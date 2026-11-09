@@ -43,7 +43,9 @@ and real direct-load format (Phase 3), input timeline (Phase 5).
 
 ### Repository layout and check command
 - Layout: `include/lynxplosion.h` (public API), `core/` (machine; no host
-  imports), `runner/` (headless runner, in-repo sha256, bundle writer),
+  imports; also holds the single in-repo SHA-256 unit, because the core
+  hashes snapshot content and payload — amended 2026-11-09 per RESEARCH F4),
+  `runner/` (headless runner and bundle writer; uses the core's SHA-256),
   `tests/`, `scripts/`, `fixtures/manifests/`, `docs/policy/`. No empty
   placeholder directories.
 - `scripts/check.sh`: POSIX sh, shellcheck-clean. Steps: print tool
