@@ -71,8 +71,8 @@ Plans:
 - [ ] 01-07-PLAN.md — Versioned snapshot save/restore with validate-then-apply refusal (API-07)
 - [ ] 01-08-PLAN.md — Determinism gates: whole-bundle two instances, golden cross-compiler digest, input and state sensitivity, run-manifest validator (DET-01/02/04)
 - [ ] 01-09-PLAN.md — Pins, hash-before-unpack fetch with per-file archive list, no-network gate (FND-02)
-- [ ] 01-10-PLAN.md — Fixture manifests, cc65 two-step build and reproducible probe (FND-03, FND-09)
-- [ ] 01-11-PLAN.md — Rights binary scan per the amended zone rule with seeded controls; PII and credential hygiene (FND-04; Task 3 awaits RC-1)
+- [ ] 01-10-PLAN.md — Fixture manifests, cc65 two-step build with derived build list, reproducible probe (FND-03, FND-09)
+- [ ] 01-11-PLAN.md — Rights binary scan per the amended zone rule with seeded controls; PII and credential hygiene (FND-04)
 - [ ] 01-12-PLAN.md — Clean-room draft, exposure record, provenance, claim template bound to the inventory (FND-07/08)
 - [ ] 01-13-PLAN.md — PROJECT.md decisions, README links, final CI evidence and efficiency review (FND-01, FND-09)
 
