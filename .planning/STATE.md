@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Evidence Harness and Walking Skeleton
 status: executing
-stopped_at: ROADMAP.md and STATE.md created; REQUIREMENTS.md traceability filled
-last_updated: "2026-11-09T22:42:46.761Z"
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-11-09T22:50:06.315Z"
 last_activity: 2026-11-09
-last_activity_desc: Roadmap created (6 phases, 54/54 v1 requirements mapped)
-state_head: 486dd6a245eb0215aa95b74879f401618d214ceb
+last_activity_desc: Phase 1 execution started
+state_head: 4044d9169df715a6c2511cab5270fc6103f3a093
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 13
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-09)
 
 **Core value:** Every compatibility claim is tied to an exact, named Lynx model/configuration and to reproducible evidence from a deterministic, observable machine.
-**Current focus:** Phase 1: Evidence Harness and Walking Skeleton
+**Current focus:** Phase 1 — Evidence Harness and Walking Skeleton
 
 ## Current Position
 
-Phase: 1 (Evidence Harness and Walking Skeleton) — READY TO EXECUTE
-Plan: 0 of TBD in current phase
+Phase: 1 (Evidence Harness and Walking Skeleton) — EXECUTING
+Plan: 2 of 13
 Status: Ready to execute
-Last activity: 2026-11-09 — Roadmap created (6 phases, 54/54 v1 requirements mapped)
+Last activity: 2026-11-09 — Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -52,6 +52,11 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 1 P01 | 4 min | 3 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -63,6 +68,8 @@ Recent decisions affecting current work:
 - [Roadmap]: v1 follows the six research slices; all v1 runs are startup tier A (direct RAM load), never boot evidence.
 - [Roadmap]: No Lynx I/II baseline adopted (O1 open); both CPU profiles built as data; no suite-pass claim before O1.
 - [Roadmap]: Language/build/API not locked (O8 open); C17 + CMake/Ninja/CTest + C ABI is the research default only.
+- [Phase 1]: Plan 01-01: status mapping fixed (ARGUMENT for NULL/invalid config, SIZE, ALIGNMENT, RANGE for bounds, STATE for bad magic/no content); lynx_guest_ticks counts from power-on or last load
+- [Phase 1]: Plan 01-01: sanitizer flags live on targets (lynx_sanitize), never CMAKE_C_FLAGS, so the plain nm twin stays uninstrumented; first CI run green in 19s on ubuntu-24.04 (run 42715092093)
 
 ### Pending Todos
 
@@ -87,6 +94,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-09
-Stopped at: ROADMAP.md and STATE.md created; REQUIREMENTS.md traceability filled
+Last session: 2026-11-09T22:50:06.283Z
+Stopped at: Completed 01-01-PLAN.md
 Resume file: None
