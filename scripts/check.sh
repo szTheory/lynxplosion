@@ -30,8 +30,30 @@ identities() {
   printf 'ninja: %s\n' "$(ninja --version)"
   printf 'shellcheck: %s\n' "$(shellcheck --version | grep '^version:')"
   printf 'git: %s\n' "$(git --version)"
+  if [ ! -f pins.txt ]; then
+    printf 'check: pins.txt is missing\n' >&2
+    return 1
+  fi
+  awk '!/^[ \t]*(#|$)/ { printf "pin: %s %s\n", $1, $2 }' pins.txt
   printf 'runner image: ImageOS=%s ImageVersion=%s\n' \
     "${ImageOS:-not-provided}" "${ImageVersion:-not-provided}"
+}
+
+# Fetches every pinned source into build/pins/NAME, verified by SHA-256 before it
+# is unpacked; a cached extraction is reused (scripts/fetch-pin.sh).
+run_pins() {
+  if [ ! -f pins.txt ]; then
+    printf 'check: pins.txt is missing\n' >&2
+    return 1
+  fi
+  pin_names=$(awk '!/^[ \t]*(#|$)/ { print $1 }' pins.txt)
+  if [ -z "$pin_names" ]; then
+    printf 'check: pins.txt has no rows\n' >&2
+    return 1
+  fi
+  for pin_name in $pin_names; do
+    sh scripts/fetch-pin.sh "$pin_name" "build/pins/$pin_name" || return 1
+  done
 }
 
 run_shellcheck() {
@@ -57,6 +79,7 @@ run_junit() {
 step identities identities
 
 # --- insertion point: pins, cc65 and probe steps go here, before shellcheck ---
+step pins run_pins
 
 step shellcheck run_shellcheck
 step workflow run_workflow

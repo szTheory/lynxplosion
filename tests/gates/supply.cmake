@@ -45,3 +45,11 @@ lynx_add_test(NAME policy.no_network.self_test
     "-DREGEX=tests/x[.]sh:1: ${lynx_net_tool_lc}.*tests/y[.]cmake:1: file[(]down"
     -P ${LYNX_TEST_SCRIPTS}/expect_fail.cmake
   LABELS policy TIMEOUT 30)
+
+# fetch-pin.sh verifies before it unpacks, lists the verified archive and reuses
+# a cache only with its list. The control is offline: file:// payloads in a
+# temporary directory outside the repository and the build tree.
+find_program(LYNX_SH sh REQUIRED)
+lynx_add_test(NAME fetch_pin.mismatch.self_test
+  COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/gates/fetch_pin_control.sh ${PROJECT_SOURCE_DIR}
+  LABELS fetch_pin TIMEOUT 30)
