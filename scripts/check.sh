@@ -270,6 +270,22 @@ run_workflow() {
   cmake --workflow --preset check
 }
 
+# Scans the build tree for rights-bearing or unlisted binaries (scripts/scan-binaries.sh).
+# Runs only after the workflow and JUnit steps, never while tests may be writing
+# files. Finder metadata files are removed first, visibly: they are the one
+# stray file macOS adds to build/ and nothing else is exempt from the scan.
+run_artifacts() {
+  if [ ! -d build ]; then
+    printf 'check: artifacts: build/ is missing\n' >&2
+    return 1
+  fi
+  find build -type f -name .DS_Store -print | while IFS= read -r finder_file; do
+    rm -f "$finder_file"
+    printf 'artifacts: removed Finder metadata %s\n' "$finder_file"
+  done
+  sh scripts/scan-binaries.sh --artifacts build --cmake-binary-dir build/check
+}
+
 # The commit history carries no home path, non-noreply identity or credential.
 # A single-commit history is skipped, visibly.
 run_history() {
@@ -298,7 +314,8 @@ step workflow run_workflow
 
 step junit run_junit
 
-# --- insertion point: artifacts step goes here, after junit and before history ---
+step artifacts run_artifacts
+# --- insertion point: nothing else goes between junit and history ---
 step history run_history
 
 total_end=$(date +%s)
