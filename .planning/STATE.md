@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Evidence Harness and Walking Skeleton
 status: executing
-stopped_at: Completed 01-05-PLAN.md
-last_updated: "2026-11-09T23:11:06.470Z"
+stopped_at: Completed 01-06-PLAN.md
+last_updated: "2026-11-09T23:15:28.113Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 1 execution started
-state_head: 3cf82b4f93d980ed7d945513f12c41d3bdd5e930
+state_head: 0d4d314ebf4443dbacf06495e1e8e8ea97036dd4
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 13
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 1 (Evidence Harness and Walking Skeleton) — EXECUTING
-Plan: 6 of 13
+Plan: 7 of 13
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 1 execution started
 
@@ -61,6 +61,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P03 | 10min | 2 tasks | 10 files |
 | Phase 1 P04 | 3 min | 2 tasks | 11 files |
 | Phase 1 P05 | 15min | 2 tasks | 10 files |
+| Phase 1 P06 | 4 min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,8 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-04: inventory compare, JUnit completeness and no-skip policy are CMake scripts with built-fault self-tests; declared skips live in tests/inventory/skips.txt with reasons — A missing, extra, duplicated or silently skipped test can never leave the check green; each rule has a negative control with exact exit code and message
 - [Phase 1]: 01-05: lynx-test-header links lynx_core_plain because its signature table needs the definitions; nm checks read only the uninstrumented twin
 - [Phase 1]: 01-05: abi helper allowlist limited to Darwin bzero/__bzero and Linux x86_64 _GLOBAL_OFFSET_TABLE_; no mem* wildcard
+- [Phase 1]: 01-06: lynx_reset clears loaded content and equals a fresh init byte for byte; a deinitialised machine refuses reset with LYNX_ERR_STATE
+- [Phase 1]: 01-06: whole-buffer memcmp refusal oracle with accepted-call controls is the API contract proof; guest-time wrap proven by white-box guest_ticks poke
 
 ### Pending Todos
 
@@ -104,6 +107,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-09T23:11:06.454Z
-Stopped at: Completed 01-05-PLAN.md
+Last session: 2026-11-09T23:15:28.086Z
+Stopped at: Completed 01-06-PLAN.md
 Resume file: None
