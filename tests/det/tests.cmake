@@ -65,3 +65,21 @@ lynx_add_test(NAME det.sensitivity
 lynx_add_test(NAME det.sensitivity_state
   COMMAND lynx-test-det state_sensitivity ${LYNX_SKELETON_CONTENT}
   LABELS det TIMEOUT 60)
+
+# The strict key = value validator, over real runner manifests and over built
+# faulty ones. Both tests run under /bin/sh through the CMake-found shell.
+find_program(LYNX_SH sh REQUIRED)
+lynx_add_test(NAME det.manifest_fields
+  COMMAND ${CMAKE_COMMAND}
+    -DRUNNER=$<TARGET_FILE:lynx-run>
+    -DCONTENT=${LYNX_SKELETON_CONTENT}
+    -DWORK=${LYNX_SCRATCH_DIR}/det/manifest_fields
+    -DSH=${LYNX_SH}
+    -DVALIDATE=${PROJECT_SOURCE_DIR}/scripts/validate-kv.sh
+    -P ${CMAKE_CURRENT_LIST_DIR}/manifest_fields.cmake
+  LABELS det TIMEOUT 30)
+
+lynx_add_test(NAME det.manifest_fields.self_test
+  COMMAND ${LYNX_SH} ${CMAKE_CURRENT_LIST_DIR}/manifest_controls.sh
+    ${LYNX_SCRATCH_DIR}/det/manifest_controls
+  LABELS det TIMEOUT 30)
