@@ -29,8 +29,10 @@ All items are hypotheses until shipped and verified. Formal, numbered
 requirements live in `.planning/REQUIREMENTS.md`.
 
 - [ ] One explicitly named baseline Lynx model/revision and CPU profile, chosen
-      from cited evidence (Epyx spec says 65C02; cc65 says 65SC02; the hardware
-      test suite treats some CPU behavior as Lynx I/II specific)
+      from cited evidence (Epyx spec says 65C02; cc65's target table in
+      `src/common/target.c` maps lynx to CPU_65SC02 — its Lynx doc page names
+      no CPU; the lynx-tests `cpu` suite expects RMB/SMB/BBx to be NOPs on
+      Lynx I and implemented on Lynx II)
 - [ ] A rights-clean, repeatable startup path that runs unattended in CI
       without copyrighted firmware, plus a separately evaluated route for
       owner-supplied firmware kept outside source control
@@ -108,6 +110,16 @@ with its own evidence plan.
 - The physical handheld has a 512-byte onboard boot ROM. Gearlynx reports
   needing a BIOS image. cc65 documents `cl65 -t lynx` producing a bootable
   `.lnx` image with its minimal loader. None of these settles a boot policy.
+- Correction (project research, 2026-11-09): a cc65 `.lnx` begins with an
+  encrypted/signed first-stage loader that the boot ROM decrypts, so it cannot
+  start by copying bank 0 into RAM. Rights-clean startup candidates are a
+  direct RAM load (BLL/BS93 `.o`) with a cited preset state, a
+  project-authored boot ROM/shim, or an HLE decrypt — the last needs an owner
+  rights decision. See `.planning/research/`.
+- Correction (project research, 2026-11-09): lynx-tests suites store raw
+  results in a `g_results` RAM array whose address is in the build's `.sym`
+  file, so results can be captured without OCR (needs a completion sentinel
+  and negative controls; many PASS values are 0x00).
 - Cartridges may include address-counter/shift-register and banked behavior,
   and writable elements/EEPROM that affect saves; they are not necessarily
   flat ROM arrays.
