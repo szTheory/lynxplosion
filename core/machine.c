@@ -80,6 +80,18 @@ void lynx__power_on(lynx_machine *m)
     m->guest_ticks = 0u;
 }
 
+/* The one power-on path, used by init and by reset. cfg may point into m, so
+   it is copied before the struct is cleared. Clearing the whole struct first
+   means no padding byte or stale field survives. */
+static void machine_setup(struct lynx_machine *m, const lynx_config *cfg)
+{
+    lynx_config keep = *cfg;
+    memset(m, 0, sizeof *m);
+    m->cfg = keep;
+    m->magic = LYNX__MAGIC;
+    lynx__power_on(m);
+}
+
 lynx_status lynx_machine_init(void *mem, size_t size, const lynx_config *cfg, lynx_machine **out)
 {
     if (mem == NULL || cfg == NULL || out == NULL) {
@@ -97,11 +109,20 @@ lynx_status lynx_machine_init(void *mem, size_t size, const lynx_config *cfg, ly
         return LYNX_ERR_ARGUMENT;
     }
     struct lynx_machine *m = (struct lynx_machine *)mem;
-    memset(m, 0, sizeof *m); /* zero the whole struct: no padding byte is ever left over */
-    m->cfg = *cfg;
-    m->magic = LYNX__MAGIC;
-    lynx__power_on(m);
+    machine_setup(m, cfg);
     *out = m;
+    return LYNX_OK;
+}
+
+lynx_status lynx_reset(lynx_machine *m)
+{
+    if (m == NULL) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (!machine_valid(m)) {
+        return LYNX_ERR_STATE;
+    }
+    machine_setup(m, &m->cfg);
     return LYNX_OK;
 }
 

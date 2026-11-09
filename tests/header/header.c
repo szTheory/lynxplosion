@@ -4,8 +4,8 @@
    depend on, and the function-pointer table pins every public signature: a
    changed declaration stops this file compiling.
 
-   Plans 01-06 and 01-07 must add lynx_reset and the snapshot functions to
-   the table below when they declare them. */
+   Plan 01-07 must add the snapshot functions to the table below when it
+   declares them. */
 #include "lynxplosion.h"
 
 _Static_assert(sizeof(lynx_status) == 4, "status is 32 bits");
@@ -22,6 +22,7 @@ static size_t (*const machine_align_fn)(void) = lynx_machine_align;
 static lynx_status (*const machine_init_fn)(void *, size_t, const lynx_config *,
                                             lynx_machine **) = lynx_machine_init;
 static void (*const machine_deinit_fn)(lynx_machine *) = lynx_machine_deinit;
+static lynx_status (*const reset_fn)(lynx_machine *) = lynx_reset;
 static lynx_status (*const load_ram_image_fn)(lynx_machine *, const uint8_t *, size_t,
                                               uint32_t) = lynx_load_ram_image;
 static lynx_status (*const advance_fn)(lynx_machine *, uint64_t, uint64_t *,
@@ -44,6 +45,7 @@ int main(void)
     (void)machine_align_fn;
     (void)machine_init_fn;
     (void)machine_deinit_fn;
+    (void)reset_fn;
     (void)load_ram_image_fn;
     (void)advance_fn;
     (void)read_register_fn;

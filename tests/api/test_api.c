@@ -390,6 +390,10 @@ static void case_instances_independent(void)
     CHECK_EQ_U64(lynx_load_ram_image(a, other, sizeof other, 0x4000u), LYNX_OK);
     CHECK_UNCHANGED(buf_b, snap_b);
 
+    /* Resetting A leaves B alone. */
+    CHECK_EQ_U64(lynx_reset(a), LYNX_OK);
+    CHECK_UNCHANGED(buf_b, snap_b);
+
     /* Deinitialising A leaves B alone, and B still runs. */
     lynx_machine_deinit(a);
     CHECK_UNCHANGED(buf_b, snap_b);
@@ -550,16 +554,258 @@ static void case_inspect_pure(void)
     CHECK_UNCHANGED(machine_buf, snap_a);
 }
 
+/* ---- bounded advance (API-03) ---- */
+
+/* Advances one call and checks what it reports. */
+static void advance_expect(lynx_machine *m, uint64_t budget, uint64_t want_consumed,
+                           lynx_stop_reason want_stop, int line)
+{
+    uint64_t consumed = 0xA5A5A5A5u;
+    lynx_stop_reason stop = 0xA5A5A5A5u;
+    lynx_status st = lynx_advance(m, budget, &consumed, &stop);
+    if (st != LYNX_OK || consumed != want_consumed || stop != want_stop || consumed > budget) {
+        fprintf(stderr,
+                "%s:%d: advance(budget %llu): status %llu consumed %llu stop %llu, want consumed "
+                "%llu stop %llu\n",
+                __FILE__, line, (unsigned long long)budget, (unsigned long long)st,
+                (unsigned long long)consumed, (unsigned long long)stop,
+                (unsigned long long)want_consumed, (unsigned long long)want_stop);
+        check_failures++;
+    }
+}
+#define ADVANCE_EXPECT(m, b, c, s) advance_expect((m), (b), (c), (s), __LINE__)
+
+static uint64_t ticks_of(const lynx_machine *m)
+{
+    uint64_t t = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(m, &t), LYNX_OK);
+    return t;
+}
+
+static uint32_t reg_of(const lynx_machine *m, uint32_t reg)
+{
+    uint32_t v = 0u;
+    CHECK_EQ_U64(lynx_read_register(m, reg, &v), LYNX_OK);
+    return v;
+}
+
+static void case_advance_budget(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+
+    /* Before any load: STATE, outputs zeroed, buffer untouched. */
+    uint64_t consumed = 0xA5A5A5A5u;
+    lynx_stop_reason stop = 0xA5A5A5A5u;
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, &stop), LYNX_ERR_STATE);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_advance(m, 4096u, NULL, &stop), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, NULL), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_advance(NULL, 4096u, &consumed, &stop), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+
+    /* A budget below one step (4 ticks) buys nothing and changes nothing. */
+    ADVANCE_EXPECT(m, 0u, 0u, LYNX_STOP_BUDGET);
+    ADVANCE_EXPECT(m, 1u, 0u, LYNX_STOP_BUDGET);
+    ADVANCE_EXPECT(m, 2u, 0u, LYNX_STOP_BUDGET);
+    ADVANCE_EXPECT(m, 3u, 0u, LYNX_STOP_BUDGET);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(ticks_of(m), 0u);
+
+    /* A budget that is not a multiple of 4 consumes the whole steps only. */
+    ADVANCE_EXPECT(m, 4u, 4u, LYNX_STOP_BUDGET);
+    ADVANCE_EXPECT(m, 5u, 4u, LYNX_STOP_BUDGET);
+    ADVANCE_EXPECT(m, 4096u, 4096u, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(ticks_of(m), 4u + 4u + 4096u);
+
+    /* The 16-byte image that ends exactly at 0x10000 stays inside itself. */
+    uint8_t wrap_image[16];
+    for (uint32_t i = 0u; i < sizeof wrap_image; i++) {
+        wrap_image[i] = (uint8_t)(i + 1u); /* 0x01..0x10, no 0xDB */
+    }
+    CHECK_EQ_U64(lynx_load_ram_image(m, wrap_image, sizeof wrap_image, 0xFFF0u), LYNX_OK);
+    for (uint32_t call = 1u; call <= 16u; call++) {
+        ADVANCE_EXPECT(m, 4u, 4u, LYNX_STOP_BUDGET);
+        uint32_t pc = reg_of(m, LYNX_REG_PC);
+        CHECK(pc >= 0xFFF0u && pc <= 0xFFFFu);
+        CHECK_EQ_HEX(pc, 0xFFF0u + (call % 16u));
+    }
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFF0u);
+    CHECK_EQ_U64(ticks_of(m), 64u);
+
+    /* A halting image: 0xDB at offset 3 stops after three steps (12 ticks) and
+       the halting check itself costs no ticks. */
+    uint8_t halt_image[8] = {0x01u, 0x02u, 0x03u, LYNX__HALT_OPCODE, 0x05u, 0x06u, 0x07u, 0x08u};
+    CHECK_EQ_U64(lynx_load_ram_image(m, halt_image, sizeof halt_image, 0x0400u), LYNX_OK);
+    ADVANCE_EXPECT(m, UINT64_MAX, 12u, LYNX_STOP_HALT);
+    CHECK_EQ_U64(ticks_of(m), 12u);
+    ADVANCE_EXPECT(m, UINT64_MAX, 0u, LYNX_STOP_HALT);
+    ADVANCE_EXPECT(m, 4u, 0u, LYNX_STOP_HALT);
+    CHECK_EQ_U64(ticks_of(m), 12u);
+    /* A halted machine consumes nothing and changes nothing. */
+    memcpy(snap_a, machine_buf, MSIZE);
+    ADVANCE_EXPECT(m, 4096u, 0u, LYNX_STOP_HALT);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+
+    /* Guest time near the 64-bit limit: white-box, the test sets the counter.
+       Room for 5 ticks buys one 4-tick step, then nothing, and never wraps. */
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+    ((struct lynx_machine *)machine_buf)->guest_ticks = UINT64_MAX - 5u;
+    ADVANCE_EXPECT(m, UINT64_MAX, 4u, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(ticks_of(m), UINT64_MAX - 1u);
+    ADVANCE_EXPECT(m, UINT64_MAX, 0u, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(ticks_of(m), UINT64_MAX - 1u);
+
+    /* The clamp itself. */
+    CHECK_EQ_U64(lynx__budget_steps(UINT64_MAX - 5u, UINT64_MAX), 1u);
+    CHECK_EQ_U64(lynx__budget_steps(0u, 7u), 1u);
+    CHECK_EQ_U64(lynx__budget_steps(0u, 3u), 0u);
+    CHECK_EQ_U64(lynx__budget_steps(UINT64_MAX, 100u), 0u);
+    CHECK_EQ_U64(lynx__budget_steps(0u, UINT64_MAX), UINT64_MAX / 4u);
+}
+
+/* ---- reset and power-on state (API-04) ---- */
+
+/* Independent SplitMix64 (Vigna, public domain), written here from the
+   published algorithm so the test does not borrow the core's code. */
+static uint64_t ref_splitmix64(uint64_t *state)
+{
+    *state += 0x9e3779b97f4a7c15u;
+    uint64_t z = *state;
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9u;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebu;
+    return z ^ (z >> 31);
+}
+
+static void read_ram(const lynx_machine *m, unsigned char *dst)
+{
+    CHECK_EQ_U64(lynx_read_memory(m, 0u, dst, LYNX_ADDRESS_SPACE), LYNX_OK);
+}
+
+static void case_reset_power_on(void)
+{
+    /* The default path is fixed 0x00. */
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    CHECK_EQ_U64(cfg.ram_policy, LYNX_RAM_POLICY_ZERO);
+    CHECK_EQ_U64(cfg.ram_seed, 0u);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    read_ram(m, mem_out);
+    CHECK(all_bytes_equal(mem_out, sizeof mem_out, 0x00));
+    lynx_identity id;
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.ram_policy, 0u);
+    CHECK_EQ_U64(id.ram_seed, 0u);
+    CHECK_EQ_U64(id.has_content, 0u);
+
+    /* Reset after load and advance equals a fresh init, byte for byte. */
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, &stop), LYNX_OK);
+    CHECK(memcmp(machine_buf, snap_a, MSIZE) != 0); /* control: the buffer did move */
+    CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    read_ram(m, mem_out);
+    CHECK(all_bytes_equal(mem_out, sizeof mem_out, 0x00));
+    CHECK_EQ_U64(ticks_of(m), 0u);
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.has_content, 0u);
+    /* After a reset there is no content, so advance refuses until a reload. */
+    CHECK_EQ_U64(lynx_advance(m, 4u, &consumed, &stop), LYNX_ERR_STATE);
+
+    /* Reset also clears a halt, through the reload that follows. */
+    uint8_t halt_image[4] = {0x01u, LYNX__HALT_OPCODE, 0x03u, 0x04u};
+    CHECK_EQ_U64(lynx_load_ram_image(m, halt_image, sizeof halt_image, 0x0200u), LYNX_OK);
+    ADVANCE_EXPECT(m, 4096u, 4u, LYNX_STOP_HALT);
+    CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+
+    /* Bad magic and NULL: a status and no change. */
+    CHECK_EQ_U64(lynx_reset(NULL), LYNX_ERR_ARGUMENT);
+    lynx_machine_deinit(m);
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_reset(m), LYNX_ERR_STATE);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+
+    /* SplitMix64 policy with a seed. */
+    const uint64_t seed = 0x0123456789abcdefu;
+    lynx_config sm;
+    lynx_config_default(&sm);
+    sm.ram_policy = LYNX_RAM_POLICY_SPLITMIX64;
+    sm.ram_seed = seed;
+    m = init_in(machine_buf, &sm);
+    lynx_machine *m2 = init_in(buf_b, &sm);
+    if (m == NULL || m2 == NULL) {
+        return;
+    }
+    CHECK(memcmp(machine_buf, buf_b, MSIZE) == 0); /* two inits, one config */
+    memcpy(snap_a, machine_buf, MSIZE);
+
+    /* The first 8 bytes are the first output, little-endian; the next 8 the second. */
+    read_ram(m, mem_out);
+    uint64_t state = seed;
+    for (uint32_t block = 0u; block < 4u; block++) {
+        uint64_t want = ref_splitmix64(&state);
+        for (uint32_t k = 0u; k < 8u; k++) {
+            CHECK_EQ_HEX(mem_out[block * 8u + k], (want >> (8u * k)) & 0xFFu);
+        }
+    }
+    /* Not all zero: the policy really fills. */
+    CHECK(!all_bytes_equal(mem_out, sizeof mem_out, 0x00));
+
+    /* Reset after load and advance equals the fresh init; identity reports policy and seed. */
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, &stop), LYNX_OK);
+    CHECK(memcmp(machine_buf, snap_a, MSIZE) != 0);
+    CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.ram_policy, LYNX_RAM_POLICY_SPLITMIX64);
+    CHECK_EQ_U64(id.ram_seed, seed);
+    CHECK_EQ_U64(id.has_content, 0u);
+
+    /* A different seed gives different RAM. */
+    sm.ram_seed = seed + 1u;
+    lynx_machine *m3 = init_in(buf_b, &sm);
+    if (m3 == NULL) {
+        return;
+    }
+    read_ram(m, mem_out);
+    static unsigned char ram_other[LYNX_ADDRESS_SPACE];
+    read_ram(m3, ram_other);
+    CHECK(memcmp(mem_out, ram_other, LYNX_ADDRESS_SPACE) != 0);
+
+    /* The reset instance reports guest time 0. */
+    CHECK_EQ_U64(ticks_of(m), 0u);
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
 } cases[] = {
+    {"advance_budget", case_advance_budget},
     {"build_id", case_build_id},
     {"identity", case_identity},
     {"init_refusal", case_init_refusal},
     {"inspect_pure", case_inspect_pure},
     {"instances_independent", case_instances_independent},
     {"load_refusal_unchanged", case_load_refusal_unchanged},
+    {"reset_power_on", case_reset_power_on},
     {"sha256", case_sha256},
     {"skeleton", case_skeleton},
 };

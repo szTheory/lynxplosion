@@ -2,6 +2,7 @@
 # Sorted (LC_ALL=C); configure fails when this differs from what is registered.
 api.abi_symbols	api
 api.abi_symbols.self_test	api
+api.advance_budget	api
 api.build_id	api
 api.header_selfcontained	api
 api.identity	api
@@ -9,6 +10,7 @@ api.init_refusal	api
 api.inspect_pure	api
 api.instances_independent	api
 api.load_refusal_unchanged	api
+api.reset_power_on	api
 api.skeleton	api
 core.includes	core
 core.includes.self_test	core

@@ -100,6 +100,15 @@ lynx_status lynx_machine_init(void *mem, size_t size, const lynx_config *cfg,
    ignored. The caller still owns the memory. */
 void lynx_machine_deinit(lynx_machine *m);
 
+/* Returns the machine to the declared power-on state: RAM filled by the
+   configured policy and seed, registers and guest time zero, no content
+   loaded. The result is byte-identical to a fresh lynx_machine_init with the
+   same config. The host reloads content after a reset. A NULL or
+   deinitialised machine returns a status and changes nothing. This is a
+   Phase 1 choice: reset clears loaded content, and a later phase may add a
+   startup-state reset beside it. */
+lynx_status lynx_reset(lynx_machine *m);
+
 /* PROVISIONAL raw RAM image loader, replaced in Phase 3. Re-applies the
    power-on RAM policy, copies len bytes of bytes to load_addr and sets the
    program counter to load_addr. Every check happens before the first write,
