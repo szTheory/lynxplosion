@@ -1,0 +1,7 @@
+/* Build identity, filled in by CMake at configure time (configure_file).
+   Read-only data: no writable global. The string holds the git revision and a
+   dirty flag, the compiler and the target system. It never holds a path, a
+   date or a clock time. */
+#include "internal.h"
+
+const char lynx__build_id[] = "@LYNX_BUILD_ID@";

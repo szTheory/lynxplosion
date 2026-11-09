@@ -6,6 +6,7 @@ lynx_warnings(lynx-test-api)
 lynx_sanitize(lynx-test-api)
 set_target_properties(lynx-test-api PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
 
+lynx_add_test(NAME api.build_id COMMAND lynx-test-api build_id LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.identity COMMAND lynx-test-api identity LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.skeleton COMMAND lynx-test-api skeleton LABELS api TIMEOUT 30)
 lynx_add_test(NAME core.sha256 COMMAND lynx-test-api sha256 LABELS core TIMEOUT 30)

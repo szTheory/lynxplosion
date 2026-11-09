@@ -146,6 +146,13 @@ typedef struct lynx_identity {
    on success. */
 lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out);
 
+/* Identity of this core build, as a NUL-terminated string of the form
+   "git=<rev>[+dirty] cc=<id>-<version> sys=<name>-<processor>" (git=nogit
+   when the build had no git checkout). Fixed at configure time, shorter than
+   128 bytes, with no path, date or clock time. Two calls return the same
+   pointer. A snapshot restores only into an identical build id. */
+const char *lynx_build_id(void);
+
 #ifdef __cplusplus
 }
 #endif

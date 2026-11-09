@@ -209,10 +209,35 @@ static void case_identity(void)
     CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_ERR_STATE);
 }
 
+static void case_build_id(void)
+{
+    const char *id = lynx_build_id();
+    CHECK(id != NULL);
+    if (id == NULL) {
+        return;
+    }
+    size_t len = strlen(id);
+    CHECK(len > 0u);
+    CHECK(len < 128u);
+    CHECK(strncmp(id, "git=", 4u) == 0);
+    CHECK(strstr(id, " cc=") != NULL);
+    CHECK(strstr(id, " sys=") != NULL);
+    /* No path, date or clock time: none of these characters can appear. */
+    CHECK(strchr(id, '/') == NULL);
+    CHECK(strchr(id, '~') == NULL);
+    CHECK(strchr(id, ':') == NULL);
+    /* Fixed for the life of the build: same pointer, same bytes. */
+    const char *again = lynx_build_id();
+    CHECK(again == id);
+    CHECK(strcmp(again, id) == 0);
+    CHECK_EQ_U64(strlen(lynx__build_id), len);
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
 } cases[] = {
+    {"build_id", case_build_id},
     {"identity", case_identity},
     {"sha256", case_sha256},
     {"skeleton", case_skeleton},

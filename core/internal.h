@@ -8,6 +8,9 @@
 
 #include "lynxplosion.h"
 
+/* Build identity string baked at configure time (core/build_id.c.in). */
+extern const char lynx__build_id[];
+
 #define LYNX__MAGIC 0x4C594E58u
 #define LYNX__TICKS_PER_STEP 4u
 #define LYNX__HALT_OPCODE 0xDBu

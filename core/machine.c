@@ -281,3 +281,8 @@ lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out)
     memcpy(out->content_sha256, m->content_sha256, sizeof out->content_sha256);
     return LYNX_OK;
 }
+
+const char *lynx_build_id(void)
+{
+    return lynx__build_id;
+}

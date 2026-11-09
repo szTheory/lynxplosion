@@ -1,5 +1,6 @@
 # Every test the check preset registers: name<TAB>labels.
 # Sorted (LC_ALL=C); configure fails when this differs from what is registered.
+api.build_id	api
 api.identity	api
 api.skeleton	api
 core.sha256	core
