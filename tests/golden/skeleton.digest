@@ -1,0 +1,16 @@
+# Observation digest of the skeleton workload: repeatability (R) evidence, not
+# accuracy. It is the SHA-256 of the sorted obs.* lines of digests.txt, so it
+# does not depend on the build identity, and it must be equal on Apple clang
+# and on gcc (Linux). Gate: det.golden, det.two_instances.
+#
+# Workload (fixture fixtures/skeleton/skeleton-image.hex, provisional skeleton):
+#   RAM policy splitmix64, seed 0x0123456789abcdef, load address 0x0200,
+#   empty input timeline, tick budget 4096, stop reason budget.
+# Regenerate:
+#   build/check/runner/lynx-run --content fixtures/skeleton/skeleton-image.hex \
+#     --load-addr 0200 --ram-policy splitmix64 --ram-seed 0123456789abcdef \
+#     --ticks 4096 --out <scratch dir>
+#   and copy the observation_digest value to the last line below.
+# Rule: regenerate only when skeleton behaviour changes on purpose (Phase 2
+# replaces the skeleton step), and give the reason in the commit message.
+4e63d10000e55c643268a601dc47770d6b40af24c02c1f95832b7352c14b251d

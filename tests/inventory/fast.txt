@@ -23,6 +23,9 @@ core.nm_undefined.self_test	core
 core.no_float	core
 core.no_float.self_test	core
 core.sha256	core
+det.golden	det
+det.golden.self_test	det
+det.two_instances	det
 det.two_runs	det
 inventory.junit.self_test	inventory
 inventory.registered.self_test	inventory
