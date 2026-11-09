@@ -49,6 +49,11 @@ run_workflow() {
   cmake --workflow --preset check
 }
 
+run_junit() {
+  cmake -DJUNIT=build/check/junit.xml -DINVENTORY=tests/inventory/fast.txt \
+    -DSKIPS=tests/inventory/skips.txt -P tests/cmake/check_junit.cmake
+}
+
 step identities identities
 
 # --- insertion point: pins, cc65 and probe steps go here, before shellcheck ---
@@ -56,7 +61,9 @@ step identities identities
 step shellcheck run_shellcheck
 step workflow run_workflow
 
-# --- insertion point: junit, artifacts and history steps go here, after workflow ---
+step junit run_junit
+
+# --- insertion point: artifacts and history steps go here, after junit ---
 
 total_end=$(date +%s)
 printf 'check: total %ss\n' "$((total_end - total_start))"

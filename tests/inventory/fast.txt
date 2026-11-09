@@ -7,4 +7,6 @@ core.sha256	core
 det.two_runs	det
 inventory.junit.self_test	inventory
 inventory.registered.self_test	inventory
+policy.no_skip	policy
+policy.no_skip.self_test	policy
 runner.cli	runner
