@@ -1,0 +1,44 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "check",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "LYNX_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "check", "configurePreset": "check" }
+  ],
+  "testPresets": [
+    {
+      "name": "check",
+      "configurePreset": "check",
+      "output": {
+        "outputOnFailure": true,
+        "outputJUnitFile": "${sourceDir}/build/${presetName}/junit.xml"
+      },
+      "execution": { "noTestsAction": "error" }
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "check",
+      "steps": [
+        { "type": "configure", "name": "check" },
+        { "type": "build", "name": "check" },
+        { "type": "test", "name": "check" }
+      ]
+    }
+  ]
+}

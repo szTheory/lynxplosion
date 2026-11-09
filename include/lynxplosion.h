@@ -1,0 +1,132 @@
+/* Lynxplosion public C API.
+
+   One machine instance lives in memory the caller provides. The core never
+   allocates, reads a clock, touches a file or starts a thread. Every function
+   that can refuse input checks all of it first and leaves the machine
+   byte-identical when it refuses.
+
+   PROVISIONAL: the machine behind this API is a skeleton. It is not a CPU and
+   makes no accuracy claim. The raw RAM image loader below is replaced by the
+   real direct-load format in Phase 3. */
+#ifndef LYNXPLOSION_H
+#define LYNXPLOSION_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Status of every call that can fail. LYNX_OK is zero. */
+typedef uint32_t lynx_status;
+enum {
+    LYNX_OK = 0,
+    LYNX_ERR_ARGUMENT = 1,          /* NULL pointer, zero length or an invalid field */
+    LYNX_ERR_SIZE = 2,              /* buffer smaller than lynx_machine_size() */
+    LYNX_ERR_ALIGNMENT = 3,         /* buffer not aligned to lynx_machine_align() */
+    LYNX_ERR_RANGE = 4,             /* register id or address range out of bounds */
+    LYNX_ERR_STATE = 5,             /* machine not initialised, or no content loaded */
+    LYNX_ERR_SNAPSHOT_INVALID = 6,  /* reserved for the snapshot API */
+    LYNX_ERR_SNAPSHOT_VERSION = 7,  /* reserved for the snapshot API */
+    LYNX_ERR_SNAPSHOT_MISMATCH = 8, /* reserved for the snapshot API */
+    LYNX_ERR_CAPACITY = 9           /* reserved for the snapshot API */
+};
+
+/* Why lynx_advance returned. FRAME and WATCH are reserved: later phases
+   report them, Phase 1 never does. */
+typedef uint32_t lynx_stop_reason;
+enum {
+    LYNX_STOP_BUDGET = 0, /* the tick budget was used up */
+    LYNX_STOP_FRAME = 1,  /* reserved */
+    LYNX_STOP_WATCH = 2,  /* reserved */
+    LYNX_STOP_HALT = 3    /* the machine halted */
+};
+
+/* Hardware profile. No Lynx I or Lynx II profile is named yet (owner
+   decision O1 is open), so the only value is NONE. */
+enum { LYNX_PROFILE_NONE = 0 };
+
+/* How RAM is filled at power-on and at reset. ZERO fills every byte with
+   0x00 and is the default everywhere. SPLITMIX64 fills RAM from the
+   SplitMix64 generator (public domain) started at ram_seed: eight bytes per
+   output, least significant byte first, from address 0. */
+enum { LYNX_RAM_POLICY_ZERO = 0, LYNX_RAM_POLICY_SPLITMIX64 = 1 };
+
+/* Register ids for lynx_read_register. */
+enum {
+    LYNX_REG_PC = 0,
+    LYNX_REG_A = 1,
+    LYNX_REG_X = 2,
+    LYNX_REG_Y = 3,
+    LYNX_REG_S = 4,
+    LYNX_REG_P = 5,
+    LYNX_REG_COUNT = 6
+};
+
+/* Size of the guest address space in bytes. */
+#define LYNX_ADDRESS_SPACE 0x10000u
+
+typedef struct lynx_config {
+    uint32_t struct_size; /* must equal sizeof(lynx_config) */
+    uint32_t profile;     /* LYNX_PROFILE_* */
+    uint32_t ram_policy;  /* LYNX_RAM_POLICY_* */
+    uint32_t reserved;    /* must be zero */
+    uint64_t ram_seed;    /* SplitMix64 start state; unused by the ZERO policy */
+} lynx_config;
+
+/* Fills cfg with the defaults: no profile, RAM policy ZERO (fixed 0x00),
+   seed 0. A NULL cfg is ignored. */
+void lynx_config_default(lynx_config *cfg);
+
+/* Opaque machine instance. */
+typedef struct lynx_machine lynx_machine;
+
+/* Size and alignment of the memory lynx_machine_init needs. Both are
+   constant for a given build. */
+size_t lynx_machine_size(void);
+size_t lynx_machine_align(void);
+
+/* Builds a machine in place in mem, which must hold at least
+   lynx_machine_size() bytes and be aligned to lynx_machine_align(). On
+   success *out points at the machine (the same address as mem). A refusal
+   returns a status and writes nothing to mem or *out. Instances share no
+   mutable state. */
+lynx_status lynx_machine_init(void *mem, size_t size, const lynx_config *cfg,
+                              lynx_machine **out);
+
+/* Marks the machine unusable. A NULL or already deinitialised machine is
+   ignored. The caller still owns the memory. */
+void lynx_machine_deinit(lynx_machine *m);
+
+/* PROVISIONAL raw RAM image loader, replaced in Phase 3. Re-applies the
+   power-on RAM policy, copies len bytes of bytes to load_addr and sets the
+   program counter to load_addr. Every check happens before the first write,
+   so a refused load leaves the machine byte-identical. Refused: NULL bytes,
+   len of zero, len above LYNX_ADDRESS_SPACE, load_addr at or above
+   LYNX_ADDRESS_SPACE, and an image that does not end inside the address
+   space. */
+lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t len,
+                                uint32_t load_addr);
+
+/* Runs the machine for at most budget master ticks (16 MHz). *consumed is the
+   number of ticks actually used and never exceeds budget. *stop says why the
+   call returned. A budget smaller than one machine step consumes nothing and
+   reports LYNX_STOP_BUDGET. Guest time never wraps: the budget is clamped so
+   that it stays below the 64-bit limit. Needs loaded content. */
+lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
+                         lynx_stop_reason *stop);
+
+/* Inspect functions never change machine state or guest time. */
+lynx_status lynx_read_register(const lynx_machine *m, uint32_t reg, uint32_t *value);
+lynx_status lynx_read_memory(const lynx_machine *m, uint32_t addr, uint8_t *out, size_t len);
+
+/* Guest time in master ticks since power-on or the last load. */
+lynx_status lynx_guest_ticks(const lynx_machine *m, uint64_t *ticks);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* LYNXPLOSION_H */
