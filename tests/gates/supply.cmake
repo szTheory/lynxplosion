@@ -66,3 +66,31 @@ lynx_add_test(NAME hygiene.manifests.self_test
   COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/gates/manifests_controls.sh
     ${PROJECT_SOURCE_DIR} ${LYNX_SCRATCH_DIR}/gates/manifests
   LABELS hygiene TIMEOUT 30)
+
+# The probe .lnx built by the pinned cc65 (the probe step of scripts/check.sh)
+# has the SHA-256 its manifest records. The self-test points the same script at
+# a manifest copy whose identity is 64 zeros and requires the mismatch message.
+lynx_add_test(NAME toolchain.probe
+  COMMAND ${CMAKE_COMMAND}
+    -DLNX=${PROJECT_SOURCE_DIR}/build/toolchain/probe.lnx
+    -DMANIFEST=${PROJECT_SOURCE_DIR}/fixtures/manifests/cc65-probe.manifest
+    -P ${LYNX_TEST_SCRIPTS}/toolchain_probe.cmake
+  LABELS toolchain TIMEOUT 30)
+
+set(lynx_probe_wrong ${LYNX_SCRATCH_DIR}/gates/toolchain_probe)
+file(REMOVE_RECURSE ${lynx_probe_wrong})
+file(READ ${PROJECT_SOURCE_DIR}/fixtures/manifests/cc65-probe.manifest lynx_probe_text)
+string(REGEX REPLACE "(^|\n)sha256 = [0-9a-f]+" "\\1sha256 = 0000000000000000000000000000000000000000000000000000000000000000"
+  lynx_probe_text "${lynx_probe_text}")
+file(WRITE ${lynx_probe_wrong}/cc65-probe.manifest "${lynx_probe_text}")
+set(lynx_probe_cmd
+  ${CMAKE_COMMAND}
+    -DLNX=${PROJECT_SOURCE_DIR}/build/toolchain/probe.lnx
+    -DMANIFEST=${lynx_probe_wrong}/cc65-probe.manifest
+    -P ${LYNX_TEST_SCRIPTS}/toolchain_probe.cmake)
+string(REPLACE ";" "$<SEMICOLON>" lynx_probe_cmd "${lynx_probe_cmd}")
+lynx_add_test(NAME toolchain.probe.self_test
+  COMMAND ${CMAKE_COMMAND} "-DCMD=${lynx_probe_cmd}" -DCODE=1
+    "-DREGEX=differs from"
+    -P ${LYNX_TEST_SCRIPTS}/expect_fail.cmake
+  LABELS toolchain TIMEOUT 30)

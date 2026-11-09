@@ -1,0 +1,11 @@
+source = fixtures/toolchain/probe.c (project-authored)
+revision = in-repo
+recipe = cl65 -t lynx -Ln probe.sym -o probe.lnx probe.c with the cc65 pin from pins.txt (scripts/check.sh probe step)
+sha256 = e2fdd9812e79c7ba2a7c3b6f1328aedf61bf358b54aab7f35ae6fb45117804af
+licence = project source all rights reserved (O5 open); linked cc65 runtime zlib
+notices = cc65 runtime library (zlib licence)
+allowed_use = toolchain reproducibility evidence only
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/toolchain/probe.c

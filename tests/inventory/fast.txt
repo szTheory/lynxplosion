@@ -43,3 +43,5 @@ policy.no_skip.self_test	policy
 policy.pins	policy
 policy.pins.self_test	policy
 runner.cli	runner
+toolchain.probe	toolchain
+toolchain.probe.self_test	toolchain
