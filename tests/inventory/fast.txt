@@ -31,6 +31,10 @@ det.sensitivity	det
 det.sensitivity_state	det
 det.two_instances	det
 det.two_runs	det
+docs.policy	docs
+docs.policy.self_test	docs
+docs.provenance	docs
+docs.provenance.self_test	docs
 fetch_pin.mismatch.self_test	fetch_pin
 hygiene.firmware_scan	hygiene
 hygiene.firmware_scan.self_test	hygiene

@@ -5,6 +5,7 @@
 include(${CMAKE_CURRENT_LIST_DIR}/abi/tests.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/api/tests.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/det/tests.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/gates/docs.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/gates/inventory.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/gates/rights.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/gates/supply.cmake)
