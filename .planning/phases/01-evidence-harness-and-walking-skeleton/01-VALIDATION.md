@@ -48,7 +48,7 @@ Task IDs are `<plan>-T<n>` (for example `01-04-T1` is plan 01-04, Task 1). Per-t
 | FND-04 | 01-09-T2, 01-10-T2, 01-11-T1, 01-11-T3 | script | `hygiene.firmware_scan` + post-workflow `artifacts` step | seeded 512 B NUL and no-NUL files in every zone; unmanifested binary; unlisted or modified pin-zone binary; file added or changed after the cc65 build list; build list with a mismatched pin digest; toolchain magic outside build output paths ⇒ reject; removed ⇒ pass | ⬜ pending |
 | FND-05 | 01-05-T1, 01-05-T2 | script + nm | `core.includes`, `core.no_float`, `core.nm_undefined`, `core.nm_globals`, `api.abi_symbols` | stdio include, float, mutable static, `time()`/`malloc()` fixtures ⇒ reject | ⬜ pending |
 | FND-06 | 01-01-T2, 01-04-T1, 01-04-T2 | CMake script | configure-time inventory equality + `inventory.junit` + `policy.no_skip` | missing, extra, duplicate, skipped, undeclared skip, self-skip property ⇒ reject | ⬜ pending |
-| FND-07 | 01-12-T1, 01-13-T1 | script | `docs.policy` | exposure row removed / banner missing ⇒ reject | ⬜ pending |
+| FND-07 | 01-12-T1, 01-13-T1 | script | `docs.policy`, `docs.provenance` | exposure row removed / banner missing / adapted file dropped from provenance ⇒ reject | ⬜ pending |
 | FND-08 | 01-12-T2 | script | `docs.claim_template` | missing field, stale inventory hash, Lynx profile ⇒ reject | ⬜ pending |
 | FND-09 | 01-10-T2, 01-13-T2 | check.sh step + ctest | cc65 wall time printed; `toolchain.probe` hash matches its manifest; CI log lines | wrong expected hash ⇒ reject | ⬜ pending |
 | API-01 | 01-01-T1, 01-05-T2, 01-06-T1 | C test | `api.skeleton`, `api.instances_independent`, `core.nm_globals` | mutation of one leaves the other byte-identical | ⬜ pending |
