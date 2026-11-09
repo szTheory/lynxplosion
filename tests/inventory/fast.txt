@@ -5,6 +5,10 @@ api.abi_symbols.self_test	api
 api.build_id	api
 api.header_selfcontained	api
 api.identity	api
+api.init_refusal	api
+api.inspect_pure	api
+api.instances_independent	api
+api.load_refusal_unchanged	api
 api.skeleton	api
 core.includes	core
 core.includes.self_test	core

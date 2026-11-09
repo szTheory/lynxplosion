@@ -233,12 +233,333 @@ static void case_build_id(void)
     CHECK_EQ_U64(strlen(lynx__build_id), len);
 }
 
+/* ---- Shared helpers for the contract cases (plan 01-06) ------------------
+
+   Every refusal below is proven the same way: copy the whole instance buffer,
+   make the call, and memcmp the buffer against the copy. A refusal that
+   touches one byte, including padding, fails. The accepted-call controls show
+   the comparison can see a change at all. */
+
+#define MSIZE (sizeof(struct lynx_machine))
+
+static _Alignas(max_align_t) unsigned char buf_b[sizeof(struct lynx_machine)];
+static unsigned char snap_a[sizeof(struct lynx_machine)];
+static unsigned char snap_b[sizeof(struct lynx_machine)];
+/* Room for a deliberately misaligned start. */
+static _Alignas(max_align_t) unsigned char over_buf[sizeof(struct lynx_machine) + 16];
+/* One byte more than the address space, for the over-long load refusal. */
+static unsigned char big_image[LYNX_ADDRESS_SPACE + 1];
+static unsigned char mem_out[LYNX_ADDRESS_SPACE];
+
+static int all_bytes_equal(const unsigned char *p, size_t len, unsigned char v)
+{
+    for (size_t i = 0u; i < len; i++) {
+        if (p[i] != v) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Initialises mem with cfg and returns the machine, or NULL after a failed check. */
+static lynx_machine *init_in(void *mem, const lynx_config *cfg)
+{
+    lynx_machine *m = NULL;
+    lynx_status st = lynx_machine_init(mem, lynx_machine_size(), cfg, &m);
+    CHECK_EQ_U64(st, LYNX_OK);
+    if (st != LYNX_OK || m == NULL) {
+        return NULL;
+    }
+    CHECK(m == mem);
+    return m;
+}
+
+/* The expected whole-buffer comparison: buffer == copy. */
+static void check_unchanged(const void *buf, const unsigned char *copy, int line)
+{
+    if (memcmp(buf, copy, MSIZE) != 0) {
+        fprintf(stderr, "%s:%d: instance buffer changed by a call that must not change it\n",
+                __FILE__, line);
+        check_failures++;
+    }
+}
+#define CHECK_UNCHANGED(buf, copy) check_unchanged((buf), (copy), __LINE__)
+
+/* ---- init refusal (API-01, API-02) ---- */
+
+static void init_refusal_one(int line, void *mem, size_t size, const lynx_config *cfg,
+                             int pass_out, lynx_status want)
+{
+    /* Both buffers hold a known pattern; a refusal must leave it alone. */
+    memset(machine_buf, 0xA5, sizeof machine_buf);
+    memset(over_buf, 0xA5, sizeof over_buf);
+    lynx_machine *const sentinel = (lynx_machine *)(uintptr_t)0x5A5A5A58u;
+    lynx_machine *out = sentinel;
+    lynx_status st = lynx_machine_init(mem, size, cfg, pass_out ? &out : NULL);
+    if (st != want) {
+        fprintf(stderr, "%s:%d: init status %llu, want %llu\n", __FILE__, line,
+                (unsigned long long)st, (unsigned long long)want);
+        check_failures++;
+    }
+    if (out != sentinel) {
+        fprintf(stderr, "%s:%d: init refusal wrote *out\n", __FILE__, line);
+        check_failures++;
+    }
+    if (!all_bytes_equal(machine_buf, sizeof machine_buf, 0xA5) ||
+        !all_bytes_equal(over_buf, sizeof over_buf, 0xA5)) {
+        fprintf(stderr, "%s:%d: init refusal wrote to the buffer\n", __FILE__, line);
+        check_failures++;
+    }
+}
+
+static void case_init_refusal(void)
+{
+    lynx_config good;
+    lynx_config_default(&good);
+    size_t size = lynx_machine_size();
+    lynx_config bad;
+
+    init_refusal_one(__LINE__, NULL, size, &good, 1, LYNX_ERR_ARGUMENT);
+    init_refusal_one(__LINE__, machine_buf, size, NULL, 1, LYNX_ERR_ARGUMENT);
+    init_refusal_one(__LINE__, machine_buf, size, &good, 0, LYNX_ERR_ARGUMENT);
+    init_refusal_one(__LINE__, machine_buf, size - 1u, &good, 1, LYNX_ERR_SIZE);
+    init_refusal_one(__LINE__, machine_buf, 0u, &good, 1, LYNX_ERR_SIZE);
+    /* Misaligned start with enough room: alignment is the refusal reason. */
+    init_refusal_one(__LINE__, over_buf + 1, size + 8u, &good, 1, LYNX_ERR_ALIGNMENT);
+    /* Misaligned and too small: the size check comes first. */
+    init_refusal_one(__LINE__, machine_buf + 1, size - 1u, &good, 1, LYNX_ERR_SIZE);
+
+    bad = good;
+    bad.struct_size += 1u;
+    init_refusal_one(__LINE__, machine_buf, size, &bad, 1, LYNX_ERR_ARGUMENT);
+    bad = good;
+    bad.struct_size = 0u;
+    init_refusal_one(__LINE__, machine_buf, size, &bad, 1, LYNX_ERR_ARGUMENT);
+    bad = good;
+    bad.profile = 1u;
+    init_refusal_one(__LINE__, machine_buf, size, &bad, 1, LYNX_ERR_ARGUMENT);
+    bad = good;
+    bad.ram_policy = 2u;
+    init_refusal_one(__LINE__, machine_buf, size, &bad, 1, LYNX_ERR_ARGUMENT);
+    bad = good;
+    bad.reserved = 1u;
+    init_refusal_one(__LINE__, machine_buf, size, &bad, 1, LYNX_ERR_ARGUMENT);
+
+    /* Positive control: the same call with good input writes the buffer and *out. */
+    memset(machine_buf, 0xA5, sizeof machine_buf);
+    lynx_machine *out = NULL;
+    CHECK_EQ_U64(lynx_machine_init(machine_buf, size, &good, &out), LYNX_OK);
+    CHECK(out == (lynx_machine *)machine_buf);
+    CHECK(!all_bytes_equal(machine_buf, sizeof machine_buf, 0xA5));
+}
+
+/* ---- instance independence and init/deinit idempotency (API-01) ---- */
+
+static void case_instances_independent(void)
+{
+    lynx_config cfg_a;
+    lynx_config cfg_b;
+    lynx_config_default(&cfg_a);
+    lynx_config_default(&cfg_b);
+    cfg_a.ram_policy = LYNX_RAM_POLICY_SPLITMIX64;
+    cfg_a.ram_seed = 1u;
+    cfg_b.ram_policy = LYNX_RAM_POLICY_SPLITMIX64;
+    cfg_b.ram_seed = 2u;
+
+    lynx_machine *a = init_in(machine_buf, &cfg_a);
+    lynx_machine *b = init_in(buf_b, &cfg_b);
+    if (a == NULL || b == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(lynx_load_ram_image(a, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_load_ram_image(b, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+
+    /* Advancing A leaves B's whole buffer alone. */
+    memcpy(snap_b, buf_b, MSIZE);
+    memcpy(snap_a, machine_buf, MSIZE);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(a, 4096u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 4096u);
+    CHECK_UNCHANGED(buf_b, snap_b);
+    CHECK(memcmp(machine_buf, snap_a, MSIZE) != 0); /* control: A did change */
+
+    /* Loading into A leaves B alone. */
+    uint8_t other[16];
+    memset(other, 0x11, sizeof other);
+    CHECK_EQ_U64(lynx_load_ram_image(a, other, sizeof other, 0x4000u), LYNX_OK);
+    CHECK_UNCHANGED(buf_b, snap_b);
+
+    /* Deinitialising A leaves B alone, and B still runs. */
+    lynx_machine_deinit(a);
+    CHECK_UNCHANGED(buf_b, snap_b);
+    lynx_identity id;
+    CHECK_EQ_U64(lynx_get_identity(b, &id), LYNX_OK);
+    CHECK_EQ_U64(id.ram_seed, 2u);
+    CHECK_EQ_U64(lynx_advance(b, 4096u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 4096u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+
+    /* Deinit twice, and deinit of NULL, are no-ops. */
+    lynx_machine_deinit(a);
+    memcpy(snap_a, machine_buf, MSIZE);
+    lynx_machine_deinit(a);
+    lynx_machine_deinit(NULL);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+
+    /* Init twice on one buffer with one config gives identical bytes, whatever
+       the buffer held before (so no stale byte or padding reaches the result). */
+    memset(machine_buf, 0xA5, sizeof machine_buf);
+    CHECK(init_in(machine_buf, &cfg_a) != NULL);
+    memcpy(snap_a, machine_buf, MSIZE);
+    memset(machine_buf, 0x5A, sizeof machine_buf);
+    CHECK(init_in(machine_buf, &cfg_a) != NULL);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK(init_in(machine_buf, &cfg_a) != NULL);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+}
+
+/* ---- load refusal (API-02) ---- */
+
+static void case_load_refusal_unchanged(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.ram_policy = LYNX_RAM_POLICY_SPLITMIX64;
+    cfg.ram_seed = 7u;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, &stop), LYNX_OK);
+    memcpy(snap_a, machine_buf, MSIZE);
+
+    CHECK_EQ_U64(lynx_load_ram_image(m, NULL, 32u, 0x0200u), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, 0u, 0x0200u), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, LYNX_ADDRESS_SPACE + 1u, 0u), LYNX_ERR_RANGE);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, SIZE_MAX, 0x10u), LYNX_ERR_RANGE);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, LYNX_ADDRESS_SPACE),
+                 LYNX_ERR_RANGE);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0xFFFFFFFFu),
+                 LYNX_ERR_RANGE);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    /* Runs one byte past 0xFFFF. */
+    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, 17u, 0xFFF0u), LYNX_ERR_RANGE);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, 2u, 0xFFFFu), LYNX_ERR_RANGE);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx_load_ram_image(NULL, tracer_image, sizeof tracer_image, 0x0200u),
+                 LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+
+    /* Control: an accepted load is visible to the comparison. */
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, 16u, 0x0300u), LYNX_OK);
+    CHECK(memcmp(machine_buf, snap_a, MSIZE) != 0);
+
+    /* Boundaries that are accepted: exactly to 0x10000, and the whole space. */
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, 16u, 0xFFF0u), LYNX_OK);
+    CHECK(memcmp(machine_buf, snap_a, MSIZE) != 0);
+    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, LYNX_ADDRESS_SPACE, 0u), LYNX_OK);
+    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, 1u, 0xFFFFu), LYNX_OK);
+
+    /* A deinitialised machine refuses a load and stays as it was. */
+    lynx_machine_deinit(m);
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u),
+                 LYNX_ERR_STATE);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+}
+
+/* ---- inspect purity (API-05) ---- */
+
+static void case_inspect_pure(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.ram_policy = LYNX_RAM_POLICY_SPLITMIX64;
+    cfg.ram_seed = 11u;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, &stop), LYNX_OK);
+    memcpy(snap_a, machine_buf, MSIZE);
+
+    uint64_t ticks_before = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(m, &ticks_before), LYNX_OK);
+    CHECK_EQ_U64(ticks_before, 4096u);
+
+    for (uint32_t r = 0u; r < LYNX_REG_COUNT; r++) {
+        uint32_t v = 0u;
+        CHECK_EQ_U64(lynx_read_register(m, r, &v), LYNX_OK);
+    }
+    uint32_t v = 0xA5A5A5A5u;
+    CHECK_EQ_U64(lynx_read_register(m, LYNX_REG_COUNT, &v), LYNX_ERR_RANGE);
+    CHECK_EQ_HEX(v, 0xA5A5A5A5u);
+    CHECK_EQ_U64(lynx_read_register(m, 0xFFFFFFFFu, &v), LYNX_ERR_RANGE);
+    CHECK_EQ_U64(lynx_read_register(m, LYNX_REG_PC, NULL), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_read_register(NULL, LYNX_REG_PC, &v), LYNX_ERR_ARGUMENT);
+
+    memset(mem_out, 0xA5, sizeof mem_out);
+    CHECK_EQ_U64(lynx_read_memory(m, 0u, mem_out, LYNX_ADDRESS_SPACE), LYNX_OK);
+    CHECK(memcmp(mem_out, ((struct lynx_machine *)machine_buf)->ram, LYNX_ADDRESS_SPACE) == 0);
+    memset(mem_out, 0xA5, sizeof mem_out);
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFFFFu, mem_out, 2u), LYNX_ERR_RANGE);
+    CHECK_EQ_U64(lynx_read_memory(m, 0x10000u, mem_out, 1u), LYNX_ERR_RANGE);
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFFFFFFFFu, mem_out, 1u), LYNX_ERR_RANGE);
+    CHECK_EQ_U64(lynx_read_memory(m, 0u, mem_out, LYNX_ADDRESS_SPACE + 1u), LYNX_ERR_RANGE);
+    CHECK_EQ_U64(lynx_read_memory(m, 0u, mem_out, SIZE_MAX), LYNX_ERR_RANGE);
+    CHECK(all_bytes_equal(mem_out, sizeof mem_out, 0xA5)); /* RANGE writes nothing */
+    CHECK_EQ_U64(lynx_read_memory(m, 0x0200u, mem_out, 0u), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_read_memory(m, 0x0200u, NULL, 4u), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_read_memory(NULL, 0x0200u, mem_out, 4u), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFFFFu, mem_out, 1u), LYNX_OK);
+
+    uint64_t ticks_after = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(m, &ticks_after), LYNX_OK);
+    CHECK_EQ_U64(ticks_after, ticks_before);
+    CHECK_EQ_U64(lynx_guest_ticks(m, NULL), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_guest_ticks(NULL, &ticks_after), LYNX_ERR_ARGUMENT);
+
+    lynx_identity id;
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.has_content, 1u);
+    CHECK_EQ_U64(lynx_get_identity(m, NULL), LYNX_ERR_ARGUMENT);
+
+    CHECK_UNCHANGED(machine_buf, snap_a);
+
+    /* A deinitialised machine: every inspect refuses with STATE, buffer untouched. */
+    lynx_machine_deinit(m);
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_read_register(m, LYNX_REG_PC, &v), LYNX_ERR_STATE);
+    CHECK_EQ_U64(lynx_read_memory(m, 0u, mem_out, 4u), LYNX_ERR_STATE);
+    CHECK_EQ_U64(lynx_guest_ticks(m, &ticks_after), LYNX_ERR_STATE);
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_ERR_STATE);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
 } cases[] = {
     {"build_id", case_build_id},
     {"identity", case_identity},
+    {"init_refusal", case_init_refusal},
+    {"inspect_pure", case_inspect_pure},
+    {"instances_independent", case_instances_independent},
+    {"load_refusal_unchanged", case_load_refusal_unchanged},
     {"sha256", case_sha256},
     {"skeleton", case_skeleton},
 };

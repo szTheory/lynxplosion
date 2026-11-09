@@ -8,5 +8,9 @@ set_target_properties(lynx-test-api PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJEC
 
 lynx_add_test(NAME api.build_id COMMAND lynx-test-api build_id LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.identity COMMAND lynx-test-api identity LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.init_refusal COMMAND lynx-test-api init_refusal LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.inspect_pure COMMAND lynx-test-api inspect_pure LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.instances_independent COMMAND lynx-test-api instances_independent LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.load_refusal_unchanged COMMAND lynx-test-api load_refusal_unchanged LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.skeleton COMMAND lynx-test-api skeleton LABELS api TIMEOUT 30)
 lynx_add_test(NAME core.sha256 COMMAND lynx-test-api sha256 LABELS core TIMEOUT 30)
