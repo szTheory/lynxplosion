@@ -36,6 +36,8 @@ hygiene.firmware_scan	hygiene
 hygiene.firmware_scan.self_test	hygiene
 hygiene.manifests	hygiene
 hygiene.manifests.self_test	hygiene
+hygiene.pii.self_test	hygiene
+hygiene.tree	hygiene
 inventory.junit.self_test	inventory
 inventory.registered.self_test	inventory
 policy.no_network	policy

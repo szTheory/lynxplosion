@@ -270,6 +270,17 @@ run_workflow() {
   cmake --workflow --preset check
 }
 
+# The commit history carries no home path, non-noreply identity or credential.
+# A single-commit history is skipped, visibly.
+run_history() {
+  history_count=$(git rev-list --count HEAD)
+  if [ "$history_count" -gt 1 ]; then
+    sh scripts/hygiene.sh --history
+  else
+    printf 'history: single commit, skipped (visible)\n'
+  fi
+}
+
 run_junit() {
   cmake -DJUNIT=build/check/junit.xml -DINVENTORY=tests/inventory/fast.txt \
     -DSKIPS=tests/inventory/skips.txt -P tests/cmake/check_junit.cmake
@@ -287,7 +298,8 @@ step workflow run_workflow
 
 step junit run_junit
 
-# --- insertion point: artifacts and history steps go here, after junit ---
+# --- insertion point: artifacts step goes here, after junit and before history ---
+step history run_history
 
 total_end=$(date +%s)
 printf 'check: total %ss\n' "$((total_end - total_start))"
