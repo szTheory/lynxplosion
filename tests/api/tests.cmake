@@ -6,4 +6,4 @@ lynx_warnings(lynx-test-api)
 lynx_sanitize(lynx-test-api)
 set_target_properties(lynx-test-api PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
 
-add_test(NAME api.skeleton COMMAND lynx-test-api skeleton)
+lynx_add_test(NAME api.skeleton COMMAND lynx-test-api skeleton LABELS api TIMEOUT 30)

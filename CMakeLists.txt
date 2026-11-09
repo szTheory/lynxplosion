@@ -39,5 +39,6 @@ target_link_options(lynx_core PUBLIC -fsanitize=address,undefined)
 
 if(LYNX_TESTS)
   enable_testing()
-  include(tests/api/tests.cmake)
+  include(cmake/Tests.cmake)
+  include(tests/tests.cmake)
 endif()
