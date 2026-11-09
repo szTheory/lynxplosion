@@ -7,8 +7,9 @@
 #
 # Inventory format: one test per line, "name<TAB>labels", labels sorted and
 # separated by commas, lines sorted (LC_ALL=C order); lines starting with # are
-# comments. This is the configure-time registration check. The JUnit step added
-# later covers the set that actually ran.
+# comments. This is the configure-time registration check (comparison in
+# tests/cmake/inventory_equal.cmake). The JUnit step in scripts/check.sh
+# (tests/cmake/check_junit.cmake) covers the set that actually ran.
 
 # Scratch directory. Every file a test or a configure-time self-test fixture
 # writes (generated fixtures, work dirs, runner bundles) lives under this
@@ -29,8 +30,12 @@ function(lynx_add_test)
   set_tests_properties(${T_NAME} PROPERTIES LABELS "${T_LABELS}" TIMEOUT ${T_TIMEOUT})
 endfunction()
 
+include(${PROJECT_SOURCE_DIR}/tests/cmake/inventory_equal.cmake)
+
 # Runs once the top-level directory has been processed, so every include()d
-# test file has registered its tests.
+# test file has registered its tests. It writes the registered rows to
+# <build>/inventory/registered.txt and compares that file with the inventory
+# through lynx_inventory_compare, the function the self-tests also exercise.
 function(lynx__check_inventory)
   set(file "${CMAKE_SOURCE_DIR}/tests/inventory/fast.txt")
   if(NOT EXISTS "${file}")
@@ -43,33 +48,12 @@ function(lynx__check_inventory)
     get_test_property(${name} LABELS labels)
     list(SORT labels)
     list(JOIN labels "," labels)
-    list(APPEND registered "${name}\t${labels}")
+    string(APPEND registered "${name}\t${labels}\n")
   endforeach()
+  set(registered_file "${CMAKE_BINARY_DIR}/inventory/registered.txt")
+  file(WRITE "${registered_file}" "${registered}")
 
-  file(STRINGS "${file}" lines)
-  set(listed "")
-  foreach(line IN LISTS lines)
-    if(NOT line STREQUAL "" AND NOT line MATCHES "^#")
-      list(APPEND listed "${line}")
-    endif()
-  endforeach()
-  set(sorted ${listed})
-  list(SORT sorted)
-  if(NOT sorted STREQUAL listed)
-    message(FATAL_ERROR "${file} is not sorted")
-  endif()
-
-  set(missing ${listed})
-  list(REMOVE_ITEM missing ${registered})
-  set(unexpected ${registered})
-  list(REMOVE_ITEM unexpected ${listed})
-  if(missing OR unexpected)
-    list(JOIN missing "\n  " missing)
-    list(JOIN unexpected "\n  " unexpected)
-    message(FATAL_ERROR "registered tests differ from ${file}\n"
-      "listed but not registered:\n  ${missing}\n"
-      "registered but not listed:\n  ${unexpected}")
-  endif()
+  lynx_inventory_compare("${registered_file}" "${file}")
 endfunction()
 
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL lynx__check_inventory)
