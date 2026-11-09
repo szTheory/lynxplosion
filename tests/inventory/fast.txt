@@ -5,3 +5,4 @@ api.identity	api
 api.skeleton	api
 core.sha256	core
 det.two_runs	det
+runner.cli	runner

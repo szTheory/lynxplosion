@@ -8,3 +8,11 @@ lynx_add_test(NAME det.two_runs
     -DWORK=${LYNX_SCRATCH_DIR}/det/two_runs
     -P ${CMAKE_CURRENT_LIST_DIR}/two_runs.cmake
   LABELS det TIMEOUT 30)
+
+lynx_add_test(NAME runner.cli
+  COMMAND ${CMAKE_COMMAND}
+    -DRUNNER=$<TARGET_FILE:lynx-run>
+    -DCONTENT=${LYNX_SKELETON_CONTENT}
+    -DWORK=${LYNX_SCRATCH_DIR}/det/runner_cli
+    -P ${CMAKE_CURRENT_LIST_DIR}/runner_cli.cmake
+  LABELS runner TIMEOUT 30)
