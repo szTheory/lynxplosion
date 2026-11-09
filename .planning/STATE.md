@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Evidence Harness and Walking Skeleton
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-11-09T22:50:06.315Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-11-09T22:54:18.136Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 1 execution started
-state_head: 4044d9169df715a6c2511cab5270fc6103f3a093
+state_head: 8b28236f385661e1bf1821a2f17e7f4f19d0f4fd
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 13
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 1 (Evidence Harness and Walking Skeleton) — EXECUTING
-Plan: 2 of 13
+Plan: 3 of 13
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 1 execution started
 
@@ -57,6 +57,7 @@ Progress: [░░░░░░░░░░] 0%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 1 P01 | 4 min | 3 tasks | 14 files |
+| Phase 1 P02 | 5min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,8 @@ Recent decisions affecting current work:
 - [Roadmap]: Language/build/API not locked (O8 open); C17 + CMake/Ninja/CTest + C ABI is the research default only.
 - [Phase 1]: Plan 01-01: status mapping fixed (ARGUMENT for NULL/invalid config, SIZE, ALIGNMENT, RANGE for bounds, STATE for bad magic/no content); lynx_guest_ticks counts from power-on or last load
 - [Phase 1]: Plan 01-01: sanitizer flags live on targets (lynx_sanitize), never CMAKE_C_FLAGS, so the plain nm twin stays uninstrumented; first CI run green in 19s on ubuntu-24.04 (run 42715092093)
+- [Phase 1]: 01-02: build identity uses the full 40-char git revision; configure fails above 127 characters (snapshot header reserves 128 bytes)
+- [Phase 1]: 01-02: one internal SHA-256 unit in core/ shared with the runner; content hash computed inside the core at load, no public sha256 utility
 
 ### Pending Todos
 
@@ -94,6 +97,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-09T22:50:06.283Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-11-09T22:54:18.101Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None
