@@ -29,8 +29,8 @@ created: "2026-11-09"
 
 ## Sampling Rate
 
-- **After every task commit:** Run the quick slice for the touched area.
-- **After every plan wave:** Run `scripts/check.sh`.
+- **After every task commit:** Run the quick slice for the touched area (the task's `<automated>` command).
+- **After every plan wave:** Run `scripts/check.sh` (each plan is its own wave; its last task runs it).
 - **Before `/gsd-verify-work`:** `scripts/check.sh` green locally AND the same commit green on GitHub Actions (`gh run view`), wall times recorded.
 - **Max feedback latency:** 60 seconds locally.
 
@@ -38,30 +38,30 @@ created: "2026-11-09"
 
 ## Per-Task Verification Map
 
-Requirement-level map (task IDs are filled in by the planner and the executor):
+Task IDs are `<plan>-T<n>` (for example `01-04-T1` is plan 01-04, Task 1). Per-task commands use the touched slice (`cmake --preset check && cmake --build --preset check && ctest --preset check -R '<slice>'`); the last task of each plan also runs `scripts/check.sh` as the plan-end (wave-end) full check.
 
-| Requirement | Test Type | Automated Command | Negative control | Status |
-|-------------|-----------|-------------------|------------------|--------|
-| FND-01 | e2e | `scripts/check.sh`; CI runs the same; `gh run view` green | controls below prove the failure paths | ⬜ pending |
-| FND-02 | script | `policy.pins`, `fetch_pin.mismatch.self_test` | wrong digest ⇒ exit 1, DEST absent; bad pins rows rejected | ⬜ pending |
-| FND-03 | script | `hygiene.manifests` | missing/unknown/duplicate key, bad sha256 or tier ⇒ reject | ⬜ pending |
-| FND-04 | script | `hygiene.firmware_scan` + post-workflow artifact-zone step | seeded 512 B NUL and no-NUL files, unmanifested binary ⇒ reject; removed ⇒ pass | ⬜ pending |
-| FND-05 | script + nm | `core.includes`, `core.no_float`, `core.nm_undefined`, `core.nm_globals`, `api.abi_symbols` | stdio include, float, mutable static, `time()`/`malloc()` fixtures ⇒ reject | ⬜ pending |
-| FND-06 | CMake script | configure-time inventory equality + `inventory.junit` | missing, extra, duplicate, skipped, undeclared skip ⇒ reject | ⬜ pending |
-| FND-07 | script | `docs.policy` | exposure row removed / banner missing ⇒ reject | ⬜ pending |
-| FND-08 | script | `docs.claim_template` | missing field, stale inventory hash ⇒ reject | ⬜ pending |
-| FND-09 | check.sh step + ctest | cc65 wall time printed; `toolchain.probe` hash matches its manifest | wrong expected hash ⇒ reject | ⬜ pending |
-| API-01 | C test | `api.instances_independent` | mutation of one leaves the other byte-identical | ⬜ pending |
-| API-02 | C test | `api.load_refusal_unchanged` | each refusal case + one accepted load showing mutation is detectable | ⬜ pending |
-| API-03 | C test | `api.advance_budget` | boundary budgets (0, 1, huge, `UINT64_MAX`) | ⬜ pending |
-| API-04 | C test | `api.reset_power_on` | different seed ⇒ different RAM | ⬜ pending |
-| API-05 | C test | `api.inspect_pure` | whole-instance `memcmp` + guest time unchanged | ⬜ pending |
-| API-07 | C test | `api.snapshot_roundtrip`, `api.snapshot_refusal` | every header field flip, truncation, trailing bytes ⇒ refuse, state unchanged | ⬜ pending |
-| DET-01 | e2e | `det.two_runs` | `det.sensitivity` (seed/content/budget/state bit ⇒ digest differs) | ⬜ pending |
-| DET-02 | C test | `det.two_instances` | same sensitivity controls | ⬜ pending |
-| DET-04 | script | `det.manifest_fields` | missing key, timestamp or absolute path ⇒ reject | ⬜ pending |
-| (cross-compiler) | e2e | `det.golden` vs `tests/golden/skeleton.digest` | edited golden ⇒ fail | ⬜ pending |
-| (PII hygiene) | script | `hygiene.pii` | runtime-constructed fake token, home path, non-noreply email ⇒ reject | ⬜ pending |
+| Requirement | Task ID(s) | Test Type | Automated Command | Negative control | Status |
+|-------------|------------|-----------|-------------------|------------------|--------|
+| FND-01 | 01-01-T1, 01-01-T2, 01-01-T3, 01-04-T2, 01-11-T2, 01-11-T3, 01-13-T2 | e2e | `scripts/check.sh`; CI runs the same; run selected by `headSha == HEAD`, `gh run watch` green | controls below prove the failure paths; `noTestsAction: error` | ⬜ pending |
+| FND-02 | 01-09-T1, 01-09-T2 | script | `policy.pins`, `policy.no_network`, `fetch_pin.mismatch.self_test` | wrong digest ⇒ exit 1, DEST absent; bad pins rows rejected; network tool in tests ⇒ reject | ⬜ pending |
+| FND-03 | 01-10-T1, 01-10-T2 | script | `hygiene.manifests` | missing/unknown/duplicate key, bad sha256 or tier, duplicate identity, uncovered fixture ⇒ reject | ⬜ pending |
+| FND-04 | 01-09-T2, 01-11-T1, 01-11-T3 | script | `hygiene.firmware_scan` + post-workflow `artifacts` step | seeded 512 B NUL and no-NUL files in every zone; unmanifested binary; unlisted or modified pin-zone binary; toolchain magic outside build output paths ⇒ reject; removed ⇒ pass | ⬜ pending (01-11-T3 blocked on RC-1) |
+| FND-05 | 01-05-T1, 01-05-T2 | script + nm | `core.includes`, `core.no_float`, `core.nm_undefined`, `core.nm_globals`, `api.abi_symbols` | stdio include, float, mutable static, `time()`/`malloc()` fixtures ⇒ reject | ⬜ pending |
+| FND-06 | 01-01-T2, 01-04-T1, 01-04-T2 | CMake script | configure-time inventory equality + `inventory.junit` + `policy.no_skip` | missing, extra, duplicate, skipped, undeclared skip, self-skip property ⇒ reject | ⬜ pending |
+| FND-07 | 01-12-T1, 01-13-T1 | script | `docs.policy` | exposure row removed / banner missing ⇒ reject | ⬜ pending |
+| FND-08 | 01-12-T2 | script | `docs.claim_template` | missing field, stale inventory hash, Lynx profile ⇒ reject | ⬜ pending |
+| FND-09 | 01-10-T2, 01-13-T2 | check.sh step + ctest | cc65 wall time printed; `toolchain.probe` hash matches its manifest; CI log lines | wrong expected hash ⇒ reject | ⬜ pending |
+| API-01 | 01-01-T1, 01-05-T2, 01-06-T1 | C test | `api.skeleton`, `api.instances_independent`, `core.nm_globals` | mutation of one leaves the other byte-identical | ⬜ pending |
+| API-02 | 01-06-T1 | C test | `api.load_refusal_unchanged` | each refusal case + one accepted load showing mutation is detectable | ⬜ pending |
+| API-03 | 01-01-T1, 01-06-T2 | C test | `api.skeleton`, `api.advance_budget` | boundary budgets (0, 1, huge, `UINT64_MAX`); image ending at `0x10000` | ⬜ pending |
+| API-04 | 01-02-T1, 01-03-T2, 01-06-T2 | C test + script | `api.identity`, `api.reset_power_on`, `runner.cli` | different seed ⇒ different RAM; default path is fixed-0x00 | ⬜ pending |
+| API-05 | 01-01-T1, 01-06-T1 | C test | `api.inspect_pure` | whole-instance `memcmp` + guest time unchanged | ⬜ pending |
+| API-07 | 01-07-T1, 01-07-T2 | C test | `api.snapshot_roundtrip`, `api.snapshot_refusal` | every header field flip, truncation, trailing bytes ⇒ refuse, state unchanged | ⬜ pending |
+| DET-01 | 01-03-T1, 01-08-T1, 01-08-T2 | e2e | `det.two_runs`, `det.golden` | `det.sensitivity`, `det.sensitivity_state` (seed/content/budget/register/time/RAM bit ⇒ digest differs) | ⬜ pending |
+| DET-02 | 01-08-T1, 01-08-T2 | C test | `det.two_instances` (whole-bundle equality) | same sensitivity controls | ⬜ pending |
+| DET-04 | 01-02-T1, 01-02-T2, 01-03-T1, 01-08-T3 | script | `api.identity`, `api.build_id`, `det.manifest_fields` | missing key, timestamp or absolute path ⇒ reject | ⬜ pending |
+| (cross-compiler) | 01-08-T1, 01-08-T3 | e2e | `det.golden` vs `tests/golden/skeleton.digest` | edited golden ⇒ fail | ⬜ pending |
+| (PII hygiene) | 01-11-T2 | script | `hygiene.tree`, `hygiene.pii.self_test`, `history` step | runtime-constructed fake token, home path, non-noreply email ⇒ reject | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 

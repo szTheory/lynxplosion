@@ -536,15 +536,22 @@ add_test(NAME inventory.missing_test.self_test
 | A9 | Applying the exact-512-byte rule across the whole pin zone stays false-positive free after pin bumps | Pattern 5 | A future pin bump may need a documented exemption |
 | A10 | muhtari helpers may be copied into an all-rights-reserved repo (owner is sole author of the named files; repo has Codex/bot commits elsewhere) | Standard Stack | Licensing-notice question for the owner; low risk |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Where does SHA-256 live (F4)?** Core needs it for the snapshot content identity; CONTEXT places an "in-repo sha256" in `runner/`. Recommendation: one file in `core/` shared with the runner. Planner decision, low cost either way (also decide whether `lynx_sha256()` is a public utility).
+   **RESOLVED:** one SHA-256 unit in `core/sha256.{c,h}` (internal `lynx__sha256_*`), shared with the runner; no public `lynx_sha256()`. Implemented in plan 01-02 Task 1 (`core.sha256` vectors, content identity); used by the runner in plan 01-03 and by snapshots in plan 01-07.
 2. **Artifact-zone rule (F2).** Accept "toolchain-output classes by magic, everything else must be text or manifested" and hex-text dumps? This narrows CONTEXT's wording slightly.
+   **RESOLVED:** superseded by the CONTEXT amendment of 2026-11-09 (plan-check B-1): fixture-manifest SHA-256, the pin zone's per-file list from the verified archive, and toolchain magic only inside the CMake binary dir's own output paths; the 512-byte rule everywhere; hex-text bundle dumps. Implemented in plan 01-09 Task 2 (per-file list) and plan 01-11 Task 1 (scan) and Task 3 (check step). One follow-on conflict (RC-1: cc65 build outputs in `build/pins/cc65/`) is open for an owner/orchestrator decision.
 3. **Golden cross-compiler digest.** Add `tests/golden/skeleton.digest`? Recommended; it is not a second CI lane.
+   **RESOLVED:** added. Implemented in plan 01-08 Task 1 (`det.golden`, `det.golden.self_test`), confirmed on gcc by the CI run in plan 01-08 Task 3 and again in plan 01-13.
 4. **Owner-level repo settings** (required check ruleset, `sha_pinning_required`): optional, needs the owner's call because it changes shared repo configuration.
+   **RESOLVED:** not changed in Phase 1; listed as owner follow-ups in the plan 01-13 Task 2 SUMMARY.
 5. **`lynx-tests` build under pinned cc65** remains unverified (blocked here); Phase 4 spike.
+   **RESOLVED:** deferred to the Phase 4 spike; Phase 1 only fetches and verifies the pin (plan 01-09 Task 2).
 6. **Prefix and status codes** (`lynx_` vs `lxp_`): Claude's discretion; choose before writing the header because `abi.cmake symbols` mode keys on the prefix.
+   **RESOLVED:** `lynx_` public, `lynx__` internal, `uint32_t` `lynx_status` codes 0..9. Implemented in plan 01-01 Task 1; enforced by `api.abi_symbols` in plan 01-05 Task 2.
 7. **CONTEXT/STACK says record O8 in PROJECT.md Key Decisions** — a docs task for the plan; PROJECT.md was not modified in this research.
+   **RESOLVED:** recorded in plan 01-13 Task 1 (O8, repository visibility, O5 open, O6 draft).
 
 ## Environment Availability
 

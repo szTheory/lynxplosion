@@ -59,18 +59,22 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. The pinned cc65 builds from source on the dev host and on the CI runner, with wall time recorded. The repo contains a claim template that binds profile, content identity, startup tier, evidence tier and test inventory, plus a draft source-exposure and clean-room record.
 **Owner gates**: O8 (language, build and API): no core code until the owner confirms it or accepts the research default (C17, CMake/Ninja/CTest, C ABI). O6 (clean-room protocol and GPL-exposure record): FND-07 stays a draft until it is decided.
 **Research flag**: Standard patterns, except the cc65 from-source build spike (FND-09: `TARGETS=lynx` recipe, wall time).
-**Plans:** 9 plans
+**Plans:** 13 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Walking skeleton tracer: check.sh → CMake → lynx_core → C test → runner bundle; first green CI run
-- [ ] 01-02-PLAN.md — Exact test inventory, JUnit completeness, declared skips, negative-control harness (FND-06)
-- [ ] 01-03-PLAN.md — Core boundary gates: include/float scans, nm on uninstrumented twin, header self-containment (FND-05)
-- [ ] 01-04-PLAN.md — Host API contract: instances, load refusal, bounded advance, reset/power-on, side-effect-free inspect (API-01..05)
-- [ ] 01-05-PLAN.md — Versioned snapshot save/restore with validate-then-apply refusal; SHA-256 vectors (API-07)
-- [ ] 01-06-PLAN.md — Determinism gates: two instances, golden cross-compiler digest, sensitivity, run-manifest validator (DET-01/02/04)
-- [ ] 01-07-PLAN.md — Pins and hash-before-unpack fetch, cc65 two-step build and probe, fixture manifests (FND-02/03/09)
-- [ ] 01-08-PLAN.md — Rights binary/firmware scan with seeded 512-byte controls; PII and credential hygiene (FND-04)
-- [ ] 01-09-PLAN.md — Clean-room draft, exposure record, claim template, PROJECT.md decisions, final CI evidence and efficiency review (FND-07/08)
+- [ ] 01-01-PLAN.md — Walking skeleton tracer: check.sh → CMake → lynx_core → public API → C test with exact values; exact registration; first green CI run (FND-01)
+- [ ] 01-02-PLAN.md — Content identity (core SHA-256, FIPS vectors) and configure-time build identity (API-04, DET-04)
+- [ ] 01-03-PLAN.md — Runner and artifact bundle: two-run digest equality, run manifest, CLI contract with fixed-0x00 default (DET-01, DET-04)
+- [ ] 01-04-PLAN.md — Exact test inventory, JUnit completeness, declared skips, negative-control harness (FND-06)
+- [ ] 01-05-PLAN.md — Core boundary gates: include/float scans, nm on uninstrumented twin, header self-containment (FND-05)
+- [ ] 01-06-PLAN.md — Host API contract: instances, load refusal, bounded advance, reset/power-on, side-effect-free inspect (API-01..05)
+- [ ] 01-07-PLAN.md — Versioned snapshot save/restore with validate-then-apply refusal (API-07)
+- [ ] 01-08-PLAN.md — Determinism gates: whole-bundle two instances, golden cross-compiler digest, input and state sensitivity, run-manifest validator (DET-01/02/04)
+- [ ] 01-09-PLAN.md — Pins, hash-before-unpack fetch with per-file archive list, no-network gate (FND-02)
+- [ ] 01-10-PLAN.md — Fixture manifests, cc65 two-step build and reproducible probe (FND-03, FND-09)
+- [ ] 01-11-PLAN.md — Rights binary scan per the amended zone rule with seeded controls; PII and credential hygiene (FND-04; Task 3 awaits RC-1)
+- [ ] 01-12-PLAN.md — Clean-room draft, exposure record, provenance, claim template bound to the inventory (FND-07/08)
+- [ ] 01-13-PLAN.md — PROJECT.md decisions, README links, final CI evidence and efficiency review (FND-01, FND-09)
 
 ### Phase 2: CPU Profiles and Per-Opcode Vectors
 **Goal**: The 65C02-class CPU executes correctly under data-defined Lynx I and Lynx II profiles, proven by pinned per-opcode vectors, without either profile being adopted as baseline.
@@ -168,7 +172,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Evidence Harness and Walking Skeleton | 0/9 | Planned | - |
+| 1. Evidence Harness and Walking Skeleton | 0/13 | Planned | - |
 | 2. CPU Profiles and Per-Opcode Vectors | 0/TBD | Not started | - |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 0/TBD | Not started | - |
 | 4. Timers, Interrupts and First Public Suites | 0/TBD | Not started | - |
