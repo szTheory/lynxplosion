@@ -42,7 +42,7 @@ sequence, not a ceiling on the project goal.
 - [x] **API-04**: Host can reset the machine to a declared power-on state, including a configurable RAM power-on policy whose seed is recorded in run identity
 - [x] **API-05**: Host can inspect registers and memory through a side-effect-free path that never changes machine state or guest time
 - [ ] **API-06**: Host supplies logical input as a timeline sampled at defined guest-time boundaries; no physical controller discovery happens in the core
-- [ ] **API-07**: Host can capture a snapshot and restore it in the same build; restore validates identity before replacing state and refuses mismatches
+- [x] **API-07**: Host can capture a snapshot and restore it in the same build; restore validates identity before replacing state and refuses mismatches
 - [ ] **API-08**: Host can register a memory watch that stops advancement on write without altering machine behavior
 
 ### Determinism and observation
@@ -190,7 +190,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-04 | Phase 1 | Complete |
 | API-05 | Phase 1 | Complete |
 | API-06 | Phase 5 | Pending |
-| API-07 | Phase 1 | Pending |
+| API-07 | Phase 1 | Complete |
 | API-08 | Phase 3 | Pending |
 | DET-01 | Phase 1 | Complete |
 | DET-02 | Phase 1 | Pending |
