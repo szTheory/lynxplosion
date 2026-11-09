@@ -1,0 +1,131 @@
+#!/bin/sh
+# Fixture manifest validation and fixture coverage.
+#
+#   sh scripts/check-manifests.sh [--root DIR]
+#
+# DIR defaults to the repository root. Every DIR/fixtures/manifests/*.manifest
+# is a strict "key = value" file (scripts/validate-kv.sh) with the keys
+#   source revision recipe sha256 licence notices allowed_use startup_tier
+#   profile evidence_tier          (required)
+#   files independence             (optional)
+# and the checks below hold across the whole set:
+#   - no two manifests carry the same sha256 (an ambiguous identity);
+#   - every "files" entry is a relative path under fixtures/ and exists;
+#   - every file under fixtures/ other than the manifests themselves is named
+#     by some manifest's "files" value.
+# Manifests are visited in LC_ALL=C sorted order, so findings are stable, and
+# validation does not depend on the key order inside a file.
+#
+# Every finding is printed as "check-manifests: ..." on standard error.
+# Exit status: 0 clean, 1 findings, 2 usage error.
+#
+# Fault prevented: a fixture whose identity, source, licence or allowed use is
+# unrecorded, or two records claiming one identity.
+LC_ALL=C
+export LC_ALL
+set -u
+set -f
+
+root=$(dirname "$0")/..
+case ${1-} in
+  --root)
+    if [ $# -ne 2 ]; then
+      echo "usage: check-manifests.sh [--root DIR]" >&2
+      exit 2
+    fi
+    root=$2
+    ;;
+  "") ;;
+  *)
+    echo "usage: check-manifests.sh [--root DIR]" >&2
+    exit 2
+    ;;
+esac
+if [ ! -d "$root" ]; then
+  echo "check-manifests: $root is not a directory" >&2
+  exit 2
+fi
+root=$(cd "$root" && pwd -P)
+validator=$(dirname "$0")/validate-kv.sh
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/lynx-manifests.XXXXXX")
+trap 'rm -rf "$work"' EXIT INT TERM
+findings=$work/findings
+: >"$findings"
+find "$root/fixtures/manifests" -maxdepth 1 -type f -name '*.manifest' 2>/dev/null |
+  sed "s|^$root/||" | sort >"$work/manifests"
+
+if [ ! -s "$work/manifests" ]; then
+  echo "check-manifests: no manifests under fixtures/manifests" >>"$findings"
+fi
+
+: >"$work/shas"
+: >"$work/covered"
+while IFS= read -r manifest; do
+  # Key validation: findings arrive on standard error, one per line.
+  sh "$validator" \
+    --required "source revision recipe sha256 licence notices allowed_use startup_tier profile evidence_tier" \
+    --optional "files independence" "$root/$manifest" 2>&1 |
+    sed "s|$root/||" |
+    sed 's|^validate-kv: |check-manifests: |' >>"$findings"
+
+  # The identity, looked up by key so the order inside the file is free.
+  awk -v m="$manifest" '
+    { i = index($0, " = ") }
+    i > 0 && substr($0, 1, i - 1) == "sha256" { print substr($0, i + 3) " " m }
+  ' "$root/$manifest" >>"$work/shas"
+
+  # The files this manifest covers, one per line.
+  awk '
+    { i = index($0, " = ") }
+    i > 0 && substr($0, 1, i - 1) == "files" {
+      n = split(substr($0, i + 3), parts, " ")
+      for (k = 1; k <= n; k++) { print parts[k] }
+    }
+  ' "$root/$manifest" >"$work/entries"
+  while IFS= read -r entry; do
+    case $entry in
+      fixtures/manifests/* | /* | *..*)
+        printf 'check-manifests: %s: files entry not a fixture path: %s\n' \
+          "$manifest" "$entry" >>"$findings"
+        continue
+        ;;
+      fixtures/*) ;;
+      *)
+        printf 'check-manifests: %s: files entry not a fixture path: %s\n' \
+          "$manifest" "$entry" >>"$findings"
+        continue
+        ;;
+    esac
+    if [ ! -f "$root/$entry" ]; then
+      printf 'check-manifests: %s: files entry missing: %s\n' \
+        "$manifest" "$entry" >>"$findings"
+    else
+      printf '%s\n' "$entry" >>"$work/covered"
+    fi
+  done <"$work/entries"
+done <"$work/manifests"
+
+# One identity, one manifest.
+sort -k1,1 -k2,2 "$work/shas" |
+  awk '
+    $1 == prev { printf "check-manifests: duplicate sha256 in %s and %s\n", first, $2 }
+    $1 != prev { prev = $1; first = $2 }
+  ' >>"$findings"
+
+# Every fixture is covered.
+sort -u "$work/covered" >"$work/covered.sorted"
+find "$root/fixtures" -type f ! -path "$root/fixtures/manifests/*" 2>/dev/null |
+  sed "s|^$root/||" | sort >"$work/present"
+comm -23 "$work/present" "$work/covered.sorted" |
+  sed 's|^|check-manifests: uncovered fixture: |' >>"$findings"
+
+count=$(wc -l <"$findings")
+count=$((count + 0))
+if [ "$count" -gt 0 ]; then
+  sort "$findings" >&2
+  printf 'check-manifests: %s finding(s)\n' "$count" >&2
+  exit 1
+fi
+printf 'check-manifests: %s manifest(s), %s fixture file(s) covered\n' \
+  "$(wc -l <"$work/manifests" | tr -d ' ')" "$(wc -l <"$work/present" | tr -d ' ')"

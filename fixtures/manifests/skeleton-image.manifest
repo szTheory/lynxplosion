@@ -1,0 +1,11 @@
+source = fixtures/skeleton/skeleton-image.hex (project-authored)
+revision = in-repo
+recipe = hand-written hex text decoded by lynx-run --content
+sha256 = 8b4da72c1cb720869b658f4975ffdfe1cfeb30ee98453c32a9d310fff1d88d8e
+licence = project source all rights reserved (O5 open)
+notices = none
+allowed_use = provisional loader test content
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/skeleton/skeleton-image.hex

@@ -53,3 +53,16 @@ find_program(LYNX_SH sh REQUIRED)
 lynx_add_test(NAME fetch_pin.mismatch.self_test
   COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/gates/fetch_pin_control.sh ${PROJECT_SOURCE_DIR}
   LABELS fetch_pin TIMEOUT 30)
+
+# Every fixture manifest is a complete, valid key = value file, no two share an
+# identity, and every file under fixtures/ is named by a manifest. The
+# self-test builds isolated trees and requires each fault to be reported.
+lynx_add_test(NAME hygiene.manifests
+  COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/scripts/check-manifests.sh
+    --root ${PROJECT_SOURCE_DIR}
+  LABELS hygiene TIMEOUT 30)
+
+lynx_add_test(NAME hygiene.manifests.self_test
+  COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/gates/manifests_controls.sh
+    ${PROJECT_SOURCE_DIR} ${LYNX_SCRATCH_DIR}/gates/manifests
+  LABELS hygiene TIMEOUT 30)
