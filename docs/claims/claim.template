@@ -1,0 +1,35 @@
+# Claim template. Copy to docs/claims/<name>.claim, replace every <placeholder>,
+# and delete these comment lines: a claim file holds only "key = value" lines
+# (scripts/validate-kv.sh rejects comments and blank lines), and
+# scripts/check-claims.sh validates every *.claim file.
+#
+# A claim is a public statement of what a named body of evidence shows. It is
+# bound to a profile, a content identity, a startup tier, an evidence tier and the
+# exact test inventory it was made against.
+#
+# Same-core digests are repeatability (R), not accuracy: a digest produced twice by
+# this project's own core shows the machine is deterministic, and says nothing about
+# whether it matches hardware. Only tiers T1 to T7 evidence supports an accuracy
+# claim, and none exists yet.
+#
+# claim             one sentence stating exactly what the evidence shows.
+# profile           the hardware profile the claim is about. "none" while owner
+#                   decision O1 (baseline model) is open; check-claims.sh rejects any
+#                   other value until the allowed list is extended.
+# content_sha256    SHA-256 (64 lowercase hex digits) of the content bytes run,
+#                   from the content_sha256 line of the run's run.manifest.
+# startup_tier      the startup route, from the run manifest (A: direct load).
+# evidence_tier     T1 to T7, or R for repeatability.
+# inventory_sha256  SHA-256 of tests/inventory/fast.txt, over its exact bytes and
+#                   order. Any change to the inventory makes the claim stale.
+#                   Print the current value with:
+#                     sh scripts/check-claims.sh --inventory-sha256
+#                   Update every claim to it only after re-running the evidence.
+# evidence          the test names or bundle files that back the claim.
+claim = <one sentence>
+profile = <none until O1 is decided>
+content_sha256 = <64 hex>
+startup_tier = <A>
+evidence_tier = <T1..T7 or R>
+inventory_sha256 = <sha256 of tests/inventory/fast.txt>
+evidence = <bundle or test names>

@@ -31,6 +31,8 @@ det.sensitivity	det
 det.sensitivity_state	det
 det.two_instances	det
 det.two_runs	det
+docs.claim_template	docs
+docs.claim_template.self_test	docs
 docs.policy	docs
 docs.policy.self_test	docs
 docs.provenance	docs

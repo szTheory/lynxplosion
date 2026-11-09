@@ -1,5 +1,5 @@
 # Documentation gates: the draft clean-room policy and exposure record, the
-# provenance list of adapted code, and (appended below) the claim template. Each
+# provenance list of adapted code, and the claim template. Each
 # self-test builds its fixture at configure time under ${LYNX_SCRATCH_DIR}, from
 # the real documents with one edit per fault, and aborts configure if an edit
 # changed nothing (an edit that silently misses would make the control vacuous).
@@ -76,4 +76,20 @@ lynx_add_test(NAME docs.provenance.self_test
   COMMAND ${CMAKE_COMMAND} "-DCMD=${lynx_prov_cmd}" -DCODE=1
     "-DREGEX=expect_fail[.]cmake: adapted from muhtari but not listed"
     -P ${LYNX_TEST_SCRIPTS}/expect_fail.cmake
+  LABELS docs TIMEOUT 30)
+
+# docs.claim_template: the claim template has exactly the claim keys, and every
+# claim under docs/claims is valid, uses profile "none" while O1 is open and holds
+# the SHA-256 of the live tests/inventory/fast.txt. The self-test builds isolated
+# trees and requires each fault (no profile, stale inventory hash, a Lynx profile,
+# a repeated key, an empty value, a reordered inventory, a template without a key)
+# to be reported, and a claims directory holding only the template to pass.
+lynx_add_test(NAME docs.claim_template
+  COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/scripts/check-claims.sh
+    --root ${PROJECT_SOURCE_DIR}
+  LABELS docs TIMEOUT 30)
+
+lynx_add_test(NAME docs.claim_template.self_test
+  COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/gates/claims_controls.sh
+    ${PROJECT_SOURCE_DIR} ${LYNX_SCRATCH_DIR}/gates/claims
   LABELS docs TIMEOUT 30)
