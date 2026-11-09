@@ -39,7 +39,7 @@ sequence, not a ceiling on the project goal.
 - [ ] **API-01**: Host can create and destroy independent machine instances that share no mutable state
 - [ ] **API-02**: Host can load content as bytes; a refused load returns a status code and leaves any existing session exactly unchanged
 - [ ] **API-03**: Host can advance the machine by a bounded master-tick budget and receives ticks consumed and a stop reason (budget, frame, watch hit, halt)
-- [ ] **API-04**: Host can reset the machine to a declared power-on state, including a configurable RAM power-on policy whose seed is recorded in run identity
+- [x] **API-04**: Host can reset the machine to a declared power-on state, including a configurable RAM power-on policy whose seed is recorded in run identity
 - [ ] **API-05**: Host can inspect registers and memory through a side-effect-free path that never changes machine state or guest time
 - [ ] **API-06**: Host supplies logical input as a timeline sampled at defined guest-time boundaries; no physical controller discovery happens in the core
 - [ ] **API-07**: Host can capture a snapshot and restore it in the same build; restore validates identity before replacing state and refuses mismatches
@@ -47,10 +47,10 @@ sequence, not a ceiling on the project goal.
 
 ### Determinism and observation
 
-- [ ] **DET-01**: Two runs from fresh state with the same content, profile, input timeline and tick budget produce identical artifact-bundle digests
+- [x] **DET-01**: Two runs from fresh state with the same content, profile, input timeline and tick budget produce identical artifact-bundle digests
 - [ ] **DET-02**: Two instances run in the same process produce the same digests as separate runs
 - [ ] **DET-03**: A run that captures a snapshot mid-way, restores it and continues produces the same digests as an uninterrupted run
-- [ ] **DET-04**: Every run writes a manifest recording profile, startup tier, content identity, input digest, tick count and core build identity
+- [x] **DET-04**: Every run writes a manifest recording profile, startup tier, content identity, input digest, tick count and core build identity
 - [ ] **DET-05**: Machine progress, logical input, raw video and raw audio are recorded as separate streams on one guest-tick timeline; same-core digests are labelled repeatability, not accuracy
 
 ### CPU
@@ -187,15 +187,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-01 | Phase 1 | Pending |
 | API-02 | Phase 1 | Pending |
 | API-03 | Phase 1 | Pending |
-| API-04 | Phase 1 | Pending |
+| API-04 | Phase 1 | Complete |
 | API-05 | Phase 1 | Pending |
 | API-06 | Phase 5 | Pending |
 | API-07 | Phase 1 | Pending |
 | API-08 | Phase 3 | Pending |
-| DET-01 | Phase 1 | Pending |
+| DET-01 | Phase 1 | Complete |
 | DET-02 | Phase 1 | Pending |
 | DET-03 | Phase 3 | Pending |
-| DET-04 | Phase 1 | Pending |
+| DET-04 | Phase 1 | Complete |
 | DET-05 | Phase 6 | Pending |
 | CPU-01 | Phase 2 | Pending |
 | CPU-02 | Phase 2 | Pending |
