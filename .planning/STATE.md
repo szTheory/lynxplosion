@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Evidence Harness and Walking Skeleton
 status: executing
-stopped_at: Completed 01-10-PLAN.md
-last_updated: "2026-11-09T23:42:11.719Z"
+stopped_at: Completed 01-11-PLAN.md
+last_updated: "2026-11-09T23:51:31.397Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 1 execution started
-state_head: 9788e836308814475d3700fe30b3b3e5257d2a1a
+state_head: 10d2cefbf04578eba81d83815f3aacdf7e9f77a8
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 13
-  completed_plans: 10
+  completed_plans: 11
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 1 (Evidence Harness and Walking Skeleton) — EXECUTING
-Plan: 11 of 13
+Plan: 12 of 13
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 1 execution started
 
@@ -66,6 +66,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P08 | 25min | 3 tasks | 12 files |
 | Phase 1 P09 | 20min | 2 tasks | 10 files |
 | Phase 1 P10 | 45min | 2 tasks | 9 files |
+| Phase 1 P11 | 40min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,8 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-09: fetch-pin.sh fails closed on newline paths, pin-record names in the archive, and unlistable archives; only .tar.gz/.tgz supported
 - [Phase 1]: 01-10: cc65 is built with BUILD_ID fixed to the pinned commit, because the Makefile otherwise embeds the enclosing repository HEAD into the tool bytes
 - [Phase 1]: 01-10: .lynx-build-files (header pin_sha256 and recipe, then sha256 path rows) and the .lynx-build key=value stamp are written only after both make runs and the probe succeed
+- [Phase 1]: 01-11: non-text means a control byte or invalid UTF-8 (never NUL alone); exactly-512-byte non-text files fail in every zone; scan-binaries findings go to stderr, summary line to stdout
+- [Phase 1]: 01-11: hygiene.sh keeps only --tree and --history, reads text files only, excludes only itself; binaries are owned by scan-binaries.sh
 
 ### Pending Todos
 
@@ -118,6 +121,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-09T23:42:11.689Z
-Stopped at: Completed 01-10-PLAN.md
+Last session: 2026-11-09T23:51:31.380Z
+Stopped at: Completed 01-11-PLAN.md
 Resume file: None
