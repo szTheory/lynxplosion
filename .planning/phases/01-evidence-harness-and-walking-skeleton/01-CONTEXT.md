@@ -109,6 +109,14 @@ and real direct-load format (Phase 3), input timeline (Phase 5).
   exemption. Seeded controls: an unlisted non-512 binary under `build/pins/`,
   an ELF/Mach-O-magic file outside the toolchain output paths, and a 512-byte
   file inside each zone must all be rejected.
+  (3) Pin build outputs (resolution of planner REVISION_CONFLICT RC-1, option
+  A1): after both cc65 make runs and the probe succeed, the cc65 step writes a
+  second derived list, `build/pins/cc65/.lynx-build-files` (SHA-256 + path of
+  every file the pinned recipe added under `build/pins/cc65/`), stamped with
+  the pin digest and recipe version. Pin-zone files pass only if they appear,
+  path and hash matching, on the archive list or this build list. Any file
+  added or modified after that point fails. The cache is reused only when the
+  archive list, the build list and the stamp all agree.
 - **Corrections from research (recorded, research-backed):** the cc65 recipe is
   two sequential make invocations (`make bin`, then `make lib TARGETS=lynx`),
   because the single invocation races (F1). Inventory equality is checked at
