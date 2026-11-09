@@ -70,6 +70,28 @@ lynx_sanitize(lynx_core)
 # The sanitizer runtime must be linked by whatever links the core.
 target_link_options(lynx_core PUBLIC -fsanitize=address,undefined)
 
+# Uninstrumented twin of the core, for the link-surface checks. Sanitized
+# objects carry writable data and runtime symbols, so every nm check reads this
+# library and never lynx_core. It is built from the same sources, with the
+# flags a release build would use, and never with a sanitizer.
+add_library(lynx_core_plain STATIC ${LYNX_CORE_SOURCES})
+target_include_directories(lynx_core_plain PUBLIC include PRIVATE core)
+target_compile_options(lynx_core_plain PRIVATE
+  -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector
+  -ffile-prefix-map=${CMAKE_SOURCE_DIR}=.
+  -ffile-prefix-map=${CMAKE_BINARY_DIR}=build)
+lynx_warnings(lynx_core_plain)
+set_target_properties(lynx_core_plain PROPERTIES
+  C_VISIBILITY_PRESET hidden
+  POSITION_INDEPENDENT_CODE ON)
+
+# The public header compiled alone: warnings only, no sanitizer. It links the
+# plain twin because its function-pointer table names every public function.
+add_executable(lynx-test-header tests/header/header.c)
+target_link_libraries(lynx-test-header PRIVATE lynx_core_plain)
+lynx_warnings(lynx-test-header)
+set_target_properties(lynx-test-header PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
+
 # The runner is host side: it may use stdio, stdlib and POSIX mkdir, so it is
 # defined here and never inside core/. _POSIX_C_SOURCE is set on the runner
 # targets only, because CMAKE_C_EXTENSIONS is OFF and hides POSIX declarations.

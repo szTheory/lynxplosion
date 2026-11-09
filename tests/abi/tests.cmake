@@ -45,3 +45,78 @@ lynx_add_test(NAME core.no_float.self_test
     "-DREGEX=sample.c:2: x = 1.5.*no_float: 1 lines"
     -P ${lynx_abi_scripts}/expect_fail.cmake
   LABELS core TIMEOUT 30)
+
+# Link layer. Every nm check reads lynx_core_plain, the uninstrumented twin;
+# the sanitized lynx_core is never an input (its objects hold writable data
+# and runtime symbols). The two fixture libraries are negative controls built
+# with the twin's own compile options, so each check fails where it runs.
+set(lynx_abi_nm ${CMAKE_NM})
+if(NOT lynx_abi_nm)
+  find_program(LYNX_NM NAMES llvm-nm nm REQUIRED)
+  set(lynx_abi_nm ${LYNX_NM})
+endif()
+set(lynx_abi_args -DNM=${lynx_abi_nm} "-DSYSTEM=${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}")
+
+get_target_property(lynx_abi_options lynx_core_plain COMPILE_OPTIONS)
+foreach(fixture IN ITEMS libc global)
+  add_library(lynx_abi_${fixture}_fixture STATIC ${CMAKE_CURRENT_LIST_DIR}/${fixture}_fixture.c)
+  target_compile_options(lynx_abi_${fixture}_fixture PRIVATE ${lynx_abi_options})
+  set_target_properties(lynx_abi_${fixture}_fixture PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
+    ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests/abi)
+endforeach()
+
+foreach(mode IN ITEMS undefined globals)
+  lynx_add_test(NAME core.nm_${mode}
+    COMMAND ${CMAKE_COMMAND} -DMODE=${mode} -DLIB=$<TARGET_FILE:lynx_core_plain>
+      ${lynx_abi_args} -P ${lynx_abi_scripts}/abi.cmake
+    LABELS core TIMEOUT 30)
+endforeach()
+lynx_add_test(NAME api.abi_symbols
+  COMMAND ${CMAKE_COMMAND} -DMODE=symbols -DLIB=$<TARGET_FILE:lynx_core_plain>
+    ${lynx_abi_args} -DHEADER=${PROJECT_SOURCE_DIR}/include/lynxplosion.h
+    -P ${lynx_abi_scripts}/abi.cmake
+  LABELS api TIMEOUT 30)
+
+# CMake wraps a long message at a column that depends on the build path, so
+# the regexes allow a line break anywhere in the finding's title.
+foreach(case IN ITEMS "undefined;libc;unexpected[^:]*symbol:.*time"
+                      "globals;global;writable[^:]*symbol:.*counter")
+  list(GET case 0 mode)
+  list(GET case 1 fixture)
+  list(GET case 2 regex)
+  set(lynx_abi_cmd ${CMAKE_COMMAND} -DMODE=${mode}
+    -DLIB=$<TARGET_FILE:lynx_abi_${fixture}_fixture>
+    ${lynx_abi_args} -P ${lynx_abi_scripts}/abi.cmake)
+  string(REPLACE ";" "$<SEMICOLON>" lynx_abi_cmd "${lynx_abi_cmd}")
+  lynx_add_test(NAME core.nm_${mode}.self_test
+    COMMAND ${CMAKE_COMMAND} "-DCMD=${lynx_abi_cmd}" -DCODE=1 "-DREGEX=${regex}"
+      -P ${lynx_abi_scripts}/expect_fail.cmake
+    LABELS core TIMEOUT 30)
+endforeach()
+
+# Self-test of the symbols mode: a copy of the real header with one more
+# declared function that nothing defines. The copy is written at configure
+# time under the scratch directory.
+file(READ ${PROJECT_SOURCE_DIR}/include/lynxplosion.h lynx_abi_header)
+string(REPLACE "#ifdef __cplusplus\n}\n#endif"
+  "lynx_status lynx_not_defined(void);\n\n#ifdef __cplusplus\n}\n#endif"
+  lynx_abi_header "${lynx_abi_header}")
+file(WRITE ${LYNX_SCRATCH_DIR}/gates/abi_symbols/lynxplosion.h "${lynx_abi_header}")
+set(lynx_abi_cmd ${CMAKE_COMMAND} -DMODE=symbols -DLIB=$<TARGET_FILE:lynx_core_plain>
+  ${lynx_abi_args} -DHEADER=${LYNX_SCRATCH_DIR}/gates/abi_symbols/lynxplosion.h
+  -P ${lynx_abi_scripts}/abi.cmake)
+string(REPLACE ";" "$<SEMICOLON>" lynx_abi_cmd "${lynx_abi_cmd}")
+lynx_add_test(NAME api.abi_symbols.self_test
+  COMMAND ${CMAKE_COMMAND} "-DCMD=${lynx_abi_cmd}" -DCODE=1
+    "-DREGEX=declared, not defined:[^\n]*\n? *lynx_not_defined"
+    -P ${lynx_abi_scripts}/expect_fail.cmake
+  LABELS api TIMEOUT 30)
+
+# The public header compiles alone as C17 with warnings fatal; the program
+# exits 0. Its static assertions pin the status, stop-reason, config and
+# identity layouts.
+lynx_add_test(NAME api.header_selfcontained
+  COMMAND lynx-test-header
+  LABELS api TIMEOUT 30)

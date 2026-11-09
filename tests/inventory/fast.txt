@@ -1,10 +1,17 @@
 # Every test the check preset registers: name<TAB>labels.
 # Sorted (LC_ALL=C); configure fails when this differs from what is registered.
+api.abi_symbols	api
+api.abi_symbols.self_test	api
 api.build_id	api
+api.header_selfcontained	api
 api.identity	api
 api.skeleton	api
 core.includes	core
 core.includes.self_test	core
+core.nm_globals	core
+core.nm_globals.self_test	core
+core.nm_undefined	core
+core.nm_undefined.self_test	core
 core.no_float	core
 core.no_float.self_test	core
 core.sha256	core
