@@ -48,7 +48,7 @@ sequence, not a ceiling on the project goal.
 ### Determinism and observation
 
 - [x] **DET-01**: Two runs from fresh state with the same content, profile, input timeline and tick budget produce identical artifact-bundle digests
-- [ ] **DET-02**: Two instances run in the same process produce the same digests as separate runs
+- [x] **DET-02**: Two instances run in the same process produce the same digests as separate runs
 - [ ] **DET-03**: A run that captures a snapshot mid-way, restores it and continues produces the same digests as an uninterrupted run
 - [x] **DET-04**: Every run writes a manifest recording profile, startup tier, content identity, input digest, tick count and core build identity
 - [ ] **DET-05**: Machine progress, logical input, raw video and raw audio are recorded as separate streams on one guest-tick timeline; same-core digests are labelled repeatability, not accuracy
@@ -193,7 +193,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-07 | Phase 1 | Complete |
 | API-08 | Phase 3 | Pending |
 | DET-01 | Phase 1 | Complete |
-| DET-02 | Phase 1 | Pending |
+| DET-02 | Phase 1 | Complete |
 | DET-03 | Phase 3 | Pending |
 | DET-04 | Phase 1 | Complete |
 | DET-05 | Phase 6 | Pending |

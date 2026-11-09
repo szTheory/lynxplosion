@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Evidence Harness and Walking Skeleton
 status: executing
-stopped_at: Completed 01-07-PLAN.md
-last_updated: "2026-11-09T23:21:14.884Z"
+stopped_at: Completed 01-08-PLAN.md
+last_updated: "2026-11-09T23:29:04.243Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 1 execution started
-state_head: d7c0aa06725c039a49ea31dbf8dac7ff906e72d5
+state_head: b7a74325c605547f5860edbbfcf659157a8d9a89
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 13
-  completed_plans: 7
+  completed_plans: 8
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 1 (Evidence Harness and Walking Skeleton) — EXECUTING
-Plan: 8 of 13
+Plan: 9 of 13
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 1 execution started
 
@@ -63,6 +63,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P05 | 15min | 2 tasks | 10 files |
 | Phase 1 P06 | 4 min | 2 tasks | 6 files |
 | Phase 1 P07 | 5min | 2 tasks | 8 files |
+| Phase 1 P08 | 25min | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -85,6 +86,8 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-06: lynx_reset clears loaded content and equals a fresh init byte for byte; a deinitialised machine refuses reset with LYNX_ERR_STATE
 - [Phase 1]: 01-06: whole-buffer memcmp refusal oracle with accepted-call controls is the API contract proof; guest-time wrap proven by white-box guest_ticks poke
 - [Phase 1]: 01-07: Snapshot format v1 (236-byte header + 65552-byte payload, SHA-256 protected); restore validates ten ordered checks then applies in one non-failing step; identity comes from the instance, restore needs the identical build id (reversible)
+- [Phase 1]: 01-08: golden = observation digest only (build-independent), proven equal on Apple clang and Linux gcc; regenerate only on intended skeleton change
+- [Phase 1]: 01-08: validate-kv keys are [a-z][a-z0-9_]*; strict layout, no comments or blank lines; -P scripts using IN_LIST set cmake_policy(VERSION 3.25)
 
 ### Pending Todos
 
@@ -109,6 +112,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-09T23:21:14.866Z
-Stopped at: Completed 01-07-PLAN.md
+Last session: 2026-11-09T23:29:04.226Z
+Stopped at: Completed 01-08-PLAN.md
 Resume file: None
