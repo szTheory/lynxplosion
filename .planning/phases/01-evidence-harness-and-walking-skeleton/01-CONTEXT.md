@@ -96,6 +96,26 @@ and real direct-load format (Phase 3), input timeline (Phase 5).
   dirs; also fail on any binary of exactly 512 bytes regardless of manifest.
   A test seeds a fake 512-byte file in an isolated copy and asserts
   rejection, then asserts a pass once it is removed (FND-04).
+- **Amendment (2026-11-09, plan-check B-1; keeps the rule's intent):** "listed in
+  a manifest" is satisfied in exactly two derived ways, and nothing else is
+  exempt. (1) Pin zone: a non-text file under `build/pins/<name>/` passes only if
+  its SHA-256 appears in a per-file list that `fetch-pin.sh` writes from the
+  SHA-256-verified archive at extraction time. Any file not on that list (added,
+  modified or unpacked from elsewhere) fails. (2) Toolchain outputs: object,
+  static-archive and executable formats (ELF, Mach-O, `ar`) and ninja/CMake state
+  files pass only inside the CMake binary dir's own output paths, identified by
+  magic bytes. The same magic anywhere else (source tree, `build/pins/`,
+  bundles, fixtures) fails. The exact-512-byte rule applies everywhere with no
+  exemption. Seeded controls: an unlisted non-512 binary under `build/pins/`,
+  an ELF/Mach-O-magic file outside the toolchain output paths, and a 512-byte
+  file inside each zone must all be rejected.
+- **Corrections from research (recorded, research-backed):** the cc65 recipe is
+  two sequential make invocations (`make bin`, then `make lib TARGETS=lynx`),
+  because the single invocation races (F1). Inventory equality is checked at
+  configure time against registration, and the JUnit step covers the executed
+  set (in place of `ctest -N`).
+- RAM power-on policy default is fixed-0x00 everywhere (config default, runner
+  CLI default, tests).
 - Forbidden imports (FND-05): two layers. (a) A `#include` allowlist for
   `core/` (`stdint.h`, `stddef.h`, `stdbool.h`, `string.h`) plus a token scan
   for `float`/`double`. (b) An `nm` check that the core static library's
