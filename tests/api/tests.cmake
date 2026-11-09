@@ -15,5 +15,6 @@ lynx_add_test(NAME api.instances_independent COMMAND lynx-test-api instances_ind
 lynx_add_test(NAME api.load_refusal_unchanged COMMAND lynx-test-api load_refusal_unchanged LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.reset_power_on COMMAND lynx-test-api reset_power_on LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.skeleton COMMAND lynx-test-api skeleton LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.snapshot_refusal COMMAND lynx-test-api snapshot_refusal LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.snapshot_roundtrip COMMAND lynx-test-api snapshot_roundtrip LABELS api TIMEOUT 30)
 lynx_add_test(NAME core.sha256 COMMAND lynx-test-api sha256 LABELS core TIMEOUT 30)

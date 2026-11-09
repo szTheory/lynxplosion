@@ -1002,6 +1002,191 @@ static void case_snapshot_roundtrip(void)
     ADVANCE_EXPECT(m2, 4096u, 0u, LYNX_STOP_HALT);
 }
 
+/* Recomputes the payload hash of a blob in place, so a test can corrupt a
+   value and still pass the hash check. White-box on the layout. */
+static void rehash_payload(unsigned char *blob)
+{
+    lynx__sha256 hash;
+    lynx__sha256_init(&hash);
+    lynx__sha256_update(&hash, blob + LYNX__SNAPSHOT_HEADER_LEN, LYNX__SNAPSHOT_PAYLOAD_LEN);
+    lynx__sha256_final(&hash, blob + SNAP_OFF_PAYLOAD_SHA);
+}
+
+/* The status a one-bit flip at header offset i must give. */
+static lynx_status header_flip_status(size_t i)
+{
+    if (i < 8u) {
+        return LYNX_ERR_SNAPSHOT_INVALID; /* magic */
+    }
+    if (i < 12u) {
+        return LYNX_ERR_SNAPSHOT_VERSION; /* format_version */
+    }
+    if (i < 16u) {
+        return LYNX_ERR_SNAPSHOT_INVALID; /* header_len */
+    }
+    if (i < 200u) {
+        return LYNX_ERR_SNAPSHOT_MISMATCH; /* build id, profile, policy, seed, content */
+    }
+    return LYNX_ERR_SNAPSHOT_INVALID; /* payload_len, payload_sha256 */
+}
+
+static void restore_expect(lynx_machine *m, const unsigned char *blob, size_t len,
+                           lynx_status want, const unsigned char *ref, int line)
+{
+    lynx_status st = lynx_snapshot_restore(m, blob, len);
+    if (st != want) {
+        fprintf(stderr, "%s:%d: snapshot restore status %llu, want %llu\n", __FILE__, line,
+                (unsigned long long)st, (unsigned long long)want);
+        check_failures++;
+    }
+    check_unchanged(m, ref, line);
+}
+#define RESTORE_EXPECT(m, blob, len, want, ref) \
+    restore_expect((m), (blob), (len), (want), (ref), __LINE__)
+
+static void case_snapshot_refusal(void)
+{
+    lynx_machine *m = snap_instance(machine_buf, SNAP_SEED, tracer_image, sizeof tracer_image, 0x0200u);
+    if (m == NULL) {
+        return;
+    }
+    advance_ticks(m, 2048u);
+    CHECK_EQ_U64(save_into(m, blob_v), 0u);
+    advance_ticks(m, 64u); /* the instance now differs from the blob, so a wrongly applied blob shows */
+    memcpy(snap_a, machine_buf, MSIZE);
+
+    /* Every header byte: flip bit 0, restore, expect the field's status, instance unchanged. */
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
+    for (size_t i = 0u; i < LYNX__SNAPSHOT_HEADER_LEN; i++) {
+        blob_bad[i] ^= 1u;
+        lynx_status st = lynx_snapshot_restore(m, blob_bad, SNAP_TOTAL);
+        if (st != header_flip_status(i) || st == LYNX_OK) {
+            fprintf(stderr, "%s:%d: header byte %zu flip gave status %llu, want %llu\n", __FILE__,
+                    __LINE__, i, (unsigned long long)st,
+                    (unsigned long long)header_flip_status(i));
+            check_failures++;
+        }
+        CHECK_UNCHANGED(machine_buf, snap_a);
+        blob_bad[i] ^= 1u;
+    }
+
+    /* Payload bytes: the first, the last and every 251st. The payload hash makes
+       any single change detectable, so a stride sample is enough. */
+    for (size_t k = 0u; k < LYNX__SNAPSHOT_PAYLOAD_LEN; k += 251u) {
+        size_t i = (size_t)LYNX__SNAPSHOT_HEADER_LEN + k;
+        blob_bad[i] ^= 1u;
+        RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+        blob_bad[i] ^= 1u;
+    }
+    blob_bad[SNAP_TOTAL - 1u] ^= 1u;
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    blob_bad[SNAP_TOTAL - 1u] ^= 1u;
+    CHECK(memcmp(blob_bad, blob_v, SNAP_TOTAL) == 0); /* every flip was undone */
+
+    /* Lengths: truncated, one extra byte, zero. */
+    RESTORE_EXPECT(m, blob_v, SNAP_TOTAL - 1u, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    blob_bad[SNAP_TOTAL] = 0u;
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL + 1u, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    RESTORE_EXPECT(m, blob_v, 0u, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    RESTORE_EXPECT(m, blob_v, LYNX__SNAPSHOT_HEADER_LEN, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+
+    /* Format version 2. */
+    blob_bad[8] = 2u;
+    CHECK_EQ_U64(blob_bad[9] | blob_bad[10] | blob_bad[11], 0u);
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
+    blob_bad[8] = 1u;
+
+    /* Another identity: each refused as a MISMATCH, whatever the blob holds. */
+    unsigned char other_image[sizeof tracer_image];
+    memcpy(other_image, tracer_image, sizeof other_image);
+    other_image[5] ^= 0x01u;
+    lynx_config zero;
+    lynx_config_default(&zero);
+    for (int variant = 0; variant < 5; variant++) {
+        lynx_machine *o = NULL;
+        switch (variant) {
+        case 0: /* different seed */
+            o = snap_instance(buf_b, SNAP_SEED + 1u, tracer_image, sizeof tracer_image, 0x0200u);
+            break;
+        case 1: /* one different content byte */
+            o = snap_instance(buf_b, SNAP_SEED, other_image, sizeof other_image, 0x0200u);
+            break;
+        case 2: /* different RAM policy (and so seed) */
+            o = init_in(buf_b, &zero);
+            if (o != NULL) {
+                CHECK_EQ_U64(lynx_load_ram_image(o, tracer_image, sizeof tracer_image, 0x0200u),
+                             LYNX_OK);
+            }
+            break;
+        case 3: /* same bytes at another address */
+            o = snap_instance(buf_b, SNAP_SEED, tracer_image, sizeof tracer_image, 0x0300u);
+            break;
+        default: /* same bytes, shorter */
+            o = snap_instance(buf_b, SNAP_SEED, tracer_image, sizeof tracer_image - 1u, 0x0200u);
+            break;
+        }
+        if (o == NULL) {
+            return;
+        }
+        memcpy(snap_b, buf_b, MSIZE);
+        restore_expect(o, blob_v, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_MISMATCH, snap_b, __LINE__);
+    }
+
+    /* A valid hash is not enough: values are checked after the hash and before the apply. */
+    const size_t pay = LYNX__SNAPSHOT_HEADER_LEN;
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
+    blob_bad[pay + 7u] = 2u; /* halted */
+    rehash_payload(blob_bad);
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    blob_bad[pay + 7u] = 0xFFu;
+    rehash_payload(blob_bad);
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    blob_bad[pay + 7u] = blob_v[pay + 7u];
+    static const uint16_t bad_pcs[] = {0x01FFu, 0x0220u, 0x0000u, 0xFFFFu};
+    for (size_t i = 0u; i < sizeof bad_pcs / sizeof bad_pcs[0]; i++) {
+        blob_bad[pay + 0u] = (uint8_t)bad_pcs[i];
+        blob_bad[pay + 1u] = (uint8_t)(bad_pcs[i] >> 8);
+        rehash_payload(blob_bad);
+        RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    }
+    /* Control: the same edit with an in-range PC and halted 1 is accepted, so the
+       white-box rehash is correct and the comparison sees the apply. */
+    blob_bad[pay + 0u] = 0x10u;
+    blob_bad[pay + 1u] = 0x02u;
+    blob_bad[pay + 7u] = 1u;
+    rehash_payload(blob_bad);
+    CHECK_EQ_U64(lynx_snapshot_restore(m, blob_bad, SNAP_TOTAL), LYNX_OK);
+    CHECK(memcmp(machine_buf, snap_a, MSIZE) != 0);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0x0210u);
+
+    /* The top of the address space: PCs just below and far below the content are
+       refused, 0xFFFF is accepted. A 16-bit sum of address and length would be 0. */
+    m = snap_instance(machine_buf, SNAP_SEED, tracer_image, 16u, 0xFFF0u);
+    if (m == NULL) {
+        return;
+    }
+    advance_ticks(m, 28u);
+    CHECK_EQ_U64(save_into(m, blob_v), 0u);
+    memcpy(snap_a, machine_buf, MSIZE);
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
+    static const uint16_t top_bad_pcs[] = {0xFFEFu, 0x0000u, 0x0200u};
+    for (size_t i = 0u; i < sizeof top_bad_pcs / sizeof top_bad_pcs[0]; i++) {
+        blob_bad[pay + 0u] = (uint8_t)top_bad_pcs[i];
+        blob_bad[pay + 1u] = (uint8_t)(top_bad_pcs[i] >> 8);
+        rehash_payload(blob_bad);
+        RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    }
+    blob_bad[pay + 0u] = 0xFFu;
+    blob_bad[pay + 1u] = 0xFFu;
+    rehash_payload(blob_bad);
+    CHECK_EQ_U64(lynx_snapshot_restore(m, blob_bad, SNAP_TOTAL), LYNX_OK);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFFFu);
+
+    /* Control: an untouched blob is accepted, so every refusal above was the edit. */
+    CHECK_EQ_U64(lynx_snapshot_restore(m, blob_v, SNAP_TOTAL), LYNX_OK);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -1015,6 +1200,7 @@ static const struct {
     {"load_refusal_unchanged", case_load_refusal_unchanged},
     {"reset_power_on", case_reset_power_on},
     {"sha256", case_sha256},
+    {"snapshot_refusal", case_snapshot_refusal},
     {"snapshot_roundtrip", case_snapshot_roundtrip},
     {"skeleton", case_skeleton},
 };
