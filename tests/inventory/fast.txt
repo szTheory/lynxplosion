@@ -3,6 +3,10 @@
 api.build_id	api
 api.identity	api
 api.skeleton	api
+core.includes	core
+core.includes.self_test	core
+core.no_float	core
+core.no_float.self_test	core
 core.sha256	core
 det.two_runs	det
 inventory.junit.self_test	inventory
