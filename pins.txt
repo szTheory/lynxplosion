@@ -1,0 +1,13 @@
+# Every pinned external source, one row each: name version url sha256.
+# scripts/fetch-pin.sh NAME DEST downloads a row and verifies its SHA-256 before
+# anything is unpacked; the pins step of scripts/check.sh runs it for every row.
+#
+# Rules: https URLs only; commit-SHA archive URLs only, never tag URLs (a tag can
+# move, a commit cannot). A pin bump is a dedicated change that recomputes the
+# archive digest and every probe hash that depends on the pinned content.
+
+# cc65 (zlib licence), the guest-side C toolchain, at one commit.
+cc65 eebf54af545f4ae52f8489a2f6d4d5f93e7942d2 https://github.com/cc65/cc65/archive/eebf54af545f4ae52f8489a2f6d4d5f93e7942d2.tar.gz d3e4bfa57c5a40dd386d1a38b27fffad3bbc296950303f3c9017211465f5c8a1
+
+# drhelius/lynx-tests (MIT) at one commit; version 1.4.9 is the upstream release it follows.
+lynx-tests 1.4.9 https://github.com/drhelius/lynx-tests/archive/b583dc43d532d3c41563a6fa35420614fbcead89.tar.gz a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e

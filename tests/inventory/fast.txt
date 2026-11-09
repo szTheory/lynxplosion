@@ -33,6 +33,10 @@ det.two_instances	det
 det.two_runs	det
 inventory.junit.self_test	inventory
 inventory.registered.self_test	inventory
+policy.no_network	policy
+policy.no_network.self_test	policy
 policy.no_skip	policy
 policy.no_skip.self_test	policy
+policy.pins	policy
+policy.pins.self_test	policy
 runner.cli	runner
