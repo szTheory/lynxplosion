@@ -24,8 +24,8 @@ set(LYNX_SKELETON_GOLDEN ${PROJECT_SOURCE_DIR}/tests/golden/skeleton.digest)
 
 add_executable(lynx-test-det ${CMAKE_CURRENT_LIST_DIR}/test_det.c)
 target_link_libraries(lynx-test-det PRIVATE lynx_bundle)
-# check.h lives in tests/; core/internal.h is used by the state cases only.
-target_include_directories(lynx-test-det PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+# check.h lives in tests/; core/internal.h is white-box use by state_sensitivity only.
+target_include_directories(lynx-test-det PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/tests)
 lynx_warnings(lynx-test-det)
 lynx_sanitize(lynx-test-det)
 set_target_properties(lynx-test-det PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
@@ -52,4 +52,16 @@ lynx_add_test(NAME det.golden.self_test
 lynx_add_test(NAME det.two_instances
   COMMAND lynx-test-det two_instances ${LYNX_SKELETON_CONTENT} ${LYNX_SKELETON_GOLDEN}
     ${LYNX_SCRATCH_DIR}/det/two_instances
+  LABELS det TIMEOUT 60)
+
+lynx_add_test(NAME det.sensitivity
+  COMMAND ${CMAKE_COMMAND}
+    -DRUNNER=$<TARGET_FILE:lynx-run>
+    -DCONTENT=${LYNX_SKELETON_CONTENT}
+    -DWORK=${LYNX_SCRATCH_DIR}/det/sensitivity
+    -P ${CMAKE_CURRENT_LIST_DIR}/sensitivity.cmake
+  LABELS det TIMEOUT 60)
+
+lynx_add_test(NAME det.sensitivity_state
+  COMMAND lynx-test-det state_sensitivity ${LYNX_SKELETON_CONTENT}
   LABELS det TIMEOUT 60)

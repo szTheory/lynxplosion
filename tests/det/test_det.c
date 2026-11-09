@@ -15,6 +15,7 @@
 
 #include "bundle.h"
 #include "check.h"
+#include "internal.h"
 #include "lynxplosion.h"
 
 #define LOAD_ADDR 0x0200u
@@ -240,11 +241,104 @@ static void case_two_instances(char **args)
         text_a = NULL;
         text_b = NULL;
     }
-    printf("two_instances: ok observation %s bundle %s\n", obs_a, bundle_a);
+    if (check_failures == 0) {
+        printf("two_instances: ok observation %s bundle %s\n", obs_a, bundle_a);
+    }
     lynx_machine_deinit(a.m);
     lynx_machine_deinit(b.m);
     free(a.mem);
     free(b.mem);
+}
+
+/* The observation digest of a machine after the fixed workload (4096 ticks in
+   one call), for the state-flip cases below. */
+static int digest_of(const lynx_machine *m, char out[65])
+{
+    bundle_run run;
+    run.content_name = NULL;
+    run.tick_budget = BUDGET;
+    run.ticks_consumed = BUDGET;
+    run.stop = LYNX_STOP_BUDGET;
+    return bundle_observe(m, &run, out);
+}
+
+/* A byte for byte copy of a machine into fresh memory. The instance holds no
+   pointers, so a memcpy of the caller buffer is a valid instance. */
+static lynx_machine *copy_machine(const lynx_machine *src)
+{
+    void *mem = malloc(lynx_machine_size());
+    if (mem == NULL || (uintptr_t)mem % lynx_machine_align() != 0) {
+        free(mem);
+        return NULL;
+    }
+    memcpy(mem, src, lynx_machine_size());
+    return (lynx_machine *)mem;
+}
+
+/* A digest that ignores state would make every equality test vacuous. One bit
+   of a register, of guest time and of a RAM byte must each change it; an
+   unmodified copy must not. */
+static void case_state_sensitivity(char **args)
+{
+    uint8_t *content = NULL;
+    size_t content_len = 0;
+    instance base;
+    lynx_machine *copy[4];
+    char want[65];
+    char got[65];
+    size_t i;
+    static const char *const name[4] = {"unmodified copy", "register a", "guest time",
+                                        "ram byte 0x0100"};
+
+    CHECK_EQ_U64(bundle_read_hex(args[0], &content, &content_len), 0);
+    if (content == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(instance_make(&base, content, content_len), 0);
+    free(content);
+    if (base.m == NULL) {
+        free(base.mem);
+        return;
+    }
+    {
+        uint64_t used = 0;
+        lynx_stop_reason stop = LYNX_STOP_HALT;
+        CHECK_EQ_U64(lynx_advance(base.m, BUDGET, &used, &stop), LYNX_OK);
+        CHECK_EQ_U64(used, BUDGET);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    }
+    CHECK_EQ_U64(digest_of(base.m, want), 0);
+
+    for (i = 0; i < 4; i++) {
+        copy[i] = copy_machine(base.m);
+        CHECK(copy[i] != NULL);
+        if (copy[i] == NULL) {
+            continue;
+        }
+        if (i == 1) {
+            copy[i]->a ^= 1u;
+        } else if (i == 2) {
+            copy[i]->guest_ticks ^= 1u;
+        } else if (i == 3) {
+            copy[i]->ram[0x0100u] ^= 1u;
+        }
+        CHECK_EQ_U64(digest_of(copy[i], got), 0);
+        if (i == 0) {
+            if (strcmp(got, want) != 0) {
+                fprintf(stderr, "sensitivity_state: %s: digest changed without a change\n",
+                        name[i]);
+                check_failures++;
+            }
+        } else if (strcmp(got, want) == 0) {
+            fprintf(stderr, "sensitivity_state: %s: digest unchanged\n", name[i]);
+            check_failures++;
+        } else {
+            printf("sensitivity_state: %s: digest differs (%s)\n", name[i], got);
+        }
+        free(copy[i]);
+    }
+    printf("sensitivity_state: base digest %s\n", want);
+    free(base.mem);
 }
 
 static const struct {
@@ -252,6 +346,7 @@ static const struct {
     int args; /* arguments after the case name */
     void (*run)(char **args);
 } cases[] = {
+    {"state_sensitivity", 1, case_state_sensitivity},
     {"two_instances", 3, case_two_instances},
 };
 
