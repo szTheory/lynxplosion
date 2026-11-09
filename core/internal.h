@@ -22,6 +22,7 @@ struct lynx_machine {
     uint8_t a, x, y, s, p;
     uint8_t halted;
     uint32_t has_content, content_addr, content_len;
+    uint8_t content_sha256[32]; /* SHA-256 of the accepted image bytes; zero before a load */
     uint64_t guest_ticks;
 };
 

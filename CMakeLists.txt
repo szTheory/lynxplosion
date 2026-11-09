@@ -24,7 +24,7 @@ function(lynx_sanitize target)
 endfunction()
 
 # Every source of the core. Later plans append to this list.
-set(LYNX_CORE_SOURCES core/machine.c)
+set(LYNX_CORE_SOURCES core/machine.c core/sha256.c)
 
 add_library(lynx_core STATIC ${LYNX_CORE_SOURCES})
 target_include_directories(lynx_core PUBLIC include PRIVATE core)

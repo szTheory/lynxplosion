@@ -125,6 +125,27 @@ lynx_status lynx_read_memory(const lynx_machine *m, uint32_t addr, uint8_t *out,
 /* Guest time in master ticks since power-on or the last load. */
 lynx_status lynx_guest_ticks(const lynx_machine *m, uint64_t *ticks);
 
+/* Run identity: what this instance was configured with and what it holds.
+   content_sha256 is computed inside the core from the bytes the loader
+   accepted; the host never supplies it. Before any load, has_content is 0 and
+   content_addr, content_len and content_sha256 are all zero. reserved is
+   always zero. */
+typedef struct lynx_identity {
+    uint32_t profile;    /* LYNX_PROFILE_* */
+    uint32_t ram_policy; /* LYNX_RAM_POLICY_* */
+    uint64_t ram_seed;
+    uint32_t has_content;
+    uint32_t content_addr;
+    uint32_t content_len;
+    uint32_t reserved;
+    uint8_t content_sha256[32];
+} lynx_identity;
+
+/* Side-effect-free inspect. NULL m or out gives LYNX_ERR_ARGUMENT; a
+   machine that is not initialised gives LYNX_ERR_STATE. *out is written only
+   on success. */
+lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out);
+
 #ifdef __cplusplus
 }
 #endif

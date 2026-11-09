@@ -13,6 +13,7 @@
 #include "check.h"
 #include "internal.h"
 #include "lynxplosion.h"
+#include "sha256.h"
 
 /* The provisional tracer image: byte i = (7*i + 3) mod 256 for i = 0..31.
    It holds no 0xDB, so the skeleton never halts on it. */
@@ -106,10 +107,114 @@ static void case_skeleton(void)
     lynx_machine_deinit(m);
 }
 
+/* The four standard SHA-256 vectors (FIPS 180-4 examples plus the million-a
+   message), each confirmed independently with shasum before being written here. */
+static void expect_sha256(const void *data, size_t len, const char *want_hex)
+{
+    lynx__sha256 s;
+    uint8_t digest[32];
+    char hex[65];
+    lynx__sha256_init(&s);
+    lynx__sha256_update(&s, data, len);
+    lynx__sha256_final(&s, digest);
+    lynx__sha256_hex(digest, hex);
+    if (strcmp(hex, want_hex) != 0) {
+        fprintf(stderr, "%s:%d: sha256 mismatch: got %s want %s\n", __FILE__, __LINE__, hex,
+                want_hex);
+        check_failures++;
+    }
+}
+
+static void case_sha256(void)
+{
+    expect_sha256("", 0u, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    expect_sha256("abc", 3u, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    const char *two_block = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    CHECK_EQ_U64(strlen(two_block), 56u);
+    expect_sha256(two_block, 56u,
+                  "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+
+    /* One million 'a' bytes fed in 1000-byte chunks. */
+    uint8_t chunk[1000];
+    memset(chunk, 'a', sizeof chunk);
+    lynx__sha256 s;
+    uint8_t digest[32];
+    char hex[65];
+    lynx__sha256_init(&s);
+    for (int i = 0; i < 1000; i++) {
+        lynx__sha256_update(&s, chunk, sizeof chunk);
+    }
+    lynx__sha256_final(&s, digest);
+    lynx__sha256_hex(digest, hex);
+    CHECK(strcmp(hex, "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0") == 0);
+}
+
+static void case_identity(void)
+{
+    static const uint8_t zero_hash[32] = {0};
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.ram_policy = LYNX_RAM_POLICY_SPLITMIX64;
+    cfg.ram_seed = 0x0123456789abcdefu;
+    lynx_machine *m = NULL;
+    CHECK_EQ_U64(lynx_machine_init(machine_buf, lynx_machine_size(), &cfg, &m), LYNX_OK);
+    if (m == NULL) {
+        return;
+    }
+
+    lynx_identity id;
+    memset(&id, 0xA5, sizeof id);
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.profile, 0u);
+    CHECK_EQ_U64(id.ram_policy, LYNX_RAM_POLICY_SPLITMIX64);
+    CHECK_EQ_HEX(id.ram_seed, 0x0123456789abcdefu);
+    CHECK_EQ_U64(id.has_content, 0u);
+    CHECK_EQ_U64(id.content_addr, 0u);
+    CHECK_EQ_U64(id.content_len, 0u);
+    CHECK_EQ_U64(id.reserved, 0u);
+    CHECK(memcmp(id.content_sha256, zero_hash, 32u) == 0);
+
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+    memset(&id, 0xA5, sizeof id);
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.profile, 0u);
+    CHECK_EQ_U64(id.ram_policy, LYNX_RAM_POLICY_SPLITMIX64);
+    CHECK_EQ_HEX(id.ram_seed, 0x0123456789abcdefu);
+    CHECK_EQ_U64(id.has_content, 1u);
+    CHECK_EQ_HEX(id.content_addr, 0x0200u);
+    CHECK_EQ_U64(id.content_len, 32u);
+    CHECK_EQ_U64(id.reserved, 0u);
+    char hex[65];
+    lynx__sha256_hex(id.content_sha256, hex);
+    CHECK(strcmp(hex, "ab5f8b5cb9435354c7b58603592d5faf081e17ceb05f7a7c67f4b666f12ca457") == 0);
+
+    /* A refused load leaves the identity as it was. */
+    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, LYNX_ADDRESS_SPACE),
+                 LYNX_ERR_RANGE);
+    lynx_identity again;
+    CHECK_EQ_U64(lynx_get_identity(m, &again), LYNX_OK);
+    CHECK(memcmp(&again, &id, sizeof id) == 0);
+
+    /* A different image gives a different hash: the hash follows the bytes. */
+    uint8_t other[32];
+    memcpy(other, tracer_image, sizeof other);
+    other[31] ^= 1u;
+    CHECK_EQ_U64(lynx_load_ram_image(m, other, sizeof other, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_get_identity(m, &again), LYNX_OK);
+    CHECK(memcmp(again.content_sha256, id.content_sha256, 32u) != 0);
+
+    CHECK_EQ_U64(lynx_get_identity(NULL, &id), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_get_identity(m, NULL), LYNX_ERR_ARGUMENT);
+    lynx_machine_deinit(m);
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_ERR_STATE);
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
 } cases[] = {
+    {"identity", case_identity},
+    {"sha256", case_sha256},
     {"skeleton", case_skeleton},
 };
 

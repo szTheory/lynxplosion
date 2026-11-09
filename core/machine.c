@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "internal.h"
+#include "sha256.h"
 
 /* SplitMix64, written in 2015 by S. Vigna, public domain. The state is held
    by the caller (here: a local of the power-on function) so there is no
@@ -75,6 +76,7 @@ void lynx__power_on(lynx_machine *m)
     m->has_content = 0u;
     m->content_addr = 0u;
     m->content_len = 0u;
+    memset(m->content_sha256, 0, sizeof m->content_sha256);
     m->guest_ticks = 0u;
 }
 
@@ -133,6 +135,10 @@ lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t le
     m->has_content = 1u;
     m->content_addr = load_addr;
     m->content_len = (uint32_t)len;
+    lynx__sha256 hash;
+    lynx__sha256_init(&hash);
+    lynx__sha256_update(&hash, bytes, len);
+    lynx__sha256_final(&hash, m->content_sha256);
     return LYNX_OK;
 }
 
@@ -254,5 +260,24 @@ lynx_status lynx_guest_ticks(const lynx_machine *m, uint64_t *ticks)
         return LYNX_ERR_STATE;
     }
     *ticks = m->guest_ticks;
+    return LYNX_OK;
+}
+
+lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out)
+{
+    if (m == NULL || out == NULL) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (!machine_valid(m)) {
+        return LYNX_ERR_STATE;
+    }
+    out->profile = m->cfg.profile;
+    out->ram_policy = m->cfg.ram_policy;
+    out->ram_seed = m->cfg.ram_seed;
+    out->has_content = m->has_content;
+    out->content_addr = m->content_addr;
+    out->content_len = m->content_len;
+    out->reserved = 0u;
+    memcpy(out->content_sha256, m->content_sha256, sizeof out->content_sha256);
     return LYNX_OK;
 }
