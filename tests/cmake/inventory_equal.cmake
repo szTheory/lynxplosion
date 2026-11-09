@@ -12,6 +12,10 @@
 # Adapted from muhtari (MIT, owner project) at commit 7fd0386, factored out of
 # its configure-time check so the same code is self-tested.
 
+# IN_LIST needs policy CMP0057, which a -P script gets only when it asks (older
+# CMake releases, as on the CI runner, default it off and reject the operator).
+cmake_policy(VERSION 3.25)
+
 # Splits "name<TAB>rest" into name and rest (rest empty when there is no tab).
 function(lynx__inventory_split row name_var rest_var)
   string(FIND "${row}" "\t" pos)

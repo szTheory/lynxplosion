@@ -8,6 +8,10 @@
 # one test case in all. A skipped test is accepted only when SKIPS lists its
 # name with a non-empty reason; a declared skip that ran is a stale declaration.
 # Every finding is reported, then the script exits 1.
+# IN_LIST needs policy CMP0057, which a -P script gets only when it asks (older
+# CMake releases, as on the CI runner, default it off and reject the operator).
+cmake_policy(VERSION 3.25)
+
 foreach(var JUNIT INVENTORY SKIPS)
   if(NOT EXISTS "${${var}}")
     message(FATAL_ERROR "check_junit: -D${var}=<file> is required")
