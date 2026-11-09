@@ -28,10 +28,10 @@ enum {
     LYNX_ERR_ALIGNMENT = 3,         /* buffer not aligned to lynx_machine_align() */
     LYNX_ERR_RANGE = 4,             /* register id or address range out of bounds */
     LYNX_ERR_STATE = 5,             /* machine not initialised, or no content loaded */
-    LYNX_ERR_SNAPSHOT_INVALID = 6,  /* reserved for the snapshot API */
-    LYNX_ERR_SNAPSHOT_VERSION = 7,  /* reserved for the snapshot API */
-    LYNX_ERR_SNAPSHOT_MISMATCH = 8, /* reserved for the snapshot API */
-    LYNX_ERR_CAPACITY = 9           /* reserved for the snapshot API */
+    LYNX_ERR_SNAPSHOT_INVALID = 6,  /* malformed, truncated or corrupted snapshot */
+    LYNX_ERR_SNAPSHOT_VERSION = 7,  /* snapshot format version not supported */
+    LYNX_ERR_SNAPSHOT_MISMATCH = 8, /* snapshot from another build, config or content */
+    LYNX_ERR_CAPACITY = 9           /* output buffer smaller than the snapshot */
 };
 
 /* Why lynx_advance returned. FRAME and WATCH are reserved: later phases
@@ -161,6 +161,33 @@ lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out);
    128 bytes, with no path, date or clock time. Two calls return the same
    pointer. A snapshot restores only into an identical build id. */
 const char *lynx_build_id(void);
+
+/* Snapshots. A snapshot is a versioned blob: a header that names the build,
+   profile, RAM policy, seed and loaded content, then the machine state with a
+   SHA-256 of that state. All integers in it are little-endian. The format is
+   version 1 and is documented beside its code in core/snapshot.c.
+
+   A snapshot restores only into an instance of the same build (the full
+   lynx_build_id string), with the same profile, RAM policy and seed and the
+   same loaded content (same bytes at the same address). Anything else is
+   refused, so no snapshot from an older or different build is ever accepted.
+
+   lynx_snapshot_size gives the exact size of every snapshot of this build; it
+   needs only an initialised machine. lynx_snapshot_save writes that many
+   bytes to buf and sets *written to the count; it needs loaded content, a buf
+   of at least cap bytes with cap at least the size, and a buf that does not
+   overlap the machine. Neither call changes the machine. A refused save
+   writes nothing to buf and nothing to *written.
+
+   lynx_snapshot_restore checks everything before it writes anything: the
+   exact length, the header, the identity against this instance, the payload
+   hash, then every field value. Only then does it apply the state. A refused
+   restore leaves the machine byte-identical. LYNX_ERR_SNAPSHOT_INVALID means
+   malformed or corrupted, LYNX_ERR_SNAPSHOT_VERSION an unsupported format
+   version, LYNX_ERR_SNAPSHOT_MISMATCH another build or identity. */
+lynx_status lynx_snapshot_size(const lynx_machine *m, size_t *size);
+lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, size_t *written);
+lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t len);
 
 #ifdef __cplusplus
 }

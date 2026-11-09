@@ -794,6 +794,214 @@ static void case_reset_power_on(void)
     CHECK_EQ_U64(ticks_of(m), 0u);
 }
 
+/* ---- snapshots (API-07) ---- */
+
+#define SNAP_TOTAL ((size_t)LYNX__SNAPSHOT_HEADER_LEN + (size_t)LYNX__SNAPSHOT_PAYLOAD_LEN)
+#define SNAP_OFF_PAYLOAD_SHA 204u
+#define SNAP_SEED 0x0123456789abcdefu
+
+/* Blobs carry one extra byte of room for the trailing-byte case. */
+static unsigned char blob_v[SNAP_TOTAL + 1];
+static unsigned char blob_bad[SNAP_TOTAL + 1];
+static unsigned char at_top[sizeof(struct lynx_machine)];
+
+/* Saves m into dst and checks the documented postconditions. Returns 0 on success. */
+static int save_into(const lynx_machine *m, unsigned char *dst)
+{
+    size_t size = 0u;
+    size_t written = 0u;
+    CHECK_EQ_U64(lynx_snapshot_size(m, &size), LYNX_OK);
+    CHECK_EQ_U64(size, SNAP_TOTAL);
+    lynx_status st = lynx_snapshot_save(m, dst, SNAP_TOTAL, &written);
+    CHECK_EQ_U64(st, LYNX_OK);
+    CHECK_EQ_U64(written, SNAP_TOTAL);
+    return st == LYNX_OK ? 0 : 1;
+}
+
+/* An instance with the cases' shared identity: SplitMix64 and the given seed,
+   the image loaded at addr. Returns NULL after a failed check. */
+static lynx_machine *snap_instance(void *mem, uint64_t seed, const unsigned char *image,
+                                   size_t len, uint32_t addr)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.ram_policy = LYNX_RAM_POLICY_SPLITMIX64;
+    cfg.ram_seed = seed;
+    lynx_machine *m = init_in(mem, &cfg);
+    if (m == NULL) {
+        return NULL;
+    }
+    CHECK_EQ_U64(lynx_load_ram_image(m, image, len, addr), LYNX_OK);
+    return m;
+}
+
+static void advance_ticks(lynx_machine *m, uint64_t ticks)
+{
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, ticks, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, ticks);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+}
+
+static void case_snapshot_roundtrip(void)
+{
+    lynx_machine *m = snap_instance(machine_buf, SNAP_SEED, tracer_image, sizeof tracer_image, 0x0200u);
+    if (m == NULL) {
+        return;
+    }
+    advance_ticks(m, 2048u);
+
+    /* Size and save leave the instance byte-identical. */
+    memcpy(snap_a, machine_buf, MSIZE); /* at_save */
+    size_t size = 0u;
+    CHECK_EQ_U64(lynx_snapshot_size(m, &size), LYNX_OK);
+    CHECK_EQ_U64(size, SNAP_TOTAL);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    memset(blob_v, 0xA5, sizeof blob_v);
+    size_t written = 0u;
+    CHECK_EQ_U64(lynx_snapshot_save(m, blob_v, size, &written), LYNX_OK);
+    CHECK_EQ_U64(written, size);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(blob_v[SNAP_TOTAL], 0xA5u); /* nothing written past the end */
+    CHECK(memcmp(blob_v, "LYNXSNAP", 8u) == 0);
+
+    /* Saving twice, over different garbage, gives the same bytes. */
+    memset(blob_bad, 0x5A, sizeof blob_bad);
+    CHECK_EQ_U64(lynx_snapshot_save(m, blob_bad, size, &written), LYNX_OK);
+    CHECK(memcmp(blob_v, blob_bad, SNAP_TOTAL) == 0);
+
+    advance_ticks(m, 2048u);
+    memcpy(snap_b, machine_buf, MSIZE); /* final */
+    CHECK(memcmp(snap_a, snap_b, MSIZE) != 0);
+
+    /* Same instance: restore gives the buffer at save time, then the same continuation. */
+    CHECK_EQ_U64(lynx_snapshot_restore(m, blob_v, size), LYNX_OK);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    advance_ticks(m, 2048u);
+    CHECK_UNCHANGED(machine_buf, snap_b);
+
+    /* A second fresh instance, same config and content: restore and continue. */
+    lynx_machine *m2 = snap_instance(buf_b, SNAP_SEED, tracer_image, sizeof tracer_image, 0x0200u);
+    if (m2 == NULL) {
+        return;
+    }
+    CHECK(memcmp(buf_b, snap_a, MSIZE) != 0);
+    CHECK_EQ_U64(lynx_snapshot_restore(m2, blob_v, size), LYNX_OK);
+    CHECK_UNCHANGED(buf_b, snap_a);
+    advance_ticks(m2, 2048u);
+    CHECK_UNCHANGED(buf_b, snap_b);
+
+    /* Capacity: one byte short is refused, nothing written, nothing reported. */
+    memset(blob_bad, 0xA5, sizeof blob_bad);
+    memcpy(snap_a, machine_buf, MSIZE);
+    written = 77u;
+    CHECK_EQ_U64(lynx_snapshot_save(m, blob_bad, size - 1u, &written), LYNX_ERR_CAPACITY);
+    CHECK(all_bytes_equal(blob_bad, sizeof blob_bad, 0xA5));
+    CHECK_EQ_U64(written, 77u);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx_snapshot_save(m, blob_bad, 0u, &written), LYNX_ERR_CAPACITY);
+    CHECK(all_bytes_equal(blob_bad, sizeof blob_bad, 0xA5));
+
+    /* Argument refusals write nothing. */
+    CHECK_EQ_U64(lynx_snapshot_size(NULL, &size), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_snapshot_size(m, NULL), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_snapshot_save(NULL, blob_bad, SNAP_TOTAL, &written), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_snapshot_save(m, NULL, SNAP_TOTAL, &written), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_snapshot_save(m, blob_bad, SNAP_TOTAL, NULL), LYNX_ERR_ARGUMENT);
+    CHECK(all_bytes_equal(blob_bad, sizeof blob_bad, 0xA5));
+    CHECK_EQ_U64(lynx_snapshot_restore(NULL, blob_v, SNAP_TOTAL), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_snapshot_restore(m, NULL, SNAP_TOTAL), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+
+    /* A buffer that overlaps the instance is refused by both calls: inside it,
+       reaching into its start, and reaching into its end. A refusal reads and
+       writes none of it, so the odd addresses are never dereferenced. */
+    unsigned char *inside = machine_buf + 16;
+    unsigned char *before = (unsigned char *)(uintptr_t)((uintptr_t)machine_buf - 100u);
+    unsigned char *after = machine_buf + MSIZE - 100u;
+    unsigned char *overlaps[3] = {inside, before, after};
+    for (size_t i = 0u; i < 3u; i++) {
+        CHECK_EQ_U64(lynx_snapshot_save(m, overlaps[i], SNAP_TOTAL, &written), LYNX_ERR_ARGUMENT);
+        CHECK_UNCHANGED(machine_buf, snap_a);
+        CHECK_EQ_U64(lynx_snapshot_restore(m, overlaps[i], SNAP_TOTAL), LYNX_ERR_ARGUMENT);
+        CHECK_UNCHANGED(machine_buf, snap_a);
+    }
+
+    /* No content loaded: save and restore are refused with STATE; size still answers. */
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *fresh = init_in(buf_b, &cfg);
+    if (fresh == NULL) {
+        return;
+    }
+    memcpy(snap_b, buf_b, MSIZE);
+    memset(blob_bad, 0xA5, sizeof blob_bad);
+    CHECK_EQ_U64(lynx_snapshot_size(fresh, &size), LYNX_OK);
+    CHECK_EQ_U64(lynx_snapshot_save(fresh, blob_bad, SNAP_TOTAL, &written), LYNX_ERR_STATE);
+    CHECK(all_bytes_equal(blob_bad, sizeof blob_bad, 0xA5));
+    CHECK_EQ_U64(lynx_snapshot_restore(fresh, blob_v, SNAP_TOTAL), LYNX_ERR_STATE);
+    CHECK_UNCHANGED(buf_b, snap_b);
+    /* A deinitialised machine: STATE for all three. */
+    lynx_machine_deinit(fresh);
+    memcpy(snap_b, buf_b, MSIZE);
+    CHECK_EQ_U64(lynx_snapshot_size(fresh, &size), LYNX_ERR_STATE);
+    CHECK_EQ_U64(lynx_snapshot_save(fresh, blob_bad, SNAP_TOTAL, &written), LYNX_ERR_STATE);
+    CHECK_EQ_U64(lynx_snapshot_restore(fresh, blob_v, SNAP_TOTAL), LYNX_ERR_STATE);
+    CHECK_UNCHANGED(buf_b, snap_b);
+
+    /* Top of the address space: 16 bytes at 0xFFF0. Seven steps leave PC at 0xFFF7. */
+    m = snap_instance(machine_buf, SNAP_SEED, tracer_image, 16u, 0xFFF0u);
+    m2 = snap_instance(buf_b, SNAP_SEED, tracer_image, 16u, 0xFFF0u);
+    if (m == NULL || m2 == NULL) {
+        return;
+    }
+    advance_ticks(m, 28u);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFF7u);
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(save_into(m, blob_v), 0u);
+    advance_ticks(m, 36u);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFF0u); /* wrapped after the sixteenth step */
+    memcpy(at_top, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_snapshot_restore(m, blob_v, SNAP_TOTAL), LYNX_OK);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    advance_ticks(m, 36u);
+    CHECK_UNCHANGED(machine_buf, at_top);
+    CHECK_EQ_U64(lynx_snapshot_restore(m2, blob_v, SNAP_TOTAL), LYNX_OK);
+    CHECK_UNCHANGED(buf_b, snap_a);
+    advance_ticks(m2, 36u);
+    CHECK_UNCHANGED(buf_b, at_top);
+
+    /* The highest PC, 0xFFFF: fifteen steps, save, restore elsewhere, one more step wraps. */
+    m = snap_instance(machine_buf, SNAP_SEED, tracer_image, 16u, 0xFFF0u);
+    m2 = snap_instance(buf_b, SNAP_SEED, tracer_image, 16u, 0xFFF0u);
+    if (m == NULL || m2 == NULL) {
+        return;
+    }
+    advance_ticks(m, 60u);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFFFu);
+    CHECK_EQ_U64(save_into(m, blob_v), 0u);
+    CHECK_EQ_U64(lynx_snapshot_restore(m2, blob_v, SNAP_TOTAL), LYNX_OK);
+    CHECK_EQ_HEX(reg_of(m2, LYNX_REG_PC), 0xFFFFu);
+    advance_ticks(m, 4u);
+    advance_ticks(m2, 4u);
+    CHECK_EQ_HEX(reg_of(m2, LYNX_REG_PC), 0xFFF0u);
+    CHECK(memcmp(machine_buf, buf_b, MSIZE) == 0);
+
+    /* A halted machine keeps its halt through a snapshot. */
+    const unsigned char halt_image[4] = {0x01u, 0x02u, LYNX__HALT_OPCODE, 0x04u};
+    m = snap_instance(machine_buf, SNAP_SEED, halt_image, sizeof halt_image, 0x0200u);
+    m2 = snap_instance(buf_b, SNAP_SEED, halt_image, sizeof halt_image, 0x0200u);
+    if (m == NULL || m2 == NULL) {
+        return;
+    }
+    ADVANCE_EXPECT(m, 4096u, 8u, LYNX_STOP_HALT);
+    CHECK_EQ_U64(save_into(m, blob_v), 0u);
+    CHECK_EQ_U64(lynx_snapshot_restore(m2, blob_v, SNAP_TOTAL), LYNX_OK);
+    CHECK(memcmp(machine_buf, buf_b, MSIZE) == 0);
+    ADVANCE_EXPECT(m2, 4096u, 0u, LYNX_STOP_HALT);
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -807,6 +1015,7 @@ static const struct {
     {"load_refusal_unchanged", case_load_refusal_unchanged},
     {"reset_power_on", case_reset_power_on},
     {"sha256", case_sha256},
+    {"snapshot_roundtrip", case_snapshot_roundtrip},
     {"skeleton", case_skeleton},
 };
 

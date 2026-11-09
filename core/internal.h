@@ -8,6 +8,14 @@
 
 #include "lynxplosion.h"
 
+/* Snapshot format version 1 (core/snapshot.c documents the layout). */
+#define LYNX__SNAPSHOT_MAGIC "LYNXSNAP" /* 8 bytes, no terminating NUL in the blob */
+#define LYNX__SNAPSHOT_MAGIC_LEN 8u
+#define LYNX__SNAPSHOT_FORMAT 1u
+#define LYNX__BUILD_ID_FIELD 128u
+#define LYNX__SNAPSHOT_HEADER_LEN 236u  /* 8+4+4+128+4+4+8+32+4+4+4+32 */
+#define LYNX__SNAPSHOT_PAYLOAD_LEN 65552u /* 2+6+8+65536 */
+
 /* Build identity string baked at configure time (core/build_id.c.in). */
 extern const char lynx__build_id[];
 

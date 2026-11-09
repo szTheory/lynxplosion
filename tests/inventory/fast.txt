@@ -12,6 +12,7 @@ api.instances_independent	api
 api.load_refusal_unchanged	api
 api.reset_power_on	api
 api.skeleton	api
+api.snapshot_roundtrip	api
 core.includes	core
 core.includes.self_test	core
 core.nm_globals	core

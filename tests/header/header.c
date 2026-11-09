@@ -2,10 +2,7 @@
    only "lynxplosion.h" proves the header is self-contained. The static
    assertions pin the sizes and values the snapshot format and the runner
    depend on, and the function-pointer table pins every public signature: a
-   changed declaration stops this file compiling.
-
-   Plan 01-07 must add the snapshot functions to the table below when it
-   declares them. */
+   changed declaration stops this file compiling. */
 #include "lynxplosion.h"
 
 _Static_assert(sizeof(lynx_status) == 4, "status is 32 bits");
@@ -35,6 +32,11 @@ static lynx_status (*const guest_ticks_fn)(const lynx_machine *, uint64_t *) = l
 static lynx_status (*const get_identity_fn)(const lynx_machine *,
                                             lynx_identity *) = lynx_get_identity;
 static const char *(*const build_id_fn)(void) = lynx_build_id;
+static lynx_status (*const snapshot_size_fn)(const lynx_machine *, size_t *) = lynx_snapshot_size;
+static lynx_status (*const snapshot_save_fn)(const lynx_machine *, uint8_t *, size_t,
+                                             size_t *) = lynx_snapshot_save;
+static lynx_status (*const snapshot_restore_fn)(lynx_machine *, const uint8_t *,
+                                                size_t) = lynx_snapshot_restore;
 
 int main(void);
 
@@ -53,5 +55,8 @@ int main(void)
     (void)guest_ticks_fn;
     (void)get_identity_fn;
     (void)build_id_fn;
+    (void)snapshot_size_fn;
+    (void)snapshot_save_fn;
+    (void)snapshot_restore_fn;
     return 0;
 }
