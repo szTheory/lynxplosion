@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Evidence Harness and Walking Skeleton
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-11-09T23:02:14.324Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-11-09T23:07:45.553Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 1 execution started
-state_head: 97fe709f883255854a048c2b11579e6a853a475d
+state_head: cf0b01e9c39b9389053b16390b243751719dcfce
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 13
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 1 (Evidence Harness and Walking Skeleton) — EXECUTING
-Plan: 4 of 13
+Plan: 5 of 13
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 1 execution started
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P01 | 4 min | 3 tasks | 14 files |
 | Phase 1 P02 | 5min | 2 tasks | 10 files |
 | Phase 1 P03 | 10min | 2 tasks | 10 files |
+| Phase 1 P04 | 3 min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,7 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-02: build identity uses the full 40-char git revision; configure fails above 127 characters (snapshot header reserves 128 bytes)
 - [Phase 1]: 01-02: one internal SHA-256 unit in core/ shared with the runner; content hash computed inside the core at load, no public sha256 utility
 - [Phase 1]: 01-03: a refused lynx-run creates no output directory; usage errors exit 2, runtime refusals exit 1; observation digest is build-independent, bundle digest embeds core_build
+- [Phase 1]: 01-04: inventory compare, JUnit completeness and no-skip policy are CMake scripts with built-fault self-tests; declared skips live in tests/inventory/skips.txt with reasons — A missing, extra, duplicated or silently skipped test can never leave the check green; each rule has a negative control with exact exit code and message
 
 ### Pending Todos
 
@@ -99,6 +101,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-09T23:02:14.296Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-11-09T23:07:45.533Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None

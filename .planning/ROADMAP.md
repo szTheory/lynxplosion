@@ -59,7 +59,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. The pinned cc65 builds from source on the dev host and on the CI runner, with wall time recorded. The repo contains a claim template that binds profile, content identity, startup tier, evidence tier and test inventory, plus a draft source-exposure and clean-room record.
 **Owner gates**: O8 (language, build and API): no core code until the owner confirms it or accepts the research default (C17, CMake/Ninja/CTest, C ABI). O6 (clean-room protocol and GPL-exposure record): FND-07 stays a draft until it is decided.
 **Research flag**: Standard patterns, except the cc65 from-source build spike (FND-09: `TARGETS=lynx` recipe, wall time).
-**Plans:** 3/13 plans executed
+**Plans:** 4/13 plans executed
 
 Plans:
 **Wave 1**
@@ -72,7 +72,7 @@ Plans:
 - [x] 01-03-PLAN.md — Runner and artifact bundle: two-run digest equality, run manifest, CLI contract with fixed-0x00 default (DET-01, DET-04)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 01-04-PLAN.md — Exact test inventory, JUnit completeness, declared skips, negative-control harness (FND-06)
+- [x] 01-04-PLAN.md — Exact test inventory, JUnit completeness, declared skips, negative-control harness (FND-06)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 01-05-PLAN.md — Core boundary gates: include/float scans, nm on uninstrumented twin, header self-containment (FND-05)
@@ -197,7 +197,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Evidence Harness and Walking Skeleton | 3/13 | In Progress | - |
+| 1. Evidence Harness and Walking Skeleton | 4/13 | In Progress | - |
 | 2. CPU Profiles and Per-Opcode Vectors | 0/TBD | Not started | - |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 0/TBD | Not started | - |
 | 4. Timers, Interrupts and First Public Suites | 0/TBD | Not started | - |
