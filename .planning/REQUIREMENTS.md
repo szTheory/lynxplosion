@@ -26,13 +26,13 @@ sequence, not a ceiling on the project goal.
 
 - [ ] **FND-01**: Developer runs one documented local command (`scripts/check.sh`) that builds, lints and runs the full fast test set, and the same command is the PR CI gate
 - [x] **FND-02**: Every external source (cc65, lynx-tests, CPU vectors) is fetched from a pinned revision and verified by SHA-256 before use; a mismatched hash fails the build
-- [ ] **FND-03**: Every fixture has a manifest recording source, revision, build recipe, SHA-256, license and notices, allowed use, startup tier, profile and evidence tier
+- [x] **FND-03**: Every fixture has a manifest recording source, revision, build recipe, SHA-256, license and notices, allowed use, startup tier, profile and evidence tier
 - [ ] **FND-04**: CI and the local check fail closed when a firmware-like or unmanifested binary appears in the tree or in build artifacts, proven by a seeded fake 512-byte file that the check rejects
 - [x] **FND-05**: The core is built without access to host clocks, filesystem, threads, floating point or mutable globals, enforced by a build-time forbidden-import check with a negative control
 - [x] **FND-06**: The test inventory is exact: the check compares the executed test list to an expected list, and any skipped, missing or extra test is reported and fails unless explicitly declared as a visible skip
 - [ ] **FND-07**: A source-exposure record and draft clean-room policy document which reference sources (including GPL emulators read during research) were consulted, pending owner decision O6
 - [ ] **FND-08**: A claim template binds every compatibility claim to profile, content identity, startup tier, evidence tier and test inventory
-- [ ] **FND-09**: cc65 builds reproducibly from the pinned source commit on the dev host and the CI runner, with wall time recorded
+- [x] **FND-09**: cc65 builds reproducibly from the pinned source commit on the dev host and the CI runner, with wall time recorded
 
 ### Core API and host boundary
 
@@ -177,13 +177,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | FND-01 | Phase 1 | Pending |
 | FND-02 | Phase 1 | Complete |
-| FND-03 | Phase 1 | Pending |
+| FND-03 | Phase 1 | Complete |
 | FND-04 | Phase 1 | Pending |
 | FND-05 | Phase 1 | Complete |
 | FND-06 | Phase 1 | Complete |
 | FND-07 | Phase 1 | Pending |
 | FND-08 | Phase 1 | Pending |
-| FND-09 | Phase 1 | Pending |
+| FND-09 | Phase 1 | Complete |
 | API-01 | Phase 1 | Complete |
 | API-02 | Phase 1 | Complete |
 | API-03 | Phase 1 | Complete |

@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Evidence Harness and Walking Skeleton
 status: executing
-stopped_at: Completed 01-09-PLAN.md
-last_updated: "2026-11-09T23:34:48.433Z"
+stopped_at: Completed 01-10-PLAN.md
+last_updated: "2026-11-09T23:42:11.719Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 1 execution started
-state_head: 0964b4b7762f7052dc88b723749e6f8ac5ea5901
+state_head: 9788e836308814475d3700fe30b3b3e5257d2a1a
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 13
-  completed_plans: 9
+  completed_plans: 10
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 1 (Evidence Harness and Walking Skeleton) — EXECUTING
-Plan: 10 of 13
+Plan: 11 of 13
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 1 execution started
 
@@ -65,6 +65,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P07 | 5min | 2 tasks | 8 files |
 | Phase 1 P08 | 25min | 3 tasks | 12 files |
 | Phase 1 P09 | 20min | 2 tasks | 10 files |
+| Phase 1 P10 | 45min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,8 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-08: validate-kv keys are [a-z][a-z0-9_]*; strict layout, no comments or blank lines; -P scripts using IN_LIST set cmake_policy(VERSION 3.25)
 - [Phase 1]: 01-09: .lynx-pin is 64 lowercase hex plus newline; .lynx-pin-files is '#' header lines then '<sha256> <path>' sorted LC_ALL=C (rights scan in 01-11 skips '#' lines)
 - [Phase 1]: 01-09: fetch-pin.sh fails closed on newline paths, pin-record names in the archive, and unlistable archives; only .tar.gz/.tgz supported
+- [Phase 1]: 01-10: cc65 is built with BUILD_ID fixed to the pinned commit, because the Makefile otherwise embeds the enclosing repository HEAD into the tool bytes
+- [Phase 1]: 01-10: .lynx-build-files (header pin_sha256 and recipe, then sha256 path rows) and the .lynx-build key=value stamp are written only after both make runs and the probe succeed
 
 ### Pending Todos
 
@@ -115,6 +118,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-09T23:34:48.412Z
-Stopped at: Completed 01-09-PLAN.md
+Last session: 2026-11-09T23:42:11.689Z
+Stopped at: Completed 01-10-PLAN.md
 Resume file: None
