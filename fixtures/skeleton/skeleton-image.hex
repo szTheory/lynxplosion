@@ -1,0 +1,4 @@
+# Project-authored test content for the provisional loader.
+# Load address 0x0200. 32 bytes, none of them 0xdb, so a run stops on the budget.
+03 0a 11 18 1f 26 2d 34 3b 42 49 50 57 5e 65 6c
+73 7a 81 88 8f 96 9d a4 ab b2 b9 c0 c7 ce d5 dc

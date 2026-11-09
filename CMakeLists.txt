@@ -70,6 +70,24 @@ lynx_sanitize(lynx_core)
 # The sanitizer runtime must be linked by whatever links the core.
 target_link_options(lynx_core PUBLIC -fsanitize=address,undefined)
 
+# The runner is host side: it may use stdio, stdlib and POSIX mkdir, so it is
+# defined here and never inside core/. _POSIX_C_SOURCE is set on the runner
+# targets only, because CMAKE_C_EXTENSIONS is OFF and hides POSIX declarations.
+add_library(lynx_bundle STATIC runner/bundle.c)
+# core/ is private: the bundle writer needs sha256.h and nothing else from it.
+target_include_directories(lynx_bundle PUBLIC runner PRIVATE core)
+target_link_libraries(lynx_bundle PUBLIC lynx_core)
+target_compile_definitions(lynx_bundle PRIVATE _POSIX_C_SOURCE=200809L)
+lynx_warnings(lynx_bundle)
+lynx_sanitize(lynx_bundle)
+
+add_executable(lynx-run runner/main.c)
+target_link_libraries(lynx-run PRIVATE lynx_bundle)
+target_compile_definitions(lynx-run PRIVATE _POSIX_C_SOURCE=200809L)
+lynx_warnings(lynx-run)
+lynx_sanitize(lynx-run)
+set_target_properties(lynx-run PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/runner)
+
 if(LYNX_TESTS)
   enable_testing()
   include(cmake/Tests.cmake)
