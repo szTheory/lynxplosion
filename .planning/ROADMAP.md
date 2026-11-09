@@ -62,18 +62,43 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 13 plans
 
 Plans:
+**Wave 1**
 - [ ] 01-01-PLAN.md — Walking skeleton tracer: check.sh → CMake → lynx_core → public API → C test with exact values; exact registration; first green CI run (FND-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-02-PLAN.md — Content identity (core SHA-256, FIPS vectors) and configure-time build identity (API-04, DET-04)
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 01-03-PLAN.md — Runner and artifact bundle: two-run digest equality, run manifest, CLI contract with fixed-0x00 default (DET-01, DET-04)
+
+**Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 01-04-PLAN.md — Exact test inventory, JUnit completeness, declared skips, negative-control harness (FND-06)
+
+**Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 01-05-PLAN.md — Core boundary gates: include/float scans, nm on uninstrumented twin, header self-containment (FND-05)
+
+**Wave 6** *(blocked on Wave 5 completion)*
 - [ ] 01-06-PLAN.md — Host API contract: instances, load refusal, bounded advance, reset/power-on, side-effect-free inspect (API-01..05)
+
+**Wave 7** *(blocked on Wave 6 completion)*
 - [ ] 01-07-PLAN.md — Versioned snapshot save/restore with validate-then-apply refusal (API-07)
+
+**Wave 8** *(blocked on Wave 7 completion)*
 - [ ] 01-08-PLAN.md — Determinism gates: whole-bundle two instances, golden cross-compiler digest, input and state sensitivity, run-manifest validator (DET-01/02/04)
+
+**Wave 9** *(blocked on Wave 8 completion)*
 - [ ] 01-09-PLAN.md — Pins, hash-before-unpack fetch with per-file archive list, no-network gate (FND-02)
+
+**Wave 10** *(blocked on Wave 9 completion)*
 - [ ] 01-10-PLAN.md — Fixture manifests, cc65 two-step build with derived build list, reproducible probe (FND-03, FND-09)
+
+**Wave 11** *(blocked on Wave 10 completion)*
 - [ ] 01-11-PLAN.md — Rights binary scan per the amended zone rule with seeded controls; PII and credential hygiene (FND-04)
+
+**Wave 12** *(blocked on Wave 11 completion)*
 - [ ] 01-12-PLAN.md — Clean-room draft, exposure record, provenance, claim template bound to the inventory (FND-07/08)
+
+**Wave 13** *(blocked on Wave 12 completion)*
 - [ ] 01-13-PLAN.md — PROJECT.md decisions, README links, final CI evidence and efficiency review (FND-01, FND-09)
 
 ### Phase 2: CPU Profiles and Per-Opcode Vectors
