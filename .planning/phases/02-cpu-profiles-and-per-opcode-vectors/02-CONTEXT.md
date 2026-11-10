@@ -211,6 +211,15 @@ timers and real IRQ sources (Phase 4), cartridge, boot, Suzy (later), any suite-
 - lynx1 `$x7/$xF` shape follows the synertek vectors (2 and 3 bytes) per the exclusion rule and is marked unverified; the CMD datasheet says 1 byte.
 - Plan sequence from research section 9.3 is the starting point (core and tables; vector runner, sample, inventories, controls, full lane; scenario vectors; fixtures plus the ca65 gate; machine switch with the Phase 1 re-baseline and golden; public-path tests; docs and verification).
 
+### Amendments from plan check, iteration 1 (2026-11-09, orchestrator decisions)
+- **Profile `none` is vector-checked (ROADMAP criterion 1 says every defined profile).** Add a `none` run and inventory `tests/inventory/vectors/none.txt` (test `cpu.vectors.none`): the 224 opcodes whose lynx1 and lynx2 rows are identical run and pass under `none` using the same sample data as lynx1; the 32 `$x7/$xF` bit-op opcodes are reported with the new closed-list reason `profile-none-stops-undefined` and are additionally asserted to stop with UNDEFINED, consuming 0 and changing nothing. The runner accepts `--profile none|lynx1|lynx2`.
+- Shapes refined by the plans and accepted: the decode row adds a `vec` field (needed by the exclusion rule); cycle kinds are 11 (stack split) rather than 10; `lynx__cpu_complete` takes a profile-table argument.
+- "178 shared opcodes" is corrected to 224 shared opcodes (research section 6.3, verified). The variant-diff spike is answered by the cross-pairing failing sets in the full lane (with identical shared rows and passing same-profile runs, a cross pair can fail only the 32 bit-op opcodes); record that caveat in the verification report.
+- The awk mini-sample cutter used by a control in the check path cuts a committed text sample by file headers; it does not convert data. "No converter scripts in the check path" is read accordingly (research R5).
+- Over-budget plan estimates (02-01 about 1.1x, 02-09 about 1.3x, both uncalibrated with sample_count 0) are accepted: executors get a fresh context, 02-09 is atomic by design (golden and claim re-baselined once), and an executor that nears its limit splits at a task commit boundary and records it.
+- CPU-03's "the `<=` mutation fails api.advance_budget" is one-time evidence recorded in the SUMMARY (a persistent core mutant is not added); the constant-cost fault control is persisted as a `.self_test`.
+- Pre-authorization record for this phase: the owner authorized pushing to the public repository and approved the phase's planned implementation and verification (AGENTS.md); plan 02-03 downloads per-file vector data over https and plan 02-11 downloads about 2 GB once for the full lane and pushes to origin main to watch CI. The reproducibility step uses one invocation with a shared work directory (no repeated 2 GB downloads).
+
 ### Claude's Discretion
 - File and function names inside `core/` (e.g. `cpu.c`, `cpu.h`, `profile.def`, `bus.c`), the exact
   `cpu_state` bit assignments and snapshot byte layout, test names, the exact column layout of the
