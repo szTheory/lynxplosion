@@ -1,0 +1,140 @@
+{
+  "items": [
+    {
+      "requirement_id": "CLI",
+      "category": "overflow",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Generated image sample counts and WAV lengths are checked against their declared bounds; invalid sizes are refused before success publication.",
+      "reason": null,
+      "probe": "What happens when content exceeds its container — scroll, clip, wrap, or truncate?"
+    },
+    {
+      "requirement_id": "CLI",
+      "category": "long-text",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Metadata uses validated bounded fields; CLI errors must remain complete and must not silently truncate into a success message.",
+      "reason": null,
+      "probe": "What happens with unusually long text — truncation, wrapping, ellipsis, or reflow?"
+    },
+    {
+      "requirement_id": "PPM",
+      "category": "empty",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Missing input, required symbols, completion or pixel data cause unsuccessful refusal and publish no success artifacts.",
+      "reason": null,
+      "probe": "What is shown when there is no data — zero items, an unfilled form, or absent media?"
+    },
+    {
+      "requirement_id": "PPM",
+      "category": "loading",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Artifacts are finalized only after validation and guest completion; no partial artifact is presented as success.",
+      "reason": null,
+      "probe": "What is shown while data or content is still loading (skeleton, spinner, progressive reveal)?"
+    },
+    {
+      "requirement_id": "PPM",
+      "category": "error",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Refusal identifies the failed check and exits unsuccessfully without success artifacts.",
+      "reason": null,
+      "probe": "What is shown when the load or submit fails (message, retry affordance, partial fallback)?"
+    },
+    {
+      "requirement_id": "PPM",
+      "category": "populated",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Successful output is an exact unscaled diagnostic P3 SNAPSHOT with identity/tick/startup/profile/palette metadata and a valid labelled silence WAV.",
+      "reason": null,
+      "probe": "What does the normal populated (happy-path) state look like at a typical volume of content?"
+    },
+    {
+      "requirement_id": "PPM",
+      "category": "overflow",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Generated image sample counts and WAV lengths are checked against their declared bounds; invalid sizes are refused before success publication.",
+      "reason": null,
+      "probe": "What happens when content exceeds its container — scroll, clip, wrap, or truncate?"
+    },
+    {
+      "requirement_id": "PPM",
+      "category": "long-text",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Metadata uses validated bounded fields; CLI errors must remain complete and must not silently truncate into a success message.",
+      "reason": null,
+      "probe": "What happens with unusually long text — truncation, wrapping, ellipsis, or reflow?"
+    },
+    {
+      "requirement_id": "WAV",
+      "category": "empty",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Missing input, required symbols, completion or pixel data cause unsuccessful refusal and publish no success artifacts.",
+      "reason": null,
+      "probe": "What is shown when there is no data — zero items, an unfilled form, or absent media?"
+    },
+    {
+      "requirement_id": "WAV",
+      "category": "loading",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Artifacts are finalized only after validation and guest completion; no partial artifact is presented as success.",
+      "reason": null,
+      "probe": "What is shown while data or content is still loading (skeleton, spinner, progressive reveal)?"
+    },
+    {
+      "requirement_id": "WAV",
+      "category": "error",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Refusal identifies the failed check and exits unsuccessfully without success artifacts.",
+      "reason": null,
+      "probe": "What is shown when the load or submit fails (message, retry affordance, partial fallback)?"
+    },
+    {
+      "requirement_id": "WAV",
+      "category": "populated",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Successful output is an exact unscaled diagnostic P3 SNAPSHOT with identity/tick/startup/profile/palette metadata and a valid labelled silence WAV.",
+      "reason": null,
+      "probe": "What does the normal populated (happy-path) state look like at a typical volume of content?"
+    },
+    {
+      "requirement_id": "WAV",
+      "category": "overflow",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Generated image sample counts and WAV lengths are checked against their declared bounds; invalid sizes are refused before success publication.",
+      "reason": null,
+      "probe": "What happens when content exceeds its container — scroll, clip, wrap, or truncate?"
+    },
+    {
+      "requirement_id": "WAV",
+      "category": "long-text",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Metadata uses validated bounded fields; CLI errors must remain complete and must not silently truncate into a success message.",
+      "reason": null,
+      "probe": "What happens with unusually long text — truncation, wrapping, ellipsis, or reflow?"
+    }
+  ],
+  "coverage": {
+    "applicable": 14,
+    "resolved": 14,
+    "unresolved": 0,
+    "unclassified": 0,
+    "byVerification": {
+      "explicit": 14,
+      "backstop": 0
+    }
+  }
+}
