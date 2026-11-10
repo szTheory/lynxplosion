@@ -15,7 +15,7 @@ set -eu
 work=$1
 here=$(dirname "$0")
 validator="$here/../../scripts/validate-kv.sh"
-required="profile startup_tier content_sha256 content_load_addr input_digest tick_budget ticks_consumed stop_reason core_build ram_policy ram_seed evidence_tier"
+required="profile content_format startup startup_tier content_sha256 content_load_addr entry_addr object_len payload_addr payload_len input_digest tick_budget ticks_consumed stop_reason core_build ram_policy ram_seed evidence_tier"
 
 rm -rf "$work"
 mkdir -p "$work"
@@ -25,9 +25,15 @@ hex64=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 # The valid manifest, in the documented key order.
 base() {
   printf 'profile = none\n'
+  printf 'content_format = bs93\n'
+  printf 'startup = A\n'
   printf 'startup_tier = A\n'
   printf 'content_sha256 = %s\n' "$hex64"
   printf 'content_load_addr = 0x0200\n'
+  printf 'entry_addr = 0x0200\n'
+  printf 'object_len = 23\n'
+  printf 'payload_addr = 0x0200\n'
+  printf 'payload_len = 13\n'
   printf 'input_digest = %s\n' "$hex64"
   printf 'tick_budget = 4096\n'
   printf 'ticks_consumed = 4096\n'
@@ -81,6 +87,21 @@ accept valid
 
 base | grep -v '^core_build = ' >"$work/missing_key.kv"
 reject missing_key 'missing key: core_build'
+
+base | grep -v '^startup = ' >"$work/missing_startup.kv"
+reject missing_startup 'missing key: startup'
+
+base | sed 's/^startup = A$/startup = /' >"$work/empty_startup.kv"
+reject empty_startup 'startup: empty value'
+
+{ base; printf 'startup = A\n'; } >"$work/duplicate_startup.kv"
+reject duplicate_startup 'startup: duplicate key'
+
+base | sed 's/^startup = A$/startup = none/' >"$work/invalid_startup.kv"
+reject invalid_startup 'startup: bad startup'
+
+base | sed 's/^startup_tier = A$/startup_tier = none/' >"$work/conflicting_startup.kv"
+reject conflicting_startup 'startup: conflicts with startup_tier' --startup-tiers "A none"
 
 { base; printf 'surprise_key = 1\n'; } >"$work/unknown_key.kv"
 reject unknown_key 'surprise_key: unknown key'

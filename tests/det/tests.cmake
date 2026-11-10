@@ -30,7 +30,6 @@ lynx_add_test(NAME det.two_runs
   COMMAND ${CMAKE_COMMAND}
     -DRUNNER=$<TARGET_FILE:lynx-run>
     -DCONTENT=${LYNX_CPU_LOOP_CONTENT}
-    -DCONTENT_SHA256=${LYNX_DET_CONTENT_SHA256}
     -DWORK=${LYNX_SCRATCH_DIR}/det/two_runs
     -P ${CMAKE_CURRENT_LIST_DIR}/two_runs.cmake
   LABELS det TIMEOUT 30)
@@ -42,6 +41,9 @@ lynx_add_test(NAME runner.cli
     -DTRAP_HEX=${LYNX_DET_CLI_TRAP_HEX}
     -DTRAP_TICKS=${LYNX_DET_CLI_TRAP_TICKS}
     -DTRAP_STOP=${LYNX_DET_CLI_TRAP_STOP}
+    -DC_COMPILER=${CMAKE_C_COMPILER}
+    -DINCLUDE_DIR=${PROJECT_SOURCE_DIR}/include
+    -DCORE_LIBRARY=$<TARGET_FILE:lynx_core_plain>
     -DWORK=${LYNX_SCRATCH_DIR}/det/runner_cli
     -P ${CMAKE_CURRENT_LIST_DIR}/runner_cli.cmake
   LABELS runner TIMEOUT 30)

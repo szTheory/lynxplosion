@@ -17,19 +17,25 @@ foreach(var RUNNER CONTENT WORK SH VALIDATE TRAP_FROM TRAP_TO TRAP_TICKS TRAP_ST
   endif()
 endforeach()
 
+include("${CMAKE_CURRENT_LIST_DIR}/bll.cmake")
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
 
 set(required
-  profile startup_tier content_sha256 content_load_addr input_digest tick_budget
-  ticks_consumed stop_reason core_build ram_policy ram_seed evidence_tier)
+  profile content_format startup startup_tier content_sha256 content_load_addr entry_addr object_len
+  payload_addr payload_len input_digest tick_budget ticks_consumed stop_reason core_build
+  ram_policy ram_seed evidence_tier)
 string(REPLACE ";" " " required_text "${required}")
 set(empty_input_sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)
 
-# run(<tag> <content> <ticks>): runs the runner into WORK/<tag>.
-function(run tag content ticks)
+# run(<tag> <source hex fixture> <ticks>): packages a canonical BLL object,
+# then runs the runner into WORK/<tag>.
+function(run tag source_hex ticks)
+  file(READ "${source_hex}" payload_hex)
+  set(object "${WORK}/${tag}.bll")
+  lynx_write_bll("${payload_hex}" "${object}" 0x0200)
   execute_process(
-    COMMAND "${RUNNER}" --content "${content}" --load-addr 0200
+    COMMAND "${RUNNER}" --content "${object}"
       --ram-policy splitmix64 --ram-seed 0123456789abcdef --ticks ${ticks}
       --out "${WORK}/${tag}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
@@ -90,6 +96,27 @@ value(fixed evidence_tier tier)
 value(fixed profile profile)
 if(NOT tier STREQUAL "R" OR NOT profile STREQUAL "none")
   message(FATAL_ERROR "manifest_fields: expected evidence_tier = R and profile = none, got ${tier} and ${profile}")
+endif()
+value(fixed content_format content_format)
+value(fixed startup startup)
+value(fixed startup_tier startup_tier)
+value(fixed content_load_addr content_load_addr)
+value(fixed entry_addr entry_addr)
+value(fixed object_len object_len)
+value(fixed payload_addr payload_addr)
+value(fixed payload_len payload_len)
+file(SHA256 "${WORK}/fixed.bll" want_content_sha256)
+file(SIZE "${WORK}/fixed.bll" want_object_len)
+math(EXPR want_payload_len "${want_object_len} - 10")
+if(NOT content_format STREQUAL "bs93" OR NOT startup STREQUAL "A" OR NOT startup_tier STREQUAL "A" OR
+   NOT content_load_addr STREQUAL "0x0200" OR NOT entry_addr STREQUAL "0x0200" OR
+   NOT payload_addr STREQUAL "0x0200" OR NOT object_len STREQUAL "${want_object_len}" OR
+   NOT payload_len STREQUAL "${want_payload_len}")
+  message(FATAL_ERROR "manifest_fields: BLL startup identity mismatch: format=${content_format}, startup=${startup}/${startup_tier}, load=${content_load_addr}, entry=${entry_addr}, object=${object_len}, payload=${payload_addr}/${payload_len}")
+endif()
+value(fixed content_sha256 content_sha256)
+if(NOT content_sha256 STREQUAL want_content_sha256)
+  message(FATAL_ERROR "manifest_fields: manifest content_sha256 ${content_sha256} does not match the complete BLL object ${want_content_sha256}")
 endif()
 value(fixed ram_seed seed)
 if(NOT seed MATCHES "^0x[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]$")
