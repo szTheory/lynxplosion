@@ -24,6 +24,16 @@ git() { command git -c core.quotePath=false "$@"; }
 cd "$(git rev-parse --show-toplevel)"
 
 SELF=scripts/hygiene.sh
+
+# A private scratch directory with an unpredictable name (never a fixed name a
+# planted symlink could redirect), removed on every exit and on a signal.
+work=$(mktemp -d "${TMPDIR:-/tmp}/hygiene.XXXXXX") || {
+  printf 'hygiene: cannot create a scratch directory\n' >&2
+  exit 1
+}
+trap 'rm -rf "$work"' EXIT
+trap 'exit 1' INT TERM
+
 fail=0
 found() {
   printf 'hygiene: %s: %s\n' "$1" "$2" >&2
@@ -113,13 +123,11 @@ mode=${1:---tree}
 [ $# -gt 0 ] && shift
 case $mode in
   --tree)
-    if ! git ls-files -z --cached --others --exclude-standard >"${TMPDIR:-/tmp}/hygiene-list.$$"; then
-      rm -f "${TMPDIR:-/tmp}/hygiene-list.$$"
+    if ! git ls-files -z --cached --others --exclude-standard >"$work/list"; then
       printf 'hygiene: cannot list files: git ls-files failed\n' >&2
       exit 1
     fi
-    tree_list=$(tr '\0' '\n' <"${TMPDIR:-/tmp}/hygiene-list.$$")
-    rm -f "${TMPDIR:-/tmp}/hygiene-list.$$"
+    tree_list=$(tr '\0' '\n' <"$work/list")
     check_files "$tree_list" tree_show
     ;;
   --history)

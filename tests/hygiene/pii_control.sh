@@ -103,6 +103,40 @@ case_text() {
 accept clean tree
 ok clean_tree
 
+# The scan keeps its file list in a private scratch directory with an
+# unpredictable name and removes it; it never uses a fixed, guessable name that a
+# planted symlink could redirect (WR-09). A git wrapper on PATH records what the
+# scratch area holds at the moment the scan lists the files.
+shim=$work/shim
+scratch=$work/scratch
+mkdir -p "$shim" "$scratch"
+real_git=$(command -v git)
+# shellcheck disable=SC2016 # the wrapper's own variables are written literally
+{
+  printf '#!/bin/sh\n'
+  printf 'case " $* " in *" ls-files "*) ls -A "$LYNX_SCRATCH" >"$LYNX_SNAP" ;; esac\n'
+  printf 'exec "$LYNX_REAL_GIT" "$@"\n'
+} >"$shim/git"
+chmod +x "$shim/git"
+(
+  cd "$iso"
+  PATH="$shim:$PATH" TMPDIR="$scratch" LYNX_SCRATCH="$scratch" LYNX_SNAP="$work/snap" \
+    LYNX_REAL_GIT="$real_git" sh scripts/hygiene.sh --tree
+) >"$work/out" 2>"$work/err" || {
+  cat "$work/err" >&2
+  fail scratch_tree "the scan failed with a private TMPDIR"
+}
+if grep -q '^hygiene-list' "$work/snap"; then
+  fail scratch_name "the file list used a fixed, guessable name"
+fi
+if ! grep -q '^hygiene\.' "$work/snap"; then
+  fail scratch_dir "no private scratch directory existed during the scan"
+fi
+if [ -n "$(ls -A "$scratch")" ]; then
+  fail scratch_cleanup "the scan left files in TMPDIR"
+fi
+ok scratch_private_and_removed
+
 case_text home_path notes.txt "see $fake_home/project for details" 'hygiene: home path: '
 case_text home_path_linux notes.txt "cd $fake_home2/work" 'hygiene: home path: '
 case_text email notes.txt "contact $fake_email today" 'hygiene: email: '
