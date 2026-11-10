@@ -21,6 +21,27 @@ set_target_properties(lynx-test-cpu-vectors PROPERTIES RUNTIME_OUTPUT_DIRECTORY 
 lynx_add_test(NAME cpu.vectors.reader_malformed COMMAND lynx-test-cpu-vectors self-test-reader
   LABELS cpu TIMEOUT 60)
 
+# The pinned per-opcode vectors for every defined profile. Each test checks the
+# sample hash against its fixture manifest, compares the plan it derives from the
+# sample and the profile table with the committed inventory byte for byte, then
+# runs every non-excluded vector through the CPU the machine uses. none uses the
+# synertek data (same data as lynx1) and also asserts that the 32 bit-op opcodes
+# stop as undefined.
+set(lynx_vec_dir ${PROJECT_SOURCE_DIR}/fixtures/vectors/sst65x02)
+set(lynx_vec_manifests ${PROJECT_SOURCE_DIR}/fixtures/manifests)
+set(lynx_vec_inventory ${PROJECT_SOURCE_DIR}/tests/inventory/vectors)
+foreach(lynx_vec_case IN ITEMS lynx1:synertek65c02 lynx2:rockwell65c02 none:synertek65c02)
+  string(REPLACE ":" ";" lynx_vec_parts "${lynx_vec_case}")
+  list(GET lynx_vec_parts 0 lynx_vec_profile)
+  list(GET lynx_vec_parts 1 lynx_vec_variant)
+  lynx_add_test(NAME cpu.vectors.${lynx_vec_profile}
+    COMMAND lynx-test-cpu-vectors run --profile ${lynx_vec_profile}
+      --sample ${lynx_vec_dir}/${lynx_vec_variant}.sample
+      --manifest ${lynx_vec_manifests}/sst65x02-${lynx_vec_variant}.manifest
+      --expect-plan ${lynx_vec_inventory}/${lynx_vec_profile}.txt
+    LABELS cpu TIMEOUT 120)
+endforeach()
+
 lynx_add_test(NAME cpu.cycles COMMAND lynx-test-cpu cycles LABELS cpu TIMEOUT 30)
 lynx_add_test(NAME cpu.tables COMMAND lynx-test-cpu tables LABELS cpu TIMEOUT 30)
 

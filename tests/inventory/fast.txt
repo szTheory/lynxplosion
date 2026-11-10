@@ -29,6 +29,9 @@ core.sha256	core
 cpu.cycles	cpu
 cpu.tables	cpu
 cpu.tables.self_test	cpu
+cpu.vectors.lynx1	cpu
+cpu.vectors.lynx2	cpu
+cpu.vectors.none	cpu
 cpu.vectors.reader_malformed	cpu
 det.golden	det
 det.golden.self_test	det
