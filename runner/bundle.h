@@ -40,6 +40,11 @@ int bundle_observe(const lynx_machine *m, const bundle_run *run, char obs_digest
 int bundle_write(const char *dir, const lynx_machine *m, const bundle_run *run,
                  char obs_digest_hex[65], char bundle_digest_hex[65]);
 
+/* Reads one binary BS93/BLL object, bounded to 65535 bytes. A 65536th byte,
+   read error or empty file is refused; output arguments change only on success.
+   On success *bytes holds *len bytes that the caller frees. */
+int bundle_read_bll(const char *path, uint8_t **bytes, size_t *len);
+
 /* Reads content given as hex text: pairs of hex digits, whitespace, and
    # comments to the end of the line. Anything else is refused, as are an odd
    digit count, a pair split by whitespace and an empty result. On success

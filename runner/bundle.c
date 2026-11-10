@@ -159,6 +159,16 @@ static const char *policy_text(uint32_t v)
     return v == LYNX_RAM_POLICY_SPLITMIX64 ? "splitmix64" : NULL;
 }
 
+static const char *content_format_text(uint32_t v)
+{
+    return v == LYNX_CONTENT_BS93 ? "bs93" : NULL;
+}
+
+static const char *startup_text(uint32_t v)
+{
+    return v == LYNX_STARTUP_A ? "A" : NULL;
+}
+
 static const char *stop_text(lynx_stop_reason v)
 {
     switch (v) {
@@ -185,6 +195,8 @@ static size_t manifest_text(const lynx_machine *m, const bundle_run *run, char *
     const char *profile;
     const char *policy;
     const char *stop;
+    const char *content_format;
+    const char *startup;
     int n;
     if (lynx_get_identity(m, &id) != LYNX_OK || id.has_content == 0) {
         return 0;
@@ -192,15 +204,24 @@ static size_t manifest_text(const lynx_machine *m, const bundle_run *run, char *
     profile = profile_text(id.profile);
     policy = policy_text(id.ram_policy);
     stop = stop_text(run->stop);
-    if (profile == NULL || policy == NULL || stop == NULL) {
+    content_format = content_format_text(id.content_format);
+    startup = startup_text(id.startup_tier);
+    if (profile == NULL || policy == NULL || stop == NULL || content_format == NULL ||
+        startup == NULL) {
         return 0;
     }
     lynx__sha256_hex(id.content_sha256, sha);
     n = snprintf(buf, cap,
                  "profile = %s\n"
-                 "startup_tier = A\n"
+                 "content_format = %s\n"
+                 "startup = %s\n"
+                 "startup_tier = %s\n"
                  "content_sha256 = %s\n"
                  "content_load_addr = 0x%04x\n"
+                 "entry_addr = 0x%04x\n"
+                 "object_len = %u\n"
+                 "payload_addr = 0x%04x\n"
+                 "payload_len = %u\n"
                  "input_digest = %s\n"
                  "tick_budget = %llu\n"
                  "ticks_consumed = %llu\n"
@@ -209,7 +230,9 @@ static size_t manifest_text(const lynx_machine *m, const bundle_run *run, char *
                  "ram_policy = %s\n"
                  "ram_seed = 0x%016llx\n"
                  "evidence_tier = R\n",
-                 profile, sha, (unsigned)id.content_addr, bundle_empty_input_digest,
+                 profile, content_format, startup, startup, sha, (unsigned)id.content_addr,
+                 (unsigned)id.entry_addr, (unsigned)id.object_len, (unsigned)id.content_addr,
+                 (unsigned)id.content_len, bundle_empty_input_digest,
                  (unsigned long long)run->tick_budget, (unsigned long long)run->ticks_consumed,
                  stop, lynx_build_id(), policy, (unsigned long long)id.ram_seed);
     if (n < 0 || (size_t)n >= cap) {
@@ -434,4 +457,39 @@ done:
     free(out);
     fclose(f);
     return rc;
+}
+
+int bundle_read_bll(const char *path, uint8_t **bytes, size_t *len)
+{
+    FILE *f;
+    uint8_t *out;
+    size_t n;
+    int failed;
+
+    if (path == NULL || bytes == NULL || len == NULL) {
+        return 1;
+    }
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return 1;
+    }
+    /* Read one byte beyond the BLL limit so oversized/trailing input is
+       detected without ever growing memory according to an untrusted file. */
+    out = malloc((size_t)UINT16_MAX + 1u);
+    if (out == NULL) {
+        fclose(f);
+        return 1;
+    }
+    n = fread(out, 1u, (size_t)UINT16_MAX + 1u, f);
+    failed = ferror(f);
+    if (fclose(f) != 0) {
+        failed = 1;
+    }
+    if (!failed && n != 0u && n <= UINT16_MAX) {
+        *bytes = out;
+        *len = n;
+        return 0;
+    }
+    free(out);
+    return 1;
 }

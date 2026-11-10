@@ -1,11 +1,11 @@
 /* lynx-run: the headless runner.
 
-   lynx-run --content FILE.hex --load-addr HEX --ticks N --out DIR
+   lynx-run --content FILE.bll --ticks N --out DIR
             [--ram-policy zero|splitmix64] [--ram-seed HEX]
             [--profile none|lynx1|lynx2]
 
-   Builds one machine through the public API, loads the hex content at the
-   load address, advances it by N master ticks and writes an artifact bundle
+   Builds one machine through the public API, loads one binary BS93/BLL object,
+   advances it by N master ticks and writes an artifact bundle
    into DIR (see bundle.h). Prints two lines on standard output:
 
      observation_digest <64 hex> (repeatability (R), not accuracy)
@@ -32,7 +32,7 @@
 #define EXIT_USAGE 2
 
 static const char usage_line[] =
-    "usage: lynx-run --content FILE.hex --load-addr HEX --ticks N --out DIR "
+    "usage: lynx-run --content FILE.bll --ticks N --out DIR "
     "[--ram-policy zero|splitmix64] [--ram-seed HEX] [--profile none|lynx1|lynx2]";
 
 static int usage_error(const char *reason, const char *what)
@@ -136,13 +136,11 @@ static void undefined_note(const lynx_machine *m)
 
 int main(int argc, char **argv)
 {
-    static const char *const flags[] = {"--content",    "--load-addr",  "--ticks",
-                                        "--out",        "--ram-policy", "--ram-seed",
-                                        "--profile"};
-    enum { F_CONTENT, F_LOAD, F_TICKS, F_OUT, F_POLICY, F_SEED, F_PROFILE, F_COUNT };
-    const char *value[F_COUNT] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+    static const char *const flags[] = {"--content", "--ticks", "--out", "--ram-policy",
+                                        "--ram-seed", "--profile"};
+    enum { F_CONTENT, F_TICKS, F_OUT, F_POLICY, F_SEED, F_PROFILE, F_COUNT };
+    const char *value[F_COUNT] = {NULL, NULL, NULL, NULL, NULL, NULL};
     uint64_t ticks = 0;
-    uint64_t load_addr = 0;
     uint64_t seed = 0;
     lynx_config cfg;
     bundle_run run;
@@ -173,16 +171,12 @@ int main(int argc, char **argv)
         }
         value[f] = argv[i + 1];
     }
-    if (value[F_CONTENT] == NULL || value[F_LOAD] == NULL || value[F_TICKS] == NULL ||
-        value[F_OUT] == NULL) {
-        return usage_error("--content, --load-addr, --ticks and --out are required", NULL);
+    if (value[F_CONTENT] == NULL || value[F_TICKS] == NULL || value[F_OUT] == NULL) {
+        return usage_error("--content, --ticks and --out are required", NULL);
     }
     if (parse_dec(value[F_TICKS], &ticks) != 0) {
         return usage_error("--ticks must be a decimal number from 0 to 18446744073709551615",
                            value[F_TICKS]);
-    }
-    if (parse_hex(value[F_LOAD], 8, &load_addr) != 0) {
-        return usage_error("--load-addr must be 1 to 8 hex digits", value[F_LOAD]);
     }
     lynx_config_default(&cfg);
     if (value[F_POLICY] != NULL) {
@@ -215,8 +209,8 @@ int main(int argc, char **argv)
 
     /* Everything below is a runtime outcome: one exit path frees what is held. */
     rc = EXIT_RUNTIME;
-    if (bundle_read_hex(value[F_CONTENT], &content, &content_len) != 0) {
-        runtime_error("cannot read content as hex text");
+    if (bundle_read_bll(value[F_CONTENT], &content, &content_len) != 0) {
+        runtime_error("cannot read content as a bounded binary BLL object");
         goto done;
     }
     mem = malloc(lynx_machine_size());
@@ -228,8 +222,7 @@ int main(int argc, char **argv)
         runtime_error("the core refused the configuration");
         goto done;
     }
-    if (load_addr > UINT32_MAX ||
-        lynx_load_ram_image(m, content, content_len, (uint32_t)load_addr) != LYNX_OK) {
+    if (lynx_load_bll(m, content, content_len) != LYNX_OK) {
         runtime_error("the core refused the content load");
         goto done;
     }
