@@ -92,7 +92,7 @@
     "default": "medium",
     "routing_tier_defaults": {
       "light": "xhigh",
-      "standard": "high",
+      "standard": "xhigh",
       "heavy": "high"
     }
   },
@@ -109,6 +109,6 @@
       "haiku": "claude-haiku-5-5"
     }
   },
-  "runtime": "claude",
+  "runtime": "codex",
   "granularity": "standard"
 }

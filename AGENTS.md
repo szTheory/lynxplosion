@@ -7,6 +7,10 @@ requirements. The name is not trademark clearance.
 
 ## Owner direction and workflow
 
+- Use Codex for OpenGSD until the owner requests another runtime switch
+  (2026-11-10). The owner switches between Codex and Claude; preserve each
+  runtime's model mappings in `.planning/config.json`. Resolve the configured
+  model and effort together when dispatching GSD agents.
 - Aim for a high-quality, accurate and useful Atari Lynx emulator. A narrow
   first delivery is sequencing, not a permanent ceiling on the goal.
 - The owner values broad console coverage, autonomous OpenGSD progress and
