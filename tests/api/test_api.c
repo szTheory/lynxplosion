@@ -1393,6 +1393,40 @@ static void case_snapshot_roundtrip(void)
     snapshot_coverage();
 }
 
+static void case_bll_identity(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    ADVANCE_EXPECT(m, 300u, 300u, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(m->mapctl, 0x0Cu);
+    CHECK_EQ_U64(save_into(m, blob_v), 0u);
+
+    /* Format 3 carries the complete object identity in the LE header and the
+       guest-written MAPCTL latch in the payload. */
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 3u);
+    CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
+    CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
+    CHECK_EQ_U64(get_le(blob_v + 208u, 4u), 0x0200u);
+    CHECK_EQ_U64(get_le(blob_v + 212u, 4u), sizeof bll_tracer);
+    CHECK_EQ_U64(get_le(blob_v + 216u, 4u), LYNX__SNAPSHOT_PAYLOAD_LEN);
+    CHECK_EQ_U64(blob_v[LYNX__SNAPSHOT_HEADER_LEN + 14u], 0x0Cu);
+    CHECK_EQ_U64(blob_v[LYNX__SNAPSHOT_HEADER_LEN + 15u], 0u);
+
+    m->mapctl = 0u;
+    CHECK_EQ_U64(lynx_snapshot_restore(m, blob_v, SNAP_TOTAL), LYNX_OK);
+    CHECK_EQ_U64(m->mapctl, 0x0Cu);
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.bll_identity\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 /* Recomputes the payload hash of a blob in place, so a test can corrupt a
    value and still pass the hash check. White-box on the layout. */
 static void rehash_payload(unsigned char *blob)
@@ -2419,6 +2453,7 @@ static const struct {
 } cases[] = {
     {"advance_budget", case_advance_budget},
     {"advance_slicing", case_advance_slicing},
+    {"bll_identity", case_bll_identity},
     {"bll_tracer", case_bll_tracer},
     {"build_id", case_build_id},
     {"cost_model", case_cost_model},

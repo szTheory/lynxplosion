@@ -1,0 +1,10 @@
+{
+  "command": "build/check/tests/lynx-test-api bll_identity",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.bll_identity\n",
+  "targetTest": "api.bll_identity",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "Snapshot version 3 serializes the BS93 format, startup A, entry 0x0200, full object length and MAPCTL 0x0C, then restores the latch.",
+  "actual": "The target ran the valid BLL guest but observed snapshot version 2; the v3 identity fields and MAPCTL payload byte were absent, and restore left MAPCTL at zero.",
+  "semanticAssessment": "The named target executed the BLL guest, reached MAPCTL 0x0C, saved a valid snapshot, and failed on the planned format-3 identity and latch-preservation assertions. There was no build, setup, load, or unrelated test failure."
+}
