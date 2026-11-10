@@ -18,7 +18,7 @@
 #                   other value until the allowed list is extended.
 # content_sha256    SHA-256 (64 lowercase hex digits) of the content bytes run,
 #                   from the content_sha256 line of the run's run.manifest.
-# startup_tier      the startup route, from the run manifest (A: direct load).
+# startup_tier      the startup route, from the run manifest (A: direct load; none for a software-model vector).
 # evidence_tier     T1 to T7, or R for repeatability.
 # inventory_sha256  SHA-256 of tests/inventory/fast.txt, over its exact bytes and
 #                   order. Any change to the inventory makes the claim stale.
@@ -26,6 +26,13 @@
 #                     sh scripts/check-claims.sh --inventory-sha256
 #                   Update every claim to it only after re-running the evidence.
 # evidence          the test names or bundle files that back the claim.
+#
+# A future CPU vector claim (Phase 2 onward) sets content_sha256 to the SHA-256 of
+# the vector inventory file tests/inventory/vectors/<profile>.txt, sets
+# startup_tier = none (a software-model vector injects CPU state and is not tier A)
+# and evidence_tier T1, and claims a software model on a flat test bus only: no
+# timing, no interrupt and no memory-map claim. A claim that names a profile
+# (lynx1 or lynx2) waits for owner decision O1.
 claim = <one sentence>
 profile = <none until O1 is decided>
 content_sha256 = <64 hex>
