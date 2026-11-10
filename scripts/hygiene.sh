@@ -40,7 +40,7 @@ found() {
 
 # A home directory names a person (also in the dashed form agent tools use for
 # project folders). Hosted CI runner homes are the exception.
-HOME_PATH='(/Users/|/home/)[A-Za-z0-9._-]+|/root/[A-Za-z0-9._-]+|[A-Za-z]:[\\/]{1,2}Users[\\/]{1,2}[A-Za-z0-9._-]+|-Users-[A-Za-z0-9._]+-'
+HOME_PATH='(/Users/|/home/)[A-Za-z0-9._-]+|[A-Za-z]:[\\/]{1,2}Users[\\/]{1,2}[A-Za-z0-9._-]+|-Users-[A-Za-z0-9._]+-'
 HOME_OK='(/Users/|/home/)runner'
 # Any address except GitHub noreply, the AI co-author noreply, documentation
 # domains and SSH remotes.

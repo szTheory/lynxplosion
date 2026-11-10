@@ -159,7 +159,12 @@ case_text credential_anthropic notes.txt "token $fake_ant" 'hygiene: credential:
 case_text credential_sk notes.txt "key=$fake_sk" 'hygiene: credential: '
 case_text credential_npm notes.txt "token $fake_npm" 'hygiene: credential: '
 case_text credential_jwt notes.txt "bearer $fake_jwt" 'hygiene: credential: '
-case_text home_path_root notes.txt "cp x $fake_root/.cache" 'hygiene: home path: '
+# The root account's home is not a person's, and a work directory named root is
+# common in scripts, so /root/ is deliberately not a pattern.
+printf '%s\n' "cp x $fake_root/.cache" >"$iso/rootdir.txt"
+accept root_home_not_personal tree
+rm -f "$iso/rootdir.txt"
+ok root_home_not_a_pattern
 case_text home_path_windows notes.txt "open $fake_win/file" 'hygiene: home path: '
 case_text home_path_windows_json notes.txt "{\"path\": \"$fake_win_json\\\\x\"}" 'hygiene: home path: '
 # Words that merely contain sk- or end in a short token are not credentials.
