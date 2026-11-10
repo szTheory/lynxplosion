@@ -1,0 +1,10 @@
+{
+  "command": "ctest --preset check -R ^api.snapshot_continue$ --no-tests=error --output-junit TMP/03-06-T1-RED.xml --output-on-failure",
+  "exitCode": 8,
+  "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"(empty)\"\n\ttests=\"1\"\n\tfailures=\"1\"\n\tdisabled=\"0\"\n\tskipped=\"0\"\n\thostname=\"\"\n\ttime=\"0\"\n\ttimestamp=\"2026-11-10T14:40:26\"\n\t>\n\t<testcase name=\"api.snapshot_continue\" classname=\"api.snapshot_continue\" time=\"0.972672\" status=\"fail\">\n\t\t<failure message=\"Failed\"/>\n\t\t<properties>\n\t\t\t<property name=\"cmake_labels\" value=\"api\"/>\n\t\t</properties>\n\t\t<system-out>PROJECT_ROOT/tests/api/test_api.c:2090: event.hit == 0u failed: 1 != 0\nPROJECT_ROOT/tests/api/test_api.c:2091: event.address == 0u failed: 1024 != 0\nPROJECT_ROOT/tests/api/test_api.c:2092: event.value == 0u failed: 90 != 0\nPROJECT_ROOT/tests/api/test_api.c:2093: event.hit_tick == 0u failed: 25 != 0\nPROJECT_ROOT/tests/api/test_api.c:2094: event.return_tick == 0u failed: 26 != 0\nPROJECT_ROOT/tests/api/test_api.c:2099: stop == LYNX_STOP_BUDGET failed: 2 != 0\n</system-out>\n\t</testcase>\n</testsuite>\n",
+  "targetTest": "api.snapshot_continue",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "A successful restore clears a prior hit and a newly armed watch, while preserving guest continuation.",
+  "actual": "The restored instance retained the prior hit event and the armed watch; the intended clear checks failed with WATCH state visible.",
+  "semanticAssessment": "The named CTest case executed and failed on the planned post-restore event-clear and observer-clear assertions. Test discovery, compilation, setup, and fixture loading succeeded; the hit metadata and stop reason demonstrate missing host observer clearing."
+}

@@ -26,6 +26,7 @@ api.reset_power_on	api
 api.seam_agreement.lynx1	api
 api.seam_agreement.lynx2	api
 api.seam_agreement.none	api
+api.snapshot_continue	api
 api.snapshot_refusal	api
 api.snapshot_roundtrip	api
 core.cpu_includes	core

@@ -48,13 +48,10 @@ static const uint8_t churn_loop[46] = {
     0xe7, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0x04, 0x32, 0x60,
 };
 
-/* A top-of-memory loop at $FFF0: NOP x13, then JMP $FFF0 whose operand ends
-   at $FFFF, so the program counter wraps through $0000 inside the JMP.
-   13 NOPs of 2 cycles and a 3-cycle JMP: 29 cycles, 145 ticks per pass. */
-static const uint8_t wrap_image[16] = {
-    0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea,
-    0x4c, 0xf0, 0xff,
-};
+/* Four NOPs at $FFFA-$FFFD, then JMP $FFFA at $FFFE. Its low operand is
+   $FFFF and the high operand comes from $0000 after PC wraps. This private
+   snapshot fixture explicitly supplies the vector-window RAM mapping. */
+static const uint8_t wrap_image[6] = {0xea, 0xea, 0xea, 0xea, 0x4c, 0xfa};
 
 /* One byte: the bit-op slot $07, so profile none stops before it. */
 static const uint8_t trap_image[1] = {0x07};
@@ -1702,20 +1699,23 @@ static void case_advance_budget(void)
     CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0x0201u);
     CHECK_EQ_U64(ticks_of(m), 10u);
 
-    /* The top-of-memory loop runs across $FFFF without leaving its 16 bytes. */
-    load_at(m, wrap_image, sizeof wrap_image, 0xFFF0u);
-    /* 28 cycles start before tick 140: 26 NOP cycles, the JMP opcode and its
-       low operand byte, so PC is at the high byte. */
-    ADVANCE_EXPECT(m, 140u, 140u, LYNX_STOP_BUDGET);
+    /* White-box CPU boundary construction only: select RAM for $FFFA-$FFFF
+       and seed the JMP high operand at $0000. FFF8/FFF9 keep their fixed routes. */
+    load_at(m, wrap_image, sizeof wrap_image, 0xFFFAu);
+    m->mapctl = 0x08u;
+    m->ram[0x0000u] = 0xFFu;
+    ADVANCE_EXPECT(m, 44u, 44u, LYNX_STOP_BUDGET);
     CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFFFu);
-    /* The high byte is fetched at tick 140: PC wraps and the JMP lands. */
     ADVANCE_EXPECT(m, 1u, 1u, LYNX_STOP_BUDGET);
-    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFF0u);
-    ADVANCE_EXPECT(m, 4u, 4u, LYNX_STOP_BUDGET);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFFFu); /* half-open budget, operand not granted */
+    ADVANCE_EXPECT(m, 5u, 5u, LYNX_STOP_BUDGET);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0x0000u); /* low operand fetch wrapped PC */
+    ADVANCE_EXPECT(m, 5u, 5u, LYNX_STOP_BUDGET);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFFAu); /* high operand fetched after wrap */
     for (uint32_t pass = 2u; pass <= 5u; pass++) {
-        ADVANCE_EXPECT(m, 145u, 145u, LYNX_STOP_BUDGET);
-        CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFF0u);
-        CHECK_EQ_U64(ticks_of(m), 145u * pass);
+        ADVANCE_EXPECT(m, 55u, 55u, LYNX_STOP_BUDGET);
+        CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFFAu);
+        CHECK_EQ_U64(ticks_of(m), 55u * pass);
     }
 
     /* Guest time near the 64-bit limit (white-box): with less than the headroom
@@ -2054,6 +2054,63 @@ static void snapshot_coverage(void)
     CHECK(memcmp(machine_buf, buf_b, MSIZE) == 0);
 }
 
+static void case_snapshot_continue(void)
+{
+    lynx_machine *watched =
+        snap_instance(machine_buf, SNAP_SEED, watch_program, sizeof watch_program, 0x0200u);
+    lynx_machine *plain =
+        snap_instance(buf_b, SNAP_SEED, watch_program, sizeof watch_program, 0x0200u);
+    if (watched == NULL || plain == NULL) {
+        return;
+    }
+
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_watch_configure(watched, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(watched, 26u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(consumed, 26u);
+    CHECK_EQ_U64(lynx_advance(plain, 26u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 26u);
+    CHECK_EQ_U64(ticks_of(watched), 26u);
+    CHECK_EQ_U64(ticks_of(plain), 26u);
+
+    /* A hit is host observation only: the two guest states serialize alike. */
+    CHECK_EQ_U64(save_into(watched, blob_v), 0u);
+    CHECK_EQ_U64(save_into(plain, blob_c), 0u);
+    CHECK(memcmp(blob_v, blob_c, SNAP_TOTAL) == 0);
+
+    /* Restoring a matching guest state clears both a prior hit and a newly
+       armed watch, while preserving the established post-write tick contract. */
+    CHECK_EQ_U64(lynx_snapshot_restore(watched, blob_c, SNAP_TOTAL), LYNX_OK);
+    lynx_watch_event event;
+    memset(&event, 0xA5, sizeof event);
+    CHECK_EQ_U64(lynx_watch_get(watched, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    CHECK_EQ_U64(event.address, 0u);
+    CHECK_EQ_U64(event.value, 0u);
+    CHECK_EQ_U64(event.hit_tick, 0u);
+    CHECK_EQ_U64(event.return_tick, 0u);
+
+    CHECK_EQ_U64(lynx_watch_configure(watched, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_snapshot_restore(watched, blob_c, SNAP_TOTAL), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(watched, 30u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 30u);
+    CHECK_EQ_U64(ticks_of(watched), 56u);
+    CHECK_EQ_HEX(watched->ram[0x0400u], 0xA6u);
+
+    /* A refusal leaves the active observer configuration byte-for-byte intact. */
+    CHECK_EQ_U64(lynx_watch_configure(watched, 0x0410u, 1u), LYNX_OK);
+    memcpy(blob_bad, blob_c, SNAP_TOTAL);
+    blob_bad[0] ^= 1u;
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_snapshot_restore(watched, blob_bad, SNAP_TOTAL),
+                 LYNX_ERR_SNAPSHOT_INVALID);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+}
+
 static void case_snapshot_roundtrip(void)
 {
     lynx_machine *m = snap_instance(machine_buf, SNAP_SEED, churn_loop, sizeof churn_loop, 0x0200u);
@@ -2174,15 +2231,18 @@ static void case_snapshot_roundtrip(void)
     CHECK_EQ_U64(lynx_snapshot_restore(fresh, blob_v, SNAP_TOTAL), LYNX_ERR_STATE);
     CHECK_UNCHANGED(buf_b, snap_b);
 
-    /* Top of the address space: the wrap loop at 0xFFF0, saved inside the JMP
-       with PC at its last byte 0xFFFF (140 ticks), restored and continued. */
-    m = snap_instance(machine_buf, SNAP_SEED, wrap_image, sizeof wrap_image, 0xFFF0u);
-    m2 = snap_instance(buf_b, SNAP_SEED, wrap_image, sizeof wrap_image, 0xFFF0u);
+    /* Top of the address space: a white-box vector-window mapping plus a raw
+       $0000 high operand lets the real CPU fetch the JMP operand across wrap. */
+    m = snap_instance(machine_buf, SNAP_SEED, wrap_image, sizeof wrap_image, 0xFFFAu);
+    m2 = snap_instance(buf_b, SNAP_SEED, wrap_image, sizeof wrap_image, 0xFFFAu);
     if (m == NULL || m2 == NULL) {
         return;
     }
-    advance_ticks(m, 140u);
-    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0xFFFFu);
+    m->mapctl = 0x08u;
+    m->ram[0x0000u] = 0xFFu;
+    advance_ticks(m, 50u);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0x0000u);
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0000u);
     memcpy(snap_a, machine_buf, MSIZE);
     CHECK_EQ_U64(save_into(m, blob_v), 0u);
     advance_ticks(m, 300u);
@@ -2193,9 +2253,9 @@ static void case_snapshot_roundtrip(void)
     CHECK_UNCHANGED(machine_buf, at_top);
     CHECK_EQ_U64(lynx_snapshot_restore(m2, blob_v, SNAP_TOTAL), LYNX_OK);
     CHECK_UNCHANGED(buf_b, snap_a);
-    CHECK_EQ_HEX(reg_of(m2, LYNX_REG_PC), 0xFFFFu);
+    CHECK_EQ_HEX(reg_of(m2, LYNX_REG_PC), 0x0000u);
     advance_ticks(m2, 5u);
-    CHECK_EQ_HEX(reg_of(m2, LYNX_REG_PC), 0xFFF0u); /* wrapped and jumped */
+    CHECK_EQ_HEX(reg_of(m2, LYNX_REG_PC), 0xFFFAu); /* fetched through wrap and jumped */
     advance_ticks(m2, 295u);
     CHECK_UNCHANGED(buf_b, at_top);
 
@@ -3327,6 +3387,7 @@ static const struct {
     {"sha256", case_sha256},
     {"snapshot_refusal", case_snapshot_refusal},
     {"snapshot_roundtrip", case_snapshot_roundtrip},
+    {"snapshot_continue", case_snapshot_continue},
     {"watch_controls", case_watch_controls},
     {"watch_post_write", case_watch_post_write},
 };
