@@ -10,10 +10,17 @@ _Static_assert(sizeof(lynx_stop_reason) == 4, "stop reason is 32 bits");
 _Static_assert(sizeof(lynx_config) == 24, "config layout");
 _Static_assert(sizeof(lynx_identity) == 64, "identity layout");
 _Static_assert(LYNX_STOP_HALT == 3, "stop reason HALT value");
-_Static_assert(LYNX_REG_COUNT == 6, "register count");
+_Static_assert(LYNX_STOP_UNDEFINED == 4, "stop reason UNDEFINED value");
+_Static_assert(LYNX_PROFILE_NONE == 0, "profile id none");
+_Static_assert(LYNX_PROFILE_LYNX1 == 1, "profile id lynx1");
+_Static_assert(LYNX_PROFILE_LYNX2 == 2, "profile id lynx2");
+_Static_assert(LYNX_REG_CPU_STATE == 6, "register id CPU_STATE");
+_Static_assert(LYNX_REG_CPU_LATCH == 7, "register id CPU_LATCH");
+_Static_assert(LYNX_REG_COUNT == 8, "register count");
 _Static_assert(LYNX_ADDRESS_SPACE == 0x10000u, "address space size");
 
 static void (*const config_default_fn)(lynx_config *) = lynx_config_default;
+static const char *(*const profile_name_fn)(uint32_t) = lynx_profile_name;
 static size_t (*const machine_size_fn)(void) = lynx_machine_size;
 static size_t (*const machine_align_fn)(void) = lynx_machine_align;
 static lynx_status (*const machine_init_fn)(void *, size_t, const lynx_config *,
@@ -43,6 +50,7 @@ int main(void);
 int main(void)
 {
     (void)config_default_fn;
+    (void)profile_name_fn;
     (void)machine_size_fn;
     (void)machine_align_fn;
     (void)machine_init_fn;

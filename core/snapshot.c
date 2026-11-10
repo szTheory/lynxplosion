@@ -1,4 +1,4 @@
-/* Snapshot save and restore, format version 1.
+/* Snapshot save and restore, format version 2.
 
    A snapshot is a header followed by a payload. Every integer is
    little-endian and is written and read one field at a time, never by copying
@@ -6,7 +6,7 @@
 
    Header (236 bytes), in order:
      0    magic          8 bytes  "LYNXSNAP"
-     8    format_version u32      1
+     8    format_version u32      2
      12   header_len     u32      236
      16   build_id       128      lynx__build_id, NUL-padded to 128
      144  profile        u32
@@ -15,17 +15,26 @@
      160  content_sha256 32
      192  content_addr   u32
      196  content_len    u32
-     200  payload_len    u32      65552
+     200  payload_len    u32      65568
      204  payload_sha256 32       SHA-256 of the payload
-   Payload (65552 bytes), in order:
-     pc u16, a u8, x u8, y u8, s u8, p u8, halted u8, guest_ticks u64,
-     ram 65536 bytes.
+   Payload (65568 bytes), offsets relative to its start:
+     0  pc u16        2  a      3  x      4  y      5  s
+     6  p (bits 4 and 5 set)    7  cpu latches (lynx__cpu.flags)
+     8  opcode        9  step (cycle index inside the instruction)
+     10 ea u16        12 tmp    13 cost_model     14 reserved u16, zero
+     16 guest_ticks u64         24 cpu_ready_at u64
+     32 ram 65536 bytes
+   The profile is not in the payload: it is part of the header identity. The
+   CPU's pending bus request is derived state and is never stored; restore
+   recomputes it with lynx__cpu_repost.
 
    Restore accepts a blob only for an instance with the identical build id,
    profile, RAM policy, seed and loaded content: the identity comes from the
    instance, so a blob cannot assert its own compatibility. It validates in a
    fixed order, all before the first write, and then applies in one step that
-   cannot fail. A refused restore leaves the instance byte-identical.
+   cannot fail. A refused restore leaves the instance byte-identical. Format 1
+   (the Phase 1 skeleton) and every other version are refused as a version
+   error.
 
    Reversibility: restore needs the same build, so no old snapshot is ever
    accepted and the format may change in any later build without migration. */
@@ -62,9 +71,16 @@ enum {
     P_Y = 4,
     P_S = 5,
     P_P = 6,
-    P_HALTED = 7,
-    P_TICKS = 8,
-    P_RAM = 16,
+    P_FLAGS = 7,
+    P_OPCODE = 8,
+    P_STEP = 9,
+    P_EA = 10,
+    P_TMP = 12,
+    P_COST_MODEL = 13,
+    P_RESERVED = 14,
+    P_TICKS = 16,
+    P_READY_AT = 24,
+    P_RAM = 32,
     P_END = P_RAM + (int)LYNX_ADDRESS_SPACE
 };
 
@@ -164,14 +180,21 @@ lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, 
     }
 
     uint8_t *payload = buf + LYNX__SNAPSHOT_HEADER_LEN;
-    put_u16(payload + P_PC, m->pc);
-    payload[P_A] = m->a;
-    payload[P_X] = m->x;
-    payload[P_Y] = m->y;
-    payload[P_S] = m->s;
-    payload[P_P] = m->p;
-    payload[P_HALTED] = m->halted;
+    put_u16(payload + P_PC, m->cpu.pc);
+    payload[P_A] = m->cpu.a;
+    payload[P_X] = m->cpu.x;
+    payload[P_Y] = m->cpu.y;
+    payload[P_S] = m->cpu.s;
+    payload[P_P] = (uint8_t)(m->cpu.p | 0x30u);
+    payload[P_FLAGS] = m->cpu.flags;
+    payload[P_OPCODE] = m->cpu.opcode;
+    payload[P_STEP] = m->cpu.step;
+    put_u16(payload + P_EA, m->cpu.ea);
+    payload[P_TMP] = m->cpu.tmp;
+    payload[P_COST_MODEL] = m->cost_model;
+    put_u16(payload + P_RESERVED, 0u);
     put_u64(payload + P_TICKS, m->guest_ticks);
+    put_u64(payload + P_READY_AT, m->cpu_ready_at);
     memcpy(payload + P_RAM, m->ram, LYNX_ADDRESS_SPACE);
 
     memcpy(buf + OFF_MAGIC, LYNX__SNAPSHOT_MAGIC, LYNX__SNAPSHOT_MAGIC_LEN);
@@ -252,22 +275,61 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     if (memcmp(digest, buf + OFF_PAYLOAD_SHA, sizeof digest) != 0) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
-    /* 10. Value ranges, in 32-bit arithmetic: content_addr + content_len can
-       reach 0x10000, which a 16-bit sum would wrap to zero. */
-    uint32_t pc = (uint32_t)get_u16(payload + P_PC);
-    if (payload[P_HALTED] > 1u || pc < m->content_addr || pc - m->content_addr >= m->content_len) {
+    /* 10. Field values. The CPU fields are assembled into a candidate (a
+       local, not the instance) and judged by the CPU's own reachability
+       predicate under this instance's profile. Any PC is valid: the CPU may
+       run anywhere in the address space. */
+    lynx__cpu cand;
+    memset(&cand, 0, sizeof cand);
+    cand.pc = get_u16(payload + P_PC);
+    cand.a = payload[P_A];
+    cand.x = payload[P_X];
+    cand.y = payload[P_Y];
+    cand.s = payload[P_S];
+    cand.p = payload[P_P];
+    cand.flags = payload[P_FLAGS];
+    cand.opcode = payload[P_OPCODE];
+    cand.step = payload[P_STEP];
+    cand.ea = get_u16(payload + P_EA);
+    cand.tmp = payload[P_TMP];
+    cand.profile = m->cpu.profile;
+    const lynx__cpu_decode *table = lynx__cpu_table(cand.profile);
+    if (!lynx__cpu_state_valid(&cand, table)) {
+        return LYNX_ERR_SNAPSHOT_INVALID;
+    }
+    if (get_u16(payload + P_RESERVED) != 0u) {
+        return LYNX_ERR_SNAPSHOT_INVALID;
+    }
+    /* The cost model is identity: it must be one this build defines and the
+       one this instance uses. */
+    if (!lynx__bus_cost_model_valid(payload[P_COST_MODEL]) ||
+        payload[P_COST_MODEL] != m->cost_model) {
+        return LYNX_ERR_SNAPSHOT_INVALID;
+    }
+    /* Subtraction form: ticks + 255 could wrap, ready - ticks cannot once
+       ready >= ticks. */
+    uint64_t ticks = get_u64(payload + P_TICKS);
+    uint64_t ready = get_u64(payload + P_READY_AT);
+    if (ready < ticks || ready - ticks > 255u) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
 
-    /* Apply: one step, field by field, no failure path. */
-    m->pc = (uint16_t)pc;
-    m->a = payload[P_A];
-    m->x = payload[P_X];
-    m->y = payload[P_Y];
-    m->s = payload[P_S];
-    m->p = payload[P_P];
-    m->halted = payload[P_HALTED];
-    m->guest_ticks = get_u64(payload + P_TICKS);
+    /* Apply: one step, field by field, no failure path. The pending bus
+       request is recomputed from the restored state. */
+    m->cpu.pc = cand.pc;
+    m->cpu.a = cand.a;
+    m->cpu.x = cand.x;
+    m->cpu.y = cand.y;
+    m->cpu.s = cand.s;
+    m->cpu.p = cand.p;
+    m->cpu.flags = cand.flags;
+    m->cpu.opcode = cand.opcode;
+    m->cpu.step = cand.step;
+    m->cpu.ea = cand.ea;
+    m->cpu.tmp = cand.tmp;
+    lynx__cpu_repost(&m->cpu, table);
+    m->guest_ticks = ticks;
+    m->cpu_ready_at = ready;
     memcpy(m->ram, payload + P_RAM, LYNX_ADDRESS_SPACE);
     return LYNX_OK;
 }

@@ -148,7 +148,7 @@ int bundle_observe(const lynx_machine *m, const bundle_run *run, char obs_digest
 
 static const char *profile_text(uint32_t v)
 {
-    return v == LYNX_PROFILE_NONE ? "none" : NULL;
+    return lynx_profile_name(v);
 }
 
 static const char *policy_text(uint32_t v)
@@ -170,6 +170,8 @@ static const char *stop_text(lynx_stop_reason v)
         return "watch";
     case LYNX_STOP_HALT:
         return "halt";
+    case LYNX_STOP_UNDEFINED:
+        return "undefined";
     default:
         return NULL;
     }
