@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: CPU Profiles and Per-Opcode Vectors
 status: executing
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-11-10T05:06:05.308Z"
+stopped_at: Completed 02-06-PLAN.md
+last_updated: "2026-11-10T05:20:54.540Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 2 execution started
-state_head: 8c867b3e2dc4cbd1c81c27fefe185b58290f9233
+state_head: f317f9163441f8e6ac6f74abb6514caf95cab62a
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 24
-  completed_plans: 18
+  completed_plans: 19
   percent: 17
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 2 (CPU Profiles and Per-Opcode Vectors) — EXECUTING
-Plan: 6 of 11
+Plan: 7 of 11
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 2 execution started
 
@@ -74,6 +74,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 2 P03 | 7 min | 2 tasks | 9 files |
 | Phase 2 P04 | 1 session | 3 tasks | 9 files |
 | Phase 2 P05 | one session | 3 tasks | 9 files |
+| Phase 02 P06 | one session | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -118,6 +119,8 @@ Recent decisions affecting current work:
 - [Phase 2]: 02-04: vector reason order is EXCL_HW, UNV_SHAPE, DEC_EXTRA, TIER_STATE; reader self-test registered as cpu.vectors.reader_malformed
 - [Phase 2]: 02-05: no_step control compares failures with asserted minus unmoved (identity incl. pc), since identity ignores pc and every pc-advancing vector fails with no CPU step
 - [Phase 2]: 02-05: added cpu.vectors.complete_mode so the full lane's whole-file runner path is checked offline; vectors_pin_controls.cmake as a separate loop driver
+- [Phase 02]: 02-06: one source tag per scenario row; mixed claims (wrap rule plus dummy address) are split into a per-cycle SST-MODEL row and a final-state WDC or LT-HW row
+- [Phase 02]: 02-06: WAI/STP evidence form is table absence (cpu.tables) plus the Test 8 replica showing CB/DB as 1-byte 1-cycle non-polling NOPs on both profiles
 
 ### Pending Todos
 
@@ -145,6 +148,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T05:06:05.227Z
-Stopped at: Completed 02-05-PLAN.md
+Last session: 2026-11-10T05:20:54.453Z
+Stopped at: Completed 02-06-PLAN.md
 Resume file: None
