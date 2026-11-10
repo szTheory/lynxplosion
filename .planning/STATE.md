@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Memory Map, Direct-Load Startup and First Diagnostic
 status: executing
-stopped_at: Completed 03-06-PLAN.md
-last_updated: "2026-11-10T20:19:26.519Z"
+stopped_at: Completed 03-07-PLAN.md
+last_updated: "2026-11-10T21:15:41.433Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 03 execution started
-state_head: 1d63e3db30621a96551f423c2d2df34227c6c623
+state_head: 9ffe4aabf3c2b5497505bc3c49cbadf6f5daac10
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 33
-  completed_plans: 30
+  completed_plans: 31
   percent: 33
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 03 (Memory Map, Direct-Load Startup and First Diagnostic) — EXECUTING
-Plan: 7 of 9
+Plan: 8 of 9
 Status: Ready to execute
 Last activity: 2026-11-10 — Phase 03 execution started
 
@@ -87,6 +87,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 03 P04 | 36 min | 2 tasks | 10 files |
 | Phase 03 P05 | 17 min | 2 tasks | 10 files |
 | Phase 03 P06 | 49 min | 2 tasks | 9 files |
+| Phase 03 P07 | 56min | 2 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -158,6 +159,8 @@ Recent decisions affecting current work:
 - [Phase 03]: 03-06: successful restore clears host watch state only after validation and guest-state apply; refusals preserve the whole instance.
 - [Phase 03]: 03-06: preserve watch grant/grant+1 semantics; host observer state stays out of guest snapshots/digests, so no golden rebaseline was needed.
 - [Phase 03]: 03-06: DET-03 unclassified probe remains a flagged assumption; repeatability checks do not auto-classify it.
+- [Phase 03]: Harness resolves linked symbols and validates the fixed result schema before dependent pixel reads.
+- [Phase 03]: Flat5 completion bounds remain PLACEHOLDER diagnostic checks, not hardware timing evidence.
 
 ### Pending Todos
 
@@ -184,6 +187,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T20:19:26.344Z
-Stopped at: Completed 03-06-PLAN.md
+Last session: 2026-11-10T21:15:40.925Z
+Stopped at: Completed 03-07-PLAN.md
 Resume file: None
