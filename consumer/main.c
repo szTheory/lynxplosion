@@ -1,6 +1,13 @@
 /* Public-only host consumer for the project-authored Phase 3 diagnostic. */
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE 1
+#elif defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
+
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -9,7 +16,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
+
+#if defined(__linux__)
+#include <linux/fs.h>
+#endif
 
 #include "lynxplosion.h"
 
@@ -512,72 +524,175 @@ static int write_exclusive(const char *path, const void *bytes, size_t length)
 {
     FILE *file = fopen(path, "wbx");
     int failed;
+#if defined(LYNX_CONSUMER_TESTING)
+    const char *injected = getenv("LYNX_TEST_IO_FAILURE");
+    int inject_write = injected != NULL && strcmp(injected, "write") == 0;
+    int inject_close = injected != NULL && strcmp(injected, "close") == 0;
+#endif
     if (file == NULL) {
         return 1;
     }
+#if defined(LYNX_CONSUMER_TESTING)
+    failed = inject_write != 0 || fwrite(bytes, 1u, length, file) != length;
+#else
     failed = fwrite(bytes, 1u, length, file) != length;
+#endif
     if (fclose(file) != 0) {
         failed = 1;
     }
+#if defined(LYNX_CONSUMER_TESTING)
+    if (inject_close != 0) {
+        failed = 1;
+    }
+#endif
     if (failed != 0) {
-        (void)remove(path);
+        if (unlink(path) != 0 && errno != ENOENT) {
+            return 2;
+        }
         return 1;
     }
     return 0;
+}
+
+static int normalize_destination(const char *directory, char *normalized,
+                                 size_t capacity)
+{
+    size_t length = strlen(directory);
+    while (length > 1u && directory[length - 1u] == '/') {
+        length--;
+    }
+    if (length == 0u || length >= capacity) {
+        return 1;
+    }
+    memcpy(normalized, directory, length);
+    normalized[length] = '\0';
+    return 0;
+}
+
+static int destination_is_absent(const char *directory)
+{
+    struct stat info;
+    if (lstat(directory, &info) == 0) {
+        return report_error("output directory already exists; choose a new empty --out path (existing files were not changed)");
+    }
+    if (errno != ENOENT) {
+        return report_error("cannot inspect the output path; check its parent path and permissions");
+    }
+    return 0;
+}
+
+static int publish_directory_exclusive(const char *staging, const char *directory)
+{
+#if defined(__APPLE__)
+    return renamex_np(staging, directory, RENAME_EXCL);
+#elif defined(__linux__)
+    return renameat2(AT_FDCWD, staging, AT_FDCWD, directory, RENAME_NOREPLACE);
+#else
+    (void)staging;
+    (void)directory;
+    errno = ENOTSUP;
+    return -1;
+#endif
 }
 
 static int publish_outputs(const char *directory, const char *ppm, size_t ppm_len,
                            const uint8_t wav[WAV_BYTES], const char *manifest,
                            size_t manifest_len)
 {
+    char normalized[4096];
+    char staging[4096];
     char ppm_path[4096];
     char wav_path[4096];
     char manifest_path[4096];
-    int made_directory = 0;
+    char stage_probe[4096];
+    int stage_length;
+    int made_staging = 0;
     int made_ppm = 0;
     int made_wav = 0;
     int made_manifest = 0;
-    if (mkdir(directory, 0700) != 0) {
-        if (errno == EEXIST) {
-            return report_error("output directory already exists; choose a new empty --out path (existing files were not changed)");
-        }
-        return report_error("cannot create the new output directory; create its parent and choose a writable --out path");
+    int write_result;
+
+    if (normalize_destination(directory, normalized, sizeof normalized) != 0) {
+        return report_error("output directory path exceeds its bound; choose a shorter --out path");
     }
-    made_directory = 1;
-    if (output_path(directory, "snapshot.ppm", ppm_path, sizeof ppm_path) != 0 ||
-        output_path(directory, "silence.wav", wav_path, sizeof wav_path) != 0 ||
-        output_path(directory, "snapshot.manifest", manifest_path, sizeof manifest_path) != 0) {
-        (void)report_error("output file path exceeds its bound; choose a shorter --out path");
+    if (output_path(normalized, "snapshot.ppm", stage_probe, sizeof stage_probe) != 0 ||
+        output_path(normalized, "silence.wav", stage_probe, sizeof stage_probe) != 0 ||
+        output_path(normalized, "snapshot.manifest", stage_probe, sizeof stage_probe) != 0) {
+        return report_error("output file path exceeds its bound; choose a shorter --out path");
+    }
+    if (destination_is_absent(normalized) != 0) {
+        return 1;
+    }
+    stage_length = snprintf(staging, sizeof staging,
+                            "%s.lynxplosion-stage-XXXXXX", normalized);
+    if (stage_length < 0 || (size_t)stage_length >= sizeof staging ||
+        output_path(staging, "snapshot.ppm", stage_probe, sizeof stage_probe) != 0 ||
+        output_path(staging, "silence.wav", stage_probe, sizeof stage_probe) != 0 ||
+        output_path(staging, "snapshot.manifest", stage_probe, sizeof stage_probe) != 0) {
+        return report_error("output staging path exceeds its bound; choose a shorter --out path");
+    }
+    if (mkdtemp(staging) == NULL) {
+        return report_error("cannot create a private sibling staging directory; create its parent and choose a writable --out path");
+    }
+    made_staging = 1;
+    if (output_path(staging, "snapshot.ppm", ppm_path, sizeof ppm_path) != 0 ||
+        output_path(staging, "silence.wav", wav_path, sizeof wav_path) != 0 ||
+        output_path(staging, "snapshot.manifest", manifest_path, sizeof manifest_path) != 0) {
+        (void)report_error("staged output path exceeds its bound; choose a shorter --out path");
         goto failed;
     }
-    if (write_exclusive(ppm_path, ppm, ppm_len) != 0) {
+    write_result = write_exclusive(ppm_path, ppm, ppm_len);
+    if (write_result != 0) {
         (void)report_error("cannot write snapshot.ppm exclusively; check output permissions and use a new directory");
         goto failed;
     }
     made_ppm = 1;
-    if (write_exclusive(wav_path, wav, WAV_BYTES) != 0) {
+    write_result = write_exclusive(wav_path, wav, WAV_BYTES);
+    if (write_result != 0) {
         (void)report_error("cannot write silence.wav exclusively; check output permissions and use a new directory");
         goto failed;
     }
     made_wav = 1;
-    if (write_exclusive(manifest_path, manifest, manifest_len) != 0) {
+    write_result = write_exclusive(manifest_path, manifest, manifest_len);
+    if (write_result != 0) {
         (void)report_error("cannot write snapshot.manifest exclusively; check output permissions and use a new directory");
         goto failed;
     }
     made_manifest = 1;
+    if (publish_directory_exclusive(staging, normalized) != 0) {
+        if (errno == EEXIST) {
+            (void)report_error("output directory already exists; choose a new empty --out path (existing files were not changed)");
+        } else {
+            (void)report_error("cannot publish the complete output directory without replacement; use a filesystem and platform that support exclusive directory rename");
+        }
+        goto failed;
+    }
+    made_staging = 0;
     return 0;
 failed:
-    if (made_manifest != 0) {
-        (void)remove(manifest_path);
+    {
+        int cleanup_failed = 0;
+        if (made_manifest != 0) {
+            if (unlink(manifest_path) != 0 && errno != ENOENT) {
+                cleanup_failed = 1;
+            }
+        }
+        if (made_wav != 0) {
+            if (unlink(wav_path) != 0 && errno != ENOENT) {
+                cleanup_failed = 1;
+            }
+        }
+        if (made_ppm != 0) {
+            if (unlink(ppm_path) != 0 && errno != ENOENT) {
+                cleanup_failed = 1;
+            }
     }
-    if (made_wav != 0) {
-        (void)remove(wav_path);
-    }
-    if (made_ppm != 0) {
-        (void)remove(ppm_path);
-    }
-    if (made_directory != 0) {
-        (void)rmdir(directory);
+        if (made_staging != 0 && rmdir(staging) != 0 && errno != ENOENT) {
+            cleanup_failed = 1;
+        }
+        if (cleanup_failed != 0) {
+            (void)report_error("could not remove this invocation's private staging files; inspect the destination parent and remove only the named staging path");
+        }
     }
     return 1;
 }

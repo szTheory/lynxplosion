@@ -224,8 +224,8 @@ elseif(MODE STREQUAL "consumer")
     public_boundary_reject(private_include
       "#include \"internal.h\"\nint main(void) { return 0; }\n" "internal.h")
     public_boundary_reject(private_symbol
-      "#include <lynxplosion.h>\nint main(void) { return (int)lynx__consumer_private_probe(); }\n"
-      "lynx__consumer_private_probe")
+      "#include <lynxplosion.h>\nint main(void) { lynx__power_on(0); return 0; }\n"
+      "lynx__power_on")
   elseif(CASE STREQUAL "snapshot_ppm")
     consumer_success("${PROFILE}")
   elseif(CASE STREQUAL "silence_wav")
@@ -303,7 +303,8 @@ elseif(MODE STREQUAL "consumer")
     endif()
     consumer_io_failure(write)
     consumer_io_failure(close)
-    execute_process(COMMAND "${ARTIFACT_CHECKER}" publication "${TEST_CONSUMER}"
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -u LYNX_TEST_IO_FAILURE
+        "${ARTIFACT_CHECKER}" publication "${TEST_CONSUMER}"
         "${WORK}/first.bll" "${WORK}/first.lbl" "${WORK}/concurrent-output"
       RESULT_VARIABLE publish_rc OUTPUT_VARIABLE publish_out ERROR_VARIABLE publish_err)
     if(NOT publish_rc STREQUAL "0")
