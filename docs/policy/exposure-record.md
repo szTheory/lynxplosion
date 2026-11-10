@@ -2,14 +2,15 @@
 
 # Research exposure record (FND-07, draft)
 
-One row per source the research consulted. Rows are built from the research files
-under `.planning/research/` only (file and line cited in the last column). Anything
-those files omit is unknown and cannot be reconstructed without opening emulator
-source, which the clean-room policy forbids. Where a research file is vague about a
-date, the research file's own date is given and marked "as recorded".
+One row per source the research consulted. Each row cites the research record
+that established the exposure in the last column. Anything those records omit is
+unknown and cannot be reconstructed without opening emulator source, which the
+clean-room policy forbids. Where a research file is vague about a date, that
+file's own date is given and marked "as recorded".
 
-The Phase 2 rows at the end of the table are built from the Phase 2 discuss and
-research records instead (last column).
+Initial rows derive from `.planning/research/`. Phase 2 rows cite the Phase 2
+discuss and research records. Phase 3 rows cite that phase's source and format
+research records.
 
 | Source | Licence | What was read | How | When | Recorded in |
 |---|---|---|---|---|---|
@@ -30,5 +31,12 @@ research records instead (last column).
 | lynx-tests `lynx-page-mode.md` | MIT | Prose describing how an emulator models page mode; the document links to that emulator's source and the links were not followed | Prose read; no link followed | 2026-11-09 (Phase 2 discuss and research) | `.planning/phases/02-cpu-profiles-and-per-opcode-vectors/discuss/01-cpu-semantics.md`, `discuss/02-bus-cycle-interface.md`, `.planning/phases/02-cpu-profiles-and-per-opcode-vectors/02-RESEARCH.md` |
 | nesdev interrupts page | Community wiki (prose) | Interrupt and reset sequence prose | Prose read; no code | 2026-11-09 (Phase 2 discuss and research) | `.planning/phases/02-cpu-profiles-and-per-opcode-vectors/discuss/02-bus-cycle-interface.md`, `.planning/phases/02-cpu-profiles-and-per-opcode-vectors/02-RESEARCH.md` |
 | Design article on cycle-stepped 6502 CPUs | Published article (prose) | Design prose on stepping a 6502 one bus cycle at a time | Prose only; no code | 2026-11-09 (Phase 2 discuss and research) | `.planning/phases/02-cpu-profiles-and-per-opcode-vectors/discuss/02-bus-cycle-interface.md`, `.planning/phases/02-cpu-profiles-and-per-opcode-vectors/02-RESEARCH.md` |
+| cc65 pinned source (zlib; commit `eebf54af545f4ae52f8489a2f6d4d5f93e7942d2`) | zlib | `libsrc/lynx/bllhdr.s:13-18` and `cfg/lynx-bll.cfg:8-24`; BLL header and linker placement expressions | Direct read at the existing source pin, solely to measure format/output identity; no emulator code copied | 2026-11-10 | `.planning/phases/03-memory-map-direct-load-startup-and-first-diagnostic/03-STARTUP-RESEARCH.md`, Sources and exposure record |
+| Epyx-derived Lynx hardware address table | Vendor hardware documentation (no source code) | MAPCTL reset value, overlay bits/ranges, and fixed FFF8/FFF9 addresses | Read the published hardware table as prose; no hardware was accessed | 2026-11-10 | `.planning/phases/03-memory-map-direct-load-startup-and-first-diagnostic/03-STARTUP-RESEARCH.md`, Sources and exposure record |
+| lynxcc SDK guide, BLL objects | Documentation (no source code) | Ten-byte BS93/BLL header fields and distinction from cartridge ROM objects | Documentation read for format comparison; no code copied | 2026-11-10 | `.planning/phases/03-memory-map-direct-load-startup-and-first-diagnostic/03-STARTUP-RESEARCH.md`, Format documentation |
+| Programming Atari Lynx guide, cc65 uploader | Documentation (no source code) | Load address as execution start; on-disk BLL versus ComLynx transfer sequence | Documentation read for format boundary; no code copied | 2026-11-10 | `.planning/phases/03-memory-map-direct-load-startup-and-first-diagnostic/03-STARTUP-RESEARCH.md`, Format documentation |
 
-Phase 2: no emulator source was opened.
+Phase 2 and Phase 3 research opened no emulator implementation source. Phase 3
+read the pinned cc65 BLL header/config source only as format evidence; the
+project-authored diagnostic does not copy that code. No firmware, commercial
+game content, physical hardware, or new package was used. O6 remains draft.

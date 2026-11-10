@@ -83,6 +83,14 @@ if(MODE STREQUAL "header" OR MODE STREQUAL "header_self_test")
       message(FATAL_ERROR "runner_diagnostic: could not create bounded bad-header control\n${corrupt_out}${corrupt_err}")
     endif()
     run_fail("bll header: signature" header "${WORK}/first-corrupt.bll" "${WORK}/first.lbl" "${HEX}")
+    file(READ "${HEX}" source_hex)
+    string(REPLACE "80 08" "81 08" wrong_source_hex "${source_hex}")
+    if(wrong_source_hex STREQUAL source_hex)
+      message(FATAL_ERROR "runner_diagnostic: could not seed one-byte source identity disagreement")
+    endif()
+    file(WRITE "${WORK}/first-wrong-source.hex" "${wrong_source_hex}")
+    run_fail("text hex identity differs from assembled BLL" header "${WORK}/first.bll"
+      "${WORK}/first.lbl" "${WORK}/first-wrong-source.hex")
   endif()
 elseif(MODE STREQUAL "symbols")
   assemble_fixture(first 0)
@@ -94,6 +102,13 @@ elseif(MODE STREQUAL "controls")
   run_ok(controls "${WORK}/first.bll" "${WORK}/first.lbl"
     "${WORK}/first-broken.bll" "${WORK}/first-broken.lbl"
     "${WORK}/first-timeout.bll" "${WORK}/first-timeout.lbl")
+  execute_process(COMMAND "${TEST_BINARY}" corrupt-map "${WORK}/first.bll" "${HEX}"
+      "${WORK}/wrong-map.bll"
+    RESULT_VARIABLE wrong_map_seed_rc OUTPUT_VARIABLE wrong_map_seed_out
+    ERROR_VARIABLE wrong_map_seed_err)
+  if(NOT wrong_map_seed_rc STREQUAL "0")
+    message(FATAL_ERROR "runner_diagnostic: could not create wrong-map control\n${wrong_map_seed_out}${wrong_map_seed_err}")
+  endif()
 
   set(bundle "${WORK}/runner-bundle")
   execute_process(COMMAND "${RUNNER}" --content "${WORK}/first.bll" --ticks 5000
@@ -102,28 +117,27 @@ elseif(MODE STREQUAL "controls")
   if(NOT runner_rc STREQUAL "0")
     message(FATAL_ERROR "runner_diagnostic: normal runner refused diagnostic\n${runner_out}${runner_err}")
   endif()
-  file(READ "${bundle}/run.manifest" manifest)
-  foreach(required_line IN ITEMS "profile = none" "stop_reason = budget" "tick_budget = 5000" "ticks_consumed = 5000")
-    string(FIND "${manifest}" "${required_line}\n" line_position)
-    if(line_position EQUAL -1)
-      message(FATAL_ERROR "runner_diagnostic: run manifest lacks '${required_line}'\n${manifest}")
-    endif()
-  endforeach()
-  file(STRINGS "${bundle}/obs.ram.hex" ram_lines)
-  list(LENGTH ram_lines ram_line_count)
-  if(ram_line_count LESS 41)
-    message(FATAL_ERROR "runner_diagnostic: runner RAM observation is truncated")
+  run_ok(bundle "${WORK}/first.bll" "${WORK}/first.lbl" "${bundle}" pass)
+
+  set(wrong_map_bundle "${WORK}/runner-wrong-map")
+  execute_process(COMMAND "${RUNNER}" --content "${WORK}/wrong-map.bll" --ticks 5000
+      --out "${wrong_map_bundle}" --profile none --ram-policy zero
+    RESULT_VARIABLE wrong_map_rc OUTPUT_VARIABLE wrong_map_out ERROR_VARIABLE wrong_map_err)
+  if(NOT wrong_map_rc STREQUAL "0")
+    message(FATAL_ERROR "runner_diagnostic: wrong-map diagnostic did not produce inspectable evidence\n${wrong_map_out}${wrong_map_err}")
   endif()
-  list(GET ram_lines 32 result_line)
-  list(GET ram_lines 40 pixels_line)
-  string(LENGTH "${result_line}" result_line_len)
-  if(NOT result_line_len EQUAL 64 OR NOT result_line MATCHES "^4c584433010300a5[0]+$")
-    message(FATAL_ERROR "runner_diagnostic: bundle result differs from the public-API oracle: ${result_line}")
+  run_ok(bundle "${WORK}/wrong-map.bll" "${WORK}/first.lbl" "${wrong_map_bundle}" map-failure)
+
+  set(broken_bundle "${WORK}/runner-broken-guest")
+  execute_process(COMMAND "${RUNNER}" --content "${WORK}/first-broken.bll" --ticks 5000
+      --out "${broken_bundle}" --profile none --ram-policy zero
+    RESULT_VARIABLE broken_rc OUTPUT_VARIABLE broken_out ERROR_VARIABLE broken_err)
+  if(NOT broken_rc STREQUAL "0")
+    message(FATAL_ERROR "runner_diagnostic: broken guest did not produce inspectable evidence\n${broken_out}${broken_err}")
   endif()
-  if(NOT pixels_line STREQUAL "0123456723456789456789ab6789abcd89abcdefabcdef01cdef0123ef012345")
-    message(FATAL_ERROR "runner_diagnostic: bundle pixels differ from the diagnostic contract: ${pixels_line}")
-  endif()
-  message(STATUS "runner_diagnostic: runner manifest, result and packed pixels agree with public API contract")
+  run_ok(bundle "${WORK}/first-broken.bll" "${WORK}/first-broken.lbl"
+    "${broken_bundle}" guest-failure)
+  message(STATUS "runner_diagnostic: runner agreement includes accepted, wrong-map and guest-error controls")
 elseif(MODE STREQUAL "restore" OR MODE STREQUAL "restore_self_test")
   assemble_fixture(first 0)
   run_ok(restore "${WORK}/first.bll" "${WORK}/first.lbl")

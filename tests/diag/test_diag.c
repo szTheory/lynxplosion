@@ -1390,6 +1390,390 @@ done:
     return result;
 }
 
+static int write_bytes_exclusive(const char *path, const uint8_t *bytes, size_t length)
+{
+    FILE *file = fopen(path, "wbx");
+    int failed;
+    if (file == NULL) {
+        return fail("cannot create owned fault fixture");
+    }
+    failed = fwrite(bytes, 1u, length, file) != length;
+    if (fclose(file) != 0) {
+        failed = 1;
+    }
+    if (failed != 0) {
+        (void)remove(path);
+        return fail("cannot finish owned fault fixture");
+    }
+    return 0;
+}
+
+static int corrupt_map_mode(const char *input_path, const char *hex_path,
+                            const char *output_path)
+{
+    uint8_t *bll = NULL;
+    size_t length = 0u;
+    int result = 1;
+    if (read_bll_file(input_path, &bll, &length) != 0 ||
+        check_header(bll, length, hex_path) != 0) {
+        goto done;
+    }
+    if (length < BLL_HEADER_SIZE + 5u || bll[BLL_HEADER_SIZE] != 0xA9u ||
+        bll[BLL_HEADER_SIZE + 1u] != 0x0Cu || bll[BLL_HEADER_SIZE + 2u] != 0x8Du ||
+        bll[BLL_HEADER_SIZE + 3u] != 0xF9u || bll[BLL_HEADER_SIZE + 4u] != 0xFFu) {
+        (void)fail("positive source fixture lacks the expected MAPCTL selection instruction");
+        goto done;
+    }
+    bll[BLL_HEADER_SIZE + 1u] = 0u;
+    if (write_bytes_exclusive(output_path, bll, length) != 0) {
+        goto done;
+    }
+    printf("diag fault: derived wrong-map control by changing the MAPCTL operand byte\n");
+    result = 0;
+done:
+    free(bll);
+    return result;
+}
+
+static int hex_digit_value(uint8_t value)
+{
+    if (value >= (uint8_t)'0' && value <= (uint8_t)'9') {
+        return (int)(value - (uint8_t)'0');
+    }
+    if (value >= (uint8_t)'a' && value <= (uint8_t)'f') {
+        return (int)(value - (uint8_t)'a') + 10;
+    }
+    return -1;
+}
+
+static int read_hex_rows(const char *path, size_t expected_bytes, uint8_t **out)
+{
+    const size_t row_bytes = 32u;
+    size_t rows = (expected_bytes + row_bytes - 1u) / row_bytes;
+    size_t text_limit;
+    size_t text_length = 0u;
+    uint8_t *text = NULL;
+    uint8_t *decoded = NULL;
+    size_t byte_offset = 0u;
+    size_t row;
+    if (expected_bytes > (SIZE_MAX - rows) / 2u) {
+        return fail("runner hex observation size overflow");
+    }
+    text_limit = expected_bytes * 2u + rows;
+    if (read_file(path, &text, &text_length, text_limit) != 0) {
+        return fail("cannot read bounded runner hex observation");
+    }
+    if (text_length != text_limit) {
+        free(text);
+        return fail("runner hex observation has the wrong length");
+    }
+    decoded = malloc(expected_bytes == 0u ? 1u : expected_bytes);
+    if (decoded == NULL) {
+        free(text);
+        return fail("cannot allocate runner observation bytes");
+    }
+    for (row = 0u; row < rows; row++) {
+        size_t remaining = expected_bytes - byte_offset;
+        size_t count = remaining < row_bytes ? remaining : row_bytes;
+        size_t index;
+        size_t row_offset = row * (row_bytes * 2u + 1u);
+        for (index = 0u; index < count; index++) {
+            int high = hex_digit_value(text[row_offset + index * 2u]);
+            int low = hex_digit_value(text[row_offset + index * 2u + 1u]);
+            if (high < 0 || low < 0) {
+                free(decoded);
+                free(text);
+                return fail("runner hex observation contains non-canonical data");
+            }
+            decoded[byte_offset + index] = (uint8_t)((unsigned)high * 16u + (unsigned)low);
+        }
+        if (text[row_offset + count * 2u] != (uint8_t)'\n') {
+            free(decoded);
+            free(text);
+            return fail("runner hex observation line width is invalid");
+        }
+        byte_offset += count;
+    }
+    free(text);
+    *out = decoded;
+    return 0;
+}
+
+static int read_bundle_file(const char *directory, const char *name,
+                            size_t limit, uint8_t **bytes, size_t *length)
+{
+    char path[4096];
+    int written = snprintf(path, sizeof path, "%s/%s", directory, name);
+    if (written < 0 || (size_t)written >= sizeof path) {
+        return fail("runner bundle path exceeds its bound");
+    }
+    return read_file(path, bytes, length, limit);
+}
+
+static int manifest_field(const char *manifest, size_t length, const char *key,
+                          char *value, size_t value_cap)
+{
+    size_t key_len = strlen(key);
+    size_t offset = 0u;
+    unsigned found = 0u;
+    value[0] = '\0';
+    while (offset < length) {
+        size_t line_len = 0u;
+        size_t value_start;
+        size_t value_len;
+        while (offset + line_len < length && manifest[offset + line_len] != '\n') {
+            line_len++;
+        }
+        if (line_len > key_len + 3u &&
+            memcmp(manifest + offset, key, key_len) == 0 &&
+            manifest[offset + key_len] == ' ' && manifest[offset + key_len + 1u] == '=' &&
+            manifest[offset + key_len + 2u] == ' ') {
+            if (found != 0u) {
+                return 1;
+            }
+            value_start = offset + key_len + 3u;
+            value_len = line_len - key_len - 3u;
+            if (value_len == 0u || value_len >= value_cap ||
+                memchr(manifest + value_start, '\r', value_len) != NULL) {
+                return 1;
+            }
+            memcpy(value, manifest + value_start, value_len);
+            value[value_len] = '\0';
+            found = 1u;
+        }
+        offset += line_len;
+        if (offset < length && manifest[offset] == '\n') {
+            offset++;
+        }
+    }
+    return found == 1u ? 0 : 1;
+}
+
+static int require_manifest_field(const char *manifest, size_t length, const char *key,
+                                  const char *expected)
+{
+    char actual[256];
+    if (manifest_field(manifest, length, key, actual, sizeof actual) != 0 ||
+        strcmp(actual, expected) != 0) {
+        fprintf(stderr, "diag bundle: manifest %s disagrees with expected identity/run data\n", key);
+        return 1;
+    }
+    return 0;
+}
+
+static uint64_t load_u64le(const uint8_t *bytes)
+{
+    uint64_t value = 0u;
+    unsigned index;
+    for (index = 0u; index < 8u; index++) {
+        value |= (uint64_t)bytes[index] << (index * 8u);
+    }
+    return value;
+}
+
+static uint32_t load_u32le(const uint8_t *bytes)
+{
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+}
+
+static void identity_hex(const uint8_t digest[32], char out[65])
+{
+    static const char digits[] = "0123456789abcdef";
+    size_t index;
+    for (index = 0u; index < 32u; index++) {
+        out[index * 2u] = digits[digest[index] >> 4];
+        out[index * 2u + 1u] = digits[digest[index] & 0x0Fu];
+    }
+    out[64] = '\0';
+}
+
+static int check_expected_pixels(const uint8_t *ram, const diag_symbols *symbols)
+{
+    unsigned y;
+    for (y = 0u; y < 8u; y++) {
+        unsigned x;
+        for (x = 0u; x < 8u; x++) {
+            size_t index = (size_t)y * 8u + x;
+            uint8_t pair = ram[symbols->pixels + index / 2u];
+            unsigned pen = index % 2u == 0u ? (unsigned)(pair >> 4)
+                                             : (unsigned)(pair & 0x0Fu);
+            if (pen != ((x + 2u * y) & 15u)) {
+                return fail("runner packed pixels differ from the independent diagnostic contract");
+            }
+        }
+    }
+    return 0;
+}
+
+static int bundle_mode(const char *bll_path, const char *labels_path,
+                       const char *bundle_dir, const char *expected_case)
+{
+    uint8_t *bll = NULL;
+    uint8_t *ram = NULL;
+    uint8_t *regs = NULL;
+    uint8_t *time_bytes = NULL;
+    uint8_t *manifest_bytes = NULL;
+    size_t bll_len = 0u;
+    size_t manifest_len = 0u;
+    char *label_text = NULL;
+    size_t label_len = 0u;
+    diag_symbols symbols;
+    machine_instance public_machine = {0};
+    lynx_identity identity;
+    lynx_stop_reason public_stop = LYNX_STOP_HALT;
+    uint64_t public_used = 0u;
+    uint64_t public_ticks = 0u;
+    char hash[65];
+    char expected_value[64];
+    uint8_t result_bytes[RESULT_SIZE];
+    uint32_t mapctl;
+    int expected_map_failure = strcmp(expected_case, "map-failure") == 0;
+    int expected_guest_failure = strcmp(expected_case, "guest-failure") == 0;
+    int result = 1;
+    if (strcmp(expected_case, "pass") != 0 && expected_map_failure == 0 &&
+        expected_guest_failure == 0) {
+        return fail("unknown bundle expectation");
+    }
+    if (read_bll_file(bll_path, &bll, &bll_len) != 0 ||
+        read_symbols_file(labels_path, &label_text, &label_len, &symbols) != 0 ||
+        machine_create(&public_machine, bll, bll_len) != 0) {
+        goto done;
+    }
+    if (lynx_advance(public_machine.machine, 5000u, &public_used, &public_stop) != LYNX_OK ||
+        public_used > 5000u || read_ticks(public_machine.machine, &public_ticks) != 0 ||
+        lynx_get_identity(public_machine.machine, &identity) != LYNX_OK ||
+        identity.has_content != 1u || identity.content_format != LYNX_CONTENT_BS93 ||
+        identity.startup_tier != LYNX_STARTUP_A || identity.entry_addr != 0x0200u ||
+        identity.object_len != bll_len) {
+        (void)fail("public runner comparison machine did not reach a valid BLL identity");
+        goto done;
+    }
+    if ((expected_map_failure != 0 && public_stop != LYNX_STOP_UNAVAILABLE) ||
+        (expected_map_failure == 0 && public_stop != LYNX_STOP_BUDGET) ||
+        public_ticks != public_used) {
+        (void)fail("runner stop/time differs from the independently advanced public machine");
+        goto done;
+    }
+    {
+        char path[4096];
+        int n = snprintf(path, sizeof path, "%s/obs.ram.hex", bundle_dir);
+        if (n < 0 || (size_t)n >= sizeof path ||
+            read_hex_rows(path, LYNX_ADDRESS_SPACE, &ram) != 0) {
+            goto done;
+        }
+    }
+    {
+        char path[4096];
+        int n = snprintf(path, sizeof path, "%s/obs.regs.hex", bundle_dir);
+        if (n < 0 || (size_t)n >= sizeof path || read_hex_rows(path, 36u, &regs) != 0) {
+            goto done;
+        }
+    }
+    {
+        char path[4096];
+        int n = snprintf(path, sizeof path, "%s/obs.time.hex", bundle_dir);
+        if (n < 0 || (size_t)n >= sizeof path || read_hex_rows(path, 20u, &time_bytes) != 0) {
+            goto done;
+        }
+    }
+    if (read_bundle_file(bundle_dir, "run.manifest", 4096u,
+                         &manifest_bytes, &manifest_len) != 0 || manifest_len == 0u) {
+        (void)fail("runner manifest is missing or exceeds its bound");
+        goto done;
+    }
+    {
+        uint8_t *terminated = realloc(manifest_bytes, manifest_len + 1u);
+        if (terminated == NULL) {
+            (void)fail("cannot terminate bounded runner manifest");
+            goto done;
+        }
+        if (memchr(terminated, '\0', manifest_len) != NULL) {
+            free(terminated);
+            manifest_bytes = NULL;
+            (void)fail("runner manifest is not bounded plain text");
+            goto done;
+        }
+        manifest_bytes = terminated;
+        manifest_bytes[manifest_len] = '\0';
+    }
+    mapctl = load_u32le(regs + LYNX_REG_MAPCTL * 4u);
+    if (mapctl != (expected_map_failure != 0 ? 0u : 0x0Cu) ||
+        load_u64le(time_bytes) != public_ticks || load_u64le(time_bytes + 8u) != public_used ||
+        load_u32le(time_bytes + 16u) != public_stop) {
+        (void)fail("runner raw register/time bytes differ from public core observations");
+        goto done;
+    }
+    memcpy(result_bytes, ram + symbols.result, sizeof result_bytes);
+    if (memcmp(result_bytes, "LXD3", 4u) != 0 || result_bytes[4] != 1u) {
+        (void)fail("runner raw result header is invalid");
+        goto done;
+    }
+    if (expected_map_failure != 0) {
+        if (result_bytes[5] != 1u || result_bytes[6] != 0u || result_bytes[7] == 0xA5u) {
+            (void)fail("wrong-map runner control did not stop with an incomplete guest result");
+            goto done;
+        }
+    } else {
+        uint8_t expected_error = expected_guest_failure != 0 ? 1u : 0u;
+        if (result_bytes[5] != 3u || result_bytes[6] != expected_error || result_bytes[7] != 0xA5u ||
+            check_expected_pixels(ram, &symbols) != 0) {
+            if (result_bytes[5] != 3u || result_bytes[6] != expected_error || result_bytes[7] != 0xA5u) {
+                (void)fail("runner raw result bytes differ from the independent guest expectation");
+            }
+            goto done;
+        }
+    }
+    identity_hex(identity.content_sha256, hash);
+    if (require_manifest_field((const char *)manifest_bytes, manifest_len, "profile", "none") != 0 ||
+        require_manifest_field((const char *)manifest_bytes, manifest_len, "content_format", "bs93") != 0 ||
+        require_manifest_field((const char *)manifest_bytes, manifest_len, "startup", "A") != 0 ||
+        require_manifest_field((const char *)manifest_bytes, manifest_len, "startup_tier", "A") != 0 ||
+        require_manifest_field((const char *)manifest_bytes, manifest_len, "content_sha256", hash) != 0 ||
+        require_manifest_field((const char *)manifest_bytes, manifest_len, "core_build", lynx_build_id()) != 0) {
+        goto done;
+    }
+    (void)snprintf(expected_value, sizeof expected_value, "0x%04x", (unsigned)identity.content_addr);
+    if (require_manifest_field((const char *)manifest_bytes, manifest_len, "content_load_addr", expected_value) != 0 ||
+        require_manifest_field((const char *)manifest_bytes, manifest_len, "payload_addr", expected_value) != 0) {
+        goto done;
+    }
+    (void)snprintf(expected_value, sizeof expected_value, "0x%04x", (unsigned)identity.entry_addr);
+    if (require_manifest_field((const char *)manifest_bytes, manifest_len, "entry_addr", expected_value) != 0) {
+        goto done;
+    }
+    (void)snprintf(expected_value, sizeof expected_value, "%u", (unsigned)identity.object_len);
+    if (require_manifest_field((const char *)manifest_bytes, manifest_len, "object_len", expected_value) != 0) {
+        goto done;
+    }
+    (void)snprintf(expected_value, sizeof expected_value, "%u", (unsigned)identity.content_len);
+    if (require_manifest_field((const char *)manifest_bytes, manifest_len, "payload_len", expected_value) != 0) {
+        goto done;
+    }
+    (void)snprintf(expected_value, sizeof expected_value, "%llu",
+                   (unsigned long long)public_ticks);
+    if (require_manifest_field((const char *)manifest_bytes, manifest_len, "tick_budget", "5000") != 0 ||
+        require_manifest_field((const char *)manifest_bytes, manifest_len, "ticks_consumed", expected_value) != 0) {
+        goto done;
+    }
+    if (require_manifest_field((const char *)manifest_bytes, manifest_len, "stop_reason",
+                               expected_map_failure != 0 ? "unavailable" : "budget") != 0) {
+        goto done;
+    }
+    printf("diag bundle: %s runner identity, raw result, packed pixels and guest time agree\n",
+           expected_case);
+    result = 0;
+done:
+    free(bll);
+    free(ram);
+    free(regs);
+    free(time_bytes);
+    free(manifest_bytes);
+    free(label_text);
+    machine_destroy(&public_machine);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 5 && strcmp(argv[1], "header") == 0) {
@@ -1436,6 +1820,12 @@ int main(int argc, char **argv)
         }
         free(bytes);
         return result;
+    }
+    if (argc == 5 && strcmp(argv[1], "corrupt-map") == 0) {
+        return corrupt_map_mode(argv[2], argv[3], argv[4]);
+    }
+    if (argc == 6 && strcmp(argv[1], "bundle") == 0) {
+        return bundle_mode(argv[2], argv[3], argv[4], argv[5]);
     }
     fprintf(stderr, "diag: invalid command line\n");
     return 2;

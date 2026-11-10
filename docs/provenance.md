@@ -64,6 +64,20 @@ Until then this list is the notice. It is an open question, not a decision.
 - The `.gitattributes` rule `fixtures/vectors/sst65x02/* -text` keeps line endings
   untouched so no client changes a SHA-256.
 
+## Project-authored Phase 3 diagnostic fixture
+
+- `fixtures/diagnostic/first.s`, `fixtures/diagnostic/bll.cfg` and
+  `fixtures/diagnostic/first.hex` are original project test material. The
+  source, pinned ca65/ld65 build recipe, complete BS93 object SHA-256, rights
+  statement and allowed test use are recorded in
+  `fixtures/manifests/first-diagnostic.manifest`. The fixture is all rights
+  reserved while O5 is open and is used only as original diagnostic test
+  content. It contains no BIOS, firmware or commercial game material. No code
+  from an emulator implementation was copied into it.
+- The generated BLL's exact bytes identify a complete accepted object,
+  including its header. Its identity is not a licence or permission to
+  redistribute the fixture.
+
 ## Pinned external sources (fetched at check time, never committed)
 
 - **cc65** (zlib licence): the guest toolchain, pinned in `pins.txt` by commit and
