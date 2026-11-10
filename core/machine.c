@@ -14,6 +14,10 @@
 #include "internal.h"
 #include "sha256.h"
 
+/* Reserved for the private CPU-vector machine-loop seam. This value is not a
+   public content format and can only be selected by the test adapter below. */
+#define LYNX__CONTENT_TEST_FLAT 1u
+
 /* SplitMix64, written in 2015 by S. Vigna, public domain. The state is held
    by the caller (here: a local of the power-on function) so there is no
    writable global. */
@@ -257,6 +261,43 @@ lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len)
     return LYNX_OK;
 }
 
+/* Private adapter for CPU vectors. Unlike lynx_load_bll, this deliberately
+   marks the instance as using an all-RAM flat bus so high-address vectors
+   still exercise the actual machine loop without claiming to model MAPCTL.
+   The snapshot identity keeps this lane distinct from normal BLL startup. */
+lynx_status lynx__load_flat_test_image(lynx_machine *m, const uint8_t *bytes, size_t len,
+                                       uint32_t load_addr)
+{
+    if (m == NULL) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (!machine_valid(m)) {
+        return LYNX_ERR_STATE;
+    }
+    if (bytes == NULL || len == 0u) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (len > LYNX_ADDRESS_SPACE || load_addr >= LYNX_ADDRESS_SPACE ||
+        len > LYNX_ADDRESS_SPACE - load_addr) {
+        return LYNX_ERR_RANGE;
+    }
+    lynx__power_on(m);
+    memcpy(&m->ram[load_addr], bytes, len);
+    lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), (uint16_t)load_addr);
+    m->has_content = 1u;
+    m->content_addr = load_addr;
+    m->content_len = (uint32_t)len;
+    m->content_format = LYNX__CONTENT_TEST_FLAT;
+    m->startup_tier = LYNX_STARTUP_A;
+    m->entry_addr = load_addr;
+    m->object_len = (uint32_t)len;
+    lynx__sha256 hash;
+    lynx__sha256_init(&hash);
+    lynx__sha256_update(&hash, bytes, len);
+    lynx__sha256_final(&hash, m->content_sha256);
+    return LYNX_OK;
+}
+
 lynx_status lynx__machine_set_cost_model(struct lynx_machine *m, uint32_t model)
 {
     if (m == NULL || !machine_valid(m) || !lynx__bus_cost_model_valid(model)) {
@@ -280,6 +321,15 @@ static uint8_t bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, u
                           uint64_t stamp)
 {
     (void)stamp;
+    /* The private vector lane bypasses mapped-device policy before the
+       normal MAPCTL decoder. It exists only to retain flat-bus model evidence. */
+    if (m->content_format == LYNX__CONTENT_TEST_FLAT) {
+        if ((flags & LYNX__CF_WRITE) != 0u) {
+            m->ram[addr] = data;
+            return data;
+        }
+        return m->ram[addr];
+    }
     if ((flags & LYNX__CF_WRITE) != 0u) {
         if (addr == 0xFFF9u) {
             /* Deterministic provisional policy: retain every written bit.

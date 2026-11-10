@@ -13,6 +13,8 @@ foreach(var RUNNER CONTENT GOLDEN WORK)
   endif()
 endforeach()
 
+include("${CMAKE_CURRENT_LIST_DIR}/bll.cmake")
+
 # The last non-comment, non-empty line of the golden is the digest.
 file(STRINGS "${GOLDEN}" golden_lines)
 set(want "")
@@ -27,8 +29,10 @@ endif()
 
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
+file(READ "${CONTENT}" payload_hex)
+lynx_write_bll("${payload_hex}" "${WORK}/content.bll" 0x0200)
 execute_process(
-  COMMAND "${RUNNER}" --content "${CONTENT}" --load-addr 0200
+  COMMAND "${RUNNER}" --content "${WORK}/content.bll"
     --ram-policy splitmix64 --ram-seed 0123456789abcdef --ticks 4096
     --out "${WORK}/run"
   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)

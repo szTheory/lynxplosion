@@ -65,6 +65,10 @@ static const uint8_t bll_tracer[] = {
     0xA9, 0x0C, 0x8D, 0xF9, 0xFF, 0xA9, 0xA5, 0x8D, 0x00, 0x04, 0x4C, 0x0A, 0x02,
 };
 
+static void make_bll_header(uint8_t *object, size_t len, uint16_t load_addr);
+static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t payload_len,
+                               uint32_t load_addr);
+
 /* Instance memory for the tests: aligned for any type, sized from the core's
    own layout. */
 static _Alignas(max_align_t) unsigned char machine_buf[sizeof(struct lynx_machine)];
@@ -145,7 +149,7 @@ static void case_identity(void)
     CHECK_EQ_U64(id.entry_addr, 0u);
     CHECK_EQ_U64(id.object_len, 0u);
 
-    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
     memset(&id, 0xA5, sizeof id);
     CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
     CHECK_EQ_U64(id.profile, 0u);
@@ -155,17 +159,19 @@ static void case_identity(void)
     CHECK_EQ_HEX(id.content_addr, 0x0200u);
     CHECK_EQ_U64(id.content_len, 32u);
     CHECK_EQ_U64(id.reserved, 0u);
-    CHECK_EQ_U64(id.content_format, LYNX_CONTENT_RAW_RAM_IMAGE);
+    CHECK_EQ_U64(id.content_format, LYNX_CONTENT_BS93);
     CHECK_EQ_U64(id.startup_tier, LYNX_STARTUP_A);
     CHECK_EQ_U64(id.entry_addr, 0x0200u);
-    CHECK_EQ_U64(id.object_len, 32u);
+    CHECK_EQ_U64(id.object_len, 42u);
     char hex[65];
     lynx__sha256_hex(id.content_sha256, hex);
-    CHECK(strcmp(hex, "ab5f8b5cb9435354c7b58603592d5faf081e17ceb05f7a7c67f4b666f12ca457") == 0);
+    CHECK(strcmp(hex, "bab6f7ea8d9ba129db7e7a776f61a73162ccd67f2348d3a17a31ae7dda31da4e") == 0);
 
     /* A refused load leaves the identity as it was. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, LYNX_ADDRESS_SPACE),
-                 LYNX_ERR_RANGE);
+    uint8_t malformed[sizeof bll_tracer];
+    memcpy(malformed, bll_tracer, sizeof malformed);
+    malformed[5]--;
+    CHECK_EQ_U64(lynx_load_bll(m, malformed, sizeof malformed), LYNX_ERR_SIZE);
     lynx_identity again;
     CHECK_EQ_U64(lynx_get_identity(m, &again), LYNX_OK);
     CHECK(memcmp(&again, &id, sizeof id) == 0);
@@ -174,7 +180,7 @@ static void case_identity(void)
     uint8_t other[32];
     memcpy(other, tracer_image, sizeof other);
     other[31] ^= 1u;
-    CHECK_EQ_U64(lynx_load_ram_image(m, other, sizeof other, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, other, sizeof other, 0x0200u), LYNX_OK);
     CHECK_EQ_U64(lynx_get_identity(m, &again), LYNX_OK);
     CHECK(memcmp(again.content_sha256, id.content_sha256, 32u) != 0);
 
@@ -320,6 +326,33 @@ static void make_bll_header(uint8_t *object, size_t len, uint16_t load_addr)
     object[7] = 'S';
     object[8] = '9';
     object[9] = '3';
+}
+
+/* Package an in-memory payload in the canonical strict BLL object used by
+   all normal API workloads. The CPU-vector machine-loop proof has its own
+   private adapter in test_cpu_vectors.c. */
+static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t payload_len,
+                               uint32_t load_addr)
+{
+    if (payload == NULL || payload_len == 0u) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (load_addr > UINT16_MAX || payload_len > (size_t)UINT16_MAX - 10u ||
+        payload_len > (size_t)LYNX_ADDRESS_SPACE - load_addr) {
+        return LYNX_ERR_RANGE;
+    }
+    const size_t object_len = payload_len + 10u;
+    uint8_t *object = malloc(object_len);
+    if (object == NULL) {
+        fprintf(stderr, "%s:%d: cannot allocate temporary BLL object\n", __FILE__, __LINE__);
+        check_failures++;
+        return LYNX_ERR_SIZE;
+    }
+    make_bll_header(object, object_len, (uint16_t)load_addr);
+    memcpy(object + 10u, payload, payload_len);
+    const lynx_status result = lynx_load_bll(m, object, object_len);
+    free(object);
+    return result;
 }
 
 static void case_bll_load(void)
@@ -649,8 +682,8 @@ static void case_instances_independent(void)
     if (a == NULL || b == NULL) {
         return;
     }
-    CHECK_EQ_U64(lynx_load_ram_image(a, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
-    CHECK_EQ_U64(lynx_load_ram_image(b, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(a, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(b, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
 
     /* Advancing A leaves B's whole buffer alone. */
     memcpy(snap_b, buf_b, MSIZE);
@@ -665,7 +698,7 @@ static void case_instances_independent(void)
     /* Loading into A leaves B alone. */
     uint8_t other[16];
     memset(other, 0x11, sizeof other);
-    CHECK_EQ_U64(lynx_load_ram_image(a, other, sizeof other, 0x4000u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(a, other, sizeof other, 0x4000u), LYNX_OK);
     CHECK_UNCHANGED(buf_b, snap_b);
 
     /* Resetting A leaves B alone. */
@@ -713,7 +746,7 @@ static void case_instances_independent(void)
         if (solo == NULL) {
             return;
         }
-        CHECK_EQ_U64(lynx_load_ram_image(solo, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+        CHECK_EQ_U64(load_bll_at(solo, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
         CHECK_EQ_U64(lynx_advance(solo, 3000u, &consumed, &stop), LYNX_OK);
         CHECK_EQ_U64(consumed, 3000u);
         memcpy(solo_runs[i], bufs[i], MSIZE);
@@ -721,7 +754,7 @@ static void case_instances_independent(void)
         if (ms[i] == NULL) {
             return;
         }
-        CHECK_EQ_U64(lynx_load_ram_image(ms[i], churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+        CHECK_EQ_U64(load_bll_at(ms[i], churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
     }
     for (uint32_t slice = 0u; slice < 30u; slice++) {
         for (size_t i = 0u; i < 3u; i++) {
@@ -767,52 +800,51 @@ static void case_load_refusal_unchanged(void)
     if (m == NULL) {
         return;
     }
-    CHECK_EQ_U64(lynx_load_ram_image(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
     uint64_t consumed = 0u;
     lynx_stop_reason stop = LYNX_STOP_HALT;
     CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(consumed, 4096u);
     memcpy(snap_a, machine_buf, MSIZE);
 
-    CHECK_EQ_U64(lynx_load_ram_image(m, NULL, 32u, 0x0200u), LYNX_ERR_ARGUMENT);
-    CHECK_UNCHANGED(machine_buf, snap_a);
-    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, 0u, 0x0200u), LYNX_ERR_ARGUMENT);
-    CHECK_UNCHANGED(machine_buf, snap_a);
-    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, LYNX_ADDRESS_SPACE + 1u, 0u), LYNX_ERR_RANGE);
-    CHECK_UNCHANGED(machine_buf, snap_a);
-    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, SIZE_MAX, 0x10u), LYNX_ERR_RANGE);
-    CHECK_UNCHANGED(machine_buf, snap_a);
-    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, LYNX_ADDRESS_SPACE),
-                 LYNX_ERR_RANGE);
-    CHECK_UNCHANGED(machine_buf, snap_a);
-    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0xFFFFFFFFu),
-                 LYNX_ERR_RANGE);
-    CHECK_UNCHANGED(machine_buf, snap_a);
-    /* Runs one byte past 0xFFFF. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, 17u, 0xFFF0u), LYNX_ERR_RANGE);
-    CHECK_UNCHANGED(machine_buf, snap_a);
-    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, 2u, 0xFFFFu), LYNX_ERR_RANGE);
-    CHECK_UNCHANGED(machine_buf, snap_a);
-    CHECK_EQ_U64(lynx_load_ram_image(NULL, tracer_image, sizeof tracer_image, 0x0200u),
-                 LYNX_ERR_ARGUMENT);
+    /* BLL malformed shape, marker, exact-length and range refusals are
+       checked against the entire instance after a prior run. */
+    expect_bll_refusal(m, NULL, sizeof bll_tracer, LYNX_ERR_ARGUMENT);
+    expect_bll_refusal(m, bll_tracer, 0u, LYNX_ERR_ARGUMENT);
+    uint8_t short_object[10];
+    make_bll_header(short_object, sizeof short_object, 0x0200u);
+    expect_bll_refusal(m, short_object, sizeof short_object, LYNX_ERR_SIZE);
+    uint8_t wrong_format[sizeof bll_tracer];
+    memcpy(wrong_format, bll_tracer, sizeof wrong_format);
+    wrong_format[6] = 'X';
+    expect_bll_refusal(m, wrong_format, sizeof wrong_format, LYNX_ERR_ARGUMENT);
+    uint8_t wrong_length[sizeof bll_tracer];
+    memcpy(wrong_length, bll_tracer, sizeof wrong_length);
+    wrong_length[5]++;
+    expect_bll_refusal(m, wrong_length, sizeof wrong_length, LYNX_ERR_SIZE);
+    uint8_t past_end[12];
+    make_bll_header(past_end, sizeof past_end, 0xFFFFu);
+    past_end[10] = 0xAAu;
+    past_end[11] = 0xBBu;
+    expect_bll_refusal(m, past_end, sizeof past_end, LYNX_ERR_RANGE);
+    expect_bll_refusal(m, big_image, (size_t)UINT16_MAX + 1u, LYNX_ERR_RANGE);
+    CHECK_EQ_U64(lynx_load_bll(NULL, bll_tracer, sizeof bll_tracer), LYNX_ERR_ARGUMENT);
     CHECK_UNCHANGED(machine_buf, snap_a);
 
-    /* Control: an accepted load is visible to the comparison. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, 16u, 0x0300u), LYNX_OK);
+    /* Control: an accepted canonical object is visible to the comparison. */
+    CHECK_EQ_U64(load_bll_at(m, tracer_image, 16u, 0x0300u), LYNX_OK);
     CHECK(memcmp(machine_buf, snap_a, MSIZE) != 0);
 
-    /* Boundaries that are accepted: exactly to 0x10000, and the whole space. */
+    /* BLL may end exactly at 0x10000, but has no raw whole-space form. */
     memcpy(snap_a, machine_buf, MSIZE);
-    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, 16u, 0xFFF0u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, big_image, 16u, 0xFFF0u), LYNX_OK);
     CHECK(memcmp(machine_buf, snap_a, MSIZE) != 0);
-    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, LYNX_ADDRESS_SPACE, 0u), LYNX_OK);
-    CHECK_EQ_U64(lynx_load_ram_image(m, big_image, 1u, 0xFFFFu), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, big_image, 1u, 0xFFFFu), LYNX_OK);
 
     /* A deinitialised machine refuses a load and stays as it was. */
     lynx_machine_deinit(m);
     memcpy(snap_a, machine_buf, MSIZE);
-    CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u),
-                 LYNX_ERR_STATE);
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_ERR_STATE);
     CHECK_UNCHANGED(machine_buf, snap_a);
 }
 
@@ -828,7 +860,7 @@ static void case_inspect_pure(void)
     if (m == NULL) {
         return;
     }
-    CHECK_EQ_U64(lynx_load_ram_image(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
     uint64_t consumed = 0u;
     lynx_stop_reason stop = LYNX_STOP_HALT;
     CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, &stop), LYNX_OK);
@@ -912,7 +944,7 @@ static unsigned char sweep_ref[sizeof(struct lynx_machine)];
 /* Loads image at addr into an initialised machine (a fresh power-on state). */
 static void load_at(lynx_machine *m, const uint8_t *image, size_t len, uint32_t addr)
 {
-    CHECK_EQ_U64(lynx_load_ram_image(m, image, len, addr), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, image, len, addr), LYNX_OK);
 }
 
 static void case_advance_budget(void)
@@ -1103,7 +1135,7 @@ static void case_reset_power_on(void)
 
     /* Reset after load and advance equals a fresh init, byte for byte. */
     memcpy(snap_a, machine_buf, MSIZE);
-    CHECK_EQ_U64(lynx_load_ram_image(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
     /* The load starts the CPU at the load address with the power-on registers. */
     CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0x0200u);
     CHECK_EQ_HEX(reg_of(m, LYNX_REG_S), 0xFDu);
@@ -1124,14 +1156,14 @@ static void case_reset_power_on(void)
     CHECK_EQ_U64(lynx_advance(m, 4u, &consumed, &stop), LYNX_ERR_STATE);
 
     /* An UNDEFINED stop is cleared by reset like any other state. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, trap_image, sizeof trap_image, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, trap_image, sizeof trap_image, 0x0200u), LYNX_OK);
     ADVANCE_EXPECT(m, 4096u, 0u, LYNX_STOP_UNDEFINED);
     CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
     CHECK_UNCHANGED(machine_buf, snap_a);
     CHECK_EQ_U64(lynx_advance(m, 4u, &consumed, &stop), LYNX_ERR_STATE);
 
     /* The cost model (internal seam) returns to flat5 on reset. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
     memcpy(snap_b, machine_buf, MSIZE);
     CHECK_EQ_U64(lynx__machine_set_cost_model(m, LYNX__COST_MODEL_COUNT), LYNX_ERR_ARGUMENT);
     CHECK_EQ_U64(lynx__machine_set_cost_model(m, 0xFFFFFFFFu), LYNX_ERR_ARGUMENT);
@@ -1161,7 +1193,7 @@ static void case_reset_power_on(void)
     }
     memcpy(snap_a, machine_buf, MSIZE);
     check_power_on_regs(m, __LINE__);
-    CHECK_EQ_U64(lynx_load_ram_image(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
     CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
     CHECK_UNCHANGED(machine_buf, snap_a);
@@ -1195,7 +1227,7 @@ static void case_reset_power_on(void)
     CHECK(!all_bytes_equal(mem_out, sizeof mem_out, 0x00));
 
     /* Reset after load and advance equals the fresh init; identity reports policy and seed. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
     CHECK_EQ_U64(lynx_advance(m, 4096u, &consumed, &stop), LYNX_OK);
     CHECK(memcmp(machine_buf, snap_a, MSIZE) != 0);
     CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
@@ -1266,7 +1298,7 @@ static lynx_machine *snap_instance_p(void *mem, uint32_t profile, uint64_t seed,
     if (m == NULL) {
         return NULL;
     }
-    CHECK_EQ_U64(lynx_load_ram_image(m, image, len, addr), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, image, len, addr), LYNX_OK);
     return m;
 }
 
@@ -1391,10 +1423,10 @@ static void case_snapshot_roundtrip(void)
     CHECK(memcmp(blob_v, "LYNXSNAP", 8u) == 0);
     CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 3u); /* format 3 */
     CHECK_EQ_U64(get_le(blob_v + 12u, 4u), LYNX__SNAPSHOT_HEADER_LEN);
-    CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_RAW_RAM_IMAGE);
+    CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
     CHECK_EQ_U64(get_le(blob_v + 208u, 4u), 0x0200u);
-    CHECK_EQ_U64(get_le(blob_v + 212u, 4u), sizeof churn_loop);
+    CHECK_EQ_U64(get_le(blob_v + 212u, 4u), sizeof churn_loop + 10u);
     CHECK_EQ_U64(get_le(blob_v + 216u, 4u), LYNX__SNAPSHOT_PAYLOAD_LEN);
 
     /* Saving twice, over different garbage, gives the same bytes. */
@@ -1791,7 +1823,7 @@ static void case_snapshot_refusal(void)
         case 2: /* different RAM policy (and so seed) */
             o = init_in(buf_b, &zero);
             if (o != NULL) {
-                CHECK_EQ_U64(lynx_load_ram_image(o, churn_loop, sizeof churn_loop, 0x0200u),
+                CHECK_EQ_U64(load_bll_at(o, churn_loop, sizeof churn_loop, 0x0200u),
                              LYNX_OK);
             }
             break;
@@ -1998,7 +2030,7 @@ static void case_cpu_program(void)
     /* sum-trap under none, RAM policy zero. Expected values are the trace table
        in fixtures/cpu/sum-trap.s (datasheet cycle counts, 5 ticks per cycle):
        105 cycles, then the $07 at $021B stops the run before it is fetched. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, sum_trap, sizeof sum_trap, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, sum_trap, sizeof sum_trap, 0x0200u), LYNX_OK);
     CHECK_EQ_U64(ticks_of(m), 0u);
     ADVANCE_EXPECT(m, 100000u, 525u, LYNX_STOP_UNDEFINED);
     CHECK_EQ_U64(ticks_of(m), 525u);
@@ -2021,7 +2053,7 @@ static void case_cpu_program(void)
 
     /* advance(524): all 105 cycles are granted (the last, PLA's pull, at 520),
        the registers are already final and one cycle is in flight until 525. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, sum_trap, sizeof sum_trap, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, sum_trap, sizeof sum_trap, 0x0200u), LYNX_OK);
     ADVANCE_EXPECT(m, 524u, 524u, LYNX_STOP_BUDGET);
     CHECK_REGS(m, 0x021Bu, 0x0Fu, 0xFFu, 0x00u, 0xFDu, 0x34u);
     CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE), 1u << 24);
@@ -2031,13 +2063,13 @@ static void case_cpu_program(void)
     CHECK_UNCHANGED(machine_buf, snap_a);
     /* Exactly 525 in one call: guest time reaches the target at the boundary,
        so BUDGET wins and the next call reports UNDEFINED. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, sum_trap, sizeof sum_trap, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, sum_trap, sizeof sum_trap, 0x0200u), LYNX_OK);
     ADVANCE_EXPECT(m, 525u, 525u, LYNX_STOP_BUDGET);
     CHECK_UNCHANGED(machine_buf, snap_a);
     ADVANCE_EXPECT(m, 1u, 0u, LYNX_STOP_UNDEFINED);
     /* advance(520) stops before the last PLA cycle: A is still 0, S still $FC,
        PC already $021B. The next call performs it and then stops. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, sum_trap, sizeof sum_trap, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, sum_trap, sizeof sum_trap, 0x0200u), LYNX_OK);
     ADVANCE_EXPECT(m, 520u, 520u, LYNX_STOP_BUDGET);
     CHECK_REGS(m, 0x021Bu, 0x00u, 0xFFu, 0x00u, 0xFCu, 0x36u);
     ADVANCE_EXPECT(m, 100u, 5u, LYNX_STOP_UNDEFINED);
@@ -2045,7 +2077,7 @@ static void case_cpu_program(void)
 
     /* churn-loop under none, RAM policy zero, after the 70-tick prelude and one
        255-tick iteration (fixtures/cpu/churn-loop.s). */
-    CHECK_EQ_U64(lynx_load_ram_image(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
     ADVANCE_EXPECT(m, 325u, 325u, LYNX_STOP_BUDGET);
     CHECK_REGS(m, 0x020Cu, 0x00u, 0x01u, 0x08u, 0xFDu, 0x34u);
     CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE), 0u);
@@ -2056,7 +2088,7 @@ static void case_cpu_program(void)
     want_ram[0x01FB] = 0x1Au; /* ($01FD = $00 from PHA, $0600 = $00 from STA) */
     check_ram(m, __LINE__);
     /* After 70 + 255k ticks: PC at the loop head and X = k. */
-    CHECK_EQ_U64(lynx_load_ram_image(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
     ADVANCE_EXPECT(m, 70u, 70u, LYNX_STOP_BUDGET);
     CHECK_REGS(m, 0x020Cu, 0x05u, 0x00u, 0x08u, 0xFDu, 0x34u); /* last flag write: LDA #$05 */
     for (uint32_t k = 1u; k <= 20u; k++) {
@@ -2146,7 +2178,7 @@ static lynx_machine *profile_instance(void *mem, uint32_t profile, const uint8_t
     if (m == NULL) {
         return NULL;
     }
-    CHECK_EQ_U64(lynx_load_ram_image(m, image, len, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(m, image, len, 0x0200u), LYNX_OK);
     return m;
 }
 
@@ -2244,7 +2276,7 @@ static void case_profile_select(void)
         CHECK_EQ_HEX(ram_byte(m, 0x10u), 0xFEu); /* lynx2: RMB0 cleared bit 0 */
         /* Reset keeps the profile; a reload runs the same program the same way. */
         CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
-        CHECK_EQ_U64(lynx_load_ram_image(m, rmb0, sizeof rmb0, 0x0200u), LYNX_OK);
+        CHECK_EQ_U64(load_bll_at(m, rmb0, sizeof rmb0, 0x0200u), LYNX_OK);
         ADVANCE_EXPECT(m, 1000u, 1000u, LYNX_STOP_BUDGET);
         CHECK_EQ_HEX(ram_byte(m, 0x10u), 0xFEu);
         lynx_machine_deinit(m);
@@ -2326,7 +2358,7 @@ static void case_profile_divergence(void)
     }
     for (uint32_t op = 0u; op < 256u; op++) {
         const uint8_t img[3] = {(uint8_t)op, 0x80u, 0u};
-        CHECK_EQ_U64(lynx_load_ram_image(m, img, sizeof img, 0x0200u), LYNX_OK);
+        CHECK_EQ_U64(load_bll_at(m, img, sizeof img, 0x0200u), LYNX_OK);
         memcpy(snap_a, machine_buf, MSIZE);
         if (slot_defined((uint8_t)op)) {
             ADVANCE_EXPECT(m, 100u, 0u, LYNX_STOP_UNDEFINED);

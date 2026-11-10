@@ -45,6 +45,10 @@
 #include "lynxplosion.h"
 #include "sha256.h"
 
+/* Private core adapter: intentionally local to this vector test, not public. */
+extern lynx_status lynx__load_flat_test_image(lynx_machine *m, const uint8_t *bytes, size_t len,
+                                              uint32_t load_addr);
+
 enum { EXIT_PASS = 0, EXIT_ASSERT = 1, EXIT_USAGE = 2, EXIT_DATA = 3, EXIT_INVENTORY = 4 };
 
 /* Named faults the controls inject; each is built here at run time, never committed. */
@@ -1381,9 +1385,17 @@ static int cmd_seam_agreement(const run_opts *o)
     cfg.profile = o->profile;
     if (lynx_machine_size() > sizeof g_mbuf ||
         lynx_machine_init(g_mbuf, lynx_machine_size(), &cfg, &m) != LYNX_OK ||
-        lynx_load_ram_image(m, content, sizeof content, 0x0200u) != LYNX_OK ||
+        lynx__load_flat_test_image(m, content, sizeof content, 0x0200u) != LYNX_OK ||
         lynx_snapshot_save(m, g_tmpl, sizeof g_tmpl, &saved) != LYNX_OK || saved != sizeof g_tmpl) {
         fprintf(stderr, "lynx-test-cpu-vectors: cannot build the machine\n");
+        free(buf);
+        return EXIT_DATA;
+    }
+    lynx_identity identity;
+    if (lynx_get_identity(m, &identity) != LYNX_OK ||
+        identity.content_format == LYNX_CONTENT_NONE ||
+        identity.content_format == LYNX_CONTENT_BS93) {
+        fprintf(stderr, "lynx-test-cpu-vectors: flat test identity is not distinct\n");
         free(buf);
         return EXIT_DATA;
     }
