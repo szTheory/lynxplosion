@@ -1072,6 +1072,22 @@ static void case_inspect_pure(void)
     memset(mem_out, 0xA5, sizeof mem_out);
     CHECK_EQ_U64(lynx_read_memory(m, 0u, mem_out, LYNX_ADDRESS_SPACE), LYNX_OK);
     CHECK(memcmp(mem_out, ((struct lynx_machine *)machine_buf)->ram, LYNX_ADDRESS_SPACE) == 0);
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_read_memory(m, 0x0200u, &m->ram[0x0100u], 1u), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    /* Keep later checks independent when proving the pre-fix implementation
+       incorrectly accepts and writes this aliased output. */
+    memcpy(machine_buf, snap_a, MSIZE);
+
+    /* A caller-owned output immediately after the machine is disjoint and is
+       accepted, including when the two ranges share a boundary. */
+    lynx_machine *adjacent = init_in(bll_adjacent_arena, &cfg);
+    if (adjacent != NULL) {
+        CHECK_EQ_U64(load_bll_at(adjacent, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+        uint8_t *adjacent_out = bll_adjacent_arena + MSIZE;
+        CHECK_EQ_U64(lynx_read_memory(adjacent, 0x0200u, adjacent_out, 4u), LYNX_OK);
+        CHECK(memcmp(adjacent_out, adjacent->ram + 0x0200u, 4u) == 0);
+    }
     memset(mem_out, 0xA5, sizeof mem_out);
     CHECK_EQ_U64(lynx_read_memory(m, 0xFFFFu, mem_out, 2u), LYNX_ERR_RANGE);
     CHECK_EQ_U64(lynx_read_memory(m, 0x10000u, mem_out, 1u), LYNX_ERR_RANGE);

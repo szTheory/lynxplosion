@@ -1,0 +1,10 @@
+{
+  "command": "ctest --test-dir build/check --output-junit <temporary-report> -R ^api.inspect_pure$ --no-tests=error --output-on-failure",
+  "exitCode": 8,
+  "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"(empty)\"\n\ttests=\"1\"\n\tfailures=\"1\"\n\tdisabled=\"0\"\n\tskipped=\"0\"\n\thostname=\"\"\n\ttime=\"0\"\n\ttimestamp=\"2026-11-10T13:38:16\"\n\t>\n\t<testcase name=\"api.inspect_pure\" classname=\"api.inspect_pure\" time=\"0.362049\" status=\"fail\">\n\t\t<failure message=\"Failed\"/>\n\t\t<properties>\n\t\t\t<property name=\"cmake_labels\" value=\"api\"/>\n\t\t</properties>\n\t\t<system-out>./tests/api/test_api.c:1076: lynx_read_memory(m, 0x0200u, &amp;m-&gt;ram[0x0100u], 1u) == LYNX_ERR_ARGUMENT failed: 0 != 1\n./tests/api/test_api.c:1077: instance buffer changed by a call that must not change it\n</system-out>\n\t</testcase>\n</testsuite>\n",
+  "targetTest": "api.inspect_pure",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "lynx_read_memory rejects an output range that overlaps any byte of the machine and leaves both untouched",
+  "actual": "The target assertion failed: lynx_read_memory returned LYNX_OK (0), then the whole-instance comparison detected that aliased output changed RAM",
+  "semanticAssessment": "The registered api.inspect_pure test executed and failed on the planned output-ownership assertion. CTest reported one failed test with no setup, compile, fixture, or unrelated failure."
+}
