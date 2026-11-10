@@ -1,8 +1,9 @@
 # Lynxplosion
 
 Lynxplosion is an Atari Lynx emulator core in early development. Phase 1 is a
-walking skeleton: a build, a test gate and a small public C API around a
-provisional machine. There is no CPU and no emulation yet.
+walking skeleton: a build, a test gate and a small public C API. Phase 2 adds a
+65C02-class CPU that runs under data-defined profiles. There is no memory map,
+no timer, no video and no way to run a game yet.
 
 ## What is and is not claimed
 
@@ -13,6 +14,24 @@ provisional machine. There is no CPU and no emulation yet.
   real direct-load format.
 - RAM is filled with `0x00` at power-on unless a caller asks for the seeded
   fill. Fixed `0x00` is the default everywhere.
+
+## Profiles
+
+The CPU runs under one of three profiles, chosen when the machine is created
+(`lynx-run --profile none|lynx1|lynx2`).
+
+- `none` is the default. It runs only what the Lynx I and Lynx II instruction
+  sets agree on. Where they differ (32 opcodes) a run stops with an
+  `UNDEFINED` stop before the opcode, changing nothing.
+- `lynx1` (65SC02 set) and `lynx2` (Rockwell R65C02 set, with RMB, SMB, BBR and
+  BBS) are explicit choices.
+- No profile is a baseline: which behaviour to trust is an open owner decision
+  (O1).
+- Ticks are not timing evidence. The per-access cost is a placeholder of five
+  ticks.
+
+Every value, its source and every unverified behaviour is listed in
+[docs/cpu-profiles.md](docs/cpu-profiles.md).
 
 ## Rights
 
@@ -28,6 +47,7 @@ contributions must never add any.
   decision O6)
 - [Exposure record](docs/policy/exposure-record.md)
 - [Provenance notice](docs/provenance.md)
+- [CPU profiles](docs/cpu-profiles.md)
 - [Claim template](docs/claims/claim.template)
 
 A claim is bound to the exact test inventory: it records the SHA-256 of

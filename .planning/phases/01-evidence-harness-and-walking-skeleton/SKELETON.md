@@ -3,6 +3,8 @@
 **Phase:** 1
 **Generated:** 2026-11-09
 
+> Update: the provisional skeleton step described below was replaced by the CPU in Phase 2 (plan 02-09), and the golden digest was re-baselined on the `churn-loop` program. See `docs/cpu-profiles.md`.
+
 ## Capability Proven End-to-End
 
 A developer runs `scripts/check.sh` on a clean checkout. It builds `lynx_core` with CMake. One C test creates a machine instance in caller-provided memory, loads a provisional RAM image, advances it by a tick budget and inspects it with exact expected values; the registered tests equal the committed inventory; GitHub Actions runs the same command on the public repository and goes green (plan 01-01). The core then reports content and build identity (plan 01-02), and the headless runner writes an artifact bundle whose digests are equal across two fresh runs (plan 01-03). Plans 01-01 and 01-03 together are the walking skeleton; plan 01-02 supplies the identity the bundle records.
