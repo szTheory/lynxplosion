@@ -67,6 +67,8 @@ cpu.vectors.reader_malformed	cpu
 cpu.vectors.sample_identity	cpu
 cpu.vectors.wrong_profile	cpu
 cpu.vectors.wrong_profile_reverse	cpu
+det.diagnostic_restore	det
+det.diagnostic_restore.self_test	det
 det.golden	det
 det.golden.self_test	det
 det.manifest_fields	det
@@ -76,6 +78,8 @@ det.sensitivity	det
 det.sensitivity_state	det
 det.two_instances	det
 det.two_runs	det
+diag.result_controls	diag
+diag.result_symbol	diag
 docs.claim_template	docs
 docs.claim_template.self_test	docs
 docs.policy	docs
@@ -83,6 +87,8 @@ docs.policy.self_test	docs
 docs.provenance	docs
 docs.provenance.self_test	docs
 fetch_pin.mismatch.self_test	fetch_pin
+fixture.bll_header	fixture
+fixture.bll_header.self_test	fixture
 fixtures.cpu_asm	toolchain
 fixtures.cpu_asm.self_test	toolchain
 hygiene.check_steps.self_test	hygiene
