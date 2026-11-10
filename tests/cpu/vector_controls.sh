@@ -700,10 +700,38 @@ EOF
   ok "a cross pairing with the right opcode set but a row that does not add up to 10,000 vectors is refused"
 }
 
+# IN-06: the pin record's row count ignores blank lines (a blank line is not a
+# row, so 511 rows and a blank line are 511, not 512). The sample mode runs
+# check_record first and then stops at the missing LICENSE of the fake root, so
+# the message tells whether the record check passed.
+lane_record_blank() {
+  fr=$work/lane-record
+  lane_root "$fr"
+  commit=$(sed -n 's/^COMMIT=//p' "$fr/scripts/vectors-full.sh")
+  [ -n "$commit" ] || fail "lane_record: no COMMIT in the lane script"
+  rec=$fr/fixtures/vectors/sst65x02/upstream.sha256
+  for rows in 511 512; do
+    {
+      printf '# commit %s\n' "$commit"
+      awk -v n="$rows" 'BEGIN { for (i = 0; i < n; i++) printf "%064d  synertek65c02/v1/%03d.json\n", i, i }'
+      printf '\n'
+    } >"$rec"
+    rc=0
+    sh "$fr/scripts/vectors-full.sh" sample >"$work/lane-record-$rows.out" 2>&1 || rc=$?
+    if [ "$rows" -eq 511 ]; then
+      expect record_511 1 'the pin record has 511 rows, not 512' "$work/lane-record-$rows.out"
+    else
+      expect record_512 1 'LICENSE is missing' "$work/lane-record-$rows.out"
+    fi
+  done
+  ok "the pin record's row count ignores a blank line (511 rows and a blank are refused, 512 and a blank pass the count)"
+}
+
 case_lane_script() {
   lane_runner_build
   lane_results_missing
   lane_cross_counts
+  lane_record_blank
 }
 
 case $name in

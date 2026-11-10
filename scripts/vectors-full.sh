@@ -126,7 +126,7 @@ check_record() {
   if ! grep -q "^# commit $COMMIT\$" "$record"; then
     fail "the pin record does not name commit $COMMIT"
   fi
-  rows=$(awk '$1 !~ /^#/ { n++ } END { print n + 0 }' "$record")
+  rows=$(awk 'NF && $1 !~ /^#/ { n++ } END { print n + 0 }' "$record")
   if [ "$rows" -ne 512 ]; then
     fail "the pin record has $rows rows, not 512"
   fi
