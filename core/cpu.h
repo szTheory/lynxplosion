@@ -4,8 +4,9 @@
    lynx__cpu_complete with the data of that access; that call is the only state
    transition, one bus access per call.
 
-   Includes only <stdint.h> and <stdbool.h>: the core.cpu_includes gate refuses
-   anything else in core/cpu*.
+   Includes only <stdint.h>, <stdbool.h>, <stddef.h> and <string.h> (this header
+   needs the first two, cpu.c also <stddef.h> for NULL): the core.cpu_includes
+   gate refuses anything else in core/cpu*.
 
    Source honesty: the instruction set and cycle sequences come from other
    vendors' datasheets, a hardware-informed test and software-model vectors,
