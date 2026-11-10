@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Memory Map, Direct-Load Startup and First Diagnostic
 status: executing
-stopped_at: Completed 03-01-PLAN.md
-last_updated: "2026-11-10T16:38:19.698Z"
+stopped_at: Completed 03-02-PLAN.md
+last_updated: "2026-11-10T17:09:45.850Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 03 execution started
-state_head: 613ea9dc29de703ca2b318d137ae6e7e955bf251
+state_head: 573efc5a1fd42331ee64d278a18c293cd0bbcd61
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 33
-  completed_plans: 25
+  completed_plans: 26
   percent: 33
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 03 (Memory Map, Direct-Load Startup and First Diagnostic) — EXECUTING
-Plan: 2 of 9
+Plan: 3 of 9
 Status: Ready to execute
 Last activity: 2026-11-10 — Phase 03 execution started
 
@@ -82,6 +82,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 02 P10 | 75 min | 3 tasks | 12 files |
 | Phase 2 P11 | 90min | 3 tasks | 16 files |
 | Phase 03 P01 | 00:25:29 | 2 tasks | 8 files |
+| Phase 03 P02 | 00:26:42 | 2 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -140,6 +141,9 @@ Recent decisions affecting current work:
 - [Phase 03]: Strict BLL loading accepts an exact BS93 object and hashes the complete object while keeping payload and startup identity distinct.
 - [Phase 03]: MAPCTL remains a provisional instance-owned byte latch; written bits are retained, but mapped ROM and device behavior is not qualified.
 - [Phase 03]: Snapshot format 3 carries explicit identity fields and MAPCTL; format 1 and 2 are refused.
+- [Phase 03]: The runner accepts a complete binary BS93 object and derives the load and entry address from the core.
+- [Phase 03]: Runner manifests derive format, startup, complete-object hash, entry and payload fields from public identity.
+- [Phase 03]: The provisional raw-image API remains until plan 03-03 removes it.
 
 ### Pending Todos
 
@@ -166,6 +170,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T16:38:19.546Z
-Stopped at: Completed 03-01-PLAN.md
+Last session: 2026-11-10T17:09:45.595Z
+Stopped at: Completed 03-02-PLAN.md
 Resume file: None
