@@ -129,13 +129,23 @@ base | sed 's/^startup_tier = A$/startup_tier = B/' >"$work/startup_tier.kv"
 reject startup_tier 'startup_tier: bad startup_tier'
 
 # startup_tier vocabulary: a run manifest keeps the default (A only), so "none"
-# is refused there; a caller that passes --startup-tiers "A none" (fixture
-# manifests and claims) accepts it but still refuses anything outside the list.
+# is refused there. Fixture manifests omit the run-only startup tag and may
+# pass --startup-tiers "A none" without creating a conflicting pair.
 base | sed 's/^startup_tier = A$/startup_tier = none/' >"$work/tier_none_run.kv"
 reject tier_none_run 'startup_tier: bad startup_tier'
-cp "$work/tier_none_run.kv" "$work/tier_none_listed.kv"
-accept tier_none_listed --startup-tiers "A none"
-cp "$work/tier_none_run.kv" "$work/tier_none_a_only.kv"
+fixture_required="profile startup_tier content_sha256 content_load_addr input_digest tick_budget ticks_consumed stop_reason core_build ram_policy ram_seed evidence_tier"
+base | grep -Ev '^(content_format|startup|entry_addr|object_len|payload_addr|payload_len) = ' |
+  sed 's/^startup_tier = A$/startup_tier = none/' >"$work/tier_none_listed.kv"
+status=0
+sh "$validator" --required "$fixture_required" --startup-tiers "A none" "$work/tier_none_listed.kv" \
+  >"$work/tier_none_listed.out" 2>&1 || status=$?
+if [ "$status" -ne 0 ]; then
+  printf 'manifest_controls: tier_none_listed: expected exit 0, got %s\n' "$status" >&2
+  cat "$work/tier_none_listed.out" >&2
+  exit 1
+fi
+printf 'manifest_controls: tier_none_listed: ok\n'
+cp "$work/tier_none_listed.kv" "$work/tier_none_a_only.kv"
 reject tier_none_a_only 'startup_tier: bad startup_tier' --startup-tiers "A"
 cp "$work/startup_tier.kv" "$work/tier_b_listed.kv"
 reject tier_b_listed 'startup_tier: bad startup_tier' --startup-tiers "A none"

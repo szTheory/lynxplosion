@@ -13,6 +13,7 @@
 #   - every required key is present;
 #   - "sha256", any key ending "_sha256" and "input_digest" hold 64 lowercase
 #     hex digits (length and character class; no regex interval counts);
+#   - startup is "A" and, when startup_tier is also present, the two tags agree;
 #   - startup_tier is one of the --startup-tiers list (default "A"; fixture
 #     manifests and claims pass "A none", run manifests keep the default);
 #     evidence_tier is one of T1 T2 T3 T4 T5 T6 T7 R;
@@ -167,6 +168,12 @@ for file in "$@"; do
       if (key == "startup_tier" && !(value in tier_ok)) {
         bad(NR, key, "bad startup_tier")
       }
+      if (key == "startup") {
+        if (value != "A") { bad(NR, key, "bad startup") }
+        startup_value = value
+        startup_line = NR
+      }
+      if (key == "startup_tier") { startup_tier_value = value }
       if (key == "evidence_tier" && value !~ /^(T[1-7]|R)$/) {
         bad(NR, key, "bad evidence_tier")
       }
@@ -180,6 +187,10 @@ for file in "$@"; do
       }
     }
     END {
+      if (("startup" in seen) && ("startup_tier" in seen) &&
+          startup_value != startup_tier_value) {
+        bad(startup_line, "startup", "conflicts with startup_tier")
+      }
       for (i = 1; i <= nreq; i++) {
         if (!(reqlist[i] in seen)) {
           bad(0, "", "missing key: " reqlist[i])

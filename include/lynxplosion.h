@@ -138,11 +138,10 @@ void lynx_machine_deinit(lynx_machine *m);
    startup-state reset beside it. */
 lynx_status lynx_reset(lynx_machine *m);
 
-/* Content format and startup strategy recorded in lynx_identity. RAW_RAM_IMAGE
-   is a temporary compatibility value for callers migrated in Phase 3. */
+/* Content format and startup strategy recorded in lynx_identity. Value 1 is
+   reserved for the private CPU-vector test lane and is not publicly loadable. */
 enum {
     LYNX_CONTENT_NONE = 0,
-    LYNX_CONTENT_RAW_RAM_IMAGE = 1,
     LYNX_CONTENT_BS93 = 2
 };
 enum { LYNX_STARTUP_NONE = 0, LYNX_STARTUP_A = 1 };
@@ -156,13 +155,6 @@ enum { LYNX_STARTUP_NONE = 0, LYNX_STARTUP_A = 1 };
    only its payload into owned RAM. Every refusal leaves the full instance
    byte-identical. */
 lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len);
-
-/* Temporary raw RAM image loader. Re-applies the power-on RAM policy and CPU
-   state, copies len bytes to load_addr, and starts at that address. Existing
-   callers are migrated to lynx_load_bll in Phase 3; this identity is tagged
-   LYNX_CONTENT_RAW_RAM_IMAGE so it cannot be confused with BS93 content. */
-lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t len,
-                                uint32_t load_addr);
 
 /* Runs the machine for at most budget master ticks (16 MHz). *consumed is the
    number of ticks actually used and never exceeds budget. *stop says why the

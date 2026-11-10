@@ -224,4 +224,5 @@ execute_process(
 if(raw_link_rc EQUAL 0 OR NOT "${raw_link_out}${raw_link_err}" MATCHES "lynx_load_ram_image")
   message(FATAL_ERROR "runner_cli: removed raw loader was not rejected by the linked library: ${raw_link_out}${raw_link_err}")
 endif()
+file(REMOVE_RECURSE "${WORK}")
 message(STATUS "runner_cli: removed raw loader is undeclared and unlinked: ok")

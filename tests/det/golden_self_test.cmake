@@ -44,4 +44,5 @@ execute_process(
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "golden_self_test: the edited golden was not rejected as required:\n${out}${err}")
 endif()
+file(REMOVE_RECURSE "${WORK}")
 message(STATUS "golden_self_test: ok, an edited golden is rejected")

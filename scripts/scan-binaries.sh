@@ -125,9 +125,17 @@ is_nontext() {
   if ! tr -d '\000-\010\013\016-\037\177' <"$nt_in" | cmp -s - "$nt_ref"; then
     return 0
   fi
-  if iconv -f UTF-8 -t UTF-8 <"$1" >/dev/null 2>&1; then
+  # Capture and compare the round trip rather than sending iconv output
+  # straight to /dev/null. On macOS, iconv can report EIO for valid long UTF-8
+  # input containing block characters when its output is that device. Check
+  # iconv's own exit status as well as byte equality so conversion errors stay
+  # fail-closed.
+  if iconv -f UTF-8 -t UTF-8 <"$1" >"$tmp/utf8-check" 2>/dev/null &&
+    cmp -s "$tmp/utf8-check" "$1"; then
+    rm -f "$tmp/utf8-check"
     return 1
   fi
+  rm -f "$tmp/utf8-check"
   return 0
 }
 

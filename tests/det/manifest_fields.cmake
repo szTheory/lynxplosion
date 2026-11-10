@@ -178,4 +178,5 @@ execute_process(
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "manifest_fields: validate-kv rejected a boundary manifest:\n${out}")
 endif()
+file(REMOVE_RECURSE "${WORK}")
 message(STATUS "manifest_fields: ok")

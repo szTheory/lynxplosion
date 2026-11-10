@@ -161,40 +161,6 @@ void lynx_machine_deinit(lynx_machine *m)
     }
 }
 
-lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t len,
-                                uint32_t load_addr)
-{
-    if (m == NULL) {
-        return LYNX_ERR_ARGUMENT;
-    }
-    if (!machine_valid(m)) {
-        return LYNX_ERR_STATE;
-    }
-    if (bytes == NULL || len == 0u) {
-        return LYNX_ERR_ARGUMENT;
-    }
-    /* Subtraction form: addr + len could wrap, LYNX_ADDRESS_SPACE - addr cannot. */
-    if (len > LYNX_ADDRESS_SPACE || load_addr >= LYNX_ADDRESS_SPACE ||
-        len > LYNX_ADDRESS_SPACE - load_addr) {
-        return LYNX_ERR_RANGE;
-    }
-    lynx__power_on(m);
-    memcpy(&m->ram[load_addr], bytes, len);
-    lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), (uint16_t)load_addr);
-    m->has_content = 1u;
-    m->content_addr = load_addr;
-    m->content_len = (uint32_t)len;
-    m->content_format = LYNX_CONTENT_RAW_RAM_IMAGE;
-    m->startup_tier = LYNX_STARTUP_A;
-    m->entry_addr = load_addr;
-    m->object_len = (uint32_t)len;
-    lynx__sha256 hash;
-    lynx__sha256_init(&hash);
-    lynx__sha256_update(&hash, bytes, len);
-    lynx__sha256_final(&hash, m->content_sha256);
-    return LYNX_OK;
-}
-
 /* Range test by subtraction: neither pointer plus length can wrap. */
 static int ranges_overlap(const void *a, size_t alen, const void *b, size_t blen)
 {
