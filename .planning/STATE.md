@@ -110,12 +110,15 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 1]: O8 (language/build/API) must be confirmed or the research default accepted before core code is written.
-- [Phase 1]: O6 (clean-room protocol, GPL research exposure) needed to finalize FND-07; draft proceeds.
-- [Phase 2+]: O1 (baseline model) gates every CPU-profile and suite-pass claim; tables and harness proceed.
-- [Phase 5]: O9 gates freezing the raw video form if it affects LibFuturo.
-- [.planning/config.json]: refers to `.planning/AUTONOMY.md`, which does not exist yet.
-- Research flags (deeper research before planning): Phases 2, 3, 4, 5, 6. Standard: Phase 1 (except cc65 build spike).
+No blockers. Open owner decisions that shape claims but do not stop work (the roadmap
+schedules around each):
+
+- O1 (baseline Lynx model/CPU profile): gates every CPU-profile and suite-pass claim. Phase 2 builds both profiles as data and claims only profile `none`.
+- O6 (clean-room protocol): the policy and exposure record stay DRAFT; implementers do not open GPL emulator source.
+- O5 (licence): no licence file; all rights reserved until decided.
+- O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
+- Resolved in Phase 1: O8 (C17, CMake/Ninja/CTest, C ABI, owner-accepted), public repository (owner-authorized), `.planning/AUTONOMY.md` created.
+- Research flags (deeper research before planning): Phases 2, 3, 4, 5, 6.
 
 ## Deferred Items
 
