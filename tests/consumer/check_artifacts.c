@@ -3,7 +3,10 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <stdint.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -840,6 +843,10 @@ static int publication_control(const char *consumer, const char *content,
                 _exit(126);
             }
             (void)close(gate[0]);
+            (void)unsetenv("LYNX_TEST_IO_FAILURE");
+            (void)unsetenv("LYNX_TEST_PUBLICATION_STOP");
+            (void)unsetenv("LYNX_TEST_PUBLICATION_READY_FD");
+            (void)unsetenv("LYNX_TEST_PUBLICATION_RESUME_FD");
             execl(consumer, consumer, "--content", content, "--symbols", symbols,
                   "--out", output, "--profile", "none", (char *)NULL);
             _exit(127);
@@ -889,14 +896,465 @@ done:
     return result;
 }
 
+enum {
+    INTERRUPTION_BEFORE_MANIFEST = 1u,
+    INTERRUPTION_BEFORE_PUBLISH = 2u,
+    INTERRUPTION_EXPECTED_PARTIAL = (1u << 0) | (1u << 1),
+    INTERRUPTION_EXPECTED_COMPLETE = (1u << 0) | (1u << 1) | (1u << 2)
+};
+
+static int read_control_value(int fd, uint32_t *value)
+{
+    uint8_t *bytes = (uint8_t *)value;
+    size_t used = 0u;
+    while (used < sizeof *value) {
+        ssize_t got = read(fd, bytes + used, sizeof *value - used);
+        if (got < 0 && errno == EINTR) {
+            continue;
+        }
+        if (got <= 0) {
+            return 1;
+        }
+        used += (size_t)got;
+    }
+    return 0;
+}
+
+static int await_publication_checkpoint(int fd, uint32_t *event)
+{
+    struct pollfd ready_event;
+    int poll_result;
+    ready_event.fd = fd;
+    ready_event.events = POLLIN;
+    ready_event.revents = 0;
+    do {
+        poll_result = poll(&ready_event, 1u, 10000);
+    } while (poll_result < 0 && errno == EINTR);
+    if (poll_result != 1 || (ready_event.revents & POLLIN) == 0) {
+        return 1;
+    }
+    return read_control_value(fd, event);
+}
+
+static int reap_after_sigkill(pid_t child, int *did_reap)
+{
+    int status;
+    int kill_succeeded = kill(child, SIGKILL) == 0;
+    pid_t waited;
+    *did_reap = 0;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited != child) {
+        return 1;
+    }
+    *did_reap = 1;
+    if (!kill_succeeded || !WIFSIGNALED(status) ||
+        WTERMSIG(status) != SIGKILL) {
+        return 1;
+    }
+    return 0;
+}
+
+static int destination_absent(const char *path)
+{
+    struct stat info;
+    if (lstat(path, &info) == 0) {
+        return 1;
+    }
+    return errno == ENOENT ? 0 : 1;
+}
+
+static int create_preservation_marker(const char *path)
+{
+    static const char marker[] = "preserve interruption sibling\n";
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    size_t used = 0u;
+    int close_result;
+    if (fd < 0) {
+        return 1;
+    }
+    while (used < sizeof marker - 1u) {
+        ssize_t written = write(fd, marker + used, sizeof marker - 1u - used);
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        if (written <= 0) {
+            (void)close(fd);
+            (void)unlink(path);
+            return 1;
+        }
+        used += (size_t)written;
+    }
+    close_result = close(fd);
+    return close_result == 0 ? 0 : 1;
+}
+
+static int preservation_marker_intact(const char *path)
+{
+    static const char marker[] = "preserve interruption sibling\n";
+    uint8_t *bytes = NULL;
+    size_t length = 0u;
+    char error[160] = {0};
+    int result = read_bounded(path, 128u, &bytes, &length, error, sizeof error);
+    int intact = result == 0 && length == sizeof marker - 1u &&
+                 memcmp(bytes, marker, sizeof marker - 1u) == 0;
+    free(bytes);
+    return intact ? 0 : 1;
+}
+
+static int locate_owned_stage(const char *output, char *stage, size_t stage_cap)
+{
+    const char *slash = strrchr(output, '/');
+    const char *basename = slash == NULL ? output : slash + 1;
+    char parent[4096];
+    char prefix[4096];
+    size_t prefix_len;
+    DIR *stream;
+    struct dirent *entry;
+    unsigned matches = 0u;
+    int valid = 1;
+    if (slash == NULL) {
+        (void)snprintf(parent, sizeof parent, ".");
+    } else if (slash == output) {
+        (void)snprintf(parent, sizeof parent, "/");
+    } else {
+        size_t parent_len = (size_t)(slash - output);
+        if (parent_len >= sizeof parent) {
+            return 1;
+        }
+        memcpy(parent, output, parent_len);
+        parent[parent_len] = '\0';
+    }
+    {
+        int prefix_len_value = snprintf(prefix, sizeof prefix,
+                                        "%s.lynxplosion-stage-", basename);
+        if (prefix_len_value < 0 || (size_t)prefix_len_value >= sizeof prefix) {
+            return 1;
+        }
+    }
+    prefix_len = strlen(prefix);
+    stream = opendir(parent);
+    if (stream == NULL) {
+        return 1;
+    }
+    while ((entry = readdir(stream)) != NULL) {
+        char candidate[4096];
+        struct stat info;
+        if (strncmp(entry->d_name, prefix, prefix_len) != 0) {
+            continue;
+        }
+        if (path_join(parent, entry->d_name, candidate, sizeof candidate) != 0 ||
+            lstat(candidate, &info) != 0 || !S_ISDIR(info.st_mode) ||
+            strlen(candidate) >= stage_cap) {
+            valid = 0;
+            continue;
+        }
+        matches++;
+        (void)snprintf(stage, stage_cap, "%s", candidate);
+    }
+    if (closedir(stream) != 0) {
+        valid = 0;
+    }
+    if (valid != 0 && matches == 1u) {
+        return 0;
+    }
+    stage[0] = '\0';
+    return 1;
+}
+
+static int stage_file_mask(const char *directory, unsigned *mask_out)
+{
+    struct stat directory_info;
+    DIR *stream;
+    struct dirent *entry;
+    unsigned seen = 0u;
+    int valid = 1;
+    if (lstat(directory, &directory_info) != 0 || !S_ISDIR(directory_info.st_mode)) {
+        return 1;
+    }
+    stream = opendir(directory);
+    if (stream == NULL) {
+        return 1;
+    }
+    while ((entry = readdir(stream)) != NULL) {
+        unsigned bit;
+        char path[4096];
+        struct stat info;
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (strcmp(entry->d_name, "snapshot.ppm") == 0) {
+            bit = 1u << 0;
+        } else if (strcmp(entry->d_name, "silence.wav") == 0) {
+            bit = 1u << 1;
+        } else if (strcmp(entry->d_name, "snapshot.manifest") == 0) {
+            bit = 1u << 2;
+        } else {
+            valid = 0;
+            continue;
+        }
+        if ((seen & bit) != 0u || path_join(directory, entry->d_name, path, sizeof path) != 0 ||
+            lstat(path, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 0) {
+            valid = 0;
+            continue;
+        }
+        seen |= bit;
+    }
+    if (closedir(stream) != 0) {
+        valid = 0;
+    }
+    *mask_out = seen;
+    return valid != 0 ? 0 : 1;
+}
+
+static int validate_interruption_stage(const char *directory, uint32_t event)
+{
+    unsigned mask = 0u;
+    char error[256] = {0};
+    if (stage_file_mask(directory, &mask) != 0) {
+        return 1;
+    }
+    if (event == INTERRUPTION_BEFORE_PUBLISH) {
+        return mask == INTERRUPTION_EXPECTED_COMPLETE &&
+               validate_directory(directory, error, sizeof error) == 0 ? 0 : 1;
+    }
+    if (event == INTERRUPTION_BEFORE_MANIFEST) {
+        uint8_t *ppm = NULL;
+        uint8_t *wav = NULL;
+        size_t ppm_len = 0u;
+        size_t wav_len = 0u;
+        fields image_fields;
+        char path[4096];
+        int valid = mask == INTERRUPTION_EXPECTED_PARTIAL;
+        if (valid != 0 && (path_join(directory, "snapshot.ppm", path, sizeof path) != 0 ||
+                           read_bounded(path, PPM_LIMIT, &ppm, &ppm_len,
+                                        error, sizeof error) != 0 ||
+                           validate_ppm(ppm, ppm_len, &image_fields, error, sizeof error) != 0)) {
+            valid = 0;
+        }
+        if (valid != 0 && (path_join(directory, "silence.wav", path, sizeof path) != 0 ||
+                           read_bounded(path, WAV_SIZE, &wav, &wav_len,
+                                        error, sizeof error) != 0 ||
+                           validate_wav(wav, wav_len, error, sizeof error) != 0)) {
+            valid = 0;
+        }
+        free(ppm);
+        free(wav);
+        return valid != 0 ? 0 : 1;
+    }
+    return 1;
+}
+
+static int remove_owned_output_directory(const char *directory)
+{
+    static const char *const names[] = {
+        "snapshot.ppm", "silence.wav", "snapshot.manifest"
+    };
+    unsigned mask = 0u;
+    size_t index;
+    if (stage_file_mask(directory, &mask) != 0 ||
+        (mask != INTERRUPTION_EXPECTED_PARTIAL && mask != INTERRUPTION_EXPECTED_COMPLETE)) {
+        return 1;
+    }
+    for (index = 0u; index < sizeof names / sizeof names[0]; index++) {
+        unsigned bit = 1u << index;
+        char path[4096];
+        if ((mask & bit) == 0u) {
+            continue;
+        }
+        if (path_join(directory, names[index], path, sizeof path) != 0 || unlink(path) != 0) {
+            return 1;
+        }
+    }
+    return rmdir(directory) == 0 ? 0 : 1;
+}
+
+static int interruption_control(const char *consumer, const char *content,
+                                const char *symbols, const char *base,
+                                const char *checkpoint, uint32_t expected_event)
+{
+    int ready_pipe[2] = {-1, -1};
+    int resume_pipe[2] = {-1, -1};
+    pid_t child = -1;
+    int reaped = 0;
+    int result = 1;
+    int failure = 0;
+    uint32_t event = 0u;
+    char output[4096] = {0};
+    char marker[4096] = {0};
+    char stage[4096] = {0};
+    char ready_text[32];
+    char resume_text[32];
+
+    if (mkdir(base, 0700) != 0 || path_join(base, "output", output, sizeof output) != 0 ||
+        path_join(base, "preserved.marker", marker, sizeof marker) != 0 ||
+        create_preservation_marker(marker) != 0 || destination_absent(output) != 0) {
+        fputs("artifact-check: could not prepare the isolated interruption fixture\n", stderr);
+        goto done;
+    }
+    if (pipe(ready_pipe) != 0 || pipe(resume_pipe) != 0) {
+        fputs("artifact-check: cannot create the interruption synchronization pipes\n", stderr);
+        goto done;
+    }
+    if (snprintf(ready_text, sizeof ready_text, "%d", ready_pipe[1]) < 0 ||
+        snprintf(resume_text, sizeof resume_text, "%d", resume_pipe[0]) < 0) {
+        fputs("artifact-check: cannot encode interruption synchronization descriptors\n", stderr);
+        goto done;
+    }
+    child = fork();
+    if (child == 0) {
+        (void)close(ready_pipe[0]);
+        (void)close(resume_pipe[1]);
+        if (unsetenv("LYNX_TEST_IO_FAILURE") != 0 ||
+            setenv("LYNX_TEST_PUBLICATION_STOP", checkpoint, 1) != 0 ||
+            setenv("LYNX_TEST_PUBLICATION_READY_FD", ready_text, 1) != 0 ||
+            setenv("LYNX_TEST_PUBLICATION_RESUME_FD", resume_text, 1) != 0) {
+            _exit(125);
+        }
+        execl(consumer, consumer, "--content", content, "--symbols", symbols,
+              "--out", output, "--profile", "none", (char *)NULL);
+        _exit(127);
+    }
+    if (child < 0) {
+        fputs("artifact-check: could not launch the interruption consumer\n", stderr);
+        goto done;
+    }
+    (void)close(ready_pipe[1]);
+    ready_pipe[1] = -1;
+    (void)close(resume_pipe[0]);
+    resume_pipe[0] = -1;
+    if (await_publication_checkpoint(ready_pipe[0], &event) != 0) {
+        fputs("artifact-check: consumer did not reach its bounded publication checkpoint\n", stderr);
+        failure = 1;
+        goto terminate;
+    }
+    if (event != expected_event) {
+        fputs("artifact-check: consumer stopped at the wrong publication checkpoint\n", stderr);
+        failure = 1;
+        goto terminate;
+    }
+    if (destination_absent(output) != 0) {
+        fputs("artifact-check: output was published before the requested interruption checkpoint\n", stderr);
+        failure = 1;
+        goto terminate;
+    }
+    if (locate_owned_stage(output, stage, sizeof stage) != 0 ||
+        validate_interruption_stage(stage, event) != 0) {
+        fputs("artifact-check: private staging contents do not match the requested checkpoint\n", stderr);
+        failure = 1;
+        goto terminate;
+    }
+
+terminate:
+    {
+        int child_reaped = 0;
+        if (reap_after_sigkill(child, &child_reaped) != 0) {
+            fputs("artifact-check: could not SIGKILL and reap the exact interrupted consumer child\n", stderr);
+            failure = 1;
+        }
+        if (child_reaped != 0) {
+            reaped = 1;
+            child = -1;
+        }
+    }
+    if (child > 0) {
+        goto done;
+    }
+    if (reaped == 0) {
+        fputs("artifact-check: could not SIGKILL and reap the exact interrupted consumer child\n", stderr);
+        failure = 1;
+    }
+    if (failure == 0 && (destination_absent(output) != 0 ||
+                         preservation_marker_intact(marker) != 0 ||
+                         locate_owned_stage(output, stage, sizeof stage) != 0 ||
+                         validate_interruption_stage(stage, event) != 0)) {
+        fputs("artifact-check: interrupted publication changed its destination, sibling marker, or private stage\n", stderr);
+        failure = 1;
+    }
+    if (reaped != 0 && stage[0] != '\0' && access(stage, F_OK) == 0 &&
+        remove_owned_output_directory(stage) != 0) {
+        fputs("artifact-check: could not clean the invocation-owned interrupted staging directory\n", stderr);
+        failure = 1;
+    }
+    if (reaped != 0 && access(output, F_OK) == 0 &&
+        remove_owned_output_directory(output) != 0) {
+        fputs("artifact-check: could not clean the invocation-owned interrupted destination\n", stderr);
+        failure = 1;
+    }
+    if (failure == 0) {
+        printf("artifact-check: SIGKILL at %s left no published destination; private stage matched its expected contents\n",
+               checkpoint);
+        result = 0;
+    }
+done:
+    if (child > 0) {
+        int child_reaped = 0;
+        (void)reap_after_sigkill(child, &child_reaped);
+        if (child_reaped != 0) {
+            reaped = 1;
+            child = -1;
+        }
+    }
+    if (reaped != 0) {
+        if (stage[0] == '\0' && output[0] != '\0') {
+            (void)locate_owned_stage(output, stage, sizeof stage);
+        }
+        if (stage[0] != '\0' && access(stage, F_OK) == 0) {
+            (void)remove_owned_output_directory(stage);
+        }
+        if (output[0] != '\0' && access(output, F_OK) == 0) {
+            (void)remove_owned_output_directory(output);
+        }
+    }
+    if (ready_pipe[0] >= 0) {
+        (void)close(ready_pipe[0]);
+    }
+    if (ready_pipe[1] >= 0) {
+        (void)close(ready_pipe[1]);
+    }
+    if (resume_pipe[0] >= 0) {
+        (void)close(resume_pipe[0]);
+    }
+    if (resume_pipe[1] >= 0) {
+        (void)close(resume_pipe[1]);
+    }
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     char error[256] = {0};
+    char before_manifest[4096];
+    char before_publish[4096];
     if (argc == 2 && strcmp(argv[1], "self-test") == 0) {
         return self_test();
     }
     if (argc == 6 && strcmp(argv[1], "publication") == 0) {
-        return publication_control(argv[2], argv[3], argv[4], argv[5]);
+        if (publication_control(argv[2], argv[3], argv[4], argv[5]) != 0) {
+            return 1;
+        }
+        {
+            int before_manifest_len = snprintf(before_manifest, sizeof before_manifest,
+                                               "%s.interruption-before-manifest", argv[5]);
+            int before_publish_len = snprintf(before_publish, sizeof before_publish,
+                                              "%s.interruption-before-publish", argv[5]);
+            if (before_manifest_len < 0 ||
+                (size_t)before_manifest_len >= sizeof before_manifest ||
+                before_publish_len < 0 ||
+                (size_t)before_publish_len >= sizeof before_publish) {
+                fputs("artifact-check: interruption fixture path exceeds its bound\n", stderr);
+                return 1;
+            }
+        }
+        if (interruption_control(argv[2], argv[3], argv[4], before_manifest,
+                                 "before-manifest", INTERRUPTION_BEFORE_MANIFEST) != 0 ||
+            interruption_control(argv[2], argv[3], argv[4], before_publish,
+                                 "before-publish", INTERRUPTION_BEFORE_PUBLISH) != 0) {
+            return 1;
+        }
+        puts("artifact-check: interruption controls passed at both publication boundaries");
+        return 0;
     }
     if (argc == 2 && validate_directory(argv[1], error, sizeof error) == 0) {
         puts("artifact-check: SNAPSHOT P3 and placeholder PCM WAV are valid");
@@ -906,6 +1364,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "artifact-check: %s\n", error);
         return 1;
     }
-    fprintf(stderr, "Usage: lynx-check-artifacts <output-directory> | self-test\n");
+    fprintf(stderr, "Usage: lynx-check-artifacts <output-directory> | self-test | publication CONSUMER BLL LABELS OUTPUT\n");
     return 2;
 }

@@ -112,9 +112,12 @@ write and close. It stages the manifest last, then publishes the whole
 directory with an exclusive no-replace rename (`renamex_np(RENAME_EXCL)` on
 macOS or `renameat2(RENAME_NOREPLACE)` on Linux). Existing directories, files
 and symlinks are refused without modification. If a process is interrupted
-before publication, a private staging directory may remain; it is not the
-requested output directory and has no published success manifest. Unsupported
-exclusive rename fails closed.
+before publication, a private staging directory may remain. Before the manifest
+is staged it contains only the closed PPM and WAV; after the manifest is closed
+it may contain the complete validated artifact set. Until the whole-directory
+exclusive rename succeeds, the requested output directory remains absent and
+the private stage is not a published success. Unsupported exclusive rename
+fails closed.
 
 `scripts/check.sh` runs CTest, whose diagnostic test drivers remove their
 isolated scratch directories and generated BLL/label inputs during cleanup.

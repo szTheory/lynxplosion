@@ -9,6 +9,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -595,6 +597,63 @@ static int publish_directory_exclusive(const char *staging, const char *director
 #endif
 }
 
+#if defined(LYNX_CONSUMER_TESTING)
+static int publication_test_fd(const char *name, int *out)
+{
+    const char *text = getenv(name);
+    char *end = NULL;
+    long value;
+    if (text == NULL || text[0] == '\0') {
+        return 1;
+    }
+    errno = 0;
+    value = strtol(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || value < 0 || value > INT_MAX) {
+        return 1;
+    }
+    *out = (int)value;
+    return 0;
+}
+
+static int publication_test_checkpoint(const char *name, uint32_t event)
+{
+    const char *requested = getenv("LYNX_TEST_PUBLICATION_STOP");
+    struct pollfd resume_event;
+    int ready_fd;
+    int resume_fd;
+    int poll_result;
+    char release;
+    ssize_t written;
+    if (requested == NULL || strcmp(requested, name) != 0) {
+        return 0;
+    }
+    if (publication_test_fd("LYNX_TEST_PUBLICATION_READY_FD", &ready_fd) != 0 ||
+        publication_test_fd("LYNX_TEST_PUBLICATION_RESUME_FD", &resume_fd) != 0) {
+        return report_error("test publication checkpoint has invalid synchronization descriptors");
+    }
+    do {
+        written = write(ready_fd, &event, sizeof event);
+    } while (written < 0 && errno == EINTR);
+    if (written != (ssize_t)sizeof event) {
+        return report_error("test publication checkpoint could not signal readiness");
+    }
+    resume_event.fd = resume_fd;
+    resume_event.events = POLLIN;
+    resume_event.revents = 0;
+    do {
+        poll_result = poll(&resume_event, 1u, 30000);
+    } while (poll_result < 0 && errno == EINTR);
+    if (poll_result == 0) {
+        return report_error("test publication checkpoint timed out waiting for its parent");
+    }
+    if (poll_result < 0 || (resume_event.revents & POLLIN) == 0 ||
+        read(resume_fd, &release, 1u) != 1 || release != 'r') {
+        return report_error("test publication checkpoint received no valid resume command");
+    }
+    return 0;
+}
+#endif
+
 static int publish_outputs(const char *directory, const char *ppm, size_t ppm_len,
                            const uint8_t wav[WAV_BYTES], const char *manifest,
                            size_t manifest_len)
@@ -653,12 +712,22 @@ static int publish_outputs(const char *directory, const char *ppm, size_t ppm_le
         goto failed;
     }
     made_wav = 1;
+#if defined(LYNX_CONSUMER_TESTING)
+    if (publication_test_checkpoint("before-manifest", 1u) != 0) {
+        goto failed;
+    }
+#endif
     write_result = write_exclusive(manifest_path, manifest, manifest_len);
     if (write_result != 0) {
         (void)report_error("cannot write snapshot.manifest exclusively; check output permissions and use a new directory");
         goto failed;
     }
     made_manifest = 1;
+#if defined(LYNX_CONSUMER_TESTING)
+    if (publication_test_checkpoint("before-publish", 2u) != 0) {
+        goto failed;
+    }
+#endif
     if (publish_directory_exclusive(staging, normalized) != 0) {
         if (errno == EEXIST) {
             (void)report_error("output directory already exists; choose a new empty --out path (existing files were not changed)");
