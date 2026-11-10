@@ -2,9 +2,9 @@
 phase: "1"
 slug: "evidence-harness-and-walking-skeleton"
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-11-09"
 ---
 
@@ -42,26 +42,26 @@ Task IDs are `<plan>-T<n>` (for example `01-04-T1` is plan 01-04, Task 1). Per-t
 
 | Requirement | Task ID(s) | Test Type | Automated Command | Negative control | Status |
 |-------------|------------|-----------|-------------------|------------------|--------|
-| FND-01 | 01-01-T1, 01-01-T2, 01-01-T3, 01-04-T2, 01-11-T2, 01-11-T3, 01-13-T2 | e2e | `scripts/check.sh`; CI runs the same; run selected by `headSha == HEAD`, `gh run watch` green | controls below prove the failure paths; `noTestsAction: error` | ⬜ pending |
-| FND-02 | 01-09-T1, 01-09-T2 | script | `policy.pins`, `policy.no_network`, `fetch_pin.mismatch.self_test` | wrong digest ⇒ exit 1, DEST absent; bad pins rows rejected; network tool in tests ⇒ reject | ⬜ pending |
-| FND-03 | 01-10-T1, 01-10-T2 | script | `hygiene.manifests` | missing/unknown/duplicate key, bad sha256 or tier, duplicate identity, uncovered fixture ⇒ reject | ⬜ pending |
-| FND-04 | 01-09-T2, 01-10-T2, 01-11-T1, 01-11-T3 | script | `hygiene.firmware_scan` + post-workflow `artifacts` step | seeded 512 B NUL and no-NUL files in every zone; unmanifested binary; unlisted or modified pin-zone binary; file added or changed after the cc65 build list; build list with a mismatched pin digest; toolchain magic outside build output paths ⇒ reject; removed ⇒ pass | ⬜ pending |
-| FND-05 | 01-05-T1, 01-05-T2 | script + nm | `core.includes`, `core.no_float`, `core.nm_undefined`, `core.nm_globals`, `api.abi_symbols` | stdio include, float, mutable static, `time()`/`malloc()` fixtures ⇒ reject | ⬜ pending |
-| FND-06 | 01-01-T2, 01-04-T1, 01-04-T2 | CMake script | configure-time inventory equality + `inventory.junit` + `policy.no_skip` | missing, extra, duplicate, skipped, undeclared skip, self-skip property ⇒ reject | ⬜ pending |
-| FND-07 | 01-12-T1, 01-13-T1 | script | `docs.policy`, `docs.provenance` | exposure row removed / banner missing / adapted file dropped from provenance ⇒ reject | ⬜ pending |
-| FND-08 | 01-12-T2 | script | `docs.claim_template` | missing field, stale inventory hash, Lynx profile ⇒ reject | ⬜ pending |
-| FND-09 | 01-10-T2, 01-13-T2 | check.sh step + ctest | cc65 wall time printed; `toolchain.probe` hash matches its manifest; CI log lines | wrong expected hash ⇒ reject | ⬜ pending |
-| API-01 | 01-01-T1, 01-05-T2, 01-06-T1 | C test | `api.skeleton`, `api.instances_independent`, `core.nm_globals` | mutation of one leaves the other byte-identical | ⬜ pending |
-| API-02 | 01-06-T1 | C test | `api.load_refusal_unchanged` | each refusal case + one accepted load showing mutation is detectable | ⬜ pending |
-| API-03 | 01-01-T1, 01-06-T2 | C test | `api.skeleton`, `api.advance_budget` | boundary budgets (0, 1, huge, `UINT64_MAX`); image ending at `0x10000` | ⬜ pending |
-| API-04 | 01-02-T1, 01-03-T2, 01-06-T2 | C test + script | `api.identity`, `api.reset_power_on`, `runner.cli` | different seed ⇒ different RAM; default path is fixed-0x00 | ⬜ pending |
-| API-05 | 01-01-T1, 01-06-T1 | C test | `api.inspect_pure` | whole-instance `memcmp` + guest time unchanged | ⬜ pending |
-| API-07 | 01-07-T1, 01-07-T2 | C test | `api.snapshot_roundtrip`, `api.snapshot_refusal` | every header field flip, truncation, trailing bytes ⇒ refuse, state unchanged | ⬜ pending |
-| DET-01 | 01-03-T1, 01-08-T1, 01-08-T2 | e2e | `det.two_runs`, `det.golden` | `det.sensitivity`, `det.sensitivity_state` (seed/content/budget/register/time/RAM bit ⇒ digest differs) | ⬜ pending |
-| DET-02 | 01-08-T1, 01-08-T2 | C test | `det.two_instances` (whole-bundle equality) | same sensitivity controls | ⬜ pending |
-| DET-04 | 01-02-T1, 01-02-T2, 01-03-T1, 01-08-T3 | script | `api.identity`, `api.build_id`, `det.manifest_fields` | missing key, timestamp or absolute path ⇒ reject | ⬜ pending |
-| (cross-compiler) | 01-08-T1, 01-08-T3 | e2e | `det.golden` vs `tests/golden/skeleton.digest` | edited golden ⇒ fail | ⬜ pending |
-| (PII hygiene) | 01-11-T2 | script | `hygiene.tree`, `hygiene.pii.self_test`, `history` step | runtime-constructed fake token, home path, non-noreply email ⇒ reject | ⬜ pending |
+| FND-01 | 01-01-T1, 01-01-T2, 01-01-T3, 01-04-T2, 01-11-T2, 01-11-T3, 01-13-T2 | e2e | `scripts/check.sh`; CI runs the same; run selected by `headSha == HEAD`, `gh run watch` green | controls below prove the failure paths; `noTestsAction: error` | ✅ green |
+| FND-02 | 01-09-T1, 01-09-T2 | script | `policy.pins`, `policy.no_network`, `fetch_pin.mismatch.self_test` | wrong digest ⇒ exit 1, DEST absent; bad pins rows rejected; network tool in tests ⇒ reject | ✅ green |
+| FND-03 | 01-10-T1, 01-10-T2 | script | `hygiene.manifests` | missing/unknown/duplicate key, bad sha256 or tier, duplicate identity, uncovered fixture ⇒ reject | ✅ green |
+| FND-04 | 01-09-T2, 01-10-T2, 01-11-T1, 01-11-T3 | script | `hygiene.firmware_scan` + post-workflow `artifacts` step | seeded 512 B NUL and no-NUL files in every zone; unmanifested binary; unlisted or modified pin-zone binary; file added or changed after the cc65 build list; build list with a mismatched pin digest; toolchain magic outside build output paths ⇒ reject; removed ⇒ pass | ✅ green |
+| FND-05 | 01-05-T1, 01-05-T2 | script + nm | `core.includes`, `core.no_float`, `core.nm_undefined`, `core.nm_globals`, `api.abi_symbols` | stdio include, float, mutable static, `time()`/`malloc()` fixtures ⇒ reject | ✅ green |
+| FND-06 | 01-01-T2, 01-04-T1, 01-04-T2 | CMake script | configure-time inventory equality + `inventory.junit` + `policy.no_skip` | missing, extra, duplicate, skipped, undeclared skip, self-skip property ⇒ reject | ✅ green |
+| FND-07 | 01-12-T1, 01-13-T1 | script | `docs.policy`, `docs.provenance` | exposure row removed / banner missing / adapted file dropped from provenance ⇒ reject | ✅ green |
+| FND-08 | 01-12-T2 | script | `docs.claim_template` | missing field, stale inventory hash, Lynx profile ⇒ reject | ✅ green |
+| FND-09 | 01-10-T2, 01-13-T2 | check.sh step + ctest | cc65 wall time printed; `toolchain.probe` hash matches its manifest; CI log lines | wrong expected hash ⇒ reject | ✅ green |
+| API-01 | 01-01-T1, 01-05-T2, 01-06-T1 | C test | `api.skeleton`, `api.instances_independent`, `core.nm_globals` | mutation of one leaves the other byte-identical | ✅ green |
+| API-02 | 01-06-T1 | C test | `api.load_refusal_unchanged` | each refusal case + one accepted load showing mutation is detectable | ✅ green |
+| API-03 | 01-01-T1, 01-06-T2 | C test | `api.skeleton`, `api.advance_budget` | boundary budgets (0, 1, huge, `UINT64_MAX`); image ending at `0x10000` | ✅ green |
+| API-04 | 01-02-T1, 01-03-T2, 01-06-T2 | C test + script | `api.identity`, `api.reset_power_on`, `runner.cli` | different seed ⇒ different RAM; default path is fixed-0x00 | ✅ green |
+| API-05 | 01-01-T1, 01-06-T1 | C test | `api.inspect_pure` | whole-instance `memcmp` + guest time unchanged | ✅ green |
+| API-07 | 01-07-T1, 01-07-T2 | C test | `api.snapshot_roundtrip`, `api.snapshot_refusal` | every header field flip, truncation, trailing bytes ⇒ refuse, state unchanged | ✅ green |
+| DET-01 | 01-03-T1, 01-08-T1, 01-08-T2 | e2e | `det.two_runs`, `det.golden` | `det.sensitivity`, `det.sensitivity_state` (seed/content/budget/register/time/RAM bit ⇒ digest differs) | ✅ green |
+| DET-02 | 01-08-T1, 01-08-T2 | C test | `det.two_instances` (whole-bundle equality) | same sensitivity controls | ✅ green |
+| DET-04 | 01-02-T1, 01-02-T2, 01-03-T1, 01-08-T3 | script | `api.identity`, `api.build_id`, `det.manifest_fields` | missing key, timestamp or absolute path ⇒ reject | ✅ green |
+| (cross-compiler) | 01-08-T1, 01-08-T3 | e2e | `det.golden` vs `tests/golden/skeleton.digest` | edited golden ⇒ fail | ✅ green |
+| (PII hygiene) | 01-11-T2 | script | `hygiene.tree`, `hygiene.pii.self_test`, `history` step | runtime-constructed fake token, home path, non-noreply email ⇒ reject | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -69,12 +69,12 @@ Task IDs are `<plan>-T<n>` (for example `01-04-T1` is plan 01-04, Task 1). Per-t
 
 ## Wave 0 Requirements
 
-- [ ] `CMakeLists.txt`, `CMakePresets.json`, test-registration CMake that equals the inventory
-- [ ] `tests/cmake/*.cmake` helpers (adapted from owner precedent muhtari, MIT)
-- [ ] `scripts/{check.sh,fetch-pin.sh,hygiene.sh,…}`, `pins.txt`
-- [ ] `tests/inventory/fast.txt`, `tests/inventory/skips.txt`, C check header
-- [ ] `include/lynxplosion.h`, `core/*`, `runner/*`
-- [ ] `.github/workflows/ci.yml`, `README.md`, `docs/policy/clean-room.md`, claim template, manifests
+- [x] `CMakeLists.txt`, `CMakePresets.json`, test-registration CMake that equals the inventory
+- [x] `tests/cmake/*.cmake` helpers (adapted from owner precedent muhtari, MIT)
+- [x] `scripts/{check.sh,fetch-pin.sh,hygiene.sh,…}`, `pins.txt`
+- [x] `tests/inventory/fast.txt`, `tests/inventory/skips.txt`, C check header
+- [x] `include/lynxplosion.h`, `core/*`, `runner/*`
+- [x] `.github/workflows/ci.yml`, `README.md`, `docs/policy/clean-room.md`, claim template, manifests
 
 ---
 
@@ -86,11 +86,19 @@ All phase behaviors have automated verification. The only external evidence is a
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 60s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 60s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-11-09
+
+## Validation Audit 2026-11-10
+
+| Metric | Count |
+|---|---|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
