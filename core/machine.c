@@ -435,6 +435,9 @@ lynx_status lynx_read_register(const lynx_machine *m, uint32_t reg, uint32_t *va
         *value = (uint32_t)m->cpu.ea | ((uint32_t)m->cpu.tmp << 16) |
                  ((uint32_t)m->cost_model << 24);
         break;
+    case LYNX_REG_MAPCTL:
+        *value = m->mapctl;
+        break;
     default:
         return LYNX_ERR_RANGE;
     }
@@ -473,8 +476,6 @@ lynx_status lynx_read_memory(const lynx_machine *m, uint32_t addr, uint8_t *out,
     return LYNX_OK;
 }
 
-/* RED-phase API seam: keep a buildable explicit refusal until the mapped
-   two-pass implementation replaces it in this plan's GREEN commit. */
 lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *out, size_t len)
 {
     if (m == NULL || out == NULL || len == 0u) {
@@ -489,7 +490,20 @@ lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *
     if (output_overlaps_machine(m, out, len)) {
         return LYNX_ERR_ARGUMENT;
     }
-    return LYNX_ERR_UNAVAILABLE;
+    /* First pass: the whole request must resolve to RAM. MAPCTL readback and
+       every unimplemented mapped device/ROM/vector byte refuse atomically. */
+    for (size_t i = 0u; i < len; i++) {
+        const uint16_t current = (uint16_t)(addr + (uint32_t)i);
+        if (lynx__bus_decode(m->mapctl, current) != LYNX__BUS_ROUTE_RAM) {
+            return LYNX_ERR_UNAVAILABLE;
+        }
+    }
+    /* Second pass: no mutating bus operation is used for inspection. */
+    for (size_t i = 0u; i < len; i++) {
+        const uint16_t current = (uint16_t)(addr + (uint32_t)i);
+        out[i] = m->ram[current];
+    }
+    return LYNX_OK;
 }
 
 lynx_status lynx_guest_ticks(const lynx_machine *m, uint64_t *ticks)

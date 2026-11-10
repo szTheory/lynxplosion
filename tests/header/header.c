@@ -40,6 +40,8 @@ static lynx_status (*const read_register_fn)(const lynx_machine *, uint32_t,
                                              uint32_t *) = lynx_read_register;
 static lynx_status (*const read_memory_fn)(const lynx_machine *, uint32_t, uint8_t *,
                                            size_t) = lynx_read_memory;
+static lynx_status (*const read_cpu_memory_fn)(const lynx_machine *, uint32_t, uint8_t *,
+                                               size_t) = lynx_read_cpu_memory;
 static lynx_status (*const guest_ticks_fn)(const lynx_machine *, uint64_t *) = lynx_guest_ticks;
 static lynx_status (*const get_identity_fn)(const lynx_machine *,
                                             lynx_identity *) = lynx_get_identity;
@@ -65,6 +67,7 @@ int main(void)
     (void)advance_fn;
     (void)read_register_fn;
     (void)read_memory_fn;
+    (void)read_cpu_memory_fn;
     (void)guest_ticks_fn;
     (void)get_identity_fn;
     (void)build_id_fn;
