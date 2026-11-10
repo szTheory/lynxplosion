@@ -22,6 +22,18 @@ open).
 This repository contains no BIOS, firmware or commercial game content, and
 contributions must never add any.
 
+## Documents
+
+- [Clean-room policy](docs/policy/clean-room.md) (draft, pending owner
+  decision O6)
+- [Exposure record](docs/policy/exposure-record.md)
+- [Provenance notice](docs/provenance.md)
+- [Claim template](docs/claims/claim.template)
+
+A claim is bound to the exact test inventory: it records the SHA-256 of
+`tests/inventory/fast.txt`, and a check fails when the inventory changes
+without the claim being regenerated.
+
 ## Running the check
 
 ```sh

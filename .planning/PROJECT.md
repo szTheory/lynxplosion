@@ -181,9 +181,11 @@ with its own evidence plan.
 | Baseline Lynx model/revision and CPU profile | Needs cited evidence; affects CPU tests | — Open |
 | Boot/firmware policy (independent startup, owner-supplied BIOS, or both) | Determines unattended CI path | — Open |
 | Cartridge/container format, banking, EEPROM/identity | Defines content contract | — Open |
-| Timing representation and advancement unit | Needs bus/DMA/timer study | — Open |
-| Implementation language, build tooling, API/ABI | Not selected by owner | — Open |
-| Project license, repository visibility, release route | Owner authority | — Open (owner) |
+| Timing representation and advancement unit | Phase 1: `lynx_advance` budget in 16 MHz master ticks; per-device timing model open (needs bus/DMA/timer study) | — Open |
+| Implementation language, build tooling, API/ABI: C17 (`CMAKE_C_EXTENSIONS OFF`, `-pedantic-errors`), CMake 3.25+ workflow presets, Ninja, CTest, C ABI with opaque handle | Owner accepted research default (O8), 2026-11-09 | ✓ Owner decision |
+| Repository visibility: public at github.com/szTheory/lynxplosion; no PII or credentials (owner, 2026-11-09) | Owner authority; recorded here so scans and CI assume a public tree | ✓ Owner decision |
+| Project licence (O5) and release route | Owner authority; no licence file until decided | — Open (owner); all rights reserved until decided |
+| Clean-room protocol (O6) | Rights boundary for emulator-source exposure | — Draft policy in docs/policy/clean-room.md; owner decision pending |
 | LibFuturo fit | Needs a real core/consumer test | — Open |
 | ComLynx/accessories timing in roadmap | Scope/cost | — Open |
 
