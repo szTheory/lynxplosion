@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Memory Map, Direct-Load Startup and First Diagnostic
 status: executing
-stopped_at: Completed 03-05-PLAN.md
-last_updated: "2026-11-10T19:27:48.554Z"
+stopped_at: Completed 03-06-PLAN.md
+last_updated: "2026-11-10T20:19:26.519Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 03 execution started
-state_head: 0507cf3e72697f37c7a416a992bc79942b5ebbdc
+state_head: 1d63e3db30621a96551f423c2d2df34227c6c623
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 33
-  completed_plans: 29
+  completed_plans: 30
   percent: 33
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 03 (Memory Map, Direct-Load Startup and First Diagnostic) — EXECUTING
-Plan: 6 of 9
+Plan: 7 of 9
 Status: Ready to execute
 Last activity: 2026-11-10 — Phase 03 execution started
 
@@ -86,6 +86,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 03 P03 | 58 min | 2 tasks | 17 files |
 | Phase 03 P04 | 36 min | 2 tasks | 10 files |
 | Phase 03 P05 | 17 min | 2 tasks | 10 files |
+| Phase 03 P06 | 49 min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -154,6 +155,9 @@ Recent decisions affecting current work:
 - [Phase 03]: Unsupported mapped device, ROM, vector, and MAPCTL-read routes refuse explicitly; host register observation reports the latch without guest readback.
 - [Phase 03]: Retain flat5 timing as an explicitly unqualified placeholder, independent of route decoding.
 - [Phase 03]: 03-05: post-write watch returns at grant+1 after bus and CPU completion; host observation state remains separate from serialized guest state.
+- [Phase 03]: 03-06: successful restore clears host watch state only after validation and guest-state apply; refusals preserve the whole instance.
+- [Phase 03]: 03-06: preserve watch grant/grant+1 semantics; host observer state stays out of guest snapshots/digests, so no golden rebaseline was needed.
+- [Phase 03]: 03-06: DET-03 unclassified probe remains a flagged assumption; repeatability checks do not auto-classify it.
 
 ### Pending Todos
 
@@ -180,6 +184,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T19:27:48.318Z
-Stopped at: Completed 03-05-PLAN.md
+Last session: 2026-11-10T20:19:26.344Z
+Stopped at: Completed 03-06-PLAN.md
 Resume file: None
