@@ -13,6 +13,7 @@ _Static_assert(sizeof(lynx_watch_event) == 32, "watch event layout");
 _Static_assert(LYNX_CONTENT_BS93 == 2, "BS93 content format id");
 _Static_assert(LYNX_STARTUP_A == 1, "tier A startup id");
 _Static_assert(LYNX_STOP_HALT == 3, "stop reason HALT value");
+_Static_assert(LYNX_STOP_WATCH == 2, "stop reason WATCH value");
 _Static_assert(LYNX_STOP_UNDEFINED == 4, "stop reason UNDEFINED value");
 _Static_assert(LYNX_STOP_UNAVAILABLE == 5, "stop reason UNAVAILABLE value");
 _Static_assert(LYNX_ERR_UNAVAILABLE == 10, "status UNAVAILABLE value");

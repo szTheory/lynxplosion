@@ -32,6 +32,15 @@ extern const char lynx__build_id[];
    64-bit guest-time limit. Larger than any cycle cost (costs are uint8_t). */
 #define LYNX__TICK_HEADROOM 0x10000u
 
+/* Host-side debugger observations are deliberately separate from guest
+   machine state. Snapshot serialization and guest digests omit this object. */
+typedef struct lynx__host_observation {
+    uint32_t watch_armed;
+    uint32_t watch_addr;
+    uint32_t watch_len;
+    lynx_watch_event watch_event;
+} lynx__host_observation;
+
 /* One machine instance. The caller's buffer is the only mutable state.
    Init zero-fills the whole struct, so padding bytes are always zero. */
 struct lynx_machine {
@@ -46,6 +55,7 @@ struct lynx_machine {
     uint8_t mapctl; /* provisional byte latch; all written bits are retained */
     uint64_t guest_ticks;       /* the only clock */
     uint64_t cpu_ready_at;      /* guest tick at which the CPU's next cycle may be granted */
+    lynx__host_observation host_observation;
 };
 
 /* Applies the configured RAM power-on policy, puts the CPU in its declared

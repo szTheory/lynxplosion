@@ -106,6 +106,7 @@ void lynx__power_on(lynx_machine *m)
     m->mapctl = 0u;
     m->guest_ticks = 0u;
     m->cpu_ready_at = m->guest_ticks;
+    memset(&m->host_observation, 0, sizeof m->host_observation);
 }
 
 /* The one power-on path, used by init and by reset. cfg may point into m, so
@@ -172,27 +173,52 @@ static int ranges_overlap(const void *a, size_t alen, const void *b, size_t blen
     return (ub - ua) < alen;
 }
 
-/* Buildable refusal seam for the first watch RED run. The TDD GREEN commit
-   replaces these bodies with the instance-owned implementation. */
 lynx_status lynx_watch_configure(lynx_machine *m, uint32_t addr, size_t len)
 {
-    (void)m;
-    (void)addr;
-    (void)len;
-    return LYNX_ERR_STATE;
+    if (m == NULL) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (!machine_valid(m)) {
+        return LYNX_ERR_STATE;
+    }
+    if (len == 0u) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (addr >= LYNX_ADDRESS_SPACE || len > (size_t)LYNX_ADDRESS_SPACE - (size_t)addr) {
+        return LYNX_ERR_RANGE;
+    }
+    memset(&m->host_observation, 0, sizeof m->host_observation);
+    m->host_observation.watch_armed = 1u;
+    m->host_observation.watch_addr = addr;
+    m->host_observation.watch_len = (uint32_t)len;
+    return LYNX_OK;
 }
 
 lynx_status lynx_watch_clear(lynx_machine *m)
 {
-    (void)m;
-    return LYNX_ERR_STATE;
+    if (m == NULL) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (!machine_valid(m)) {
+        return LYNX_ERR_STATE;
+    }
+    memset(&m->host_observation, 0, sizeof m->host_observation);
+    return LYNX_OK;
 }
 
 lynx_status lynx_watch_get(const lynx_machine *m, lynx_watch_event *out)
 {
-    (void)m;
-    (void)out;
-    return LYNX_ERR_STATE;
+    if (m == NULL || out == NULL) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (!machine_valid(m)) {
+        return LYNX_ERR_STATE;
+    }
+    if (ranges_overlap(out, sizeof *out, m, sizeof *m)) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    *out = m->host_observation.watch_event;
+    return LYNX_OK;
 }
 
 lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len)
@@ -408,6 +434,7 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
         const uint64_t grant = m->guest_ticks; /* no stalls before Phase 4 */
         const lynx__bus_timing price =
             lynx__bus_timing_of(m->cost_model, lynx__bus_region_of(addr), m->cpu.req_kind);
+        const uint8_t write_value = m->cpu.req_data;
         uint8_t data = 0u;
         if (!bus_access(m, addr, m->cpu.req_data, flags, grant + price.sample, &data)) {
             *stop = LYNX_STOP_UNAVAILABLE;
@@ -415,6 +442,22 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
         }
         lynx__cpu_complete(&m->cpu, table, data, 0u); /* no interrupt lines before Phase 4 */
         m->cpu_ready_at = grant + price.ticks;
+        const uint32_t watched_addr = (uint32_t)addr;
+        if ((flags & LYNX__CF_WRITE) != 0u && m->host_observation.watch_armed != 0u &&
+            watched_addr >= m->host_observation.watch_addr &&
+            watched_addr - m->host_observation.watch_addr < m->host_observation.watch_len) {
+            /* The bus mutation, CPU continuation and next-ready tick are all
+               committed before this host-only one-shot observation returns. */
+            m->host_observation.watch_event.hit = 1u;
+            m->host_observation.watch_event.address = watched_addr;
+            m->host_observation.watch_event.value = write_value;
+            m->host_observation.watch_event.hit_tick = grant;
+            m->host_observation.watch_event.return_tick = grant + 1u;
+            m->host_observation.watch_armed = 0u;
+            m->guest_ticks = grant + 1u;
+            *stop = LYNX_STOP_WATCH;
+            break;
+        }
     }
     *consumed = m->guest_ticks - start;
     return LYNX_OK;

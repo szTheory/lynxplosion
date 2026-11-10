@@ -1455,6 +1455,13 @@ static void case_watch_controls(void)
         return;
     }
     CHECK_EQ_U64(load_bll_at(m, watch_program, sizeof watch_program, 0x0200u), LYNX_OK);
+    lynx_watch_event event;
+    memset(&event, 0xA5, sizeof event);
+    CHECK_EQ_U64(lynx_watch_configure(NULL, 0x0400u, 1u), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_watch_clear(NULL), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_watch_get(NULL, &event), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(event.hit, UINT32_C(0xA5A5A5A5));
+    CHECK_EQ_U64(lynx_watch_get(m, NULL), LYNX_ERR_ARGUMENT);
     CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
     const uint64_t config_tick = ticks_of(m);
 
@@ -1471,7 +1478,6 @@ static void case_watch_controls(void)
     CHECK_EQ_U64(consumed, 25u);
     CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
     CHECK_EQ_HEX(m->ram[0x0400u], 0u);
-    lynx_watch_event event;
     CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
     CHECK_EQ_U64(event.hit, 0u);
     CHECK_EQ_U64(event.address, 0u);
@@ -1536,6 +1542,28 @@ static void case_watch_controls(void)
     CHECK_EQ_U64(event.hit, 0u);
     lynx_machine_deinit(m);
 
+    /* A due write whose mapped target is unavailable is refused before the
+       watch can publish an event or expose hidden backing RAM. */
+    static const uint8_t unavailable_write[] = {
+        0xA9u, 0x00u, 0x8Du, 0xF9u, 0xFFu, 0xA9u, 0x96u,
+        0x8Du, 0x00u, 0xFEu, 0x4Cu, 0x0Au, 0x02u
+    };
+    m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, unavailable_write, sizeof unavailable_write, 0x0200u),
+                 LYNX_OK);
+    m->ram[0xFE00u] = 0x3Cu;
+    CHECK_EQ_U64(lynx_watch_configure(m, 0xFE00u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 128u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_EQ_U64(m->cpu.req_addr, 0xFE00u);
+    CHECK_EQ_HEX(m->ram[0xFE00u], 0x3Cu);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    lynx_machine_deinit(m);
+
     /* Successful reset and load clear host-only configuration and hit data. */
     m = init_in(machine_buf, &cfg);
     if (m == NULL) {
@@ -1559,6 +1587,11 @@ static void case_watch_controls(void)
     CHECK_EQ_U64(event.hit, 0u);
     CHECK_EQ_U64(ticks_of(m), 0u);
     lynx_machine_deinit(m);
+    memset(&event, 0xA5, sizeof event);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_ERR_STATE);
+    CHECK_EQ_U64(lynx_watch_clear(m), LYNX_ERR_STATE);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_ERR_STATE);
+    CHECK_EQ_U64(event.hit, UINT32_C(0xA5A5A5A5));
 }
 
 /* CPU_STATE as documented in the public header. */
