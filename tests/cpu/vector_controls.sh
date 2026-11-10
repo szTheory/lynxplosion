@@ -625,8 +625,62 @@ lane_runner_build() {
   ok "the run mode builds the check preset before running; a stale runner is replaced; a failed build is fatal"
 }
 
+# lane_harness DIR MODE: the real run_same and run_cross of the lane script, cut
+# out of it and driven against a fake runner (the script's own helper functions
+# are cut out with them). MODE tells the fake runner what to do. The caller
+# appends the calls to the harness on stdin and runs it under set -eu, as the
+# script does.
+lane_harness() {
+  lh=$1
+  mkdir -p "$lh/root/build/vectors-full" "$lh/work"
+  {
+    printf 'set -eu\nLC_ALL=C\nexport LC_ALL\n'
+    printf 'HEXDIGITS="0 1 2 3 4 5 6 7 8 9 a b c d e f"\n'
+    printf 'root=%s\nwork=%s\nlane_status=0\nrunner=%s\n' "$lh/root" "$lh/work" "$lh/runner"
+    for fn in sha_of failing_set bitop_set run_same run_cross; do
+      sed -n "/^$fn() {\$/,/^}\$/p" "$root/scripts/vectors-full.sh"
+    done
+    cat
+  } >"$lh/harness.sh"
+  # shellcheck disable=SC2016 # the fake runner, not this shell, expands these
+  {
+    printf '#!/bin/sh\n'
+    printf 'res=\n'
+    printf 'while [ $# -gt 0 ]; do [ "$1" = --results ] && res=$2; shift; done\n'
+    printf 'case "%s" in\n' "$2"
+    printf '  crash) exit 3 ;;\n'
+    printf '  same) rc=0 ;;\n'
+    printf '  cross*) rc=1 ;;\n'
+    printf 'esac\n'
+    printf 'for h in 0 1 2 3 4 5 6 7 8 9 a b c d e f; do for l in 0 1 2 3 4 5 6 7 8 9 a b c d e f; do\n'
+    printf '  op=$h$l; pass=10000; fail=0\n'
+    printf '  case "%s$l" in cross*7|cross*f) pass=5000; fail=5000 ;; esac\n' "$2"
+    printf '  case "%s$op" in cross_short07) pass=4000 ;; esac\n' "$2"
+    printf '  printf "%%s\\t%%s\\t%%s\\n" "$op" "$pass" "$fail"\n'
+    printf 'done; done >"$res"\n'
+    printf 'exit $rc\n'
+  } >"$lh/runner"
+  chmod +x "$lh/runner"
+}
+
+# IN-04: a runner that dies without writing its results file must be reported as
+# a failed lane, not end the script through the unchecked cp of the file.
+lane_results_missing() {
+  lh=$work/lane-results
+  lane_harness "$lh" crash <<'EOF'
+run_same none synertek65c02 --profile none
+echo "lane_status=$lane_status"
+EOF
+  rc=0
+  sh "$lh/harness.sh" >"$work/lane-results.out" 2>&1 || rc=$?
+  expect lane_results_missing 0 'FAILED, the runner wrote no results file' "$work/lane-results.out"
+  expect lane_results_missing 0 '^lane_status=1$' "$work/lane-results.out"
+  ok "a runner without a results file is a failed lane, reported, not a silent exit"
+}
+
 case_lane_script() {
   lane_runner_build
+  lane_results_missing
 }
 
 case $name in

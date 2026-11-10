@@ -230,6 +230,11 @@ run_same() {
   "$runner" complete "$3" "$4" --dir "$work/dl" --variant "$2" --results "$work/$rs_name.results" \
     >"$work/$rs_name.log" 2>&1 || rs_rc=$?
   cat "$work/$rs_name.log"
+  if [ ! -f "$work/$rs_name.results" ]; then
+    echo "vectors-full: run: $rs_name: FAILED, the runner wrote no results file (runner exit $rs_rc)" >&2
+    lane_status=1
+    return 0
+  fi
   cp "$work/$rs_name.results" "$root/build/vectors-full/$rs_name.results"
   echo "vectors-full: run: $rs_name ($2 under $4): runner exit $rs_rc in $(($(date +%s) - rs_started)) s, results sha256 $(sha_of "$work/$rs_name.results")"
   if [ "$rs_rc" -ne 0 ]; then
@@ -248,6 +253,11 @@ run_cross() {
   "$runner" complete "$3" "$4" --dir "$work/dl" --variant "$2" --results "$work/$rc_name.results" \
     >"$work/$rc_name.log" 2>&1 || rc_rc=$?
   cat "$work/$rc_name.log"
+  if [ ! -f "$work/$rc_name.results" ]; then
+    echo "vectors-full: run: $rc_name: FAILED, the runner wrote no results file (runner exit $rc_rc)" >&2
+    lane_status=1
+    return 0
+  fi
   cp "$work/$rc_name.results" "$root/build/vectors-full/$rc_name.results"
   rc_got=$(failing_set "$work/$rc_name.results")
   rc_want=$(bitop_set)
