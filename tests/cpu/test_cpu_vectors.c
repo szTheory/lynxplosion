@@ -9,6 +9,14 @@
          every non-excluded vector through the same CPU the machine uses
      run --profile P --sample FILE --print-plan
          print the derived plan (used once to generate the committed inventories)
+     complete --profile P --dir DIR --variant V
+         run every vector of the 256 whole upstream files DIR/V/v1/<op>.json (10,000
+         per file) through the same CPU, with the exclusions and, under none, the
+         undefined rows that the profile table gives; no committed plan applies
+     Options of run and complete: --results FILE (one line per run row, op, passed,
+     failed, ascending), --partial (sample: any ascending subset of sections;
+     complete: files that are absent are skipped, at least one must exist) and
+     --fault no-step|stray-write|mutant-69 (named faults used only by the controls).
 
    Asserted per vector: final pc, s, a, x, y, p under mask 0xCF, every listed final
    ram value, and no write outside the union of the initial and final ram address
@@ -29,6 +37,9 @@
 #include "sha256.h"
 
 enum { EXIT_PASS = 0, EXIT_ASSERT = 1, EXIT_USAGE = 2, EXIT_DATA = 3, EXIT_INVENTORY = 4 };
+
+/* Named faults the controls inject; each is built here at run time, never committed. */
+enum { FAULT_NONE = 0, FAULT_NO_STEP = 1, FAULT_STRAY_WRITE = 2, FAULT_MUTANT_69 = 3 };
 
 /* ---- files --------------------------------------------------------------- */
 
@@ -449,7 +460,12 @@ typedef struct run_opts {
     const char *sample;
     const char *manifest;
     const char *expect_plan;
+    const char *dir;     /* complete: directory holding <variant>/v1/<op>.json */
+    const char *variant; /* complete: synertek65c02 or rockwell65c02 */
+    const char *results; /* optional results file */
     int print_plan;
+    int partial;
+    int fault;
 } run_opts;
 
 /* Per-opcode counts from the parse pass. */
@@ -505,12 +521,12 @@ static int manifest_sha256(const char *path, char out[65])
 }
 
 /* Parses the whole sample once, filling the per-opcode counts. */
-static int parse_pass(const char *buf, size_t len, const char *label, unsigned profile)
+static int parse_pass(const char *buf, size_t len, const char *label, unsigned profile, int partial)
 {
     const lynx__cpu_decode *t = lynx__cpu_table(profile);
     int rc;
     memset(&g_counts, 0, sizeof g_counts);
-    if (sst_open_sample(&g_reader, buf, len, label, 0) != 0) {
+    if (sst_open_sample(&g_reader, buf, len, label, partial) != 0) {
         fprintf(stderr, "%s\n", g_reader.msg);
         return -1;
     }
@@ -525,7 +541,7 @@ static int parse_pass(const char *buf, size_t len, const char *label, unsigned p
         fprintf(stderr, "%s\n", g_reader.msg);
         return -1;
     }
-    if (g_reader.sections != 256u || g_reader.total == 0u) {
+    if ((partial == 0 && g_reader.sections != 256u) || g_reader.total == 0u) {
         fprintf(stderr, "%s: parsed %u sections and %u vectors, expected 256 sections\n", label, g_reader.sections,
                 g_reader.total);
         return -1;
@@ -552,7 +568,12 @@ static void build_plan(const run_opts *o, const char *sample_hex)
     plan_add("# profile = %s\n", o->profile_name);
     plan_add("# source = SingleStepTests/65x02 %s %s%s\n", g_reader.commit, g_reader.variant,
              o->profile == 0u ? " (same data as lynx1; rows defined only where lynx1 and lynx2 agree)" : "");
-    plan_add("# sample = first 32 objects of each of 256 files, upstream bytes verbatim\n");
+    if (o->partial != 0) {
+        plan_add("# sample = partial, first 32 objects of each of %u files, upstream bytes verbatim\n",
+                 g_reader.sections);
+    } else {
+        plan_add("# sample = first 32 objects of each of 256 files, upstream bytes verbatim\n");
+    }
     plan_add("# sample_sha256 = %s\n", sample_hex);
     plan_add("# asserted = pc s a x y, p & 0xcf, final listed ram, no write outside listed addresses\n");
     plan_add("# not_asserted = cycle count, bus trace, unlisted reads, ticks\n");
@@ -564,6 +585,9 @@ static void build_plan(const run_opts *o, const char *sample_hex)
     for (op = 0; op < 256u; op++) {
         rowinfo ri = classify(o->profile, op, t);
         unsigned n = g_counts.vectors[op];
+        if (o->partial != 0 && n == 0u) {
+            continue; /* a partial sample has no section for this opcode */
+        }
         g_totals.vectors += n;
         if (ri.status == ST_RUN) {
             g_totals.run++;
@@ -588,13 +612,13 @@ static void build_plan(const run_opts *o, const char *sample_hex)
                  g_counts.decimal[op], ri.reason);
     }
     if (o->profile == 0u) {
-        plan_add("# totals = files 256 run %u excluded %u undefined %u vectors %u asserted %u excluded_vectors %u "
+        plan_add("# totals = files %u run %u excluded %u undefined %u vectors %u asserted %u excluded_vectors %u "
                  "undefined_vectors %u\n",
-                 g_totals.run, g_totals.excluded, g_totals.undefined, g_totals.vectors, g_totals.asserted,
+                 g_reader.sections, g_totals.run, g_totals.excluded, g_totals.undefined, g_totals.vectors, g_totals.asserted,
                  g_totals.excluded_vectors, g_totals.undefined_vectors);
     } else {
-        plan_add("# totals = files 256 run %u excluded %u vectors %u asserted %u excluded_vectors %u\n", g_totals.run,
-                 g_totals.excluded, g_totals.vectors, g_totals.asserted, g_totals.excluded_vectors);
+        plan_add("# totals = files %u run %u excluded %u vectors %u asserted %u excluded_vectors %u\n",
+                 g_reader.sections, g_totals.run, g_totals.excluded, g_totals.vectors, g_totals.asserted, g_totals.excluded_vectors);
     }
 }
 
@@ -678,13 +702,16 @@ static int is_identity(const sst_vector *v)
 }
 
 typedef struct results {
-    unsigned asserted, passed, failed, identity;
+    unsigned asserted, passed, failed, identity, unmoved;
     unsigned undefined_checked, undefined_stopped;
     unsigned printed;
     unsigned op_passed[256], op_failed[256];
 } results;
 
 static results g_res;
+static rowinfo g_info[256];
+static int g_fault;
+static int g_stray_done;
 
 static void fail_field(const sst_vector *v, const char *field, unsigned got, unsigned want)
 {
@@ -729,6 +756,25 @@ static void restore_touched(const sst_vector *v)
     }
 }
 
+/* Fault stray-write: the bus performs and logs one more write, to an address the
+   vector does not list, as if the CPU had written where it must not. */
+static void inject_stray_write(const sst_vector *v)
+{
+    uint16_t addr = 0xFFF0u;
+    while (addr_listed(&v->initial, &v->final, addr) != 0) {
+        addr = (uint16_t)(addr - 1u);
+    }
+    if (g_bus.nlog < FLAT_LOG_MAX) {
+        flat_entry *e = &g_bus.log[g_bus.nlog];
+        memset(e, 0, sizeof *e);
+        e->addr = addr;
+        e->data = 0x5Au;
+        e->write = 1u;
+        g_bus.nlog++;
+    }
+    g_bus.mem[addr] = 0x5Au;
+}
+
 /* One executed vector: returns the number of failed fields. */
 static unsigned run_vector(const sst_vector *v, unsigned profile, const lynx__cpu_decode *t)
 {
@@ -736,9 +782,14 @@ static unsigned run_vector(const sst_vector *v, unsigned profile, const lynx__cp
     unsigned failed = 0;
     unsigned i;
     load_initial(v, &cpu, t, profile);
-    if (!flat_bus_step_instruction(&g_bus, &cpu, t)) {
+    /* fault no-step: the state is loaded and the CPU is never called */
+    if (g_fault != FAULT_NO_STEP && !flat_bus_step_instruction(&g_bus, &cpu, t)) {
         fail_field(v, "cycle-bound", 0u, 0u);
         failed++;
+    }
+    if (g_fault == FAULT_STRAY_WRITE && g_stray_done == 0) {
+        inject_stray_write(v);
+        g_stray_done = 1;
     }
     if (cpu.pc != v->final.pc) {
         fail_field(v, "pc", cpu.pc, v->final.pc);
@@ -821,50 +872,128 @@ static unsigned probe_undefined(const sst_vector *v, unsigned profile, const lyn
     return failed;
 }
 
-static int execute_pass(const char *buf, size_t len, const char *label, const run_opts *o)
+/* One vector of a run or undefined row (excluded rows are only counted by the
+   callers); counts it in g_res. */
+static void exec_one(const sst_vector *v, const run_opts *o, const lynx__cpu_decode *t)
+{
+    unsigned op = v->opcode;
+    unsigned failed;
+    if (g_info[op].status == ST_RUN) {
+        g_res.asserted++;
+        if (is_identity(v) != 0) {
+            g_res.identity++;
+            if (v->final.pc == v->initial.pc) {
+                g_res.unmoved++;
+            }
+        }
+        failed = run_vector(v, o->profile, t);
+        if (failed == 0u) {
+            g_res.passed++;
+            g_res.op_passed[op]++;
+        } else {
+            g_res.failed++;
+            g_res.op_failed[op]++;
+        }
+    } else if (g_info[op].status == ST_UNDEFINED) {
+        g_res.undefined_checked++;
+        failed = probe_undefined(v, o->profile, t);
+        if (failed == 0u) {
+            g_res.undefined_stopped++;
+        } else {
+            g_res.failed++;
+            g_res.op_failed[op]++;
+        }
+    }
+}
+
+/* The profile table the run uses; fault mutant-69 is a test-local copy whose $69
+   row is the $E9 row, so $69 decodes as SBC with no change to the core. */
+static lynx__cpu_decode g_mutant[256];
+
+static const lynx__cpu_decode *table_for(const run_opts *o)
+{
+    if (o->fault == FAULT_MUTANT_69) {
+        memcpy(g_mutant, lynx__cpu_table(o->profile), sizeof g_mutant);
+        g_mutant[0x69] = g_mutant[0xE9];
+        return g_mutant;
+    }
+    return lynx__cpu_table(o->profile);
+}
+
+static void begin_execution(const run_opts *o)
 {
     const lynx__cpu_decode *t = lynx__cpu_table(o->profile);
-    rowinfo info[256];
     unsigned op;
     unsigned a;
-    int rc;
     for (op = 0; op < 256u; op++) {
-        info[op] = classify(o->profile, op, t);
+        g_info[op] = classify(o->profile, op, t);
     }
     for (a = 0; a < 65536u; a++) {
         g_bus.mem[a] = poison((uint16_t)a);
     }
     memset(&g_res, 0, sizeof g_res);
-    if (sst_open_sample(&g_reader, buf, len, label, 0) != 0) {
+    g_fault = o->fault;
+    g_stray_done = 0;
+}
+
+static const char *fault_name(int fault)
+{
+    switch (fault) {
+    case FAULT_NO_STEP:
+        return "no-step";
+    case FAULT_STRAY_WRITE:
+        return "stray-write";
+    case FAULT_MUTANT_69:
+        return "mutant-69";
+    default:
+        return "none";
+    }
+}
+
+/* One line per run row that executed at least one vector: op, passed, failed. */
+static int write_results(const char *path)
+{
+    FILE *f;
+    unsigned op;
+    if (path == NULL) {
+        return 0;
+    }
+    f = fopen(path, "wb");
+    if (f == NULL) {
+        fprintf(stderr, "lynx-test-cpu-vectors: cannot write %s\n", path);
+        return -1;
+    }
+    for (op = 0; op < 256u; op++) {
+        if (g_info[op].status == ST_RUN && g_res.op_passed[op] + g_res.op_failed[op] > 0u) {
+            (void)fprintf(f, "%02x\t%u\t%u\n", op, g_res.op_passed[op], g_res.op_failed[op]);
+        }
+    }
+    if (fclose(f) != 0) {
+        fprintf(stderr, "lynx-test-cpu-vectors: cannot write %s\n", path);
+        return -1;
+    }
+    return 0;
+}
+
+static void print_fault(const run_opts *o)
+{
+    if (o->fault != FAULT_NONE) {
+        printf("fault %s\n", fault_name(o->fault));
+        printf("unmoved %u\n", g_res.unmoved);
+    }
+}
+
+static int execute_pass(const char *buf, size_t len, const char *label, const run_opts *o)
+{
+    const lynx__cpu_decode *t = table_for(o);
+    int rc;
+    begin_execution(o);
+    if (sst_open_sample(&g_reader, buf, len, label, o->partial) != 0) {
         fprintf(stderr, "%s\n", g_reader.msg);
         return EXIT_DATA;
     }
     while ((rc = sst_next(&g_reader, &g_vec)) > 0) {
-        unsigned failed;
-        op = g_vec.opcode;
-        if (info[op].status == ST_RUN) {
-            g_res.asserted++;
-            if (is_identity(&g_vec) != 0) {
-                g_res.identity++;
-            }
-            failed = run_vector(&g_vec, o->profile, t);
-            if (failed == 0u) {
-                g_res.passed++;
-                g_res.op_passed[op]++;
-            } else {
-                g_res.failed++;
-                g_res.op_failed[op]++;
-            }
-        } else if (info[op].status == ST_UNDEFINED) {
-            g_res.undefined_checked++;
-            failed = probe_undefined(&g_vec, o->profile, t);
-            if (failed == 0u) {
-                g_res.undefined_stopped++;
-            } else {
-                g_res.failed++;
-                g_res.op_failed[op]++;
-            }
-        }
+        exec_one(&g_vec, o, t);
     }
     if (rc < 0) {
         fprintf(stderr, "%s\n", g_reader.msg);
@@ -903,7 +1032,7 @@ static int cmd_run(const run_opts *o)
             return EXIT_DATA;
         }
     }
-    if (parse_pass(buf, len, o->sample, o->profile) != 0) {
+    if (parse_pass(buf, len, o->sample, o->profile, o->partial) != 0) {
         free(buf);
         return EXIT_DATA;
     }
@@ -923,17 +1052,22 @@ static int cmd_run(const run_opts *o)
     if (rc != EXIT_PASS) {
         return rc;
     }
+    if (write_results(o->results) != 0) {
+        return EXIT_DATA;
+    }
     printf("profile %s\n", o->profile_name);
     printf("sample_sha256 %s\n", hex);
     printf("plan matches the committed inventory\n");
     if (o->profile == 0u) {
-        printf("totals files 256 run %u excluded %u undefined %u vectors %u\n", g_totals.run, g_totals.excluded,
-               g_totals.undefined, g_totals.vectors);
+        printf("totals files %u run %u excluded %u undefined %u vectors %u\n", g_reader.sections, g_totals.run,
+               g_totals.excluded, g_totals.undefined, g_totals.vectors);
     } else {
-        printf("totals files 256 run %u excluded %u vectors %u\n", g_totals.run, g_totals.excluded, g_totals.vectors);
+        printf("totals files %u run %u excluded %u vectors %u\n", g_reader.sections, g_totals.run, g_totals.excluded,
+               g_totals.vectors);
     }
     printf("asserted %u passed %u failed %u identity %u\n", g_res.asserted, g_res.passed, g_res.failed,
            g_res.identity);
+    print_fault(o);
     printf("excluded_vectors parsed %u asserted 0\n", g_totals.excluded_vectors);
     if (o->profile == 0u) {
         printf("undefined_vectors %u stopped %u\n", g_res.undefined_checked, g_res.undefined_stopped);
@@ -942,6 +1076,90 @@ static int cmd_run(const run_opts *o)
            g_totals.unv_cycles_vectors, g_totals.unv_shape_rows, g_totals.unv_shape_vectors);
     if (g_res.asserted != g_totals.asserted || g_res.undefined_checked != g_totals.undefined_vectors) {
         fprintf(stderr, "lynx-test-cpu-vectors: executed counts differ from the plan\n");
+        return EXIT_ASSERT;
+    }
+    return g_res.failed == 0u ? EXIT_PASS : EXIT_ASSERT;
+}
+
+/* The whole upstream files: DIR/<variant>/v1/<op>.json, 10,000 vectors each. The
+   same classification as the sample run (exclusions, and under none the undefined
+   rows) with no committed plan: the full lane compares totals, not a file. */
+static int cmd_complete(const run_opts *o)
+{
+    const lynx__cpu_decode *t = table_for(o);
+    unsigned op;
+    unsigned files = 0;
+    unsigned run_rows = 0;
+    unsigned excluded_rows = 0;
+    unsigned undefined_rows = 0;
+    unsigned vectors = 0;
+    unsigned excluded_vectors = 0;
+    char path[1024];
+    begin_execution(o);
+    for (op = 0; op < 256u; op++) {
+        size_t len = 0;
+        char *buf;
+        int rc;
+        int n = snprintf(path, sizeof path, "%s/%s/v1/%02x.json", o->dir, o->variant, op);
+        if (n < 0 || (size_t)n >= sizeof path) {
+            fprintf(stderr, "lynx-test-cpu-vectors: path too long\n");
+            return EXIT_USAGE;
+        }
+        if (o->partial != 0) {
+            FILE *probe = fopen(path, "rb");
+            if (probe == NULL) {
+                continue;
+            }
+            (void)fclose(probe);
+        }
+        buf = read_whole_file(path, &len);
+        if (buf == NULL) {
+            return EXIT_DATA;
+        }
+        sst_open_file(&g_reader, buf, len, op, path);
+        while ((rc = sst_next(&g_reader, &g_vec)) > 0) {
+            vectors++;
+            if (g_info[op].status == ST_EXCLUDED) {
+                excluded_vectors++;
+            } else {
+                exec_one(&g_vec, o, t);
+            }
+        }
+        if (rc < 0) {
+            fprintf(stderr, "%s\n", g_reader.msg);
+            free(buf);
+            return EXIT_DATA;
+        }
+        free(buf);
+        files++;
+        if (g_info[op].status == ST_RUN) {
+            run_rows++;
+        } else if (g_info[op].status == ST_EXCLUDED) {
+            excluded_rows++;
+        } else {
+            undefined_rows++;
+        }
+    }
+    if (files == 0u) {
+        fprintf(stderr, "lynx-test-cpu-vectors: no vector file found under %s/%s/v1\n", o->dir, o->variant);
+        return EXIT_DATA;
+    }
+    if (write_results(o->results) != 0) {
+        return EXIT_DATA;
+    }
+    printf("profile %s\n", o->profile_name);
+    printf("variant %s\n", o->variant);
+    printf("totals files %u run %u excluded %u undefined %u vectors %u\n", files, run_rows, excluded_rows,
+           undefined_rows, vectors);
+    printf("asserted %u passed %u failed %u identity %u\n", g_res.asserted, g_res.passed, g_res.failed,
+           g_res.identity);
+    print_fault(o);
+    printf("excluded_vectors parsed %u asserted 0\n", excluded_vectors);
+    if (o->profile == 0u) {
+        printf("undefined_vectors %u stopped %u\n", g_res.undefined_checked, g_res.undefined_stopped);
+    }
+    if (g_res.asserted + excluded_vectors + g_res.undefined_checked != vectors) {
+        fprintf(stderr, "lynx-test-cpu-vectors: executed counts differ from the parsed counts\n");
         return EXIT_ASSERT;
     }
     return g_res.failed == 0u ? EXIT_PASS : EXIT_ASSERT;
@@ -961,20 +1179,76 @@ static int parse_profile(const char *name, unsigned *out)
     return 0;
 }
 
+static int parse_fault(const char *name, int *out)
+{
+    if (strcmp(name, "no-step") == 0) {
+        *out = FAULT_NO_STEP;
+    } else if (strcmp(name, "stray-write") == 0) {
+        *out = FAULT_STRAY_WRITE;
+    } else if (strcmp(name, "mutant-69") == 0) {
+        *out = FAULT_MUTANT_69;
+    } else {
+        return -1;
+    }
+    return 0;
+}
+
 static int usage(void)
 {
     fprintf(stderr,
             "usage: lynx-test-cpu-vectors parse-check FILE | self-test-reader\n"
             "       lynx-test-cpu-vectors run --profile none|lynx1|lynx2 --sample FILE --manifest FILE "
             "--expect-plan FILE\n"
-            "       lynx-test-cpu-vectors run --profile P --sample FILE --print-plan\n");
+            "       lynx-test-cpu-vectors run --profile P --sample FILE --print-plan\n"
+            "       lynx-test-cpu-vectors complete --profile P --dir DIR --variant V\n"
+            "       run and complete also take: [--results FILE] [--partial] "
+            "[--fault no-step|stray-write|mutant-69]\n");
     return EXIT_USAGE;
 }
 
 /* ---- main ---------------------------------------------------------------- */
 
+/* Options shared by run and complete; 0 on success. */
+static int parse_run_opts(int argc, char **argv, run_opts *o)
+{
+    int i;
+    memset(o, 0, sizeof *o);
+    for (i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--print-plan") == 0) {
+            o->print_plan = 1;
+        } else if (strcmp(argv[i], "--partial") == 0) {
+            o->partial = 1;
+        } else if (i + 1 < argc && strcmp(argv[i], "--profile") == 0) {
+            o->profile_name = argv[++i];
+            if (parse_profile(o->profile_name, &o->profile) != 0) {
+                return -1;
+            }
+        } else if (i + 1 < argc && strcmp(argv[i], "--fault") == 0) {
+            if (parse_fault(argv[++i], &o->fault) != 0) {
+                return -1;
+            }
+        } else if (i + 1 < argc && strcmp(argv[i], "--sample") == 0) {
+            o->sample = argv[++i];
+        } else if (i + 1 < argc && strcmp(argv[i], "--manifest") == 0) {
+            o->manifest = argv[++i];
+        } else if (i + 1 < argc && strcmp(argv[i], "--expect-plan") == 0) {
+            o->expect_plan = argv[++i];
+        } else if (i + 1 < argc && strcmp(argv[i], "--dir") == 0) {
+            o->dir = argv[++i];
+        } else if (i + 1 < argc && strcmp(argv[i], "--variant") == 0) {
+            o->variant = argv[++i];
+        } else if (i + 1 < argc && strcmp(argv[i], "--results") == 0) {
+            o->results = argv[++i];
+        } else {
+            return -1;
+        }
+    }
+    return o->profile_name == NULL ? -1 : 0;
+}
+
 int main(int argc, char **argv)
 {
+    run_opts o;
     if (argc == 3 && strcmp(argv[1], "parse-check") == 0) {
         return cmd_parse_check(argv[2]);
     }
@@ -982,34 +1256,24 @@ int main(int argc, char **argv)
         return cmd_self_test_reader();
     }
     if (argc >= 2 && strcmp(argv[1], "run") == 0) {
-        run_opts o;
-        int i;
-        memset(&o, 0, sizeof o);
-        for (i = 2; i < argc; i++) {
-            if (strcmp(argv[i], "--print-plan") == 0) {
-                o.print_plan = 1;
-            } else if (i + 1 < argc && strcmp(argv[i], "--profile") == 0) {
-                o.profile_name = argv[++i];
-                if (parse_profile(o.profile_name, &o.profile) != 0) {
-                    return usage();
-                }
-            } else if (i + 1 < argc && strcmp(argv[i], "--sample") == 0) {
-                o.sample = argv[++i];
-            } else if (i + 1 < argc && strcmp(argv[i], "--manifest") == 0) {
-                o.manifest = argv[++i];
-            } else if (i + 1 < argc && strcmp(argv[i], "--expect-plan") == 0) {
-                o.expect_plan = argv[++i];
-            } else {
-                return usage();
-            }
-        }
-        if (o.profile_name == NULL || o.sample == NULL) {
+        if (parse_run_opts(argc, argv, &o) != 0 || o.sample == NULL || o.dir != NULL || o.variant != NULL) {
             return usage();
         }
         if (o.print_plan == 0 && (o.manifest == NULL || o.expect_plan == NULL)) {
             return usage();
         }
         return cmd_run(&o);
+    }
+    if (argc >= 2 && strcmp(argv[1], "complete") == 0) {
+        if (parse_run_opts(argc, argv, &o) != 0 || o.dir == NULL || o.variant == NULL || o.sample != NULL ||
+            o.manifest != NULL || o.expect_plan != NULL || o.print_plan != 0) {
+            return usage();
+        }
+        if (strcmp(o.variant, "synertek65c02") != 0 && strcmp(o.variant, "rockwell65c02") != 0) {
+            fprintf(stderr, "lynx-test-cpu-vectors: the variant must be synertek65c02 or rockwell65c02\n");
+            return EXIT_USAGE;
+        }
+        return cmd_complete(&o);
     }
     return usage();
 }

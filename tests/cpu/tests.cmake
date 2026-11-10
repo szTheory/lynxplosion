@@ -42,6 +42,23 @@ foreach(lynx_vec_case IN ITEMS lynx1:synertek65c02 lynx2:rockwell65c02 none:syne
     LABELS cpu TIMEOUT 120)
 endforeach()
 
+# Named-fault controls for the vector gates (RESEARCH 5.6). Each case builds its
+# faulty input at test time under the scratch directory, runs the real runner and
+# requires the exact exit code and message; the profile controls also compare the
+# exact failing opcode set (the 32 bit-operation opcodes, both directions) with
+# the one the profile difference predicts. Only wrong_profile,
+# wrong_profile_reverse, no_step and sample_identity read a full sample; the
+# other cases cut mini-samples. complete_mode runs the full lane's whole-file
+# mode on synthetic 10,000-object files, so that runner path is checked offline.
+find_program(LYNX_SH sh REQUIRED)
+foreach(lynx_vec_control IN ITEMS wrong_profile wrong_profile_reverse no_step corrupt_expect
+    malformed inventory_drift sample_identity mutant_profile complete_mode)
+  lynx_add_test(NAME cpu.vectors.${lynx_vec_control}
+    COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/cpu/vector_controls.sh ${lynx_vec_control}
+      ${PROJECT_SOURCE_DIR} $<TARGET_FILE:lynx-test-cpu-vectors> ${LYNX_SCRATCH_DIR}/vectors
+    LABELS cpu TIMEOUT 120)
+endforeach()
+
 lynx_add_test(NAME cpu.cycles COMMAND lynx-test-cpu cycles LABELS cpu TIMEOUT 30)
 lynx_add_test(NAME cpu.tables COMMAND lynx-test-cpu tables LABELS cpu TIMEOUT 30)
 
