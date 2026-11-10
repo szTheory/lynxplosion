@@ -172,6 +172,29 @@ static int ranges_overlap(const void *a, size_t alen, const void *b, size_t blen
     return (ub - ua) < alen;
 }
 
+/* Buildable refusal seam for the first watch RED run. The TDD GREEN commit
+   replaces these bodies with the instance-owned implementation. */
+lynx_status lynx_watch_configure(lynx_machine *m, uint32_t addr, size_t len)
+{
+    (void)m;
+    (void)addr;
+    (void)len;
+    return LYNX_ERR_STATE;
+}
+
+lynx_status lynx_watch_clear(lynx_machine *m)
+{
+    (void)m;
+    return LYNX_ERR_STATE;
+}
+
+lynx_status lynx_watch_get(const lynx_machine *m, lynx_watch_event *out)
+{
+    (void)m;
+    (void)out;
+    return LYNX_ERR_STATE;
+}
+
 lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len)
 {
     if (m == NULL || bytes == NULL || len == 0u) {

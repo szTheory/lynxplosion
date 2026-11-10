@@ -1,0 +1,10 @@
+{
+  "command": "ctest --test-dir build/check -R ^api.watch_post_write$ --output-junit <temporary>/03-05-T2-RED.xml --output-on-failure",
+  "exitCode": 8,
+  "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"(empty)\"\n\ttests=\"1\"\n\tfailures=\"1\"\n\tdisabled=\"0\"\n\tskipped=\"0\"\n\thostname=\"\"\n\ttime=\"0\"\n\ttimestamp=\"2026-11-10T14:18:40\"\n\t>\n\t<testcase name=\"api.watch_post_write\" classname=\"api.watch_post_write\" time=\"0.455553\" status=\"fail\">\n\t\t<failure message=\"Failed\"/>\n\t\t<properties>\n\t\t\t<property name=\"cmake_labels\" value=\"api\"/>\n\t\t</properties>\n\t\t<system-out>./tests/api/test_api.c:1411: configured == LYNX_OK failed: 5 != 0\n</system-out>\n\t</testcase>\n</testsuite>\n",
+  "targetTest": "api.watch_post_write",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "A valid watch range is accepted with LYNX_OK before the watched store runs",
+  "actual": "lynx_watch_configure returned LYNX_ERR_STATE (5)",
+  "semanticAssessment": "The named test executed and failed at the planned valid-configuration assertion because the buildable refusal seam intentionally returns STATE; discovery and setup succeeded."
+}

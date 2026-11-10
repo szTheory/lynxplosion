@@ -39,8 +39,8 @@ enum {
     LYNX_ERR_UNAVAILABLE = 10       /* requested mapped observation is unavailable */
 };
 
-/* Why lynx_advance returned. FRAME, WATCH and HALT are reserved: later
-   phases may report them, this build never does. UNAVAILABLE leaves the
+/* Why lynx_advance returned. FRAME and HALT remain reserved in this build.
+   WATCH reports a completed matching CPU write. UNAVAILABLE leaves the
    pending CPU request uncompleted at its grant. */
 typedef uint32_t lynx_stop_reason;
 enum {
@@ -202,6 +202,36 @@ lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len);
    of guest time, not as progress to retry. */
 lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
                          lynx_stop_reason *stop);
+
+/* A one-shot write-watch event. hit is 1 when a CPU bus write matched the
+   configured range; otherwise all fields are zero. hit_tick is the access
+   sample tick (currently the grant tick), and return_tick is one tick later. */
+typedef struct lynx_watch_event {
+    uint32_t hit;
+    uint32_t address;
+    uint32_t value; /* low 8 bits contain the written byte */
+    uint64_t hit_tick;
+    uint64_t return_tick;
+} lynx_watch_event;
+
+/* Configure one bounded, non-empty, half-open watched range [addr, addr+len),
+   clear the prior event, and arm it for the next matching actual CPU write.
+   A hit returns LYNX_STOP_WATCH only after the bus write, CPU request
+   completion and next-ready tick are committed. The return tick is grant+1,
+   even when the cycle's remaining duration is later; consumed never exceeds
+   the half-open budget. A request due exactly at the budget target is not
+   started. A hit disarms the watch but preserves its event until reconfigure
+   or clear. Configure and clear do not advance guest time.
+
+   Calls on one instance must be caller-serialized. Watches are per-instance
+   host observation: they are not guest state, guest digests or snapshots. A
+   successful reset or load clears watch state; a refused operation preserves
+   it. There are no callbacks and no caller pointers are retained. */
+lynx_status lynx_watch_configure(lynx_machine *m, uint32_t addr, size_t len);
+lynx_status lynx_watch_clear(lynx_machine *m);
+/* Copy the last event, or an all-zero event when no hit is pending. out must
+   not overlap any byte of the machine instance. */
+lynx_status lynx_watch_get(const lynx_machine *m, lynx_watch_event *out);
 
 /* Inspect functions never change machine state or guest time. Output ranges
    must not overlap any byte of the machine instance. lynx_read_memory reads

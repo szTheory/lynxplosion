@@ -65,6 +65,14 @@ static const uint8_t bll_tracer[] = {
     0xA9, 0x0C, 0x8D, 0xF9, 0xFF, 0xA9, 0xA5, 0x8D, 0x00, 0x04, 0x4C, 0x0A, 0x02,
 };
 
+/* Two stores to one watched location, separated by a load. The first store
+   must finish before WATCH; rearming then observes the second value. */
+static const uint8_t watch_program[] = {
+    0xA9u, 0x5Au, 0x8Du, 0x00u, 0x04u,
+    0xA9u, 0xA6u, 0x8Du, 0x00u, 0x04u,
+    0x4Cu, 0x00u, 0x02u
+};
+
 static void make_bll_header(uint8_t *object, size_t len, uint16_t load_addr);
 static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t payload_len,
                                uint32_t load_addr);
@@ -1387,6 +1395,170 @@ static void case_rom_unavailable(void)
     rom_read_request(1, 0xFFFAu, 0x08u, 0xC7u);
     rom_opcode_request(0);
     rom_opcode_request(1);
+}
+
+static void case_watch_post_write(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, watch_program, sizeof watch_program, 0x0200u), LYNX_OK);
+    const lynx_status configured = lynx_watch_configure(m, 0x0400u, 1u);
+    if (configured != LYNX_OK) {
+        CHECK_EQ_U64(configured, LYNX_OK);
+        return;
+    }
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 26u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(consumed, 26u);
+    CHECK(consumed <= 26u);
+    CHECK_EQ_U64(ticks_of(m), 26u);
+    CHECK_EQ_HEX(m->ram[0x0400u], 0x5Au);
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0205u); /* next LDA opcode: STA completed */
+    CHECK_EQ_U64(m->cpu_ready_at, 30u);    /* in-cycle duration remains */
+
+    lynx_watch_event event;
+    memset(&event, 0xA5, sizeof event);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 1u);
+    CHECK_EQ_U64(event.address, 0x0400u);
+    CHECK_EQ_U64(event.value, 0x5Au);
+    CHECK_EQ_U64(event.hit_tick, 25u);
+    CHECK_EQ_U64(event.return_tick, 26u);
+
+    /* The second store to the same address proves the first request was
+       completed, the one-shot was disarmed, and resumption did not replay it. */
+    CHECK_EQ_U64(lynx_advance(m, 40u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 40u);
+    CHECK_EQ_HEX(m->ram[0x0400u], 0xA6u);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 1u);
+    CHECK_EQ_U64(event.value, 0x5Au);
+    CHECK_EQ_U64(event.hit_tick, 25u);
+    CHECK_EQ_U64(event.return_tick, 26u);
+    lynx_machine_deinit(m);
+}
+
+static void case_watch_controls(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, watch_program, sizeof watch_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    const uint64_t config_tick = ticks_of(m);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_WATCH;
+    CHECK_EQ_U64(lynx_advance(m, 0u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(ticks_of(m), config_tick);
+    CHECK_EQ_HEX(m->ram[0x0400u], 0u);
+
+    /* The first matching store is due exactly at target=25 and must not run. */
+    CHECK_EQ_U64(lynx_advance(m, 25u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 25u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_HEX(m->ram[0x0400u], 0u);
+    lynx_watch_event event;
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    CHECK_EQ_U64(event.address, 0u);
+    CHECK_EQ_U64(event.value, 0u);
+    CHECK_EQ_U64(event.hit_tick, 0u);
+    CHECK_EQ_U64(event.return_tick, 0u);
+
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0xFFFFu, 2u), LYNX_ERR_RANGE);
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 0u), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK_EQ_U64(lynx_watch_get(m, (lynx_watch_event *)(void *)m), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(m, snap_a);
+
+    /* Grant 25 is inside the one-tick half-open budget: WATCH wins over BUDGET. */
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(ticks_of(m), 26u);
+    CHECK_EQ_HEX(m->ram[0x0400u], 0x5Au);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 1u);
+    CHECK_EQ_U64(event.value, 0x5Au);
+
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0xFFFFu, 2u), LYNX_ERR_RANGE);
+    CHECK_UNCHANGED(m, snap_a);
+    const uint64_t before_rearm = ticks_of(m);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(ticks_of(m), before_rearm);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    CHECK_EQ_U64(event.address, 0u);
+    CHECK_EQ_U64(event.value, 0u);
+    CHECK_EQ_U64(event.hit_tick, 0u);
+    CHECK_EQ_U64(event.return_tick, 0u);
+    CHECK_EQ_U64(lynx_advance(m, 30u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 30u);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(ticks_of(m), 56u);
+    CHECK_EQ_HEX(m->ram[0x0400u], 0xA6u);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 1u);
+    CHECK_EQ_U64(event.address, 0x0400u);
+    CHECK_EQ_U64(event.value, 0xA6u);
+    CHECK_EQ_U64(event.hit_tick, 55u);
+    CHECK_EQ_U64(event.return_tick, 56u);
+
+    const uint64_t before_clear = ticks_of(m);
+    CHECK_EQ_U64(lynx_watch_clear(m), LYNX_OK);
+    CHECK_EQ_U64(ticks_of(m), before_clear);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+
+    /* Outside-range writes advance normally and leave the event empty. */
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0402u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 100u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 100u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    lynx_machine_deinit(m);
+
+    /* Successful reset and load clear host-only configuration and hit data. */
+    m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, watch_program, sizeof watch_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 26u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    CHECK_EQ_U64(ticks_of(m), 0u);
+
+    CHECK_EQ_U64(load_bll_at(m, watch_program, sizeof watch_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 26u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(load_bll_at(m, watch_program, sizeof watch_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    CHECK_EQ_U64(ticks_of(m), 0u);
+    lynx_machine_deinit(m);
 }
 
 /* CPU_STATE as documented in the public header. */
@@ -3122,6 +3294,8 @@ static const struct {
     {"sha256", case_sha256},
     {"snapshot_refusal", case_snapshot_refusal},
     {"snapshot_roundtrip", case_snapshot_roundtrip},
+    {"watch_controls", case_watch_controls},
+    {"watch_post_write", case_watch_post_write},
 };
 
 int main(int argc, char **argv)
