@@ -1,10 +1,30 @@
 # Determinism tests: the runner is driven as separate fresh processes.
 set(LYNX_SKELETON_CONTENT ${PROJECT_SOURCE_DIR}/fixtures/skeleton/skeleton-image.hex)
 
+# workload values; plan 02-09 changes only these.
+# LYNX_DET_CONTENT_SHA256: SHA-256 of the accepted image bytes (det.two_runs).
+# LYNX_DET_FLIP_*: the one place a byte of the image is changed for the content
+#   sensitivity check; FROM must occur exactly once in the image text.
+# LYNX_DET_TRAP_*: the image with a stopping opcode planted (det.manifest_fields:
+#   FROM must occur exactly once), and the ticks consumed and stop reason a run of
+#   it must report. LYNX_DET_CLI_TRAP_*: the one-instruction image runner.cli
+#   runs with the largest budget, and its expected ticks and stop reason.
+set(LYNX_DET_CONTENT_SHA256 ab5f8b5cb9435354c7b58603592d5faf081e17ceb05f7a7c67f4b666f12ca457)
+set(LYNX_DET_FLIP_FROM "03 0a")
+set(LYNX_DET_FLIP_TO "04 0a")
+set(LYNX_DET_TRAP_FROM "03 0a 11 18")
+set(LYNX_DET_TRAP_TO "03 0a 11 db")
+set(LYNX_DET_TRAP_TICKS 12)
+set(LYNX_DET_TRAP_STOP halt)
+set(LYNX_DET_CLI_TRAP_HEX db)
+set(LYNX_DET_CLI_TRAP_TICKS 0)
+set(LYNX_DET_CLI_TRAP_STOP halt)
+
 lynx_add_test(NAME det.two_runs
   COMMAND ${CMAKE_COMMAND}
     -DRUNNER=$<TARGET_FILE:lynx-run>
     -DCONTENT=${LYNX_SKELETON_CONTENT}
+    -DCONTENT_SHA256=${LYNX_DET_CONTENT_SHA256}
     -DWORK=${LYNX_SCRATCH_DIR}/det/two_runs
     -P ${CMAKE_CURRENT_LIST_DIR}/two_runs.cmake
   LABELS det TIMEOUT 30)
@@ -13,6 +33,9 @@ lynx_add_test(NAME runner.cli
   COMMAND ${CMAKE_COMMAND}
     -DRUNNER=$<TARGET_FILE:lynx-run>
     -DCONTENT=${LYNX_SKELETON_CONTENT}
+    -DTRAP_HEX=${LYNX_DET_CLI_TRAP_HEX}
+    -DTRAP_TICKS=${LYNX_DET_CLI_TRAP_TICKS}
+    -DTRAP_STOP=${LYNX_DET_CLI_TRAP_STOP}
     -DWORK=${LYNX_SCRATCH_DIR}/det/runner_cli
     -P ${CMAKE_CURRENT_LIST_DIR}/runner_cli.cmake
   LABELS runner TIMEOUT 30)
@@ -58,6 +81,8 @@ lynx_add_test(NAME det.sensitivity
   COMMAND ${CMAKE_COMMAND}
     -DRUNNER=$<TARGET_FILE:lynx-run>
     -DCONTENT=${LYNX_SKELETON_CONTENT}
+    "-DFLIP_FROM=${LYNX_DET_FLIP_FROM}"
+    "-DFLIP_TO=${LYNX_DET_FLIP_TO}"
     -DWORK=${LYNX_SCRATCH_DIR}/det/sensitivity
     -P ${CMAKE_CURRENT_LIST_DIR}/sensitivity.cmake
   LABELS det TIMEOUT 60)
@@ -73,6 +98,10 @@ lynx_add_test(NAME det.manifest_fields
   COMMAND ${CMAKE_COMMAND}
     -DRUNNER=$<TARGET_FILE:lynx-run>
     -DCONTENT=${LYNX_SKELETON_CONTENT}
+    "-DTRAP_FROM=${LYNX_DET_TRAP_FROM}"
+    "-DTRAP_TO=${LYNX_DET_TRAP_TO}"
+    -DTRAP_TICKS=${LYNX_DET_TRAP_TICKS}
+    -DTRAP_STOP=${LYNX_DET_TRAP_STOP}
     -DWORK=${LYNX_SCRATCH_DIR}/det/manifest_fields
     -DSH=${LYNX_SH}
     -DVALIDATE=${PROJECT_SOURCE_DIR}/scripts/validate-kv.sh

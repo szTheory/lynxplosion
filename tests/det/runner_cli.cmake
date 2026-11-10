@@ -1,11 +1,12 @@
 # runner.cli: the runner's defaults, usage errors and refusals.
-# Usage: cmake -DRUNNER=... -DCONTENT=... -DWORK=... -P runner_cli.cmake
+# Usage: cmake -DRUNNER=... -DCONTENT=... -DWORK=... -DTRAP_HEX=... -DTRAP_TICKS=...
+#        -DTRAP_STOP=... -P runner_cli.cmake
 #
 # Fault prevented: a runner that crashes, hangs or writes on bad input, or that
 # silently defaults to a seeded RAM policy, would corrupt the evidence.
-foreach(var RUNNER CONTENT WORK)
-  if(NOT DEFINED ${var})
-    message(FATAL_ERROR "runner_cli: -D${var}= is required")
+foreach(var RUNNER CONTENT WORK TRAP_HEX TRAP_TICKS TRAP_STOP)
+  if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
+    message(FATAL_ERROR "runner_cli: -D${var}= is required and must not be empty")
   endif()
 endforeach()
 
@@ -64,18 +65,20 @@ if(EXISTS "${WORK}/unused")
 endif()
 message(STATUS "runner_cli: refusals leave no output: ok")
 
-# The full tick range is accepted. The largest budget needs content that halts
-# at once (0xdb), or the run would simulate for geological time.
-file(WRITE "${WORK}/halt.hex" "db\n")
+# The full tick range is accepted. The largest budget needs content that stops
+# at once (TRAP_HEX, today the halt opcode 0xdb), or the run would simulate for
+# geological time.
+file(WRITE "${WORK}/halt.hex" "${TRAP_HEX}\n")
 expect("zero ticks" 0 ""
   --content "${CONTENT}" --load-addr 0200 --ticks 0 --out "${WORK}/zero")
 expect("largest tick budget" 0 ""
   --content "${WORK}/halt.hex" --load-addr 0200 --ticks 18446744073709551615 --out "${WORK}/max")
-file(STRINGS "${WORK}/max/run.manifest" max_lines REGEX "^(tick_budget|stop_reason) = ")
-if(NOT max_lines STREQUAL "tick_budget = 18446744073709551615;stop_reason = halt")
-  message(FATAL_ERROR "runner_cli: largest tick budget: manifest says '${max_lines}'")
+file(STRINGS "${WORK}/max/run.manifest" max_lines REGEX "^(tick_budget|ticks_consumed|stop_reason) = ")
+set(want_max "tick_budget = 18446744073709551615;ticks_consumed = ${TRAP_TICKS};stop_reason = ${TRAP_STOP}")
+if(NOT max_lines STREQUAL want_max)
+  message(FATAL_ERROR "runner_cli: largest tick budget: manifest says '${max_lines}', expected '${want_max}'")
 endif()
-message(STATUS "runner_cli: largest tick budget recorded, halt reported: ok")
+message(STATUS "runner_cli: largest tick budget recorded, ${TRAP_STOP} reported: ok")
 
 # Default RAM policy is fixed 0x00 with seed 0 (CONTEXT: the CLI default).
 expect("default ram policy" 0 ""

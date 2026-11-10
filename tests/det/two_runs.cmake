@@ -1,13 +1,17 @@
 # det.two_runs: two fresh runner processes, same inputs, equal evidence.
-# Usage: cmake -DRUNNER=... -DCONTENT=... -DWORK=... -P two_runs.cmake
+# Usage: cmake -DRUNNER=... -DCONTENT=... -DCONTENT_SHA256=... -DWORK=... -P two_runs.cmake
 #
 # Fault prevented: a runner whose output depends on the process (an address, a
 # clock, a path, an uninitialised byte) would still pass a single-run test.
-foreach(var RUNNER CONTENT WORK)
+foreach(var RUNNER CONTENT CONTENT_SHA256 WORK)
   if(NOT DEFINED ${var})
     message(FATAL_ERROR "two_runs: -D${var}= is required")
   endif()
 endforeach()
+# CONTENT_SHA256 is the workload's content hash, set in tests/det/tests.cmake.
+if(NOT "${CONTENT_SHA256}" MATCHES "^[0-9a-f]+$")
+  message(FATAL_ERROR "two_runs: -DCONTENT_SHA256= must be lowercase hex, got '${CONTENT_SHA256}'")
+endif()
 
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}")
@@ -16,7 +20,6 @@ set(expected_keys
   profile startup_tier content_sha256 content_load_addr input_digest tick_budget
   ticks_consumed stop_reason core_build ram_policy ram_seed evidence_tier)
 set(expected_names obs.ram.hex obs.regs.hex obs.time.hex run.manifest)
-set(tracer_sha256 ab5f8b5cb9435354c7b58603592d5faf081e17ceb05f7a7c67f4b666f12ca457)
 
 foreach(run a b)
   execute_process(
@@ -58,7 +61,7 @@ foreach(run a b)
       message(FATAL_ERROR "two_runs: run ${run}: bad manifest line: ${line}")
     endif()
     list(APPEND keys "${CMAKE_MATCH_1}")
-    if(CMAKE_MATCH_1 STREQUAL "content_sha256" AND NOT line STREQUAL "content_sha256 = ${tracer_sha256}")
+    if(CMAKE_MATCH_1 STREQUAL "content_sha256" AND NOT line STREQUAL "content_sha256 = ${CONTENT_SHA256}")
       message(FATAL_ERROR "two_runs: run ${run}: wrong content_sha256: ${line}")
     endif()
   endforeach()

@@ -1,12 +1,13 @@
 # det.sensitivity: the observation digest depends on seed, content and tick
 # budget, so equal digests elsewhere are not vacuous.
-# Usage: cmake -DRUNNER=... -DCONTENT=... -DWORK=... -P sensitivity.cmake
+# Usage: cmake -DRUNNER=... -DCONTENT=... -DFLIP_FROM=... -DFLIP_TO=... -DWORK=...
+#        -P sensitivity.cmake
 #
 # Fault prevented: a digest that ignores an input (or a runner that ignores a
 # flag) would make every equality test pass for the wrong reason.
-foreach(var RUNNER CONTENT WORK)
-  if(NOT DEFINED ${var})
-    message(FATAL_ERROR "sensitivity: -D${var}= is required")
+foreach(var RUNNER CONTENT FLIP_FROM FLIP_TO WORK)
+  if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
+    message(FATAL_ERROR "sensitivity: -D${var}= is required and must not be empty")
   endif()
 endforeach()
 
@@ -29,12 +30,28 @@ function(digest out tag content seed ticks)
   set(${out} "${CMAKE_MATCH_1}" PARENT_SCOPE)
 endfunction()
 
-# The changed content: the first data byte, 03, becomes 04. Built here at test
-# time and never committed.
+# The changed content: the one place where FLIP_FROM occurs becomes FLIP_TO.
+# The match is unanchored and must be unique: the occurrences are counted, and
+# any count but 1 is a failure. Built here at test time and never committed.
 file(READ "${CONTENT}" original)
-string(REPLACE "\n03 0a" "\n04 0a" changed "${original}")
+set(occurrences 0)
+set(rest "${original}")
+string(LENGTH "${FLIP_FROM}" from_length)
+while(TRUE)
+  string(FIND "${rest}" "${FLIP_FROM}" at)
+  if(at EQUAL -1)
+    break()
+  endif()
+  math(EXPR occurrences "${occurrences} + 1")
+  math(EXPR cut "${at} + ${from_length}")
+  string(SUBSTRING "${rest}" ${cut} -1 rest)
+endwhile()
+if(NOT occurrences EQUAL 1)
+  message(FATAL_ERROR "sensitivity: FLIP_FROM '${FLIP_FROM}' must occur exactly once in ${CONTENT}, found ${occurrences}")
+endif()
+string(REPLACE "${FLIP_FROM}" "${FLIP_TO}" changed "${original}")
 if(changed STREQUAL original)
-  message(FATAL_ERROR "sensitivity: the fixture no longer starts its data with '03 0a'")
+  message(FATAL_ERROR "sensitivity: FLIP_TO '${FLIP_TO}' leaves the content unchanged")
 endif()
 file(WRITE "${WORK}/changed-content.hex" "${changed}")
 

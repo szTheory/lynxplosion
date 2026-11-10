@@ -1,13 +1,14 @@
 # det.manifest_fields: run.manifest of real runner output passes the strict
 # validator, holds its keys in the documented order, and records exact values
 # at the boundaries (empty input, zero budget, the largest budget).
-# Usage: cmake -DRUNNER=... -DCONTENT=... -DWORK=... -DSH=... -DVALIDATE=... -P manifest_fields.cmake
+# Usage: cmake -DRUNNER=... -DCONTENT=... -DWORK=... -DSH=... -DVALIDATE=...
+#        -DTRAP_FROM=... -DTRAP_TO=... -DTRAP_TICKS=... -DTRAP_STOP=... -P manifest_fields.cmake
 #
 # Fault prevented: a manifest that drifts in key order, rounds a tick count,
 # leaks a host path or date, or is accepted by a validator that checks nothing.
-foreach(var RUNNER CONTENT WORK SH VALIDATE)
-  if(NOT DEFINED ${var})
-    message(FATAL_ERROR "manifest_fields: -D${var}= is required")
+foreach(var RUNNER CONTENT WORK SH VALIDATE TRAP_FROM TRAP_TO TRAP_TICKS TRAP_STOP)
+  if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
+    message(FATAL_ERROR "manifest_fields: -D${var}= is required and must not be empty")
   endif()
 endforeach()
 
@@ -103,12 +104,29 @@ if(NOT budget STREQUAL "0" OR NOT consumed STREQUAL "0")
   message(FATAL_ERROR "manifest_fields: a zero budget recorded tick_budget=${budget} ticks_consumed=${consumed}")
 endif()
 
-# (c) the largest budget on an image that halts: the fixture's bytes with db at
-# offset 3, written here at test time.
+# (c) the largest budget on an image that halts: the fixture's bytes with
+# TRAP_FROM replaced by TRAP_TO, written here at test time. The match is
+# unanchored and must be unique: the occurrences are counted, and any count but
+# 1 is a failure.
 file(READ "${CONTENT}" original)
-string(REPLACE "\n03 0a 11 18" "\n03 0a 11 db" halting "${original}")
+set(occurrences 0)
+set(rest "${original}")
+string(LENGTH "${TRAP_FROM}" from_length)
+while(TRUE)
+  string(FIND "${rest}" "${TRAP_FROM}" at)
+  if(at EQUAL -1)
+    break()
+  endif()
+  math(EXPR occurrences "${occurrences} + 1")
+  math(EXPR cut "${at} + ${from_length}")
+  string(SUBSTRING "${rest}" ${cut} -1 rest)
+endwhile()
+if(NOT occurrences EQUAL 1)
+  message(FATAL_ERROR "manifest_fields: TRAP_FROM '${TRAP_FROM}' must occur exactly once in ${CONTENT}, found ${occurrences}")
+endif()
+string(REPLACE "${TRAP_FROM}" "${TRAP_TO}" halting "${original}")
 if(halting STREQUAL original)
-  message(FATAL_ERROR "manifest_fields: the fixture no longer starts its data with '03 0a 11 18'")
+  message(FATAL_ERROR "manifest_fields: TRAP_TO '${TRAP_TO}' leaves the content unchanged")
 endif()
 file(WRITE "${WORK}/halting-content.hex" "${halting}")
 run(max "${WORK}/halting-content.hex" 18446744073709551615)
@@ -118,8 +136,8 @@ value(max stop_reason stop)
 if(NOT budget STREQUAL "18446744073709551615")
   message(FATAL_ERROR "manifest_fields: tick_budget ${budget} is not exactly 18446744073709551615")
 endif()
-if(NOT consumed STREQUAL "12" OR NOT stop STREQUAL "halt")
-  message(FATAL_ERROR "manifest_fields: expected ticks_consumed = 12 and stop_reason = halt, got ${consumed} and ${stop}")
+if(NOT consumed STREQUAL "${TRAP_TICKS}" OR NOT stop STREQUAL "${TRAP_STOP}")
+  message(FATAL_ERROR "manifest_fields: expected ticks_consumed = ${TRAP_TICKS} and stop_reason = ${TRAP_STOP}, got ${consumed} and ${stop}")
 endif()
 execute_process(
   COMMAND "${SH}" "${VALIDATE}" --required "${required_text}" --no-host-data
