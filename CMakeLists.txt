@@ -31,7 +31,7 @@ set(LYNX_BUILD_ID_TEMPLATE "${PROJECT_SOURCE_DIR}/core/build_id.c.in")
 include(cmake/BuildId.cmake)
 
 # Every source of the core. Later plans append to this list.
-set(LYNX_CORE_SOURCES core/machine.c core/sha256.c core/snapshot.c "${PROJECT_BINARY_DIR}/generated/build_id.c")
+set(LYNX_CORE_SOURCES core/cpu.c core/cpu_profile.c core/machine.c core/sha256.c core/snapshot.c "${PROJECT_BINARY_DIR}/generated/build_id.c")
 
 add_library(lynx_core STATIC ${LYNX_CORE_SOURCES})
 target_include_directories(lynx_core PUBLIC include PRIVATE core)
