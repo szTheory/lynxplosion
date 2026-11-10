@@ -1,18 +1,18 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 3
+current_phase: 03
 current_phase_name: Memory Map, Direct-Load Startup and First Diagnostic
-status: planning
-stopped_at: Phase 2 complete, ready to plan Phase 3
-last_updated: "2026-11-10T07:18:07.931Z"
+status: executing
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-11-10T16:38:19.698Z"
 last_activity: 2026-11-10
-last_activity_desc: Phase 2 complete, transitioned to Phase 3
-state_head: dac3b5c19f997f7327873ed68a6ca17b7c2795d9
+last_activity_desc: Phase 03 execution started
+state_head: 613ea9dc29de703ca2b318d137ae6e7e955bf251
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 24
-  completed_plans: 24
+  total_plans: 33
+  completed_plans: 25
   percent: 33
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-09)
 
 **Core value:** Every compatibility claim is tied to an exact, named Lynx model/configuration and to reproducible evidence from a deterministic, observable machine.
-**Current focus:** Phase 2 — CPU Profiles and Per-Opcode Vectors
+**Current focus:** Phase 03 — Memory Map, Direct-Load Startup and First Diagnostic
 
 ## Current Position
 
-Phase: 3 — Memory Map, Direct-Load Startup and First Diagnostic
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-11-10 — Phase 2 complete, transitioned to Phase 3
+Phase: 03 (Memory Map, Direct-Load Startup and First Diagnostic) — EXECUTING
+Plan: 2 of 9
+Status: Ready to execute
+Last activity: 2026-11-10 — Phase 03 execution started
 
 Progress: [███░░░░░░░] 33%
 
@@ -81,6 +81,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 2 P09 | 19 min | 3 tasks | 14 files |
 | Phase 02 P10 | 75 min | 3 tasks | 12 files |
 | Phase 2 P11 | 90min | 3 tasks | 16 files |
+| Phase 03 P01 | 00:25:29 | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -136,6 +137,9 @@ Recent decisions affecting current work:
 - [Phase 02]: 02-10: api.seam_agreement runs all three profiles through tests/cpu/seam_agreement.cmake; about 10 s serial, dominated by 1,024 undefined-row restores under none
 - [Phase 2]: Full vector lane has no CI trigger (5 min 47 s, 2 GB download); run at phase verification, pin bumps and before claims
 - [Phase 2]: api.seam_agreement split per profile with ctest COST so the longest starts first; ci.yml unchanged
+- [Phase 03]: Strict BLL loading accepts an exact BS93 object and hashes the complete object while keeping payload and startup identity distinct.
+- [Phase 03]: MAPCTL remains a provisional instance-owned byte latch; written bits are retained, but mapped ROM and device behavior is not qualified.
+- [Phase 03]: Snapshot format 3 carries explicit identity fields and MAPCTL; format 1 and 2 are refused.
 
 ### Pending Todos
 
@@ -162,6 +166,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T06:40:36.679Z
-Stopped at: Phase 2 complete, ready to plan Phase 3
+Last session: 2026-11-10T16:38:19.546Z
+Stopped at: Completed 03-01-PLAN.md
 Resume file: None
