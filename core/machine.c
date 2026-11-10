@@ -473,6 +473,25 @@ lynx_status lynx_read_memory(const lynx_machine *m, uint32_t addr, uint8_t *out,
     return LYNX_OK;
 }
 
+/* RED-phase API seam: keep a buildable explicit refusal until the mapped
+   two-pass implementation replaces it in this plan's GREEN commit. */
+lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *out, size_t len)
+{
+    if (m == NULL || out == NULL || len == 0u) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (!machine_valid(m)) {
+        return LYNX_ERR_STATE;
+    }
+    if (addr >= LYNX_ADDRESS_SPACE || len > LYNX_ADDRESS_SPACE - addr) {
+        return LYNX_ERR_RANGE;
+    }
+    if (output_overlaps_machine(m, out, len)) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    return LYNX_ERR_UNAVAILABLE;
+}
+
 lynx_status lynx_guest_ticks(const lynx_machine *m, uint64_t *ticks)
 {
     if (m == NULL || ticks == NULL) {

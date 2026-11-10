@@ -1123,6 +1123,132 @@ static void case_inspect_pure(void)
     CHECK_UNCHANGED(machine_buf, snap_a);
 }
 
+static void capture_inspection_snapshot(const lynx_machine *m, uint8_t *out, size_t expected_size)
+{
+    size_t size = 0u;
+    size_t written = 0u;
+    CHECK_EQ_U64(lynx_snapshot_size(m, &size), LYNX_OK);
+    CHECK_EQ_U64(size, expected_size);
+    CHECK_EQ_U64(lynx_snapshot_save(m, out, expected_size, &written), LYNX_OK);
+    CHECK_EQ_U64(written, expected_size);
+}
+
+static void case_memory_peek_pure(void)
+{
+    enum { INSPECT_SNAPSHOT_SIZE = LYNX__SNAPSHOT_HEADER_LEN + LYNX__SNAPSHOT_PAYLOAD_LEN };
+    uint8_t before_snapshot[INSPECT_SNAPSHOT_SIZE];
+    uint8_t after_snapshot[INSPECT_SNAPSHOT_SIZE];
+    const uint8_t select_all_ram[] = {
+        0xA9u, 0x8Fu, 0x8Du, 0xF9u, 0xFFu, 0x4Cu, 0x05u, 0x02u
+    };
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, select_all_ram, sizeof select_all_ram, 0x0200u), LYNX_OK);
+    ADVANCE_EXPECT(m, 100u, 100u, LYNX_STOP_BUDGET);
+    uint8_t low_ram = 0u;
+    lynx_status low_status = lynx_read_cpu_memory(m, 0x0200u, &low_ram, 1u);
+    if (low_status != LYNX_OK) {
+        CHECK_EQ_U64(low_status, LYNX_OK);
+        return;
+    }
+    CHECK_EQ_HEX(low_ram, 0xA9u);
+    uint32_t mapctl = 0u;
+    CHECK_EQ_U64(lynx_read_register(m, LYNX_REG_MAPCTL, &mapctl), LYNX_OK);
+    CHECK_EQ_HEX(mapctl, 0x8Fu);
+
+    m->ram[0xFC00u] = 0xC1u;
+    m->ram[0xFD00u] = 0xD2u;
+    m->ram[0xFE00u] = 0xE3u;
+    m->ram[0xFFFAu] = 0xF4u;
+    m->ram[0xFFF8u] = 0x38u;
+    m->ram[0xFFF9u] = 0x59u;
+    static const struct {
+        uint16_t addr;
+        uint8_t value;
+    } mapped_ram[] = {
+        {0xFC00u, 0xC1u}, {0xFD00u, 0xD2u}, {0xFE00u, 0xE3u}, {0xFFFAu, 0xF4u}, {0xFFF8u, 0x38u}
+    };
+    for (size_t i = 0u; i < sizeof mapped_ram / sizeof mapped_ram[0]; i++) {
+        uint8_t out = 0xA5u;
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, mapped_ram[i].addr, &out, 1u), LYNX_OK);
+        CHECK_EQ_U64(out, mapped_ram[i].value);
+    }
+    uint8_t raw_mapctl_byte = 0u;
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFFF9u, &raw_mapctl_byte, 1u), LYNX_OK);
+    CHECK_EQ_HEX(raw_mapctl_byte, 0x59u);
+
+    /* The latch survives snapshots, including bit 7, but mapped guest readback
+       remains unavailable. */
+    capture_inspection_snapshot(m, before_snapshot, sizeof before_snapshot);
+    lynx_machine *m2 = init_in(buf_b, &cfg);
+    if (m2 == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m2, select_all_ram, sizeof select_all_ram, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_snapshot_restore(m2, before_snapshot, sizeof before_snapshot), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_register(m2, LYNX_REG_MAPCTL, &mapctl), LYNX_OK);
+    CHECK_EQ_HEX(mapctl, 0x8Fu);
+
+    m->mapctl = 0u;
+    m->ram[0xFBFFu] = 0xA1u;
+    m->ram[0xFC00u] = 0xB2u;
+    uint64_t ticks_before = ticks_of(m);
+    memcpy(snap_a, m, MSIZE);
+    capture_inspection_snapshot(m, before_snapshot, sizeof before_snapshot);
+    uint8_t crossing[2] = {0x5Au, 0xA5u};
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFBFFu, crossing, sizeof crossing),
+                 LYNX_ERR_UNAVAILABLE);
+    CHECK_EQ_HEX(crossing[0], 0x5Au);
+    CHECK_EQ_HEX(crossing[1], 0xA5u);
+    uint8_t unavailable = 0xCCu;
+    static const uint16_t unavailable_addresses[] = {0xFC00u, 0xFD00u, 0xFE00u, 0xFFF9u, 0xFFFAu};
+    for (size_t i = 0u; i < sizeof unavailable_addresses / sizeof unavailable_addresses[0]; i++) {
+        unavailable = 0xCCu;
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, unavailable_addresses[i], &unavailable, 1u),
+                     LYNX_ERR_UNAVAILABLE);
+        CHECK_EQ_HEX(unavailable, 0xCCu);
+    }
+    uint8_t raw_suzy = 0u;
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFC00u, &raw_suzy, 1u), LYNX_OK);
+    CHECK_EQ_HEX(raw_suzy, 0xB2u);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0x0200u, &m->ram[0x0100u], 1u), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFFFFu, crossing, 2u), LYNX_ERR_RANGE);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0x10000u, crossing, 1u), LYNX_ERR_RANGE);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0u, crossing, 0u), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0u, NULL, 1u), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_read_cpu_memory(NULL, 0u, crossing, 1u), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK_EQ_U64(ticks_of(m), ticks_before);
+    capture_inspection_snapshot(m, after_snapshot, sizeof after_snapshot);
+    CHECK(memcmp(before_snapshot, after_snapshot, sizeof before_snapshot) == 0);
+
+    lynx_machine_deinit(m2);
+}
+
+static void case_rom_unavailable(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, bll_tracer + 10u, 13u, 0x0200u), LYNX_OK);
+    m->ram[0xFE00u] = 0x3Cu;
+    uint8_t out = 0xA5u;
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFE00u, &out, 1u), LYNX_ERR_UNAVAILABLE);
+    CHECK_EQ_HEX(out, 0xA5u);
+    CHECK_UNCHANGED(m, snap_a);
+    uint8_t raw = 0u;
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFE00u, &raw, 1u), LYNX_OK);
+    CHECK_EQ_HEX(raw, 0x3Cu);
+}
+
 /* CPU_STATE as documented in the public header. */
 static uint32_t cpu_state_word(uint32_t flags, uint32_t step, uint32_t opcode, uint32_t delta)
 {
@@ -2847,9 +2973,11 @@ static const struct {
     {"inspect_pure", case_inspect_pure},
     {"instances_independent", case_instances_independent},
     {"map_matrix", case_map_matrix},
+    {"memory_peek_pure", case_memory_peek_pure},
     {"load_refusal_unchanged", case_load_refusal_unchanged},
     {"profile_divergence", case_profile_divergence},
     {"profile_select", case_profile_select},
+    {"rom_unavailable", case_rom_unavailable},
     {"reset_power_on", case_reset_power_on},
     {"sha256", case_sha256},
     {"snapshot_refusal", case_snapshot_refusal},

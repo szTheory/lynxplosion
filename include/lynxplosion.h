@@ -76,8 +76,10 @@ enum { LYNX_RAM_POLICY_ZERO = 0, LYNX_RAM_POLICY_SPLITMIX64 = 1 };
      bits 0-15  effective-address latch
      bits 16-23 temporary data latch
      bits 24-31 cycle cost model id (0 is the PLACEHOLDER flat model)
-   Together the eight registers expose every machine field a snapshot holds
-   except RAM (lynx_read_memory) and guest time (lynx_guest_ticks). */
+   MAPCTL reports the instance-owned byte written by guest code; it is host
+   latch observation, not guest readback. Together the nine registers expose
+   every non-RAM machine field a snapshot holds except guest time
+   (lynx_guest_ticks). */
 enum {
     LYNX_REG_PC = 0,
     LYNX_REG_A = 1,
@@ -87,7 +89,8 @@ enum {
     LYNX_REG_P = 5,
     LYNX_REG_CPU_STATE = 6,
     LYNX_REG_CPU_LATCH = 7,
-    LYNX_REG_COUNT = 8
+    LYNX_REG_MAPCTL = 8,
+    LYNX_REG_COUNT = 9
 };
 
 /* Size of the guest address space in bytes. */
@@ -200,10 +203,21 @@ lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len);
 lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
                          lynx_stop_reason *stop);
 
-/* Inspect functions never change machine state or guest time. lynx_read_memory
-   reads the underlying raw 64 KiB RAM, separately from the CPU bus view. */
+/* Inspect functions never change machine state or guest time. Output ranges
+   must not overlap any byte of the machine instance. lynx_read_memory reads
+   the underlying raw 64 KiB RAM, separately from the CPU bus view. */
 lynx_status lynx_read_register(const lynx_machine *m, uint32_t reg, uint32_t *value);
 lynx_status lynx_read_memory(const lynx_machine *m, uint32_t addr, uint8_t *out, size_t len);
+
+/* Side-effect-free CPU-mapped RAM peek. The entire address range, output
+   ownership and every mapped route are checked before any byte is copied.
+   NULL pointers or zero length return ARGUMENT; an out-of-range request returns
+   RANGE; if any byte maps to an unimplemented device, absent ROM/vector target
+   or MAPCTL read, the whole request returns UNAVAILABLE. A refusal leaves the
+   entire output range, machine and guest time unchanged. A successful request
+   can read only mapped RAM and never performs a CPU bus cycle. */
+lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *out,
+                                 size_t len);
 
 /* Guest time in master ticks since power-on or the last load. */
 lynx_status lynx_guest_ticks(const lynx_machine *m, uint64_t *ticks);

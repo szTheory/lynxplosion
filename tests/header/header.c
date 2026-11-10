@@ -13,12 +13,15 @@ _Static_assert(LYNX_CONTENT_BS93 == 2, "BS93 content format id");
 _Static_assert(LYNX_STARTUP_A == 1, "tier A startup id");
 _Static_assert(LYNX_STOP_HALT == 3, "stop reason HALT value");
 _Static_assert(LYNX_STOP_UNDEFINED == 4, "stop reason UNDEFINED value");
+_Static_assert(LYNX_STOP_UNAVAILABLE == 5, "stop reason UNAVAILABLE value");
+_Static_assert(LYNX_ERR_UNAVAILABLE == 10, "status UNAVAILABLE value");
 _Static_assert(LYNX_PROFILE_NONE == 0, "profile id none");
 _Static_assert(LYNX_PROFILE_LYNX1 == 1, "profile id lynx1");
 _Static_assert(LYNX_PROFILE_LYNX2 == 2, "profile id lynx2");
 _Static_assert(LYNX_REG_CPU_STATE == 6, "register id CPU_STATE");
 _Static_assert(LYNX_REG_CPU_LATCH == 7, "register id CPU_LATCH");
-_Static_assert(LYNX_REG_COUNT == 8, "register count");
+_Static_assert(LYNX_REG_MAPCTL == 8, "register id MAPCTL");
+_Static_assert(LYNX_REG_COUNT == 9, "register count");
 _Static_assert(LYNX_ADDRESS_SPACE == 0x10000u, "address space size");
 
 static void (*const config_default_fn)(lynx_config *) = lynx_config_default;

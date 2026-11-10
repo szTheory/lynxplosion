@@ -1,0 +1,10 @@
+{
+  "command": "ctest --test-dir /tmp/lynxplosion-03-04-red/build --output-junit <temporary-report> -R ^api.memory_peek_pure$ --no-tests=error --output-on-failure",
+  "exitCode": 8,
+  "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"(empty)\"\n\ttests=\"1\"\n\tfailures=\"1\"\n\tdisabled=\"0\"\n\tskipped=\"0\"\n\thostname=\"\"\n\ttime=\"0\"\n\ttimestamp=\"2026-11-10T13:46:16\"\n\t>\n\t<testcase name=\"api.memory_peek_pure\" classname=\"api.memory_peek_pure\" time=\"0.463708\" status=\"fail\">\n\t\t<failure message=\"Failed\"/>\n\t\t<properties/>\n\t\t<system-out>./tests/api/test_api.c:1155: low_status == LYNX_OK failed: 10 != 0\n</system-out>\n\t</testcase>\n</testsuite>\n",
+  "targetTest": "api.memory_peek_pure",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "A valid CPU-mapped read from RAM returns LYNX_OK and the corresponding byte",
+  "actual": "The intended assertion failed because the RED-phase explicit-refusal seam returned LYNX_ERR_UNAVAILABLE (10)",
+  "semanticAssessment": "The memory_peek_pure target executed through init, BLL load, and CPU MAPCTL setup, then failed only because a valid RAM peek was refused. This is an assertion failure for the missing mapped-peek behavior, not a compile, link, fixture, or unrelated failure."
+}
