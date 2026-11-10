@@ -237,9 +237,14 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
 
     while (m->guest_ticks < target) {
         if (m->cpu_ready_at > m->guest_ticks) {
-            /* Inside the previous cycle's duration. */
-            m->guest_ticks = m->cpu_ready_at < target ? m->cpu_ready_at : target;
-            continue;
+            /* Inside the previous cycle's duration: the next cycle can start
+               only when it ends, and not at all in this call if that is at
+               or after target. */
+            if (m->cpu_ready_at >= target) {
+                m->guest_ticks = target;
+                break;
+            }
+            m->guest_ticks = m->cpu_ready_at;
         }
         if (lynx__cpu_at_boundary(&m->cpu) && m->cpu.req_kind == LYNX__CK_OPCODE &&
             !lynx__cpu_opcode_defined(m->cpu.profile, bus_peek(m, m->cpu.req_addr))) {
