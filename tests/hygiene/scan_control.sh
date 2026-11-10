@@ -183,6 +183,18 @@ accept source_utf8_text scan_src
 rm -f "$iso/utf8.txt"
 ok source_utf8_text_accepted
 
+# A long valid UTF-8 line with terminal block characters remains text. On
+# macOS, iconv writing this content directly to /dev/null can fail with EIO;
+# the scanner must validate the conversion without treating that sink quirk as
+# a binary finding.
+{
+  printf '%1000s' ''
+  printf 'Progress: ███░░░░░░\n'
+} >"$iso/utf8-long.txt"
+accept source_utf8_long_text scan_src
+rm -f "$iso/utf8-long.txt"
+ok source_utf8_long_text_accepted
+
 # A control byte other than tab, LF, FF and CR makes a file non-text; the
 # allowed ones do not.
 printf 'a\tb\fc\r\nd\n' >"$iso/allowed-controls.txt"
