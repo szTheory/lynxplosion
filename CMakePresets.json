@@ -28,7 +28,7 @@
         "outputOnFailure": true,
         "outputJUnitFile": "${sourceDir}/build/${presetName}/junit.xml"
       },
-      "execution": { "noTestsAction": "error" }
+      "execution": { "noTestsAction": "error", "jobs": 4 }
     }
   ],
   "workflowPresets": [
