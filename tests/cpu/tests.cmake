@@ -126,3 +126,15 @@ lynx_add_test(NAME cpu.tables.self_test
   COMMAND ${CMAKE_COMMAND} "-DCMD=${lynx_cpu_mutant_cmd}" -DCODE=1 "-DREGEX=differ set"
     -P ${lynx_cpu_scripts}/expect_fail.cmake
   LABELS cpu TIMEOUT 30)
+
+# The shipping machine against the vector seam (RESEARCH OQ11): one vector per
+# run-row opcode per profile, restored through a recomputed format-2 snapshot and
+# advanced by the seam's cycle count; under none every vector of the 32 undefined
+# rows must stop with UNDEFINED and leave the instance byte-identical.
+lynx_add_test(NAME api.seam_agreement
+  COMMAND ${CMAKE_COMMAND}
+    -DTOOL=$<TARGET_FILE:lynx-test-cpu-vectors>
+    -DVEC_DIR=${lynx_vec_dir}
+    -DMANIFESTS=${lynx_vec_manifests}
+    -P ${CMAKE_CURRENT_LIST_DIR}/seam_agreement.cmake
+  LABELS api TIMEOUT 120)

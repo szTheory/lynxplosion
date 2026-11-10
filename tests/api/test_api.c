@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "check.h"
+#include "cpu/flat_bus.h"
 #include "internal.h"
 #include "lynxplosion.h"
 #include "sha256.h"
@@ -1938,12 +1939,275 @@ static void case_profile_divergence(void)
     lynx_machine_deinit(m);
 }
 
+/* ---- cost model and slicing (CPU-03, ROADMAP criterion 3) ---- */
+
+/* Named-fault switch of the persistent control api.cost_model.self_test: the
+   case runs on the flat5 model where it expects test_skew, which is what a
+   timing function that ignores its cost table would produce. */
+static int g_fault_constant;
+
+/* The test's own copy of the test_skew prices, one per cycle kind in the order
+   of enum lynx__ck (RESEARCH section 8). It is deliberately not read from the
+   core: a wrong price in the core then shows up as a wrong total. */
+static const uint8_t skew_copy[LYNX__CK_COUNT] = {
+    [LYNX__CK_OPCODE] = 4,       [LYNX__CK_OPERAND] = 6,   [LYNX__CK_DUMMY_STREAM] = 3,
+    [LYNX__CK_DUMMY] = 10,       [LYNX__CK_READ] = 7,      [LYNX__CK_WRITE] = 9,
+    [LYNX__CK_RMW_READ] = 8,     [LYNX__CK_STACK_READ] = 11, [LYNX__CK_STACK_WRITE] = 12,
+    [LYNX__CK_POINTER] = 13,     [LYNX__CK_VECTOR] = 14,
+};
+
+static flat_bus g_fb;
+static uint8_t seam_kinds[1024];
+static uint8_t seam_replay[LYNX_ADDRESS_SPACE];
+
+typedef struct seam_totals {
+    uint64_t cycles;
+    uint64_t skew_ticks;      /* sum of the test_skew price over every cycle */
+    long long skew_extra;     /* sum of (skew price - 5) over every cycle */
+    uint32_t end_pc;
+} seam_totals;
+
+/* Runs a program on the flat test bus (the internal seam, profile none) until
+   the next instruction is one profile none stops at, or until max_cycles cycles
+   have been logged. Records the cycle kinds in order, the sums over the log and
+   the replay of every logged write onto the initial RAM. */
+static seam_totals seam_run(const uint8_t *image, size_t len, size_t max_cycles)
+{
+    seam_totals tot;
+    const lynx__cpu_decode *t = lynx__cpu_table(LYNX_PROFILE_NONE);
+    lynx__cpu cpu;
+    memset(&tot, 0, sizeof tot);
+    flat_bus_clear(&g_fb);
+    flat_bus_load(&g_fb, 0x0200u, image, (unsigned)len);
+    memcpy(seam_replay, g_fb.mem, sizeof seam_replay);
+    lynx__cpu_init(&cpu, LYNX_PROFILE_NONE);
+    lynx__cpu_start_at(&cpu, t, 0x0200u);
+    while (tot.cycles < max_cycles && !slot_defined(g_fb.mem[cpu.pc])) {
+        flat_bus_reset_log(&g_fb);
+        if (!flat_bus_step_instruction(&g_fb, &cpu, t)) {
+            fprintf(stderr, "%s: the seam overran its cycle bound\n", __FILE__);
+            check_failures++;
+            break;
+        }
+        for (unsigned i = 0u; i < g_fb.nlog; i++) {
+            const flat_entry *e = &g_fb.log[i];
+            if (tot.cycles < sizeof seam_kinds) {
+                seam_kinds[tot.cycles] = e->kind;
+            }
+            tot.cycles++;
+            tot.skew_ticks += skew_copy[e->kind];
+            tot.skew_extra += (long long)skew_copy[e->kind] - 5;
+            if (e->write != 0u) {
+                seam_replay[e->addr] = e->data;
+            }
+        }
+    }
+    tot.end_pc = cpu.pc;
+    return tot;
+}
+
+/* sum-trap on the machine under one cost model. Returns ticks consumed. */
+static uint64_t cost_run(uint32_t model, unsigned char *regs_ram)
+{
+    lynx_machine *m = profile_instance(machine_buf, LYNX_PROFILE_NONE, sum_trap, sizeof sum_trap);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    if (m == NULL) {
+        return 0u;
+    }
+    /* Fault fault-constant: the machine stays on flat5 where the test expects
+       test_skew, as a timing function that ignores its cost table would. */
+    if (model != LYNX__COST_FLAT5 && !g_fault_constant) {
+        CHECK_EQ_U64(lynx__machine_set_cost_model(m, model), LYNX_OK);
+    }
+    CHECK_EQ_U64(lynx_advance(m, 100000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNDEFINED);
+    /* registers (six words), CPU_STATE, then RAM */
+    for (uint32_t r = 0u; r < 7u; r++) {
+        put_le(regs_ram + 4u * r, reg_of(m, r), 4u);
+    }
+    CHECK_EQ_U64(lynx_read_memory(m, 0u, regs_ram + 28u, LYNX_ADDRESS_SPACE), LYNX_OK);
+    /* The cost-model byte of CPU_LATCH names the model that ran. */
+    CHECK_EQ_U64(reg_of(m, LYNX_REG_CPU_LATCH) >> 24, g_fault_constant ? 0u : model);
+    lynx_machine_deinit(m);
+    return consumed;
+}
+
+static unsigned char cost_flat[28u + LYNX_ADDRESS_SPACE];
+static unsigned char cost_skew[28u + LYNX_ADDRESS_SPACE];
+
+static void case_cost_model(void)
+{
+    /* The seam over the same bytes: cycle kinds, the price sums and the writes. */
+    const seam_totals tot = seam_run(sum_trap, sizeof sum_trap, 100000u);
+    CHECK_EQ_U64(tot.cycles, 105u);                 /* RESEARCH 7.1: 105 cycles */
+    CHECK_EQ_HEX(tot.end_pc, 0x021Bu);              /* the next opcode is the $07 */
+
+    const uint64_t flat = cost_run(LYNX__COST_FLAT5, cost_flat);
+    const uint64_t skew = cost_run(LYNX__COST_TEST_SKEW, cost_skew);
+    CHECK_EQ_U64(flat, 525u);
+    CHECK_EQ_U64(flat, tot.cycles * 5u);
+
+    /* The cost model changes consumed ticks and nothing architectural: the same
+       registers, the same CPU position and the same RAM. */
+    CHECK(memcmp(cost_flat, cost_skew, sizeof cost_flat) == 0);
+    /* RAM equals the replay of the logged writes onto the initial RAM, so no write
+       reached memory without passing the bus. */
+    CHECK(memcmp(cost_flat + 28u, seam_replay, LYNX_ADDRESS_SPACE) == 0);
+
+    /* The consumed-tick difference is the sum over the log of (price - 5). */
+    const long long want_diff = tot.skew_extra;
+    const long long got_diff = (long long)skew - (long long)flat;
+    CHECK(want_diff > 0);
+    if (skew == flat && want_diff != 0) {
+        fprintf(stderr,
+                "%s:%d: cost model ignored: test_skew consumed %llu ticks, the same as flat5, "
+                "but the seam log prices it at %llu\n",
+                __FILE__, __LINE__, (unsigned long long)skew,
+                (unsigned long long)tot.skew_ticks);
+        check_failures++;
+    } else if (got_diff != want_diff) {
+        fprintf(stderr, "%s:%d: test_skew minus flat5 is %lld ticks, the seam log gives %lld\n",
+                __FILE__, __LINE__, got_diff, want_diff);
+        check_failures++;
+    }
+    CHECK_EQ_U64(skew, tot.skew_ticks);
+
+    /* The setter refuses a model this build does not define and writes nothing. */
+    lynx_machine *m = profile_instance(machine_buf, LYNX_PROFILE_NONE, sum_trap, sizeof sum_trap);
+    if (m == NULL) {
+        return;
+    }
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx__machine_set_cost_model(m, 2u), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx__machine_set_cost_model(m, 0xFFFFFFFFu), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK_EQ_U64(lynx__machine_set_cost_model(NULL, 1u), LYNX_ERR_ARGUMENT);
+    lynx_machine_deinit(m);
+}
+
+static unsigned char slice_ref[sizeof(struct lynx_machine)];
+
+/* Runs churn-loop (seeded RAM) on a fresh load, under the model, for total ticks
+   in the given chunk sizes (the last chunk is the remainder). */
+static lynx_machine *slice_start(uint32_t model)
+{
+    lynx_machine *m = snap_instance(machine_buf, SNAP_SEED, churn_loop, sizeof churn_loop, 0x0200u);
+    if (m != NULL && model != LYNX__COST_FLAT5) {
+        CHECK_EQ_U64(lynx__machine_set_cost_model(m, model), LYNX_OK);
+    }
+    return m;
+}
+
+static void slice_run(lynx_machine *m, uint64_t total, uint64_t chunk)
+{
+    uint64_t done = 0u;
+    while (done < total) {
+        const uint64_t n = total - done < chunk ? total - done : chunk;
+        advance_ticks(m, n);
+        done += n;
+    }
+}
+
+static void slice_compare(const char *what, uint64_t arg, uint32_t model)
+{
+    if (memcmp(machine_buf, slice_ref, MSIZE) != 0) {
+        fprintf(stderr, "%s: model %u: %s %llu differs from one 4096-tick call\n", __FILE__,
+                (unsigned)model, what, (unsigned long long)arg);
+        check_failures++;
+    }
+}
+
+static void slice_one_model(uint32_t model)
+{
+    lynx_machine *m = slice_start(model);
+    if (m == NULL) {
+        return;
+    }
+    advance_ticks(m, 4096u);
+    memcpy(slice_ref, machine_buf, MSIZE);
+    CHECK_EQ_U64(ticks_of(m), 4096u);
+
+    static const uint64_t chunks[] = {1u, 3u, 7u, 64u, 255u, 512u};
+    for (size_t i = 0u; i < sizeof chunks / sizeof chunks[0]; i++) {
+        m = slice_start(model);
+        if (m == NULL) {
+            return;
+        }
+        slice_run(m, 4096u, chunks[i]);
+        slice_compare("chunk size", chunks[i], model);
+    }
+    /* Every two-chunk split from 1 to 600. */
+    for (uint64_t split = 1u; split <= 600u; split++) {
+        m = slice_start(model);
+        if (m == NULL) {
+            return;
+        }
+        advance_ticks(m, split);
+        advance_ticks(m, 4096u - split);
+        slice_compare("split at", split, model);
+    }
+
+    /* Grants chain: stepping one tick at a time, the cycle count is read from
+       CPU_STATE (bits 24-31, ticks until the next cycle may start). A grant is a
+       step after which that delta is one less than the cycle's price, which
+       happens only at the tick where the previous cycle ended. g[i+1] must be
+       g[i] + ticks[i], with ticks[i] the price of the i-th cycle of the seam
+       log under this model. */
+    const seam_totals tot = seam_run(churn_loop, sizeof churn_loop, 300u);
+    CHECK(tot.cycles >= 300u);
+    m = slice_start(model);
+    if (m == NULL) {
+        return;
+    }
+    uint64_t grants[320];
+    size_t ngrants = 0u;
+    uint32_t prev_delta = 0u; /* the first cycle is due at tick 0 */
+    for (uint64_t tick = 0u; tick < 600u; tick++) {
+        advance_ticks(m, 1u);
+        const uint32_t delta = reg_of(m, LYNX_REG_CPU_STATE) >> 24;
+        if (prev_delta == 0u) {
+            /* The CPU was ready at this tick: a cycle was granted here. */
+            if (ngrants < sizeof grants / sizeof grants[0]) {
+                const uint8_t kind = seam_kinds[ngrants];
+                const uint32_t price = model == LYNX__COST_FLAT5 ? 5u : skew_copy[kind];
+                CHECK_EQ_U64(delta + 1u, price); /* the ready delta restarts at the price */
+                grants[ngrants++] = tick;
+            }
+        } else {
+            CHECK_EQ_U64(delta, prev_delta - 1u); /* no grant: the delta counts down */
+        }
+        prev_delta = delta;
+    }
+    CHECK(ngrants > 40u);
+    CHECK_EQ_U64(grants[0], 0u);
+    for (size_t i = 0u; i + 1u < ngrants; i++) {
+        const uint32_t price = model == LYNX__COST_FLAT5 ? 5u : skew_copy[seam_kinds[i]];
+        CHECK_EQ_U64(grants[i + 1u], grants[i] + price);
+    }
+    /* And the stepped run is the same instance as a single 600-tick call. */
+    memcpy(slice_ref, machine_buf, MSIZE);
+    m = slice_start(model);
+    if (m != NULL) {
+        advance_ticks(m, 600u);
+        slice_compare("600 one-tick steps against a single call of", 600u, model);
+    }
+}
+
+static void case_advance_slicing(void)
+{
+    slice_one_model(LYNX__COST_FLAT5);
+    slice_one_model(LYNX__COST_TEST_SKEW);
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
 } cases[] = {
     {"advance_budget", case_advance_budget},
+    {"advance_slicing", case_advance_slicing},
     {"build_id", case_build_id},
+    {"cost_model", case_cost_model},
     {"cpu_program", case_cpu_program},
     {"identity", case_identity},
     {"init_refusal", case_init_refusal},
@@ -1960,8 +2224,12 @@ static const struct {
 
 int main(int argc, char **argv)
 {
-    if (argc != 2) {
-        fprintf(stderr, "usage: lynx-test-api <case>\n");
+    /* One case per run; the only argument a case takes is the named fault of the
+       persistent control api.cost_model.self_test. */
+    if (argc == 3 && strcmp(argv[1], "cost_model") == 0 && strcmp(argv[2], "fault-constant") == 0) {
+        g_fault_constant = 1;
+    } else if (argc != 2) {
+        fprintf(stderr, "usage: lynx-test-api <case> | lynx-test-api cost_model fault-constant\n");
         return 2;
     }
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {

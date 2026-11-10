@@ -7,6 +7,20 @@ lynx_sanitize(lynx-test-api)
 set_target_properties(lynx-test-api PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
 
 lynx_add_test(NAME api.advance_budget COMMAND lynx-test-api advance_budget LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.advance_slicing COMMAND lynx-test-api advance_slicing LABELS api TIMEOUT 60)
+# Success criterion 3: a non-default per-access cost (the internal test_skew model,
+# set through lynx__machine_set_cost_model) changes consumed ticks by exactly the
+# sum over the seam bus log of (price - 5) and changes no register or RAM byte.
+lynx_add_test(NAME api.cost_model COMMAND lynx-test-api cost_model LABELS api TIMEOUT 30)
+# Persistent control: the same case with the machine left on flat5 where the test
+# expects test_skew (what a timing function that ignores its table produces) must
+# fail, and for that reason.
+lynx_add_test(NAME api.cost_model.self_test
+  COMMAND ${CMAKE_COMMAND}
+    "-DCMD=$<TARGET_FILE:lynx-test-api>$<SEMICOLON>cost_model$<SEMICOLON>fault-constant"
+    -DCODE=1 "-DREGEX=cost model ignored"
+    -P ${PROJECT_SOURCE_DIR}/tests/cmake/expect_fail.cmake
+  LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.cpu_program COMMAND lynx-test-api cpu_program LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.build_id COMMAND lynx-test-api build_id LABELS api TIMEOUT 30)
 # The identity follows the checkout (commit, staged change, linked worktree)

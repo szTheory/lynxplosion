@@ -17,6 +17,13 @@
      failed, ascending), --partial (sample: any ascending subset of sections;
      complete: files that are absent are skipped, at least one must exist) and
      --fault no-step|stray-write|mutant-69 (named faults used only by the controls).
+     seam-agreement --profile none|lynx1|lynx2 --sample FILE --manifest FILE
+         the machine against the vector seam: for every run row the first vector of
+         the opcode is written into a format-2 snapshot (hash recomputed), restored
+         into a machine through the public restore call and advanced by the seam's
+         cycle count at 5 ticks; registers and the whole RAM must equal the internal
+         seam step. Under none every vector of the undefined rows must stop with
+         UNDEFINED, nothing consumed and the instance byte-identical.
 
    Asserted per vector: final pc, s, a, x, y, p under mask 0xCF, every listed final
    ram value, and no write outside the union of the initial and final ram address
@@ -34,6 +41,8 @@
 #include "cpu.h"
 #include "cpu/flat_bus.h"
 #include "cpu/sst_reader.h"
+#include "internal.h"
+#include "lynxplosion.h"
 #include "sha256.h"
 
 enum { EXIT_PASS = 0, EXIT_ASSERT = 1, EXIT_USAGE = 2, EXIT_DATA = 3, EXIT_INVENTORY = 4 };
@@ -1165,6 +1174,248 @@ static int cmd_complete(const run_opts *o)
     return g_res.failed == 0u ? EXIT_PASS : EXIT_ASSERT;
 }
 
+/* ---- seam-agreement: the shipping machine against the vector seam --------- */
+
+static _Alignas(max_align_t) unsigned char g_mbuf[sizeof(struct lynx_machine)];
+static unsigned char g_tmpl[LYNX__SNAPSHOT_HEADER_LEN + LYNX__SNAPSHOT_PAYLOAD_LEN];
+static unsigned char g_blob[LYNX__SNAPSHOT_HEADER_LEN + LYNX__SNAPSHOT_PAYLOAD_LEN];
+static unsigned char g_mref[sizeof(struct lynx_machine)];
+static uint8_t g_poison[65536];
+static uint8_t g_ram_read[65536];
+static unsigned g_sa_printed;
+
+static void sa_fail(const sst_vector *v, const char *what, unsigned got, unsigned want)
+{
+    if (g_sa_printed < 40u) {
+        fprintf(stderr, "FAIL opcode %02x vector %u %s: machine %u, seam/expected %u\n", v->opcode, v->ordinal, what,
+                got, want);
+    } else if (g_sa_printed == 40u) {
+        fprintf(stderr, "FAIL (further failures not printed)\n");
+    }
+    g_sa_printed++;
+}
+
+/* The vector's initial state as a format-2 payload on top of the template blob,
+   the payload hash recomputed, restored through the public call. The CPU is at
+   an instruction boundary at the vector's pc, the cost model is flat5 and guest
+   time is 0 with the next cycle due at once. 0 on success. */
+static int sa_restore(lynx_machine *m, const sst_vector *v, const uint8_t *ram)
+{
+    unsigned char *pay = g_blob + LYNX__SNAPSHOT_HEADER_LEN;
+    lynx__sha256 h;
+    memcpy(g_blob, g_tmpl, sizeof g_blob);
+    memset(pay, 0, 32u); /* every CPU latch, cost model 0, guest time and ready time zero */
+    pay[0] = (unsigned char)(v->initial.pc & 0xFFu);
+    pay[1] = (unsigned char)(v->initial.pc >> 8);
+    pay[2] = v->initial.a;
+    pay[3] = v->initial.x;
+    pay[4] = v->initial.y;
+    pay[5] = v->initial.s;
+    pay[6] = (unsigned char)(v->initial.p | 0x30u);
+    memcpy(pay + 32, ram, 65536u);
+    lynx__sha256_init(&h);
+    lynx__sha256_update(&h, pay, LYNX__SNAPSHOT_PAYLOAD_LEN);
+    lynx__sha256_final(&h, g_blob + (LYNX__SNAPSHOT_HEADER_LEN - 32u));
+    return lynx_snapshot_restore(m, g_blob, sizeof g_blob) == LYNX_OK ? 0 : -1;
+}
+
+static unsigned sa_reg(const lynx_machine *m, uint32_t reg)
+{
+    uint32_t value = 0xA5A5A5A5u;
+    if (lynx_read_register(m, reg, &value) != LYNX_OK) {
+        return 0xA5A5A5A5u;
+    }
+    return value;
+}
+
+/* One vector. A run row: the internal seam steps one instruction on the flat
+   test bus and the machine advances by that many cycles at 5 ticks; they must
+   agree on registers and on every RAM byte. An undefined row (profile none):
+   the machine stops with nothing consumed and the instance unchanged. Returns
+   the number of failed checks. */
+static unsigned sa_one(lynx_machine *m, const sst_vector *v, unsigned profile, const lynx__cpu_decode *t,
+                       int undefined)
+{
+    unsigned failed = 0;
+    unsigned i;
+    uint64_t consumed = 0xA5A5A5A5u;
+    uint64_t ticks = 0xA5A5A5A5u;
+    lynx_stop_reason stop = 0xA5A5A5A5u;
+    lynx__cpu cpu;
+    unsigned n;
+    memcpy(g_bus.mem, g_poison, sizeof g_bus.mem);
+    for (i = 0; i < v->initial.nram; i++) {
+        g_bus.mem[v->initial.ram_addr[i]] = v->initial.ram_val[i];
+    }
+    if (sa_restore(m, v, g_bus.mem) != 0) {
+        sa_fail(v, "restore", 1u, 0u);
+        return 1u;
+    }
+    if (undefined != 0) {
+        memcpy(g_mref, m, sizeof g_mref);
+        if (lynx_advance(m, 1000u, &consumed, &stop) != LYNX_OK || consumed != 0u || stop != LYNX_STOP_UNDEFINED) {
+            sa_fail(v, "undefined-stop", (unsigned)stop, LYNX_STOP_UNDEFINED);
+            failed++;
+        }
+        if (memcmp(m, g_mref, sizeof g_mref) != 0) {
+            sa_fail(v, "undefined-instance-changed", 1u, 0u);
+            failed++;
+        }
+        return failed;
+    }
+    lynx__cpu_init(&cpu, profile);
+    cpu.a = v->initial.a;
+    cpu.x = v->initial.x;
+    cpu.y = v->initial.y;
+    cpu.s = v->initial.s;
+    cpu.p = (uint8_t)(v->initial.p | 0x30u);
+    lynx__cpu_start_at(&cpu, t, v->initial.pc);
+    flat_bus_reset_log(&g_bus);
+    if (!flat_bus_step_instruction(&g_bus, &cpu, t)) {
+        sa_fail(v, "seam-cycle-bound", 0u, 0u);
+        return 1u;
+    }
+    n = g_bus.nlog;
+    if (lynx_advance(m, (uint64_t)n * 5u, &consumed, &stop) != LYNX_OK || consumed != (uint64_t)n * 5u ||
+        stop != LYNX_STOP_BUDGET) {
+        sa_fail(v, "advance", (unsigned)consumed, n * 5u);
+        return 1u;
+    }
+    if (lynx_guest_ticks(m, &ticks) != LYNX_OK || ticks != (uint64_t)n * 5u) {
+        sa_fail(v, "guest-ticks", (unsigned)ticks, n * 5u);
+        failed++;
+    }
+    if (sa_reg(m, LYNX_REG_PC) != cpu.pc) {
+        sa_fail(v, "pc", sa_reg(m, LYNX_REG_PC), cpu.pc);
+        failed++;
+    }
+    if (sa_reg(m, LYNX_REG_S) != cpu.s) {
+        sa_fail(v, "s", sa_reg(m, LYNX_REG_S), cpu.s);
+        failed++;
+    }
+    if (sa_reg(m, LYNX_REG_A) != cpu.a) {
+        sa_fail(v, "a", sa_reg(m, LYNX_REG_A), cpu.a);
+        failed++;
+    }
+    if (sa_reg(m, LYNX_REG_X) != cpu.x) {
+        sa_fail(v, "x", sa_reg(m, LYNX_REG_X), cpu.x);
+        failed++;
+    }
+    if (sa_reg(m, LYNX_REG_Y) != cpu.y) {
+        sa_fail(v, "y", sa_reg(m, LYNX_REG_Y), cpu.y);
+        failed++;
+    }
+    if (sa_reg(m, LYNX_REG_P) != ((unsigned)cpu.p | 0x30u)) {
+        sa_fail(v, "p", sa_reg(m, LYNX_REG_P), (unsigned)cpu.p | 0x30u);
+        failed++;
+    }
+    /* A boundary with nothing in flight: both words are zero (cost model 0). */
+    if (sa_reg(m, LYNX_REG_CPU_STATE) != 0u || sa_reg(m, LYNX_REG_CPU_LATCH) != 0u) {
+        sa_fail(v, "boundary", sa_reg(m, LYNX_REG_CPU_STATE) | sa_reg(m, LYNX_REG_CPU_LATCH), 0u);
+        failed++;
+    }
+    if (lynx_read_memory(m, 0u, g_ram_read, 65536u) != LYNX_OK) {
+        sa_fail(v, "read-memory", 1u, 0u);
+        return failed + 1u;
+    }
+    if (memcmp(g_ram_read, g_bus.mem, 65536u) != 0) {
+        unsigned a = 0;
+        while (g_ram_read[a] == g_bus.mem[a]) {
+            a++;
+        }
+        sa_fail(v, "ram", g_ram_read[a], g_bus.mem[a]);
+        if (g_sa_printed <= 40u) {
+            fprintf(stderr, "  first differing address $%04x\n", a);
+        }
+        failed++;
+    }
+    return failed;
+}
+
+static int cmd_seam_agreement(const run_opts *o)
+{
+    const lynx__cpu_decode *t = lynx__cpu_table(o->profile);
+    size_t len = 0;
+    char *buf = read_whole_file(o->sample, &len);
+    lynx__sha256 sha;
+    uint8_t digest[32];
+    char hex[65];
+    char want[65];
+    lynx_config cfg;
+    lynx_machine *m = NULL;
+    static const uint8_t content[1] = {0xEAu};
+    size_t saved = 0;
+    unsigned expect_run = 0;
+    unsigned expect_undef_rows = 0;
+    unsigned tested_run = 0;
+    unsigned tested_undef = 0;
+    unsigned failed = 0;
+    unsigned op;
+    unsigned a;
+    int rc;
+
+    if (buf == NULL) {
+        return EXIT_DATA;
+    }
+    lynx__sha256_init(&sha);
+    lynx__sha256_update(&sha, buf, len);
+    lynx__sha256_final(&sha, digest);
+    lynx__sha256_hex(digest, hex);
+    if (manifest_sha256(o->manifest, want) != 0 || strcmp(want, hex) != 0) {
+        fprintf(stderr, "lynx-test-cpu-vectors: the sample hash does not match the manifest\n");
+        free(buf);
+        return EXIT_DATA;
+    }
+    for (op = 0; op < 256u; op++) {
+        rowinfo ri = classify(o->profile, op, t);
+        g_info[op] = ri;
+        expect_run += ri.status == ST_RUN ? 1u : 0u;
+        expect_undef_rows += ri.status == ST_UNDEFINED ? 1u : 0u;
+    }
+    for (a = 0; a < 65536u; a++) {
+        g_poison[a] = poison((uint16_t)a);
+    }
+    lynx_config_default(&cfg);
+    cfg.profile = o->profile;
+    if (lynx_machine_size() > sizeof g_mbuf ||
+        lynx_machine_init(g_mbuf, lynx_machine_size(), &cfg, &m) != LYNX_OK ||
+        lynx_load_ram_image(m, content, sizeof content, 0x0200u) != LYNX_OK ||
+        lynx_snapshot_save(m, g_tmpl, sizeof g_tmpl, &saved) != LYNX_OK || saved != sizeof g_tmpl) {
+        fprintf(stderr, "lynx-test-cpu-vectors: cannot build the machine\n");
+        free(buf);
+        return EXIT_DATA;
+    }
+    if (sst_open_sample(&g_reader, buf, len, o->sample, 0) != 0) {
+        fprintf(stderr, "%s\n", g_reader.msg);
+        free(buf);
+        return EXIT_DATA;
+    }
+    while ((rc = sst_next(&g_reader, &g_vec)) > 0) {
+        op = g_vec.opcode;
+        if (g_info[op].status == ST_RUN && g_vec.ordinal == 0u) {
+            failed += sa_one(m, &g_vec, o->profile, t, 0) != 0u ? 1u : 0u;
+            tested_run++;
+        } else if (g_info[op].status == ST_UNDEFINED) {
+            failed += sa_one(m, &g_vec, o->profile, t, 1) != 0u ? 1u : 0u;
+            tested_undef++;
+        }
+    }
+    free(buf);
+    lynx_machine_deinit(m);
+    if (rc < 0) {
+        fprintf(stderr, "%s\n", g_reader.msg);
+        return EXIT_DATA;
+    }
+    printf("profile %s\n", o->profile_name);
+    printf("seam_agreement run_rows %u undefined_vectors %u failed %u\n", tested_run, tested_undef, failed);
+    if (tested_run != expect_run || tested_undef != expect_undef_rows * SST_SAMPLE_OBJECTS) {
+        fprintf(stderr, "lynx-test-cpu-vectors: tested %u run rows and %u undefined vectors, expected %u and %u\n",
+                tested_run, tested_undef, expect_run, expect_undef_rows * SST_SAMPLE_OBJECTS);
+        return EXIT_ASSERT;
+    }
+    return failed == 0u ? EXIT_PASS : EXIT_ASSERT;
+}
+
 static int parse_profile(const char *name, unsigned *out)
 {
     if (strcmp(name, "none") == 0) {
@@ -1201,6 +1452,7 @@ static int usage(void)
             "--expect-plan FILE\n"
             "       lynx-test-cpu-vectors run --profile P --sample FILE --print-plan\n"
             "       lynx-test-cpu-vectors complete --profile P --dir DIR --variant V\n"
+            "       lynx-test-cpu-vectors seam-agreement --profile P --sample FILE --manifest FILE\n"
             "       run and complete also take: [--results FILE] [--partial] "
             "[--fault no-step|stray-write|mutant-69]\n");
     return EXIT_USAGE;
@@ -1263,6 +1515,13 @@ int main(int argc, char **argv)
             return usage();
         }
         return cmd_run(&o);
+    }
+    if (argc >= 2 && strcmp(argv[1], "seam-agreement") == 0) {
+        if (parse_run_opts(argc, argv, &o) != 0 || o.sample == NULL || o.manifest == NULL || o.dir != NULL ||
+            o.variant != NULL || o.expect_plan != NULL || o.print_plan != 0 || o.fault != FAULT_NONE) {
+            return usage();
+        }
+        return cmd_seam_agreement(&o);
     }
     if (argc >= 2 && strcmp(argv[1], "complete") == 0) {
         if (parse_run_opts(argc, argv, &o) != 0 || o.dir == NULL || o.variant == NULL || o.sample != NULL ||
