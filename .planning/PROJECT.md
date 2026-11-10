@@ -24,6 +24,7 @@ everything else fails, that link between claim, profile and evidence must hold.
 - ✓ One documented local check command aligned with the fast PR gate — Phase 1 (`scripts/check.sh`, same command in CI; CI green on the pushed HEAD)
 - ✓ Exact test inventories, named-fault negative controls and visible skips/missing/stale evidence — Phase 1 (57 tests accounted for once each; every gate has a seeded control)
 - ✓ A canonical machine-core skeleton behind a host API with instance ownership, bounded guest-time advancement, reset, errors and refusal postconditions, validated by whole-buffer comparison — Phase 1 (logical input, CPU, devices and raw outputs come in later phases)
+- ✓ A 65C02-class CPU as data-defined Lynx I and Lynx II profiles (plus the default `none` = what both agree on), selectable per instance, every memory access a tick-stamped bus cycle with a variable cost model, proven by 7.3 million pinned per-opcode vectors (0 failed), exact per-profile inventories and named-fault controls; Lynx-specific cycle counts stay labelled unverified (Epyx's VTI spec is not public) and no baseline is adopted — Phase 2
 - ✓ Repeatable runs: two fresh runs and two in-process instances give identical artifact-bundle digests, labelled repeatability, not accuracy — Phase 1
 
 ### Active
@@ -211,4 +212,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-09 after Phase 1*
+*Last updated: 2026-11-10 after Phase 2*

@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 2
-current_phase_name: CPU Profiles and Per-Opcode Vectors
-status: verifying
-stopped_at: Completed 02-11-PLAN.md
-last_updated: "2026-11-10T06:40:36.762Z"
-last_activity: 2026-11-09
-last_activity_desc: Phase 2 execution started
-state_head: e8523539ed236eba1ae0a41f39f044db12c43d4a
+current_phase: 3
+current_phase_name: Memory Map, Direct-Load Startup and First Diagnostic
+status: planning
+stopped_at: Phase 2 complete, ready to plan Phase 3
+last_updated: "2026-11-10T07:18:07.931Z"
+last_activity: 2026-11-10
+last_activity_desc: Phase 2 complete, transitioned to Phase 3
+state_head: dac3b5c19f997f7327873ed68a6ca17b7c2795d9
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 24
   completed_plans: 24
-  percent: 17
+  percent: 33
 ---
 
 # Project State
@@ -27,17 +27,17 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 
 ## Current Position
 
-Phase: 2 (CPU Profiles and Per-Opcode Vectors) — EXECUTING
-Plan: 11 of 11
-Status: Phase complete — ready for verification
-Last activity: 2026-11-09 — Phase 2 execution started
+Phase: 3 — Memory Map, Direct-Load Startup and First Diagnostic
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-11-10 — Phase 2 complete, transitioned to Phase 3
 
-Progress: [██░░░░░░░░] 17%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
+- Total plans completed: 24
 - Average duration: -
 - Total execution time: 0 hours
 
@@ -46,6 +46,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 13 | - | - |
+| 2 | 11 | - | - |
 
 **Recent Trend:**
 - Last 5 plans: -
@@ -142,15 +143,14 @@ None yet.
 
 ### Blockers/Concerns
 
-No blockers. Open owner decisions that shape claims but do not stop work (the roadmap
-schedules around each):
+No blockers. Open owner decisions that shape claims but do not stop work:
 
-- O1 (baseline Lynx model/CPU profile): gates every CPU-profile and suite-pass claim. Phase 2 builds both profiles as data and claims only profile `none`.
-- O6 (clean-room protocol): the policy and exposure record stay DRAFT; implementers do not open GPL emulator source.
+- O1 (baseline Lynx model/CPU profile): no baseline adopted; profiles are data (`none`, `lynx1`, `lynx2`); claims name profile `none` only.
+- O6 (clean-room protocol): policy and exposure record stay DRAFT; no emulator source opened in Phases 1-2.
 - O5 (licence): no licence file; all rights reserved until decided.
 - O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
-- Resolved in Phase 1: O8 (C17, CMake/Ninja/CTest, C ABI, owner-accepted), public repository (owner-authorized), `.planning/AUTONOMY.md` created.
-- Research flags (deeper research before planning): Phases 2, 3, 4, 5, 6.
+- Phase 3 starts at the memory map (MAPCTL), direct-load startup tier A and the first original diagnostic; research flags remain for Phases 3-6.
+- Carried follow-ups: bus tick stamp is plumbed but unobserved until a device consumes it (Phase 4); `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
 
 ## Deferred Items
 
@@ -163,5 +163,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-11-10T06:40:36.679Z
-Stopped at: Completed 02-11-PLAN.md
+Stopped at: Phase 2 complete, ready to plan Phase 3
 Resume file: None

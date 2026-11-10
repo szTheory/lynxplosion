@@ -34,7 +34,7 @@ the project goal.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Evidence Harness and Walking Skeleton** - One check command, pinned and manifested fixtures, fail-closed rights and core-boundary checks, and a repeatable skeleton machine behind the host API (completed 2026-11-09)
-- [ ] **Phase 2: CPU Profiles and Per-Opcode Vectors** - 65C02-class CPU with Lynx I and Lynx II profiles as data, tick-stamped bus cycles, proven by pinned vectors
+- [x] **Phase 2: CPU Profiles and Per-Opcode Vectors** - 65C02-class CPU with Lynx I and Lynx II profiles as data, tick-stamped bus cycles, proven by pinned vectors (completed 2026-11-10)
 - [ ] **Phase 3: Memory Map, Direct-Load Startup and First Diagnostic** - MAPCTL memory map, startup tier A, original diagnostic reporting through a RAM result block, first labelled snapshot via an independent consumer
 - [ ] **Phase 4: Timers, Interrupts and First Public Suites** - Master-tick scheduler, Mikey timer bank, IRQ and minimal sleep; `timers` and `cpu` suites read from guest RAM with controls
 - [ ] **Phase 5: Display, Raw Video and Input** - Timer-driven frames, display DMA, per-line palette, raw video and logical input; live input-responsive homebrew frame
@@ -113,7 +113,7 @@ Plans:
   4. Tests cover IRQ entry, CLI/SEI latency, WAI/STP and reserved-opcode NOP lengths, and each follows the selected profile's documented behaviour. Each expected value cites its source or is marked unverified.
 **Owner gates**: O1 (baseline model). Both profiles are built and neither is named baseline. No CPU-profile compatibility claim is made until O1 is decided.
 **Research flag**: Deeper research needed before planning: which SingleStepTests directory applies to each profile and which opcodes to exclude; decimal-mode and reserved-opcode cycle counts (unsourced); the shape of the bus-cycle interface (AD-01 spike).
-**Plans:** 11/11 plans executed
+**Plans:** 11/11 plans complete
 
 Plans:
 **Wave 1**
@@ -232,7 +232,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Evidence Harness and Walking Skeleton | 13/13 | Complete    | 2026-11-09 |
-| 2. CPU Profiles and Per-Opcode Vectors | 11/11 | In Progress | - |
+| 2. CPU Profiles and Per-Opcode Vectors | 11/11 | Complete    | 2026-11-10 |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 0/TBD | Not started | - |
 | 4. Timers, Interrupts and First Public Suites | 0/TBD | Not started | - |
 | 5. Display, Raw Video and Input | 0/TBD | Not started | - |

@@ -51,3 +51,34 @@ builds; the linked probe `.lnx` is byte-identical across both and is the evidenc
 plans that executed with no owner stops. Plan checking cut 14 findings to 0 in three passes; the
 costliest were scope (plans over 15 files) and a rights-gate rule that did not account for the
 toolchain's own build outputs. Decide such conflicts at the CONTEXT level and record them.
+
+## Phase 2: CPU Profiles and Per-Opcode Vectors (2026-11-10)
+
+**Independent oracles beat self-authored ones.** The per-cycle expectation lists the core author wrote catch
+slips, not table errors; the pinned vectors (final state), a hand-derived fixture trace written before the CPU
+met it (matched on the first run), and a seeded wrong-profile control are what make the result credible.
+Constant "poison" for unlisted reads would have let 8 of 16 bit-op opcodes pass the reverse control vacuously;
+use an address-hashed value.
+
+**Where the hardware evidence is thin, label it instead of choosing.** Epyx's CPU spec is non-public, and
+SingleStepTests disagrees with the datasheets on several reserved opcodes. The rule that worked: follow
+hardware-informed Lynx evidence where it exists, follow the source variant elsewhere, tag every value with its
+source and an unverified flag, and let the check print counts per tag.
+
+**Parallel lenses need an explicit conflict pass.** Four research lenses disagreed on mid-instruction budget
+stops; resolving it against an already-verified Phase 1 property (consumed never exceeds the budget) settled it.
+
+**Cost control.** Committing 6.4 MB of test data made scans 10x slower until the scanners read each file once
+and prefiltered fixed strings; part of an apparent regression was host load, so compare CPU seconds. The
+history scan still grows about 1.5 s per commit because the data is in every later commit (candidate: scan each
+blob once).
+
+**Portability and process.** Run the full check in an ubuntu:24.04 container before pushing: it caught a CMake
+policy class (while-loop and IN_LIST under script-mode policies) twice. A post-execution review found
+restore-validation gaps (forged snapshots reaching states execution never produces) that every plan's tests
+missed; review restore paths as attack surface. Plan-check estimates were low-confidence: executors used a
+fraction of the projected tokens.
+
+**Open follow-ups.** Test fragility: `cpu.vectors.malformed`/`complete_mode` fail when the repo path is
+about 170 characters (diagnostic truncation); the bus tick stamp is plumbed but unobserved until a device
+consumes it (Phase 4).
