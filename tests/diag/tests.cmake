@@ -122,7 +122,8 @@ endfunction()
 function(public_boundary_reject name source expected)
   set(probe "${WORK}/${name}.c")
   file(WRITE "${probe}" "${source}")
-  execute_process(COMMAND "${C_COMPILER}" -std=c17 -I "${PUBLIC_INCLUDE_DIR}"
+  execute_process(COMMAND "${C_COMPILER}" -std=c17 -Werror=implicit-function-declaration
+      -I "${PUBLIC_INCLUDE_DIR}"
       -fsyntax-only "${probe}"
     RESULT_VARIABLE probe_rc OUTPUT_VARIABLE probe_out ERROR_VARIABLE probe_err)
   set(all_output "${probe_out}${probe_err}")
