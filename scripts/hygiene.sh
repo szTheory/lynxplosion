@@ -40,14 +40,15 @@ found() {
 
 # A home directory names a person (also in the dashed form agent tools use for
 # project folders). Hosted CI runner homes are the exception.
-HOME_PATH='(/Users/|/home/)[A-Za-z0-9._-]+|[A-Za-z]:\\Users\\[A-Za-z0-9._-]+|-Users-[A-Za-z0-9._]+-'
+HOME_PATH='(/Users/|/home/)[A-Za-z0-9._-]+|/root/[A-Za-z0-9._-]+|[A-Za-z]:[\\/]{1,2}Users[\\/]{1,2}[A-Za-z0-9._-]+|-Users-[A-Za-z0-9._]+-'
 HOME_OK='(/Users/|/home/)runner'
 # Any address except GitHub noreply, the AI co-author noreply, documentation
 # domains and SSH remotes.
 EMAIL='[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z][A-Za-z]+'
 EMAIL_OK='[A-Za-z0-9._%+-]+@users\.noreply\.github\.com|noreply@github\.com|noreply@anthropic\.com|[A-Za-z0-9._%+-]+@example\.(com|org|net)|git@github\.com'
-# Credential-shaped tokens: GitHub, AWS, PEM private keys, Slack, Google API.
-CREDENTIAL='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|gh[ousr]_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}'
+# Credential-shaped tokens: GitHub, AWS, PEM private keys, Slack, Google API,
+# Anthropic and generic sk- keys, npm tokens and JSON web tokens.
+CREDENTIAL='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|gh[ousr]_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|sk-ant-[A-Za-z0-9_-]{20,}|(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{32,}|npm_[A-Za-z0-9]{36}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
 
 # stdin is text. True if some match of $1 is not, as a whole, an allowed form $2.
 # Only the matches are tested (-o), and an allowed form must be the entire match,

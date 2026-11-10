@@ -90,6 +90,14 @@ fake_pat=github_$(printf 'pat')_$(rep b 30)
 fake_aws=AK$(printf 'IA')$(rep A 16)
 fake_pem=-----BEGIN$(printf ' RSA ')PRIVATE$(printf ' KEY')-----
 fake_slack=xo$(printf 'xb')-$(rep 1 12)
+fake_ant=s$(printf 'k-an')t-$(rep c 24)
+fake_sk=s$(printf 'k-')$(rep d 40)
+fake_npm=np$(printf 'm_')$(rep e 36)
+fake_jwt=ey$(printf 'J')$(rep f 12).ey$(printf 'J')$(rep g 12).$(rep h 12)
+fake_root=/ro$(printf 'ot')/$home_c
+fake_win=C:/Us$(printf 'ers')/$home_c
+bs=$(printf '\134')
+fake_win_json=C:$bs${bs}Us$(printf 'ers')$bs$bs$home_c
 
 # case_text NAME FILE CONTENT FINDING: write, expect FINDING, remove, expect a pass.
 case_text() {
@@ -146,6 +154,19 @@ case_text credential_fine_grained notes.txt "token $fake_pat" 'hygiene: credenti
 case_text credential_aws notes.txt "key $fake_aws" 'hygiene: credential: '
 case_text credential_pem notes.txt "$fake_pem" 'hygiene: credential: '
 case_text credential_slack notes.txt "token $fake_slack" 'hygiene: credential: '
+
+case_text credential_anthropic notes.txt "token $fake_ant" 'hygiene: credential: '
+case_text credential_sk notes.txt "key=$fake_sk" 'hygiene: credential: '
+case_text credential_npm notes.txt "token $fake_npm" 'hygiene: credential: '
+case_text credential_jwt notes.txt "bearer $fake_jwt" 'hygiene: credential: '
+case_text home_path_root notes.txt "cp x $fake_root/.cache" 'hygiene: home path: '
+case_text home_path_windows notes.txt "open $fake_win/file" 'hygiene: home path: '
+case_text home_path_windows_json notes.txt "{\"path\": \"$fake_win_json\\\\x\"}" 'hygiene: home path: '
+# Words that merely contain sk- or end in a short token are not credentials.
+printf '%s\n' "the risk-adjusted-plan-for-the-whole-walking-skeleton-build and task-$(rep d 40)" >"$iso/words.txt"
+accept sk_inside_word tree
+rm -f "$iso/words.txt"
+ok sk_inside_word_accepted
 
 # The allowed forms pass: the AI co-author noreply, the GitHub noreply domain,
 # a hosted runner home, an example domain, a tilde path and a short prefix.
