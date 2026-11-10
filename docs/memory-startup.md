@@ -33,12 +33,26 @@ fixture recipe in `03-STARTUP-RESEARCH.md`. Format references include the
 boot evidence. No BIOS bytes, commercial game bytes or external emulator
 implementation are part of this path.
 
-The memory map sources identify MAPCTL at `0xFFF9` and describe its overlay
-bits; the exact device behavior is handled in later Phase 3 work. The current
-core starts MAPCTL at zero on init, reset and successful load as a deterministic
-project policy. That is not a claim about hardware reset state. CPU reset
-register values likewise remain unverified while the Lynx I/II and CPU baseline
-decision O1 is open. The current flat five-master-tick timing is
+The sourced CPU decoder has four independent windows: Suzy at `0xFC00–0xFCFF`,
+Mikey at `0xFD00–0xFDFF`, ROM at `0xFE00–0xFFF7`, and vectors at
+`0xFFFA–0xFFFF`. MAPCTL bits 0–3 select underlying RAM for those windows;
+`0xFFF8` remains RAM and `0xFFF9` remains the MAPCTL write address. The full
+byte is retained, while only its low nibble affects routing. Raw RAM reads and
+CPU-mapped peeks remain separate observations.
+
+The decoder is source-backed; unsupported target behavior is a separate
+provisional policy. This build has no ROM or device contents, so mapped Suzy,
+Mikey, absent-ROM, vector and MAPCTL-read CPU requests stop as unavailable
+before CPU completion and do not fall through to hidden RAM. Only guest writes
+to the MAPCTL latch are implemented. Host observation can read the latch, but
+that does not establish guest MAPCTL readback, device register values, or
+hidden-RAM write-through on hardware. Named controls exercise these refusals
+and RAM-selected counterparts through real CPU requests.
+
+The current core starts MAPCTL at zero on init, reset and successful load as a
+deterministic project policy. That is not a claim about hardware reset state.
+CPU reset register values likewise remain unverified while the Lynx I/II and
+CPU baseline decision O1 is open. The current flat five-master-tick timing is
 `PLACEHOLDER`, not a hardware timing claim.
 
 No baseline or suite-pass compatibility claim is made. O5 (project licence),

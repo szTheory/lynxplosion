@@ -45,3 +45,69 @@ lynx_add_test(NAME api.reset_power_on COMMAND lynx-test-api reset_power_on LABEL
 lynx_add_test(NAME api.snapshot_refusal COMMAND lynx-test-api snapshot_refusal LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.snapshot_roundtrip COMMAND lynx-test-api snapshot_roundtrip LABELS api TIMEOUT 30)
 lynx_add_test(NAME core.sha256 COMMAND lynx-test-api sha256 LABELS core TIMEOUT 30)
+
+# One persistent control per public contract groups its isolated fault cases.
+# The generated driver requires each child to exit 1 and match its intended
+# assertion, so usage errors and unrelated failures cannot pass the control.
+set(API_FAULT_BATCH "${PROJECT_BINARY_DIR}/tests/api_fault_batch.cmake")
+file(GENERATE OUTPUT "${API_FAULT_BATCH}" CONTENT [==[
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
+foreach(var TEST_BINARY FAULT_GROUP)
+  if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
+    message(FATAL_ERROR "api fault control: -D${var} is required")
+  endif()
+endforeach()
+if(FAULT_GROUP STREQUAL "map")
+  set(positive_case map_matrix)
+  set(fault_cases
+    "map_matrix|fault-wrong-map-bit|stop == LYNX_STOP_BUDGET failed"
+    "map_matrix|fault-special-address-order|stop == LYNX_STOP_UNAVAILABLE failed")
+elseif(FAULT_GROUP STREQUAL "peek")
+  set(positive_case memory_peek_pure)
+  set(fault_cases
+    "memory_peek_pure|fault-raw-as-mapped|raw_status == LYNX_OK failed")
+elseif(FAULT_GROUP STREQUAL "rom")
+  set(positive_case rom_unavailable)
+  set(fault_cases
+    "rom_unavailable|fault-fallback-to-ram|stop == LYNX_STOP_UNAVAILABLE failed")
+else()
+  message(FATAL_ERROR "api fault control: unknown FAULT_GROUP ${FAULT_GROUP}")
+endif()
+execute_process(COMMAND "${TEST_BINARY}" "${positive_case}"
+  RESULT_VARIABLE positive_result OUTPUT_VARIABLE positive_out ERROR_VARIABLE positive_err)
+if(NOT "${positive_result}" STREQUAL "0")
+  message(FATAL_ERROR "${positive_case}: accepted control failed with exit ${positive_result}\n${positive_out}${positive_err}")
+endif()
+foreach(spec IN LISTS fault_cases)
+  string(REPLACE "|" ";" fields "${spec}")
+  list(GET fields 0 case_name)
+  list(GET fields 1 fault_name)
+  list(GET fields 2 expected_assertion)
+  execute_process(COMMAND "${TEST_BINARY}" "${case_name}" "${fault_name}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  set(output "${out}${err}")
+  if(NOT "${result}" STREQUAL "1" OR NOT output MATCHES "${expected_assertion}")
+    message(FATAL_ERROR "${case_name} ${fault_name}: expected exit 1 and assertion '${expected_assertion}', got exit ${result}\n${output}")
+  endif()
+endforeach()
+message(STATUS "api ${FAULT_GROUP} fault subcases failed at their intended assertions")
+]==])
+
+# 03-04 already implemented these public-path controls; they become permanent
+# inventory gates here after their route mutants are proven in the failing direction.
+lynx_add_test(NAME memory.map_matrix COMMAND lynx-test-api map_matrix LABELS memory TIMEOUT 60)
+lynx_add_test(NAME memory.map_matrix.self_test
+  COMMAND ${CMAKE_COMMAND} "-DTEST_BINARY=$<TARGET_FILE:lynx-test-api>" -DFAULT_GROUP=map
+    -P "${API_FAULT_BATCH}"
+  LABELS memory TIMEOUT 30)
+lynx_add_test(NAME api.memory_peek_pure COMMAND lynx-test-api memory_peek_pure LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.memory_peek_pure.self_test
+  COMMAND ${CMAKE_COMMAND} "-DTEST_BINARY=$<TARGET_FILE:lynx-test-api>" -DFAULT_GROUP=peek
+    -P "${API_FAULT_BATCH}"
+  LABELS api TIMEOUT 30)
+lynx_add_test(NAME memory.rom_unavailable COMMAND lynx-test-api rom_unavailable LABELS memory TIMEOUT 30)
+lynx_add_test(NAME memory.rom_unavailable.self_test
+  COMMAND ${CMAKE_COMMAND} "-DTEST_BINARY=$<TARGET_FILE:lynx-test-api>" -DFAULT_GROUP=rom
+    -P "${API_FAULT_BATCH}"
+  LABELS memory TIMEOUT 30)

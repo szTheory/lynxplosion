@@ -19,6 +19,8 @@ api.init_refusal	api
 api.inspect_pure	api
 api.instances_independent	api
 api.load_refusal_unchanged	api
+api.memory_peek_pure	api
+api.memory_peek_pure.self_test	api
 api.profile_select	api
 api.reset_power_on	api
 api.seam_agreement.lynx1	api
@@ -87,6 +89,10 @@ hygiene.pii.self_test	hygiene
 hygiene.tree	hygiene
 inventory.junit.self_test	inventory
 inventory.registered.self_test	inventory
+memory.map_matrix	memory
+memory.map_matrix.self_test	memory
+memory.rom_unavailable	memory
+memory.rom_unavailable.self_test	memory
 policy.no_network	policy
 policy.no_network.self_test	policy
 policy.no_skip	policy

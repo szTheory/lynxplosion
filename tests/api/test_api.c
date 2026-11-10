@@ -73,6 +73,15 @@ static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t p
    own layout. */
 static _Alignas(max_align_t) unsigned char machine_buf[sizeof(struct lynx_machine)];
 
+enum {
+    API_FAULT_NONE = 0,
+    API_FAULT_WRONG_MAP_BIT,
+    API_FAULT_SPECIAL_ADDRESS_ORDER,
+    API_FAULT_RAW_AS_MAPPED,
+    API_FAULT_ROM_FALLBACK
+};
+static int g_api_fault;
+
 static int is_power_of_two(size_t v)
 {
     return v != 0u && (v & (v - 1u)) == 0u;
@@ -361,6 +370,14 @@ static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t p
    before the CPU request completes. */
 static int map_target_is_ram(uint8_t mapctl, uint16_t addr)
 {
+    /* Persistent negative controls deliberately corrupt one expected route.
+       The public CPU-request oracle must reject each wrong-map interpretation. */
+    if (g_api_fault == API_FAULT_WRONG_MAP_BIT && mapctl == 0u && addr == 0xFC00u) {
+        return 1;
+    }
+    if (g_api_fault == API_FAULT_SPECIAL_ADDRESS_ORDER && mapctl == 0u && addr == 0xFFF8u) {
+        return 0;
+    }
     if (addr < 0xFC00u || addr == 0xFFF8u) {
         return 1;
     }
@@ -1196,6 +1213,13 @@ static void case_memory_peek_pure(void)
     m->mapctl = 0u;
     m->ram[0xFBFFu] = 0xA1u;
     m->ram[0xFC00u] = 0xB2u;
+    uint8_t raw_suzy = 0u;
+    const lynx_status raw_status =
+        g_api_fault == API_FAULT_RAW_AS_MAPPED
+            ? lynx_read_cpu_memory(m, 0xFC00u, &raw_suzy, 1u)
+            : lynx_read_memory(m, 0xFC00u, &raw_suzy, 1u);
+    CHECK_EQ_U64(raw_status, LYNX_OK);
+    CHECK_EQ_HEX(raw_suzy, 0xB2u);
     uint64_t ticks_before = ticks_of(m);
     memcpy(snap_a, m, MSIZE);
     capture_inspection_snapshot(m, before_snapshot, sizeof before_snapshot);
@@ -1212,9 +1236,6 @@ static void case_memory_peek_pure(void)
                      LYNX_ERR_UNAVAILABLE);
         CHECK_EQ_HEX(unavailable, 0xCCu);
     }
-    uint8_t raw_suzy = 0u;
-    CHECK_EQ_U64(lynx_read_memory(m, 0xFC00u, &raw_suzy, 1u), LYNX_OK);
-    CHECK_EQ_HEX(raw_suzy, 0xB2u);
     CHECK_EQ_U64(lynx_read_cpu_memory(m, 0x0200u, &m->ram[0x0100u], 1u), LYNX_ERR_ARGUMENT);
     CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFFFFu, crossing, 2u), LYNX_ERR_RANGE);
     CHECK_EQ_U64(lynx_read_cpu_memory(m, 0x10000u, crossing, 1u), LYNX_ERR_RANGE);
@@ -1227,6 +1248,112 @@ static void case_memory_peek_pure(void)
     CHECK(memcmp(before_snapshot, after_snapshot, sizeof before_snapshot) == 0);
 
     lynx_machine_deinit(m2);
+}
+
+static void rom_read_request(int ram_selected, uint16_t addr, uint8_t map_bit, uint8_t sentinel)
+{
+    const uint8_t program[] = {
+        0xA9u, ram_selected != 0 ? map_bit : 0u, 0x8Du, 0xF9u, 0xFFu,
+        0xADu, (uint8_t)addr, (uint8_t)(addr >> 8), 0x8Du, 0x00u, 0x03u,
+        0x4Cu, 0x0Bu, 0x02u
+    };
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, program, sizeof program, 0x0200u), LYNX_OK);
+    m->ram[addr] = sentinel;
+    m->ram[0x0300u] = 0u;
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 128u, &consumed, &stop), LYNX_OK);
+    if (ram_selected == 0) {
+        if (g_api_fault == API_FAULT_ROM_FALLBACK) {
+            /* Counterfactual fallback mutant: it reads the backing RAM and
+               completes instead of returning the public unavailable stop. */
+            stop = LYNX_STOP_BUDGET;
+            consumed = 128u;
+            m->ram[0x0300u] = sentinel;
+        }
+        CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+        CHECK(consumed < 128u);
+        CHECK_EQ_U64(m->cpu.req_addr, addr);
+        CHECK_EQ_HEX(m->ram[addr], sentinel);
+        CHECK_EQ_HEX(m->ram[0x0300u], 0u);
+    } else {
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 128u);
+        CHECK_EQ_HEX(m->ram[0x0300u], sentinel);
+    }
+    lynx_machine_deinit(m);
+}
+
+static void rom_write_request(int ram_selected)
+{
+    const uint8_t program[] = {
+        0xA9u, ram_selected != 0 ? 0x04u : 0x00u, 0x8Du, 0xF9u, 0xFFu,
+        0xA9u, 0xA5u, 0x8Du, 0x00u, 0xFEu, 0x4Cu, 0x0Au, 0x02u
+    };
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, program, sizeof program, 0x0200u), LYNX_OK);
+    m->ram[0xFE00u] = 0x3Cu;
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 128u, &consumed, &stop), LYNX_OK);
+    if (ram_selected == 0) {
+        CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+        CHECK(consumed < 128u);
+        CHECK_EQ_U64(m->cpu.req_addr, 0xFE00u);
+        CHECK_EQ_HEX(m->ram[0xFE00u], 0x3Cu);
+    } else {
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 128u);
+        CHECK_EQ_HEX(m->ram[0xFE00u], 0xA5u);
+    }
+    lynx_machine_deinit(m);
+}
+
+static void rom_opcode_request(int ram_selected)
+{
+    const uint8_t boot_without_map[] = {0x4Cu, 0x00u, 0xFEu};
+    const uint8_t boot_with_map[] = {
+        0xA9u, 0x04u, 0x8Du, 0xF9u, 0xFFu, 0x4Cu, 0x00u, 0xFEu
+    };
+    static const uint8_t target_code[] = {
+        0xA9u, 0x5Au, 0x8Du, 0x01u, 0x03u, 0x4Cu, 0x00u, 0xFEu
+    };
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    const uint8_t *boot = ram_selected != 0 ? boot_with_map : boot_without_map;
+    const size_t boot_len = ram_selected != 0 ? sizeof boot_with_map : sizeof boot_without_map;
+    CHECK_EQ_U64(load_bll_at(m, boot, boot_len, 0x0200u), LYNX_OK);
+    memcpy(&m->ram[0xFE00u], target_code, sizeof target_code);
+    m->ram[0x0301u] = 0u;
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 128u, &consumed, &stop), LYNX_OK);
+    if (ram_selected == 0) {
+        CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+        CHECK(consumed < 128u);
+        CHECK_EQ_U64(m->cpu.req_addr, 0xFE00u);
+        CHECK_EQ_HEX(m->ram[0x0301u], 0u);
+    } else {
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 128u);
+        CHECK_EQ_HEX(m->ram[0x0301u], 0x5Au);
+    }
+    lynx_machine_deinit(m);
 }
 
 static void case_rom_unavailable(void)
@@ -1247,6 +1374,19 @@ static void case_rom_unavailable(void)
     uint8_t raw = 0u;
     CHECK_EQ_U64(lynx_read_memory(m, 0xFE00u, &raw, 1u), LYNX_OK);
     CHECK_EQ_HEX(raw, 0x3Cu);
+    lynx_machine_deinit(m);
+
+    /* The real CPU path refuses mapped absent-ROM reads and writes, vector
+       window reads, and ROM opcode fetches before request completion. Each
+       corresponding MAPCTL-selected RAM case executes and leaves a marker. */
+    rom_read_request(0, 0xFE00u, 0x04u, 0x6Du);
+    rom_read_request(1, 0xFE00u, 0x04u, 0x6Du);
+    rom_write_request(0);
+    rom_write_request(1);
+    rom_read_request(0, 0xFFFAu, 0x08u, 0xC7u);
+    rom_read_request(1, 0xFFFAu, 0x08u, 0xC7u);
+    rom_opcode_request(0);
+    rom_opcode_request(1);
 }
 
 /* CPU_STATE as documented in the public header. */
@@ -2986,12 +3126,29 @@ static const struct {
 
 int main(int argc, char **argv)
 {
-    /* One case per run; the only argument a case takes is the named fault of the
-       persistent control api.cost_model.self_test. */
-    if (argc == 3 && strcmp(argv[1], "cost_model") == 0 && strcmp(argv[2], "fault-constant") == 0) {
-        g_fault_constant = 1;
+    /* Each persistent control dispatches a named, semantically targeted
+       mutation. Unknown faults remain usage errors, never passing controls. */
+    if (argc == 3) {
+        if (strcmp(argv[1], "cost_model") == 0 && strcmp(argv[2], "fault-constant") == 0) {
+            g_fault_constant = 1;
+        } else if (strcmp(argv[1], "map_matrix") == 0 &&
+                   strcmp(argv[2], "fault-wrong-map-bit") == 0) {
+            g_api_fault = API_FAULT_WRONG_MAP_BIT;
+        } else if (strcmp(argv[1], "map_matrix") == 0 &&
+                   strcmp(argv[2], "fault-special-address-order") == 0) {
+            g_api_fault = API_FAULT_SPECIAL_ADDRESS_ORDER;
+        } else if (strcmp(argv[1], "memory_peek_pure") == 0 &&
+                   strcmp(argv[2], "fault-raw-as-mapped") == 0) {
+            g_api_fault = API_FAULT_RAW_AS_MAPPED;
+        } else if (strcmp(argv[1], "rom_unavailable") == 0 &&
+                   strcmp(argv[2], "fault-fallback-to-ram") == 0) {
+            g_api_fault = API_FAULT_ROM_FALLBACK;
+        } else {
+            fprintf(stderr, "usage: lynx-test-api <case> [named-fault]\n");
+            return 2;
+        }
     } else if (argc != 2) {
-        fprintf(stderr, "usage: lynx-test-api <case> | lynx-test-api cost_model fault-constant\n");
+        fprintf(stderr, "usage: lynx-test-api <case> [named-fault]\n");
         return 2;
     }
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
