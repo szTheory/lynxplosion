@@ -110,6 +110,20 @@ static int case_tables(void)
     CHECK_DONE();
 }
 
+/* A test-local copy of the table with the lynx2 row of $69 changed: the
+   differ-set check must fail (exit 1 and the message "differ set"). */
+static int case_tables_mutant(void)
+{
+    static lynx__cpu_decode mut[2][256];
+    unsigned differ = 0;
+    unsigned defined = 0;
+    memcpy(mut, lynx__cpu_decode_table, sizeof mut);
+    mut[1][0x69].kind = LYNX__K_SBC;
+    check_failures += check_tables(mut[0], mut[1], &differ, &defined);
+    printf("tables_mutant: differ-set size %u\n", differ);
+    CHECK_DONE();
+}
+
 /* ---- tracer -------------------------------------------------------------- */
 
 static void run_tracer(void)
@@ -602,6 +616,305 @@ static void check_decimal(void)
     printf("cycles: decimal and binary ADC/SBC checked\n");
 }
 
+/* ---- interrupts, BRK, reset, validity ------------------------------------- */
+
+/* Expected-value tags for this section:
+     LT-HW     lynx-tests hardware result (only CLI latency and the 1-cycle NOP
+               poll rule are of this kind)
+     WDC / RKW the datasheet interrupt sequence
+     INFERRED  chosen by the model, unverified for the Lynx (every other
+               latency: SEI, PLP, RTI, taken-branch, NMI) */
+
+static lynx__cpu setup_cpu(uint8_t profile, uint16_t pc, const uint8_t *prog, unsigned n, uint8_t p)
+{
+    lynx__cpu c;
+    flat_bus_clear(&g_bus);
+    flat_bus_load(&g_bus, pc, prog, n);
+    g_bus.mem[0xFFFEu] = 0x00u;
+    g_bus.mem[0xFFFFu] = 0x80u;
+    g_bus.mem[0xFFFAu] = 0x00u;
+    g_bus.mem[0xFFFBu] = 0x90u;
+    g_bus.mem[0xFFFCu] = 0x00u;
+    g_bus.mem[0xFFFDu] = 0xC0u;
+    lynx__cpu_init(&c, profile);
+    c.p = p;
+    lynx__cpu_start_at(&c, lynx__cpu_table(profile), pc);
+    return c;
+}
+
+static unsigned seq_running(const lynx__cpu *c)
+{
+    return (unsigned)((c->flags & LYNX__CS_SEQ_MASK) >> 4);
+}
+
+/* Checks the 7 cycles of an entry sequence in the log from index first. */
+static void check_entry_log(unsigned first, uint16_t ret_pc, uint16_t vec, uint8_t pushed_p)
+{
+    const flat_entry *e = &g_bus.log[first];
+    CHECK_EQ_U64(g_bus.nlog, first + 7u);
+    CHECK(e[0].addr == ret_pc && e[0].kind == LYNX__CK_DUMMY_STREAM && e[0].write == 0u);
+    CHECK(e[1].addr == ret_pc && e[1].kind == LYNX__CK_DUMMY_STREAM && e[1].write == 0u);
+    CHECK(e[2].addr == 0x1FDu && e[2].kind == LYNX__CK_STACK_WRITE && e[2].write == 1u);
+    CHECK(e[3].addr == 0x1FCu && e[3].kind == LYNX__CK_STACK_WRITE && e[3].write == 1u);
+    CHECK(e[4].addr == 0x1FBu && e[4].kind == LYNX__CK_STACK_WRITE && e[4].write == 1u);
+    CHECK(e[5].addr == vec && e[5].kind == LYNX__CK_VECTOR && e[5].write == 0u);
+    CHECK(e[6].addr == (uint16_t)(vec + 1u) && e[6].kind == LYNX__CK_VECTOR && e[6].write == 0u);
+    CHECK_EQ_HEX(e[2].data, ret_pc >> 8);
+    CHECK_EQ_HEX(e[3].data, ret_pc & 0xFFu);
+    CHECK_EQ_HEX(e[4].data, pushed_p);
+    /* no POLL cycle inside an entry sequence */
+    CHECK((e[6].flags & LYNX__CF_POLL) == 0u);
+}
+
+static void check_interrupts(void)
+{
+    static const uint8_t nops[2] = {0xEAu, 0xEAu};
+    lynx__cpu c;
+    const lynx__cpu_decode *t = lynx__cpu_table(2u);
+
+    /* IRQ held from the first cycle, I clear, D set: taken after the NOP.
+       [WDC] entry: 7 cycles, P pushed with bit 4 clear and bit 5 set. */
+    c = setup_cpu(2u, 0x0200u, nops, 2u, 0x38u & ~0x04u);
+    flat_bus_set_lines_all(&g_bus, LYNX__LINE_IRQ);
+    CHECK(flat_bus_step_instruction(&g_bus, &c, t)); /* the NOP, plus the whole entry */
+    CHECK_EQ_U64(seq_running(&c), 0u);
+    CHECK_EQ_HEX(c.pc, 0x8000u);
+    CHECK_EQ_HEX(c.s, 0xFAu);
+    CHECK((c.p & 0x04u) != 0u);
+    CHECK((c.p & 0x08u) == 0u);
+    CHECK_EQ_U64(g_bus.nlog, 9u);
+    check_entry_log(2u, 0x0201u, 0xFFFEu, 0x28u);
+    CHECK(lynx__cpu_state_valid(&c, t));
+
+    /* IRQ held, I set: never taken. */
+    c = setup_cpu(2u, 0x0200u, nops, 2u, 0x34u);
+    flat_bus_set_lines_all(&g_bus, LYNX__LINE_IRQ);
+    CHECK(flat_bus_step_instruction(&g_bus, &c, t));
+    CHECK_EQ_U64(g_bus.nlog, 2u);
+    CHECK_EQ_HEX(c.pc, 0x0201u);
+    CHECK_EQ_U64(c.req_kind, LYNX__CK_OPCODE);
+
+    /* NMI rising edge during the NOP, I set: taken from FFFA. [WDC] A held-high
+       line is taken once: the handler's first instruction runs. */
+    c = setup_cpu(2u, 0x0200u, nops, 2u, 0x34u);
+    flat_bus_set_lines_all(&g_bus, LYNX__LINE_NMI);
+    g_bus.sched[0] = 0u;
+    g_bus.mem[0x9000u] = 0xEAu;
+    g_bus.mem[0x9001u] = 0xEAu;
+    CHECK(flat_bus_step_instruction(&g_bus, &c, t));
+    CHECK_EQ_HEX(c.pc, 0x9000u);
+    CHECK_EQ_U64(g_bus.nlog, 9u);
+    check_entry_log(2u, 0x0201u, 0xFFFAu, 0x24u);
+    flat_bus_reset_log(&g_bus);
+    flat_bus_set_lines_all(&g_bus, LYNX__LINE_NMI); /* the schedule restarts with the log */
+    CHECK(flat_bus_step_instruction(&g_bus, &c, t)); /* handler NOP at 9000 */
+    CHECK_EQ_U64(g_bus.nlog, 2u);
+    CHECK_EQ_HEX(c.pc, 0x9001u);
+    CHECK_EQ_U64(c.req_kind, LYNX__CK_OPCODE);
+    CHECK_EQ_U64(seq_running(&c), 0u);
+
+    /* NMI beats IRQ at the same boundary. [INFERRED] */
+    c = setup_cpu(2u, 0x0200u, nops, 2u, 0x30u);
+    flat_bus_set_lines_all(&g_bus, LYNX__LINE_NMI | LYNX__LINE_IRQ);
+    g_bus.sched[0] = 0u;
+    CHECK(flat_bus_step_instruction(&g_bus, &c, t));
+    CHECK_EQ_HEX(c.pc, 0x9000u);
+
+    /* BRK with D set: pushes pc+2 and P with bit 4 set, sets I, clears D. [WDC] */
+    {
+        static const uint8_t brk[2] = {0x00u, 0xEAu};
+        c = setup_cpu(2u, 0x0200u, brk, 2u, 0x3Cu & ~0x04u);
+        CHECK(flat_bus_step_instruction(&g_bus, &c, t));
+        CHECK_EQ_U64(g_bus.nlog, 7u);
+        CHECK_EQ_HEX(g_bus.mem[0x1FDu], 0x02u);
+        CHECK_EQ_HEX(g_bus.mem[0x1FCu], 0x02u);
+        CHECK_EQ_HEX(g_bus.mem[0x1FBu], 0x38u);
+        CHECK((c.p & 0x04u) != 0u);
+        CHECK((c.p & 0x08u) == 0u);
+        CHECK_EQ_HEX(c.pc, 0x8000u);
+    }
+
+    /* Reset seam: 7 cycles, three STACK_READ, S down by 3, vector FFFC, I set,
+       D clear, A, X and Y unchanged. [INFERRED: unverified for the Lynx] */
+    c = setup_cpu(2u, 0x0200u, nops, 2u, 0x38u);
+    c.a = 1u;
+    c.x = 2u;
+    c.y = 3u;
+    lynx__cpu_start_reset(&c, t);
+    CHECK(!lynx__cpu_at_boundary(&c));
+    CHECK(lynx__cpu_state_valid(&c, t));
+    CHECK(flat_bus_step_instruction(&g_bus, &c, t));
+    CHECK_EQ_U64(g_bus.nlog, 7u);
+    CHECK(g_bus.log[2].addr == 0x1FDu && g_bus.log[2].kind == LYNX__CK_STACK_READ);
+    CHECK(g_bus.log[3].addr == 0x1FCu && g_bus.log[3].kind == LYNX__CK_STACK_READ);
+    CHECK(g_bus.log[4].addr == 0x1FBu && g_bus.log[4].kind == LYNX__CK_STACK_READ);
+    CHECK(g_bus.log[5].addr == 0xFFFCu && g_bus.log[5].kind == LYNX__CK_VECTOR);
+    CHECK(g_bus.log[6].addr == 0xFFFDu && g_bus.log[6].kind == LYNX__CK_VECTOR);
+    CHECK_EQ_HEX(c.s, 0xFAu);
+    CHECK_EQ_HEX(c.pc, 0xC000u);
+    CHECK((c.p & 0x04u) != 0u);
+    CHECK((c.p & 0x08u) == 0u);
+    CHECK(c.a == 1u && c.x == 2u && c.y == 3u);
+
+    /* CLI latency [LT-HW, lynx-tests Test 1]: with an IRQ pending, CLI is not
+       interrupted; the IRQ is taken after the next instruction. */
+    {
+        static const uint8_t cli[3] = {0x58u, 0xEAu, 0xEAu};
+        c = setup_cpu(2u, 0x0200u, cli, 3u, 0x34u);
+        flat_bus_set_lines_all(&g_bus, LYNX__LINE_IRQ);
+        flat_bus_run_cycles(&g_bus, &c, t, 2u); /* CLI */
+        CHECK(lynx__cpu_at_boundary(&c));
+        CHECK_EQ_U64(seq_running(&c), 0u);
+        flat_bus_run_cycles(&g_bus, &c, t, 2u); /* the NOP */
+        CHECK_EQ_U64(seq_running(&c), 1u);
+        flat_bus_reset_log(&g_bus);
+        CHECK(flat_bus_step_instruction(&g_bus, &c, t));
+        check_entry_log(0u, 0x0202u, 0xFFFEu, 0x24u & ~0x04u);
+    }
+
+    /* Test 8 replica [LT-HW, lynx-tests Test 8]: after CLI with an IRQ pending, a
+       run of 1-cycle NOPs ($03, $CB, $DB) takes no IRQ; it is taken after the
+       first 2-cycle instruction (INX), the return address being the byte after. */
+    {
+        static const uint8_t t8[7] = {0x58u, 0x03u, 0x03u, 0xCBu, 0xDBu, 0xE8u, 0xEAu};
+        unsigned i;
+        c = setup_cpu(2u, 0x0200u, t8, 7u, 0x34u);
+        flat_bus_set_lines_all(&g_bus, LYNX__LINE_IRQ);
+        flat_bus_run_cycles(&g_bus, &c, t, 2u); /* CLI */
+        for (i = 0; i < 4u; i++) {
+            flat_bus_run_cycles(&g_bus, &c, t, 1u); /* one 1-cycle NOP each */
+            CHECK(lynx__cpu_at_boundary(&c));
+            CHECK_EQ_U64(seq_running(&c), 0u);
+        }
+        flat_bus_run_cycles(&g_bus, &c, t, 2u); /* INX */
+        CHECK_EQ_U64(seq_running(&c), 1u);
+        CHECK_EQ_U64(c.x, 1u);
+        flat_bus_reset_log(&g_bus);
+        CHECK(flat_bus_step_instruction(&g_bus, &c, t));
+        check_entry_log(0u, 0x0206u, 0xFFFEu, 0x24u & ~0x04u);
+        /* Control: a block of $EA NOPs takes it after the first $EA. */
+        c = setup_cpu(2u, 0x0200u, t8, 7u, 0x34u);
+        g_bus.mem[0x201u] = 0xEAu;
+        flat_bus_set_lines_all(&g_bus, LYNX__LINE_IRQ);
+        flat_bus_run_cycles(&g_bus, &c, t, 2u); /* CLI */
+        flat_bus_run_cycles(&g_bus, &c, t, 2u); /* first $EA */
+        CHECK_EQ_U64(seq_running(&c), 1u);
+    }
+    printf("cycles: interrupt, BRK, reset and CLI latency checked\n");
+}
+
+/* A state refused or accepted by lynx__cpu_state_valid. */
+static void check_state_validity(void)
+{
+    static const uint8_t lda[2] = {0xA9u, 0x12u};
+    lynx__cpu c;
+    lynx__cpu b;
+    const lynx__cpu_decode *t = lynx__cpu_table(2u);
+
+    c = setup_cpu(2u, 0x0200u, lda, 2u, 0x34u);
+    CHECK(lynx__cpu_state_valid(&c, t));
+    flat_bus_run_cycles(&g_bus, &c, t, 1u); /* mid-instruction */
+    CHECK(c.step == 1u && c.opcode == 0xA9u);
+    CHECK(lynx__cpu_state_valid(&c, t));
+
+    b = c;
+    b.step = 3u; /* beyond the two micro-operations of an immediate instruction */
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b.step = 8u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b = c;
+    b.p = 0x20u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b.p = 0x10u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b = c;
+    b.flags = 0x40u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b.flags = 0x80u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b = c;
+    b.profile = 3u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+
+    /* A boundary holds canonical zeros; every latch pattern inside 0x3F is legal. */
+    c = setup_cpu(2u, 0x0200u, lda, 2u, 0x34u);
+    b = c;
+    b.flags = 0x0Fu;
+    CHECK(lynx__cpu_state_valid(&b, t));
+    b.flags = 0x3Fu; /* reset sequence pending at step 0 */
+    CHECK(lynx__cpu_state_valid(&b, t));
+    b = c;
+    b.opcode = 1u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b = c;
+    b.ea = 1u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b = c;
+    b.tmp = 1u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+
+    /* Under none a mid-instruction state of a split opcode is refused. */
+    b = c;
+    b.profile = 0u;
+    b.opcode = 0x07u;
+    b.step = 1u;
+    CHECK(!lynx__cpu_state_valid(&b, lynx__cpu_table(0u)));
+    b.profile = 2u;
+    CHECK(lynx__cpu_state_valid(&b, lynx__cpu_table(2u)));
+    printf("cycles: state validity refusals checked\n");
+}
+
+/* Every state reached by real execution is accepted: all opcodes of every
+   profile, cycle by cycle, with no lines, an IRQ held and an NMI held. */
+static void check_validity_sweep(void)
+{
+    static const uint8_t line_sets[3] = {0u, LYNX__LINE_IRQ, LYNX__LINE_NMI};
+    static const uint8_t p_sets[3] = {0x34u, 0x30u, 0x34u};
+    unsigned profile;
+    unsigned pass;
+    unsigned op;
+    unsigned i;
+    unsigned states = 0;
+    for (profile = 0; profile < 3u; profile++) {
+        const lynx__cpu_decode *t = lynx__cpu_table(profile);
+        for (pass = 0; pass < 3u; pass++) {
+            for (op = 0; op < 256u; op++) {
+                lynx__cpu c;
+                if (!lynx__cpu_opcode_defined(profile, (uint8_t)op)) {
+                    continue;
+                }
+                flat_bus_clear(&g_bus);
+                for (i = 0; i < 65536u; i++) {
+                    g_bus.mem[i] = (uint8_t)(i * 37u + 11u);
+                }
+                g_bus.mem[0x0200u] = (uint8_t)op;
+                lynx__cpu_init(&c, profile);
+                c.p = p_sets[pass];
+                c.x = 0x10u;
+                c.y = 0x20u;
+                lynx__cpu_start_at(&c, t, 0x0200u);
+                flat_bus_set_lines_all(&g_bus, line_sets[pass]);
+                for (i = 0; i < 24u; i++) {
+                    /* The machine stops before an opcode that is undefined under none. */
+                    if (lynx__cpu_at_boundary(&c) &&
+                        !lynx__cpu_opcode_defined(profile, g_bus.mem[c.pc])) {
+                        break;
+                    }
+                    flat_bus_cycle(&g_bus, &c, t);
+                    states++;
+                    if (!lynx__cpu_state_valid(&c, t)) {
+                        fprintf(stderr, "cycles: profile %u pass %u opcode %02X cycle %u: state refused\n",
+                                profile, pass, op, i + 1u);
+                        check_failures++;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    printf("cycles: %u real states accepted by lynx__cpu_state_valid\n", states);
+}
+
 static int case_cycles(void)
 {
     unsigned i;
@@ -611,6 +924,9 @@ static int case_cycles(void)
         run_cycase(&cycases[i]);
     }
     check_decimal();
+    check_interrupts();
+    check_state_validity();
+    check_validity_sweep();
     printf("cycles: %u cases; tags SST-MODEL %u, WDC %u, RKW %u, INFERRED %u (all unverified for the Lynx)\n",
            count, g_tag_sst, g_tag_wdc, g_tag_rkw, g_tag_inf);
     CHECK_DONE();
@@ -627,6 +943,9 @@ int main(int argc, char **argv)
     }
     if (strcmp(argv[1], "tracer") == 0) {
         return case_tracer();
+    }
+    if (strcmp(argv[1], "tables_mutant") == 0) {
+        return case_tables_mutant();
     }
     if (strcmp(argv[1], "cycles") == 0) {
         return case_cycles();

@@ -15,6 +15,8 @@ api.reset_power_on	api
 api.skeleton	api
 api.snapshot_refusal	api
 api.snapshot_roundtrip	api
+core.cpu_includes	core
+core.cpu_includes.self_test	core
 core.includes	core
 core.includes.self_test	core
 core.nm_globals	core
@@ -26,6 +28,7 @@ core.no_float.self_test	core
 core.sha256	core
 cpu.cycles	cpu
 cpu.tables	cpu
+cpu.tables.self_test	cpu
 det.golden	det
 det.golden.self_test	det
 det.manifest_fields	det
