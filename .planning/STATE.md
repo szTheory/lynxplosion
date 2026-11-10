@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: CPU Profiles and Per-Opcode Vectors
 status: executing
-stopped_at: Completed 02-04-PLAN.md
-last_updated: "2026-11-10T04:45:40.302Z"
+stopped_at: Completed 02-05-PLAN.md
+last_updated: "2026-11-10T05:06:05.308Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 2 execution started
-state_head: 5c0333bfd7091d9df55fd0b12b80afadeb2dbb03
+state_head: 8c867b3e2dc4cbd1c81c27fefe185b58290f9233
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 24
-  completed_plans: 17
+  completed_plans: 18
   percent: 17
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 2 (CPU Profiles and Per-Opcode Vectors) — EXECUTING
-Plan: 5 of 11
+Plan: 6 of 11
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 2 execution started
 
@@ -73,6 +73,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 2 P02 | one session | 2 tasks | 8 files |
 | Phase 2 P03 | 7 min | 2 tasks | 9 files |
 | Phase 2 P04 | 1 session | 3 tasks | 9 files |
+| Phase 2 P05 | one session | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -115,6 +116,8 @@ Recent decisions affecting current work:
 - [Phase 2]: 02-03: sample containers keep the three-line header, so files are 3201546 and 3230210 bytes (bodies equal the research sizes 3201335 and 3229999)
 - [Phase 2]: 02-03: vectors-full.sh takes several modes in one invocation sharing one work dir; full download is about 2.0 GB and 190 s
 - [Phase 2]: 02-04: vector reason order is EXCL_HW, UNV_SHAPE, DEC_EXTRA, TIER_STATE; reader self-test registered as cpu.vectors.reader_malformed
+- [Phase 2]: 02-05: no_step control compares failures with asserted minus unmoved (identity incl. pc), since identity ignores pc and every pc-advancing vector fails with no CPU step
+- [Phase 2]: 02-05: added cpu.vectors.complete_mode so the full lane's whole-file runner path is checked offline; vectors_pin_controls.cmake as a separate loop driver
 
 ### Pending Todos
 
@@ -142,6 +145,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T04:45:40.135Z
-Stopped at: Completed 02-04-PLAN.md
+Last session: 2026-11-10T05:06:05.227Z
+Stopped at: Completed 02-05-PLAN.md
 Resume file: None
