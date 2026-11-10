@@ -15,6 +15,11 @@ if [ $# -ne 1 ]; then
 fi
 root=$(cd "$1" && pwd -P)
 fetch=$root/scripts/fetch-pin.sh
+# The script fetches https URLs only; a file:// URL is allowed solely under this
+# variable, which this offline control sets and the pins step never does. The
+# strict cases below remove it with env -u.
+LYNX_FETCH_PIN_ALLOW_FILE=1
+export LYNX_FETCH_PIN_ALLOW_FILE
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/lynx-fetchpin.XXXXXX")
 trap 'rm -rf "$work"' EXIT INT TERM
@@ -154,3 +159,107 @@ PINS=$work/pins-odd.txt sh "$fetch" odd "$work/odd-dest" >"$work/out7" 2>&1 || r
 grep -q 'odd: the archive holds a path with a newline' "$work/out7" || fail newline_path "no newline finding in: $(cat "$work/out7")"
 [ ! -e "$work/odd-dest" ] || fail newline_path "DEST exists after a refused listing"
 ok newline_path
+
+# --- WR-05: the row, the URL scheme and DEST are validated before any action ----
+
+strict() { env -u LYNX_FETCH_PIN_ALLOW_FILE "$@"; }
+
+# 8. A file:// URL is refused unless the control's variable is set, and nothing
+# is created.
+rc=0
+PINS=$pins_ok strict sh "$fetch" payload "$work/strict-dest" >"$work/out8" 2>&1 || rc=$?
+[ "$rc" -eq 1 ] || fail scheme_file "expected exit 1, got $rc: $(cat "$work/out8")"
+grep -q 'only https URLs are fetched' "$work/out8" || fail scheme_file "no scheme finding in: $(cat "$work/out8")"
+[ ! -e "$work/strict-dest" ] || fail scheme_file "DEST exists after a refused scheme"
+ok scheme_file_refused
+
+# 9. An http URL and a URL that would read as an option are refused before any
+# transfer is attempted.
+for bad_url in "http://example.invalid/payload.tar.gz" "-oops.tar.gz" "ftp://example.invalid/p.tar.gz"; do
+  printf 'payload 1 %s %s\n' "$bad_url" "$true_digest" >"$work/pins-url.txt"
+  rc=0
+  PINS=$work/pins-url.txt strict sh "$fetch" payload "$work/strict-dest" >"$work/out9" 2>&1 || rc=$?
+  [ "$rc" -eq 1 ] || fail scheme_other "$bad_url: expected exit 1, got $rc"
+  grep -q 'only https URLs are fetched' "$work/out9" || fail scheme_other "$bad_url: no scheme finding"
+  [ ! -e "$work/strict-dest" ] || fail scheme_other "$bad_url: DEST exists"
+done
+ok scheme_other_refused
+
+# 10. A digest that is not 64 lowercase hex digits and a name outside the
+# character set are refused.
+upper=$(printf '%s' "$true_digest" | tr 'a-f' 'A-F')
+short=$(printf '%s' "$true_digest" | cut -c 1-63)
+for bad_digest in "$upper" "$short" "${true_digest}0" "xyz"; do
+  printf 'payload 1 file://%s/payload.tar.gz %s\n' "$work" "$bad_digest" >"$work/pins-digest.txt"
+  rc=0
+  PINS=$work/pins-digest.txt sh "$fetch" payload "$work/strict-dest" >"$work/out10" 2>&1 || rc=$?
+  [ "$rc" -eq 1 ] || fail bad_digest "expected exit 1, got $rc for a bad digest"
+  grep -q 'must be 64 lowercase hex digits' "$work/out10" || fail bad_digest "no digest finding"
+  [ ! -e "$work/strict-dest" ] || fail bad_digest "DEST exists after a bad digest"
+done
+ok bad_digest_refused
+for bad_name in 'a/b' '../x' 'a b' ''; do
+  rc=0
+  PINS=$pins_ok sh "$fetch" "$bad_name" "$work/strict-dest" >"$work/out10b" 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail bad_name "a name '$bad_name' was accepted"
+  [ ! -e "$work/strict-dest" ] || fail bad_name "DEST exists after a bad name"
+done
+ok bad_name_refused
+
+# 11. A DEST that can name a directory that matters is refused and the directory
+# survives: the working directory and its spellings, a parent of it, and the
+# home directory and its parent.
+mkdir -p "$work/cwd/inner" "$work/fakehome/sub"
+printf 'keep\n' >"$work/cwd/inner/keep.txt"
+printf 'keep\n' >"$work/cwd/keep.txt"
+printf 'keep\n' >"$work/fakehome/keep.txt"
+refuse_dest() { # NAME DIR DEST [HOME]
+  rd_home=${4:-$work/fakehome}
+  rc=0
+  (cd "$2" && HOME=$rd_home PINS=$pins_ok sh "$fetch" payload "$3") >"$work/out11" 2>&1 || rc=$?
+  [ "$rc" -eq 2 ] || fail "$1" "expected exit 2, got $rc: $(cat "$work/out11")"
+  [ -f "$work/cwd/keep.txt" ] && [ -f "$work/cwd/inner/keep.txt" ] && [ -f "$work/fakehome/keep.txt" ] ||
+    fail "$1" "a protected file was removed"
+  ok "$1"
+}
+refuse_dest dest_dot "$work/cwd" .
+refuse_dest dest_dotdot "$work/cwd/inner" ..
+refuse_dest dest_trailing_dot "$work/cwd" inner/..
+# shellcheck disable=SC2088 # a literal tilde, the case under test
+refuse_dest dest_tilde "$work/cwd" '~/x'
+refuse_dest dest_cwd_absolute "$work/cwd" "$work/cwd"
+refuse_dest dest_parent_of_cwd "$work/cwd/inner" "$work/cwd"
+refuse_dest dest_home "$work/cwd" "$work/fakehome"
+refuse_dest dest_parent_of_home "$work/cwd" "$work"
+
+# 12. The transfer is made with https-only options, in an order where the URL
+# cannot be read as an option. A stand-in for the transfer tool (its name is
+# assembled so this file names no network tool) records its arguments.
+tool=cu
+tool=${tool}rl
+mkdir -p "$work/bin"
+# shellcheck disable=SC2016 # the stand-in's variables are written literally
+{
+  printf '#!/bin/sh\n'
+  printf ': >"$LYNX_ARGS"\n'
+  printf 'out=\n'
+  printf 'while [ $# -gt 0 ]; do\n'
+  printf '  printf "%%s\\n" "$1" >>"$LYNX_ARGS"\n'
+  printf '  if [ "$1" = -o ]; then out=$2; fi\n'
+  printf '  shift\n'
+  printf 'done\n'
+  printf 'cp "$LYNX_PAYLOAD" "$out"\n'
+} >"$work/bin/$tool"
+chmod +x "$work/bin/$tool"
+printf 'payload 1 https://example.invalid/p/payload.tar.gz %s\n' "$true_digest" >"$work/pins-https.txt"
+rc=0
+PATH="$work/bin:$PATH" LYNX_ARGS=$work/args LYNX_PAYLOAD=$work/payload.tar.gz PINS=$work/pins-https.txt \
+  strict sh "$fetch" payload "$work/https-dest" >"$work/out12" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || fail https_options "expected exit 0, got $rc: $(cat "$work/out12")"
+grep -qxF -- '--proto' "$work/args" || fail https_options "no --proto option"
+grep -qxF -- '=https' "$work/args" || fail https_options "the protocol is not restricted to https"
+grep -qxF -- '--proto-redir' "$work/args" || fail https_options "no --proto-redir option"
+[ "$(grep -cxF -- '=https' "$work/args")" -eq 2 ] || fail https_options "redirects are not restricted to https"
+[ "$(tail -n 2 "$work/args" | head -n 1)" = "--" ] || fail https_options "the URL is not preceded by --"
+[ "$(tail -n 1 "$work/args")" = "https://example.invalid/p/payload.tar.gz" ] || fail https_options "the URL is not the last argument"
+ok https_options

@@ -10,6 +10,11 @@
 # row's is it unpacked (.tar.gz or .tgz, top directory stripped), and DEST is
 # never touched before that. On a mismatch DEST is not created.
 #
+# Before any download the row and DEST are validated: NAME is [A-Za-z0-9._-]+,
+# the digest is 64 lowercase hex digits, the URL is https:// (and redirects stay
+# https), and DEST is never empty, the root, the working directory or its
+# parents, the home directory or its parents.
+#
 # Two files are written inside DEST, in this order:
 #   .lynx-pin-files  a comment header naming the archive SHA-256, then one
 #                    "<sha256> <relative path>" line for every regular file of
@@ -31,9 +36,41 @@ name=$1
 dest=$2
 pins=${PINS:-$(dirname "$0")/../pins.txt}
 
-if [ -z "$dest" ] || [ "$dest" = "/" ]; then
-  echo "fetch-pin: $name: DEST must be a directory path, not '$dest'" >&2
-  exit 2
+# DEST is removed with rm -rf once the archive verifies, so a path that can name
+# a directory that matters is refused here, before anything else happens: the
+# empty path, the root, the working directory and its parents as spelled, a
+# leading tilde (never expanded by this script), and below, as resolved, the
+# working directory, any parent of it, the home directory and any parent of it.
+case $name in
+  '' | *[!A-Za-z0-9._-]*)
+    echo "fetch-pin: NAME must match [A-Za-z0-9._-]+" >&2
+    exit 2
+    ;;
+esac
+case $dest in
+  '' | / | . | .. | ./ | ../ | */. | */.. | */./ | */../ | '~'*)
+    echo "fetch-pin: $name: DEST must be a directory path, not '$dest'" >&2
+    exit 2
+    ;;
+esac
+if [ -d "$dest" ]; then
+  dest_real=$(cd "$dest" && pwd -P)
+  here_real=$(pwd -P)
+  case $here_real/ in
+    "$dest_real"/*)
+      echo "fetch-pin: $name: DEST is the working directory or a parent of it" >&2
+      exit 2
+      ;;
+  esac
+  if [ -n "${HOME:-}" ] && [ -d "$HOME" ]; then
+    home_real=$(cd "$HOME" && pwd -P)
+    case $home_real/ in
+      "$dest_real"/*)
+        echo "fetch-pin: $name: DEST is the home directory or a parent of it" >&2
+        exit 2
+        ;;
+    esac
+  fi
 fi
 if [ ! -f "$pins" ]; then
   echo "fetch-pin: $name: $pins is missing" >&2
@@ -47,8 +84,22 @@ if [ -z "$row" ]; then
 fi
 # shellcheck disable=SC2086 # split the row into its four fields
 set -- $row
+if [ $# -ne 4 ]; then
+  echo "fetch-pin: $name: the pins row must have four fields: name version url sha256" >&2
+  exit 1
+fi
 url=$3
 want=$4
+case $want in
+  *[!0-9a-f]*)
+    echo "fetch-pin: $name: the pinned digest must be 64 lowercase hex digits" >&2
+    exit 1
+    ;;
+esac
+if [ "${#want}" -ne 64 ]; then
+  echo "fetch-pin: $name: the pinned digest must be 64 lowercase hex digits" >&2
+  exit 1
+fi
 
 if command -v sha256sum >/dev/null 2>&1; then
   hasher="sha256sum"
@@ -66,6 +117,23 @@ if [ "$have" = "$want" ] && [ -f "$dest/.lynx-pin-files" ]; then
   exit 0
 fi
 
+# https only. A file:// URL is accepted solely when LYNX_FETCH_PIN_ALLOW_FILE=1,
+# which only the offline control sets; the pins step never does.
+proto='=https'
+case $url in
+  https://?*) ;;
+  file://?*)
+    if [ "${LYNX_FETCH_PIN_ALLOW_FILE:-}" != 1 ]; then
+      echo "fetch-pin: $name: only https URLs are fetched: $url" >&2
+      exit 1
+    fi
+    proto='=https,file'
+    ;;
+  *)
+    echo "fetch-pin: $name: only https URLs are fetched: $url" >&2
+    exit 1
+    ;;
+esac
 case $url in
   *.tar.gz | *.tgz) ;;
   *)
@@ -77,7 +145,7 @@ esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 file=$tmp/archive.tar.gz
-curl -fsSL --retry 3 -o "$file" "$url"
+curl -fsSL --proto "$proto" --proto-redir '=https' --retry 3 -o "$file" -- "$url"
 # shellcheck disable=SC2086 # $hasher is a command and its fixed option
 got=$($hasher "$file")
 got=${got%% *}
