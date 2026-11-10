@@ -218,8 +218,9 @@ refuse_dest() { # NAME DIR DEST [HOME]
   rc=0
   (cd "$2" && HOME=$rd_home PINS=$pins_ok sh "$fetch" payload "$3") >"$work/out11" 2>&1 || rc=$?
   [ "$rc" -eq 2 ] || fail "$1" "expected exit 2, got $rc: $(cat "$work/out11")"
-  [ -f "$work/cwd/keep.txt" ] && [ -f "$work/cwd/inner/keep.txt" ] && [ -f "$work/fakehome/keep.txt" ] ||
-    fail "$1" "a protected file was removed"
+  for rd_keep in "$work/cwd/keep.txt" "$work/cwd/inner/keep.txt" "$work/fakehome/keep.txt"; do
+    [ -f "$rd_keep" ] || fail "$1" "a protected file was removed"
+  done
   ok "$1"
 }
 refuse_dest dest_dot "$work/cwd" .
