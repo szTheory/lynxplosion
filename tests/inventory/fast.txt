@@ -24,6 +24,8 @@ core.nm_undefined.self_test	core
 core.no_float	core
 core.no_float.self_test	core
 core.sha256	core
+cpu.cycles	cpu
+cpu.tables	cpu
 det.golden	det
 det.golden.self_test	det
 det.manifest_fields	det

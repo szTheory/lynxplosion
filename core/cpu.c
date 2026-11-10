@@ -206,6 +206,23 @@ static bool br_cross(const lynx__cpu *c)
     return (br_target(c) & 0xFF00u) != (c->pc & 0xFF00u);
 }
 
+/* The branch taken-dummy cycle may move pc, so it records its page-cross
+   answer in ea above the offset byte: 0x100 crossed, 0x200 not crossed. Before
+   that cycle the answer is computed live. */
+#define BR_CROSSED 0x100u
+#define BR_SAME_PAGE 0x200u
+
+static bool br_cross_now(const lynx__cpu *c)
+{
+    if ((c->ea & BR_SAME_PAGE) != 0u) {
+        return false;
+    }
+    if ((c->ea & BR_CROSSED) != 0u) {
+        return true;
+    }
+    return br_cross(c);
+}
+
 static bool br_taken(const lynx__cpu *c, const lynx__cpu_decode *t)
 {
     uint32_t p = c->p;
@@ -446,7 +463,7 @@ static bool uop_active(const lynx__cpu *c, const lynx__cpu_decode *t, uint8_t u)
         return br_taken(c, t);
     case U_BR_CROSS_REL:
     case U_BR_CROSS_ZP:
-        return br_taken(c, t) && br_cross(c);
+        return br_taken(c, t) && br_cross_now(c);
     case U_DECX_EA_C:
     case U_DECX_IMM_C:
         return (t[c->opcode].flags & LYNX__F_DEC_EXTRA) != 0u && (c->p & P_D) != 0u;
@@ -673,7 +690,10 @@ static void apply(lynx__cpu *c, const lynx__cpu_decode *t, uint8_t u, uint8_t da
     case U_RMW1: c->tmp = data; break;
     case U_RMW2: c->tmp = op_rmw(c, kind, c->tmp); break;
     case U_BR_TAKEN:
-        if (!br_cross(c)) {
+        if (br_cross(c)) {
+            c->ea = (uint16_t)((c->ea & 0xFFu) | BR_CROSSED);
+        } else {
+            c->ea = (uint16_t)((c->ea & 0xFFu) | BR_SAME_PAGE);
             c->pc = br_target(c);
         }
         break;

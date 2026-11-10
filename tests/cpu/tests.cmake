@@ -6,3 +6,6 @@ target_include_directories(lynx-test-cpu PRIVATE ${PROJECT_SOURCE_DIR}/core ${PR
 lynx_warnings(lynx-test-cpu)
 lynx_sanitize(lynx-test-cpu)
 set_target_properties(lynx-test-cpu PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
+
+lynx_add_test(NAME cpu.cycles COMMAND lynx-test-cpu cycles LABELS cpu TIMEOUT 30)
+lynx_add_test(NAME cpu.tables COMMAND lynx-test-cpu tables LABELS cpu TIMEOUT 30)
