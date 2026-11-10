@@ -41,7 +41,9 @@ struct lynx_machine {
     lynx__cpu cpu;
     uint8_t cost_model; /* LYNX__COST_*: prices every bus cycle; flat5 after power-on */
     uint32_t has_content, content_addr, content_len;
+    uint32_t content_format, startup_tier, entry_addr, object_len;
     uint8_t content_sha256[32]; /* SHA-256 of the accepted image bytes; zero before a load */
+    uint8_t mapctl; /* provisional byte latch; all written bits are retained */
     uint64_t guest_ticks;       /* the only clock */
     uint64_t cpu_ready_at;      /* guest tick at which the CPU's next cycle may be granted */
 };

@@ -9,9 +9,9 @@
    unqualified for the Lynx: its instruction sets and cycle counts come from
    other vendors' datasheets, a hardware-informed test and software-model
    vectors, and every cycle costs a PLACEHOLDER five master ticks. No profile
-   is a baseline. There is no memory map yet: the CPU sees the raw 64 KiB RAM.
-   PROVISIONAL: the raw RAM image loader below is replaced by the real
-   direct-load format in Phase 3. */
+   is a baseline. Phase 3 is adding the MAPCTL memory map in slices; until the
+   decoder lands, all addresses except the FFF9 MAPCTL write route still use
+   raw RAM. The raw RAM image loader remains temporarily for existing callers. */
 #ifndef LYNXPLOSION_H
 #define LYNXPLOSION_H
 
@@ -138,17 +138,29 @@ void lynx_machine_deinit(lynx_machine *m);
    startup-state reset beside it. */
 lynx_status lynx_reset(lynx_machine *m);
 
-/* Load a complete BS93/BLL object (strict tier-A direct load). */
+/* Content format and startup strategy recorded in lynx_identity. RAW_RAM_IMAGE
+   is a temporary compatibility value for callers migrated in Phase 3. */
+enum {
+    LYNX_CONTENT_NONE = 0,
+    LYNX_CONTENT_RAW_RAM_IMAGE = 1,
+    LYNX_CONTENT_BS93 = 2
+};
+enum { LYNX_STARTUP_NONE = 0, LYNX_STARTUP_A = 1 };
+
+/* Load a complete BS93/BLL tier-A object. The strict accepted subset has a
+   10-byte header: 80 08, big-endian load address, big-endian total object
+   length including the header, and BS93. The payload must be non-empty, its
+   declared and supplied lengths must match exactly, and its address range
+   must fit in 64 KiB. The CPU starts at the payload address after the declared
+   power-on state is applied. The core hashes the complete object and copies
+   only its payload into owned RAM. Every refusal leaves the full instance
+   byte-identical. */
 lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len);
 
-/* PROVISIONAL raw RAM image loader, replaced in Phase 3. Re-applies the
-   power-on RAM policy and CPU state, copies len bytes of bytes to load_addr
-   and starts the CPU at an instruction boundary with the program counter at
-   load_addr. Every check happens before the first write,
-   so a refused load leaves the machine byte-identical. Refused: NULL bytes,
-   len of zero, len above LYNX_ADDRESS_SPACE, load_addr at or above
-   LYNX_ADDRESS_SPACE, and an image that does not end inside the address
-   space. */
+/* Temporary raw RAM image loader. Re-applies the power-on RAM policy and CPU
+   state, copies len bytes to load_addr, and starts at that address. Existing
+   callers are migrated to lynx_load_bll in Phase 3; this identity is tagged
+   LYNX_CONTENT_RAW_RAM_IMAGE so it cannot be confused with BS93 content. */
 lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t len,
                                 uint32_t load_addr);
 
@@ -183,9 +195,8 @@ lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t le
 lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
                          lynx_stop_reason *stop);
 
-/* Inspect functions never change machine state or guest time.
-   lynx_read_memory reads the raw 64 KiB RAM, not a CPU-mapped view (there is
-   no memory map until Phase 3). */
+/* Inspect functions never change machine state or guest time. lynx_read_memory
+   reads the underlying raw 64 KiB RAM, separately from the CPU bus view. */
 lynx_status lynx_read_register(const lynx_machine *m, uint32_t reg, uint32_t *value);
 lynx_status lynx_read_memory(const lynx_machine *m, uint32_t addr, uint8_t *out, size_t len);
 
@@ -193,10 +204,11 @@ lynx_status lynx_read_memory(const lynx_machine *m, uint32_t addr, uint8_t *out,
 lynx_status lynx_guest_ticks(const lynx_machine *m, uint64_t *ticks);
 
 /* Run identity: what this instance was configured with and what it holds.
-   content_sha256 is computed inside the core from the bytes the loader
-   accepted; the host never supplies it. Before any load, has_content is 0 and
-   content_addr, content_len and content_sha256 are all zero. reserved is
-   always zero. */
+   content_sha256 is computed inside the core from the complete accepted input
+   object; the host never supplies it. content_addr/content_len identify the
+   payload in RAM, while object_len includes any container header. entry_addr
+   is the first CPU address. Before any load, the content and startup fields
+   are zero. reserved is always zero. */
 typedef struct lynx_identity {
     uint32_t profile;    /* LYNX_PROFILE_* */
     uint32_t ram_policy; /* LYNX_RAM_POLICY_* */
@@ -206,6 +218,10 @@ typedef struct lynx_identity {
     uint32_t content_len;
     uint32_t reserved;
     uint8_t content_sha256[32];
+    uint32_t content_format; /* LYNX_CONTENT_* */
+    uint32_t startup_tier;   /* LYNX_STARTUP_* */
+    uint32_t entry_addr;
+    uint32_t object_len;
 } lynx_identity;
 
 /* Side-effect-free inspect. NULL m or out gives LYNX_ERR_ARGUMENT; a

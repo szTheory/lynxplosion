@@ -94,7 +94,12 @@ void lynx__power_on(lynx_machine *m)
     m->has_content = 0u;
     m->content_addr = 0u;
     m->content_len = 0u;
+    m->content_format = LYNX_CONTENT_NONE;
+    m->startup_tier = LYNX_STARTUP_NONE;
+    m->entry_addr = 0u;
+    m->object_len = 0u;
     memset(m->content_sha256, 0, sizeof m->content_sha256);
+    m->mapctl = 0u;
     m->guest_ticks = 0u;
     m->cpu_ready_at = m->guest_ticks;
 }
@@ -175,6 +180,10 @@ lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t le
     m->has_content = 1u;
     m->content_addr = load_addr;
     m->content_len = (uint32_t)len;
+    m->content_format = LYNX_CONTENT_RAW_RAM_IMAGE;
+    m->startup_tier = LYNX_STARTUP_A;
+    m->entry_addr = load_addr;
+    m->object_len = (uint32_t)len;
     lynx__sha256 hash;
     lynx__sha256_init(&hash);
     lynx__sha256_update(&hash, bytes, len);
@@ -182,12 +191,70 @@ lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t le
     return LYNX_OK;
 }
 
+/* Range test by subtraction: neither pointer plus length can wrap. */
+static int ranges_overlap(const void *a, size_t alen, const void *b, size_t blen)
+{
+    const uintptr_t ua = (uintptr_t)a;
+    const uintptr_t ub = (uintptr_t)b;
+    if (ua >= ub) {
+        return (ua - ub) < blen;
+    }
+    return (ub - ua) < alen;
+}
+
 lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len)
 {
-    (void)m;
-    (void)bytes;
-    (void)len;
-    return LYNX_ERR_STATE;
+    if (m == NULL || bytes == NULL || len == 0u) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (!machine_valid(m)) {
+        return LYNX_ERR_STATE;
+    }
+    /* Reject aliasing before inspecting the input or resetting the instance.
+       Include padding and every other instance-owned field in this range. */
+    if (ranges_overlap(bytes, len, m, sizeof *m)) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (len > UINT16_MAX) {
+        return LYNX_ERR_RANGE;
+    }
+    if (len < 11u) {
+        return LYNX_ERR_SIZE;
+    }
+
+    /* Complete container validation precedes hashing and all state changes. */
+    if (bytes[0] != 0x80u || bytes[1] != 0x08u || bytes[6] != 'B' ||
+        bytes[7] != 'S' || bytes[8] != '9' || bytes[9] != '3') {
+        return LYNX_ERR_ARGUMENT;
+    }
+    const uint32_t load_addr = ((uint32_t)bytes[2] << 8) | bytes[3];
+    const uint32_t object_len = ((uint32_t)bytes[4] << 8) | bytes[5];
+    if ((size_t)object_len != len) {
+        return LYNX_ERR_SIZE;
+    }
+    const size_t payload_len = len - 10u;
+    if (payload_len > (size_t)LYNX_ADDRESS_SPACE - load_addr) {
+        return LYNX_ERR_RANGE;
+    }
+
+    uint8_t object_sha256[32];
+    lynx__sha256 hash;
+    lynx__sha256_init(&hash);
+    lynx__sha256_update(&hash, bytes, len);
+    lynx__sha256_final(&hash, object_sha256);
+
+    lynx__power_on(m);
+    memcpy(&m->ram[load_addr], bytes + 10u, payload_len);
+    lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), (uint16_t)load_addr);
+    m->has_content = 1u;
+    m->content_addr = load_addr;
+    m->content_len = (uint32_t)payload_len;
+    m->content_format = LYNX_CONTENT_BS93;
+    m->startup_tier = LYNX_STARTUP_A;
+    m->entry_addr = load_addr;
+    m->object_len = object_len;
+    memcpy(m->content_sha256, object_sha256, sizeof m->content_sha256);
+    return LYNX_OK;
 }
 
 lynx_status lynx__machine_set_cost_model(struct lynx_machine *m, uint32_t model)
@@ -199,22 +266,27 @@ lynx_status lynx__machine_set_cost_model(struct lynx_machine *m, uint32_t model)
     return LYNX_OK;
 }
 
-/* The side-effect-free read the UNDEFINED check uses to look at the next
-   opcode without fetching it. Raw RAM until Phase 3 adds the memory map. */
+/* The side-effect-free raw-RAM read the UNDEFINED check uses to look at the
+   next opcode without fetching it. MAPCTL guest readback is still unverified. */
 static uint8_t bus_peek(const struct lynx_machine *m, uint16_t addr)
 {
     return m->ram[addr];
 }
 
-/* Performs one granted bus cycle on raw RAM: the only memory access of the
-   CPU. Returns the byte read, or the byte written. stamp is the guest tick at
-   which the access takes effect (the grant plus the sample offset); Phase 2
-   has no device that observes it. */
+/* Performs one granted bus cycle through the instance-owned access seam.
+   FFF9 writes reach the provisional MAPCTL latch; the rest still uses raw RAM
+   until the full decoder lands. stamp is unused by this partial map slice. */
 static uint8_t bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint8_t flags,
                           uint64_t stamp)
 {
     (void)stamp;
     if ((flags & LYNX__CF_WRITE) != 0u) {
+        if (addr == 0xFFF9u) {
+            /* Deterministic provisional policy: retain every written bit.
+               Reserved-bit and guest readback behavior are not qualified. */
+            m->mapctl = data;
+            return data;
+        }
         m->ram[addr] = data;
         return data;
     }
@@ -359,6 +431,10 @@ lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out)
     out->content_len = m->content_len;
     out->reserved = 0u;
     memcpy(out->content_sha256, m->content_sha256, sizeof out->content_sha256);
+    out->content_format = m->content_format;
+    out->startup_tier = m->startup_tier;
+    out->entry_addr = m->entry_addr;
+    out->object_len = m->object_len;
     return LYNX_OK;
 }
 

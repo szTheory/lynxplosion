@@ -139,6 +139,10 @@ static void case_identity(void)
     CHECK_EQ_U64(id.content_len, 0u);
     CHECK_EQ_U64(id.reserved, 0u);
     CHECK(memcmp(id.content_sha256, zero_hash, 32u) == 0);
+    CHECK_EQ_U64(id.content_format, LYNX_CONTENT_NONE);
+    CHECK_EQ_U64(id.startup_tier, LYNX_STARTUP_NONE);
+    CHECK_EQ_U64(id.entry_addr, 0u);
+    CHECK_EQ_U64(id.object_len, 0u);
 
     CHECK_EQ_U64(lynx_load_ram_image(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
     memset(&id, 0xA5, sizeof id);
@@ -150,6 +154,10 @@ static void case_identity(void)
     CHECK_EQ_HEX(id.content_addr, 0x0200u);
     CHECK_EQ_U64(id.content_len, 32u);
     CHECK_EQ_U64(id.reserved, 0u);
+    CHECK_EQ_U64(id.content_format, LYNX_CONTENT_RAW_RAM_IMAGE);
+    CHECK_EQ_U64(id.startup_tier, LYNX_STARTUP_A);
+    CHECK_EQ_U64(id.entry_addr, 0x0200u);
+    CHECK_EQ_U64(id.object_len, 32u);
     char hex[65];
     lynx__sha256_hex(id.content_sha256, hex);
     CHECK(strcmp(hex, "ab5f8b5cb9435354c7b58603592d5faf081e17ceb05f7a7c67f4b666f12ca457") == 0);
@@ -200,19 +208,6 @@ static void case_build_id(void)
 }
 
 static lynx_machine *init_in(void *mem, const lynx_config *cfg);
-
-static void case_bll_tracer(void)
-{
-    const int failures_before = check_failures;
-    lynx_config cfg;
-    lynx_config_default(&cfg);
-    lynx_machine *m = init_in(machine_buf, &cfg);
-    if (m != NULL) {
-        CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
-    }
-    const int passed = check_failures == failures_before;
-    printf("TAP version 13\n1..1\n%s 1 - api.bll_tracer\n", passed ? "ok" : "not ok");
-}
 
 /* ---- Shared helpers for the contract cases (plan 01-06) ------------------
 
@@ -299,6 +294,108 @@ static uint32_t reg_of(const lynx_machine *m, uint32_t reg)
     uint32_t v = 0u;
     CHECK_EQ_U64(lynx_read_register(m, reg, &v), LYNX_OK);
     return v;
+}
+
+static void expect_bll_refusal(lynx_machine *m, const uint8_t *bytes, size_t len,
+                               lynx_status want)
+{
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_load_bll(m, bytes, len), want);
+    CHECK_UNCHANGED(m, snap_a);
+}
+
+static void case_bll_tracer(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(m->mapctl, 0u);
+    CHECK_EQ_U64(ticks_of(m), 0u);
+
+    lynx_identity id;
+    memset(&id, 0xA5, sizeof id);
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.content_format, LYNX_CONTENT_NONE);
+    CHECK_EQ_U64(id.startup_tier, LYNX_STARTUP_NONE);
+    CHECK_EQ_U64(id.entry_addr, 0u);
+    CHECK_EQ_U64(id.object_len, 0u);
+
+    uint8_t source[sizeof bll_tracer];
+    memcpy(source, bll_tracer, sizeof source);
+    CHECK_EQ_U64(lynx_load_bll(m, source, sizeof source), LYNX_OK);
+    CHECK_EQ_U64(reg_of(m, LYNX_REG_PC), 0x0200u);
+    CHECK_EQ_U64(m->mapctl, 0u);
+    CHECK_EQ_U64(ticks_of(m), 0u);
+
+    memset(&id, 0xA5, sizeof id);
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.content_format, LYNX_CONTENT_BS93);
+    CHECK_EQ_U64(id.startup_tier, LYNX_STARTUP_A);
+    CHECK_EQ_U64(id.content_addr, 0x0200u);
+    CHECK_EQ_U64(id.content_len, 13u);
+    CHECK_EQ_U64(id.entry_addr, 0x0200u);
+    CHECK_EQ_U64(id.object_len, sizeof bll_tracer);
+    char hash_hex[65];
+    lynx__sha256_hex(id.content_sha256, hash_hex);
+    CHECK(strcmp(hash_hex, "50ddb4511395952841333f53031b264adde66d40953df60a2a7c4bcdaf52d279") == 0);
+
+    /* The accepted payload is copied into RAM; changing the caller's object
+       cannot alter guest code or the core-computed object identity. */
+    source[10] = 0xEAu;
+    lynx_identity after_source_change;
+    CHECK_EQ_U64(lynx_get_identity(m, &after_source_change), LYNX_OK);
+    CHECK(memcmp(after_source_change.content_sha256, id.content_sha256, 32u) == 0);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 300u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 300u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    uint8_t result = 0xA5u;
+    CHECK_EQ_U64(lynx_read_memory(m, 0x0400u, &result, 1u), LYNX_OK);
+    CHECK_EQ_U64(result, 0xA5u);
+    CHECK_EQ_U64(m->mapctl, 0x0Cu);
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFFF9u, &result, 1u), LYNX_OK);
+    CHECK_EQ_U64(result, 0u); /* raw RAM remains distinct from the latch */
+
+    /* Every malformed object is rejected before power-on and leaves the
+       already-running instance byte-identical. */
+    expect_bll_refusal(m, NULL, sizeof bll_tracer, LYNX_ERR_ARGUMENT);
+    expect_bll_refusal(m, bll_tracer, 0u, LYNX_ERR_ARGUMENT);
+    uint8_t malformed[sizeof bll_tracer + 1u];
+    memcpy(malformed, bll_tracer, sizeof bll_tracer);
+    malformed[0] = 0x81u;
+    expect_bll_refusal(m, malformed, sizeof bll_tracer, LYNX_ERR_ARGUMENT);
+    memcpy(malformed, bll_tracer, sizeof bll_tracer);
+    malformed[6] = 'X';
+    expect_bll_refusal(m, malformed, sizeof bll_tracer, LYNX_ERR_ARGUMENT);
+    memcpy(malformed, bll_tracer, sizeof bll_tracer);
+    malformed[5] = 0x16u;
+    expect_bll_refusal(m, malformed, sizeof bll_tracer, LYNX_ERR_SIZE);
+    expect_bll_refusal(m, bll_tracer, sizeof bll_tracer - 1u, LYNX_ERR_SIZE);
+    memcpy(malformed, bll_tracer, sizeof bll_tracer);
+    malformed[sizeof bll_tracer] = 0u;
+    expect_bll_refusal(m, malformed, sizeof bll_tracer + 1u, LYNX_ERR_SIZE);
+    const uint8_t empty_payload[10] = {0x80u, 0x08u, 0x02u, 0x00u,
+                                       0x00u, 0x0Au, 'B', 'S', '9', '3'};
+    expect_bll_refusal(m, empty_payload, sizeof empty_payload, LYNX_ERR_SIZE);
+    memcpy(malformed, bll_tracer, sizeof bll_tracer);
+    malformed[2] = 0xFFu;
+    malformed[3] = 0xF8u;
+    expect_bll_refusal(m, malformed, sizeof bll_tracer, LYNX_ERR_RANGE);
+    expect_bll_refusal(m, (const uint8_t *)m, sizeof *m, LYNX_ERR_ARGUMENT);
+    expect_bll_refusal(m, big_image, LYNX_ADDRESS_SPACE, LYNX_ERR_RANGE);
+
+    CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
+    CHECK_EQ_U64(m->mapctl, 0u);
+    CHECK_EQ_U64(ticks_of(m), 0u);
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.bll_tracer\n",
+           check_failures == failures_before ? "ok" : "not ok");
 }
 
 /* ---- init refusal (API-01, API-02) ---- */
