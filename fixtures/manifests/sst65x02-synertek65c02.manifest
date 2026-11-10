@@ -1,0 +1,11 @@
+source = https://github.com/SingleStepTests/65x02 synertek65c02/v1 (third-party test data)
+revision = 2f6980a2d95757486c7bee24355c360e40e2a224
+recipe = sh scripts/vectors-full.sh pin then sample (first 32 objects of each file, bytes verbatim)
+sha256 = 2fabae3f5acbfe44f9782721ed1cb96a5be6de4575038cc3cab3d309f2a7164b
+licence = MIT, Copyright (c) 2024 Thomas Harte et al
+notices = fixtures/vectors/sst65x02/LICENSE
+allowed_use = CPU functional-vector test data (software model, not hardware evidence)
+startup_tier = none
+profile = lynx1
+evidence_tier = T1
+files = fixtures/vectors/sst65x02/synertek65c02.sample fixtures/vectors/sst65x02/LICENSE fixtures/vectors/sst65x02/upstream.sha256

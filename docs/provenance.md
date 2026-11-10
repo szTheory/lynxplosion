@@ -39,6 +39,31 @@ Until then this list is the notice. It is an open question, not a decision.
   (constants, padding and message schedule follow the standard; the code is the
   muhtari adaptation listed above).
 
+## Third-party data committed with notice
+
+- **SingleStepTests/65x02** (MIT, "Copyright (c) 2024 Thomas Harte et al"): per-opcode
+  CPU test vectors, pinned at commit `2f6980a2d95757486c7bee24355c360e40e2a224`
+  (2025-05-10). Only the `synertek65c02/v1` variant (profile `lynx1`) and the
+  `rockwell65c02/v1` variant (profile `lynx2`) are used. What is committed under
+  `fixtures/vectors/sst65x02/`: one sample container per variant (the first 32 objects
+  of each of the 256 opcode files, upstream bytes verbatim), `upstream.sha256` (the
+  SHA-256 of each of the 512 whole upstream files) and `LICENSE` (the upstream licence
+  text, verbatim, which is the notice that travels with the data). The data is
+  software-model test data (evidence tier T1), not hardware evidence, and it carries no
+  BIOS, firmware or commercial ROM content.
+- The two samples are recorded in `fixtures/manifests/sst65x02-synertek65c02.manifest`
+  and `fixtures/manifests/sst65x02-rockwell65c02.manifest`; the synertek manifest also
+  names the shared `LICENSE` and `upstream.sha256`.
+- The sample is produced by `scripts/vectors-full.sh pin sample`, which downloads the
+  files over https from the pinned commit, verifies each against `upstream.sha256` and
+  fails closed on any error. That script, and the later full run of every vector in
+  every file, is the only network use; it runs outside `scripts/check.sh` and CTest, so
+  the check needs no network.
+- Clean-room: the vector generator was not read. Only the repository README, the LICENSE
+  and the committed data files were read; see `docs/policy/exposure-record.md`.
+- The `.gitattributes` rule `fixtures/vectors/sst65x02/* -text` keeps line endings
+  untouched so no client changes a SHA-256.
+
 ## Pinned external sources (fetched at check time, never committed)
 
 - **cc65** (zlib licence): the guest toolchain, pinned in `pins.txt` by commit and
