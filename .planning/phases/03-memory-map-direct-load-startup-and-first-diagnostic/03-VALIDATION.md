@@ -9,7 +9,7 @@ created: "2026-11-10"
 
 # Phase 3 — Validation Strategy
 
-> Initial contract seeded from the settled Phase 3 context and research. All Phase 3 behavior is pending; these are candidate test IDs, not registered tests.
+> Executable coverage is assigned to 03-01 through 03-09 in sequential waves; see 03-PLANNING-AUDIT.md and 03-EDGE-RESOLUTIONS.json. All Phase 3 behavior is still pending; these are planned test IDs, not verified registrations.
 
 ## Test Infrastructure
 
@@ -24,8 +24,8 @@ created: "2026-11-10"
 
 ## Sampling Rate
 
-- **After each task commit:** Run its targeted CTest slice; each plan's final task runs `scripts/check.sh`.
-- **After each plan/wave:** Full `scripts/check.sh`; then inspect measured CI critical path on the exact tested head.
+- **After each task:** Run its direct executable case or nonempty targeted CTest slice from the plan.
+- **At integration:** Full `sh scripts/check.sh` locally and in Linux; inspect CI critical path for the exact tested head. Repeat affected checks after accepted review/security fixes.
 - **Before phase verification:** Full local and CI gate green, review/security findings fixed, inventory and claim hash aligned.
 - No phase tests have run; no behavior is marked green.
 
@@ -35,8 +35,8 @@ created: "2026-11-10"
 |---|---|---|---|
 | MEM-01 | `memory.map_matrix`, `api.memory_peek_pure` | Wrong bit/window mutant; FFF8/FFF9 boundary mutant; raw RAM must remain visible while CPU mapping changes | ❌ New Phase 3 tests pending |
 | MEM-02 | `api.bll_load`, `fixture.bll_header` | Bad marker/magic/endian/length, empty body, truncated/trailing, range wrap, machine-buffer overlap; full instance byte-identical on refusal | ❌ Pending |
-| MEM-03 | `runner.startup_manifest`, `docs.claim_template` | Missing/wrong startup tier, stale claim inventory hash | ❌ Pending |
-| MEM-04 | `api.firmware_absent`, `memory.rom_unavailable` | BLL API rejects unknown/cart/firmware-shaped input; mapped absent ROM stops explicitly, never RAM/zero BIOS | ❌ Pending |
+| MEM-03 | `det.manifest_fields`, `det.manifest_fields.self_test`, `docs.claim_template` | Missing/wrong startup tier, stale claim inventory hash | ❌ Pending |
+| MEM-04 | `api.bll_load`, `runner.cli`, `memory.rom_unavailable` | BLL API rejects unknown/cart/firmware-shaped input and has no firmware option; mapped absent ROM stops explicitly, never RAM/zero BIOS | ❌ Pending |
 | EVD-01 | `diag.result_symbol`, `diag.result_controls` | No-run, broken guest, bad magic/schema, zero progress, zero done, corrupt result, timeout | ❌ Pending |
 | API-08 | `api.watch_post_write`, `api.watch_controls` | No-hit, just-outside range, rearm/double-write mutant; matching write must already be visible at stop | ❌ Pending |
 | DET-03 | `api.snapshot_continue`, `det.diagnostic_restore` | Bad version/hash/identity/invalid state; refusal preserves full machine; split-budget restore mutant | ❌ Pending |
@@ -58,7 +58,7 @@ created: "2026-11-10"
 
 ## Wave 0 Requirements
 
-- [ ] Add test registration/inventory scaffolding for `memory.*`, `api.bll_*`, `api.watch_*`, `diag.*`, `consumer.*`, `runner.startup_manifest`; retain negative controls as registered tests.
+- [ ] Add test registration/inventory scaffolding for `memory.*`, `api.bll_*`, `api.watch_*`, `diag.*`, `consumer.*`; retain and extend existing `det.manifest_fields` and `det.manifest_fields.self_test` startup checks and registered negative controls.
 - [ ] Add original diagnostic source, project linker config/header recipe, generated symbol output and a source/text fixture representation plus manifest/provenance fields. Do not commit a raw firmware-like binary.
 - [ ] Extend API refusal/snapshot test helpers for whole-instance equality and snapshot field controls.
 - [ ] Add independent consumer target and temporary-output WAV validator.
@@ -77,6 +77,14 @@ None planned. Repository behavior, PPM/WAV structure, CI and evidence packaging 
 - [ ] Local feedback latency measured and below the agreed bound.
 - [ ] `nyquist_compliant: true` only after validation audit verifies full coverage.
 
-**Approval:** pending
+**Planning map:** 03-01 BLL tracer/identity/snapshot; 03-02 ownership controls/strict runner; 03-03 complete caller/manifest migration and private flat-vector seam; 03-04 MAPCTL/pure inspection and its intentional golden change; 03-05 permanent map controls/post-write watch; 03-06 watch/restore/digest equivalence and any intentional guest-digest golden change; 03-07 original diagnostic/result oracle; 03-08 runner agreement/public consumer; 03-09 atomic artifacts/full local/Linux/exact-head CI qualification.
+
+**Exact planned additions:** api.bll_tracer, api.bll_load, api.bll_alias, api.bll_identity; memory.map_matrix, memory.map_matrix.self_test, api.memory_peek_pure, api.memory_peek_pure.self_test, memory.rom_unavailable, memory.rom_unavailable.self_test; api.watch_post_write, api.watch_controls, api.watch_independent, api.snapshot_continue, api.watch_controls.self_test, api.snapshot_continue.self_test; fixture.bll_header, fixture.bll_header.self_test, diag.result_symbol, diag.result_controls, det.diagnostic_restore, det.diagnostic_restore.self_test; consumer.public_api, consumer.snapshot_ppm, consumer.silence_wav, consumer.refusal_controls. Driver variants are subcases under these exact IDs. Every direct executable mode names its exact inventory ID beside the command in its task verify block. Existing det.manifest_fields and det.manifest_fields.self_test are extended rather than duplicated.
+
+**Golden ownership:** 03-04 declares and updates tests/golden/skeleton.digest for the new MAPCTL observation only after independent CPU/RAM/tick checks. 03-06 declares it for intentional normalized guest-digest changes, never for observer configuration/hit history. 03-09 runs local/Linux golden and negative controls without changing expected values to hide failure. Cross-compiler equality and CI bind to the exact final tested head.
+
+**Probe:** nine classified edges have explicit planned predicates. Five unclassified assumptions remain flagged with concrete tests/manual evidence review; two descriptor-less prohibition recalls remain flagged-unverified. No hardware/rights authority is inferred from software checks.
+
+**Approval:** implementation evidence pending; no manual owner action is needed for routine execution.
 
 

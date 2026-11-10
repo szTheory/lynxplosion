@@ -1,0 +1,1 @@
+No external API integration: Phase 3 extends the deterministic project-owned C API, local BLL/diagnostic fixtures and host file artifacts. It integrates no external SDK, remote service, model or authentication surface.

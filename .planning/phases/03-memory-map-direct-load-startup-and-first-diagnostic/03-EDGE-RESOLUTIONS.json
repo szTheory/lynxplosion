@@ -1,0 +1,170 @@
+{
+  "source": "03-EDGE-PROBE.json",
+  "items": [
+    {
+      "requirement_id": "API-08",
+      "category": "idempotency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Repeated watch configuration replaces its copied range and clears old hit; one-shot hit disarms and explicit rearm never repeats the completed store.",
+      "flagged_assumption": false,
+      "plan": "03-06",
+      "test": "api.watch_controls",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "API-08",
+      "category": "concurrency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Caller serializes operations on one instance; independently configured instances can advance interleaved with no observer cross-talk.",
+      "flagged_assumption": false,
+      "plan": "03-06",
+      "test": "api.watch_independent",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "DET-03",
+      "category": "unclassified",
+      "status": "unresolved",
+      "verification": null,
+      "resolution": "Unclassified assumption: common-tick guest observations, snapshot bytes and normalized digests must match across restore/watch/slices; forged rehashed states refuse unchanged.",
+      "flagged_assumption": true,
+      "plan": "03-06",
+      "test": "api.snapshot_continue",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "MEM-01",
+      "category": "unclassified",
+      "status": "unresolved",
+      "verification": null,
+      "resolution": "Unclassified assumption: all16 route cases and actual CPU request controls prove software routing; unavailable device/readback policy remains hardware-unverified.",
+      "flagged_assumption": true,
+      "plan": "03-05",
+      "test": "memory.map_matrix",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "MEM-02",
+      "category": "adjacency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "A payload ending exactly at10000 succeeds; one byte beyond refuses; buffers merely touching instance bounds are disjoint, any shared byte refuses.",
+      "flagged_assumption": false,
+      "plan": "03-02",
+      "test": "api.bll_alias",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "MEM-02",
+      "category": "empty",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "NULL/zero input and header-only length10 refuse; length11 with one payload byte is accepted if range-valid.",
+      "flagged_assumption": false,
+      "plan": "03-02",
+      "test": "api.bll_load",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "MEM-02",
+      "category": "ordering",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Preflight validates instance/size/overlap then complete header/range before power-on/copy; ambiguous malformed inputs never partially apply.",
+      "flagged_assumption": false,
+      "plan": "03-02",
+      "test": "api.bll_load",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "MEM-03",
+      "category": "adjacency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Adjacent source containers retain distinct whole-object identities and per-run startup tags; no host address parameter merges identities.",
+      "flagged_assumption": false,
+      "plan": "03-03",
+      "test": "det.manifest_fields",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "MEM-03",
+      "category": "empty",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Missing or empty startup tag refuses manifest validation; no content cannot publish a success manifest.",
+      "flagged_assumption": false,
+      "plan": "03-03",
+      "test": "det.manifest_fields.self_test",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "MEM-03",
+      "category": "ordering",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Manifest keys are emitted in one fixed documented order; duplicate tags or conflicting startup aliases are refused.",
+      "flagged_assumption": false,
+      "plan": "03-03",
+      "test": "det.manifest_fields",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "MEM-04",
+      "category": "unclassified",
+      "status": "unresolved",
+      "verification": null,
+      "resolution": "Unclassified assumption: unavailable ROM and absent firmware API controls prove supported-interface limits, not arbitrary input rights.",
+      "flagged_assumption": true,
+      "plan": "03-05",
+      "test": "memory.rom_unavailable",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "EVD-01",
+      "category": "unclassified",
+      "status": "unresolved",
+      "verification": null,
+      "resolution": "Unclassified assumption: no-run/real broken guest/timeout/result corruptions must fail distinct semantic completion criteria.",
+      "flagged_assumption": true,
+      "plan": "03-07",
+      "test": "diag.result_controls",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "HB-01",
+      "category": "unclassified",
+      "status": "unresolved",
+      "verification": null,
+      "resolution": "Unclassified assumption: exact independent pixel/palette/sample/metadata checks prove a diagnostic SNAPSHOT, not video accuracy.",
+      "flagged_assumption": true,
+      "plan": "03-09",
+      "test": "consumer.snapshot_ppm",
+      "evidence_status": "planned, not executed"
+    },
+    {
+      "requirement_id": "CON-01",
+      "category": "concurrency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Exclusive staging and no-replace atomic publication allow at most one complete winner; refusals preserve preexisting output bytes.",
+      "flagged_assumption": false,
+      "plan": "03-09",
+      "test": "consumer.refusal_controls",
+      "evidence_status": "planned, not executed"
+    }
+  ],
+  "coverage": {
+    "applicable": 14,
+    "resolved": 9,
+    "unresolved": 5,
+    "unclassified": 5,
+    "byVerification": {
+      "explicit": 9,
+      "backstop": 0
+    }
+  },
+  "no_silent_drop": "14 original items = 9 explicit predicates + 5 flagged unclassified assumptions"
+}

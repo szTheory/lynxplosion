@@ -162,7 +162,18 @@ Plans:
   5. An independent consumer built only against the public API drives the core and renders a tick-stamped framebuffer snapshot to a viewable PNG or PPM labelled as a snapshot, not a frame. Its WAV writer is in place; the core produces silence until Phase 6.
 **Owner gates**: None for tier A. O8 is inherited (public C API). O2, O3 and O4 are not scheduled: no BIOS, boot ROM, boot shim or HLE decrypt. Tier A results are never boot, cartridge or loader evidence.
 **Research flag**: Deeper research needed before planning: per-register preset provenance (the DISPCTL sources disagree; cite Epyx or test values, never another emulator's); spike whether `lynx-bll.cfg` output equals the BS93 `.o` container (Disagreement 12). The fallback is `ca65`/`ld65` with a project config and packer.
-**Plans**: TBD
+**Plans:** 9 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Strict BLL tracer and versioned guest identity
+- [ ] 03-02-PLAN.md — BLL ownership proofs and strict runner startup
+- [ ] 03-03-PLAN.md — Complete caller migration and private flat-vector seam
+- [ ] 03-04-PLAN.md — MAPCTL routes and pure mapped inspection
+- [ ] 03-05-PLAN.md — Permanent map controls and post-write watch API
+- [ ] 03-06-PLAN.md — Watch isolation and equivalent snapshot continuation
+- [ ] 03-07-PLAN.md — Original source-built diagnostic and result oracle
+- [ ] 03-08-PLAN.md — Runner diagnostic agreement and independent public consumer
+- [ ] 03-09-PLAN.md — Atomic consumer artifacts and exact-head qualification
 
 ### Phase 4: Timers, Interrupts and First Public Suites
 **Goal**: Mikey timers and interrupts drive the machine from one master-tick scheduler, and the first public lynx-tests suites run headlessly with machine-read, inventoried and controlled results.
