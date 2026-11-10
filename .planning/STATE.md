@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: CPU Profiles and Per-Opcode Vectors
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-11-10T03:17:49.688Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-11-10T03:23:30.401Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 2 execution started
-state_head: b496ce311b4415a6b1a9aaef871675ba74ebec11
+state_head: ec04b3121787a812975aa2dd04cb260bdface71d
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 24
-  completed_plans: 14
+  completed_plans: 15
   percent: 17
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 2 (CPU Profiles and Per-Opcode Vectors) — EXECUTING
-Plan: 2 of 11
+Plan: 3 of 11
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 2 execution started
 
@@ -70,6 +70,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 1 P12 | 35 min | 2 tasks | 12 files |
 | Phase 1 P13 | 25min | 2 tasks | 4 files |
 | Phase 2 P01 | one session | 3 tasks | 12 files |
+| Phase 2 P02 | one session | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -108,6 +109,7 @@ Recent decisions affecting current work:
 - [Phase 2]: Branch taken-dummy records its page-cross answer in ea bits 8 and 9
 - [Phase 2]: Starting any interrupt entry clears both TAKE latches
 - [Phase 2]: lynx__cpu_table returns NULL above profile 2; opcode fetch request carries neither POLL nor LAST
+- [Phase 2]: 02-02: validate-kv.sh --startup-tiers list (default A); fixture manifests and claims accept none, run manifests A only; malformed list is usage error
 
 ### Pending Todos
 
@@ -135,6 +137,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T03:17:49.613Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-11-10T03:23:30.331Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None
