@@ -29,6 +29,14 @@ it does not decide O6 and it is not a licence statement.
   Each value cites an Epyx page or a hardware test, or stays unset.
 - **Firmware and game bytes never enter the repository** or its artifacts, whatever
   licence a carrying file claims.
+- **The rights scan is a safety net, not a proof.** `scripts/scan-binaries.sh` finds
+  a non-text file of exactly 512 bytes, an unmanifested binary, a text file that is
+  hex digit pairs decoding to exactly 512 bytes (the syntax `lynx-run --content`
+  reads) and a run of 200 or more base64 characters on one line, unless the file's
+  SHA-256 is a fixture manifest value. It does not see an image split across many
+  short base64 lines, a C array of byte values, any other encoding, or content
+  inside a compressed archive. Those stay a review responsibility: a file whose
+  provenance is not recorded in a manifest is not added.
 
 Status: FND-07 stays a draft until O6 is decided. The check `docs.policy` keeps the
 banner above and the per-source rows in place while the draft stands.

@@ -28,6 +28,17 @@
 #      build path fails, whether or not the file is manifested.
 # A non-text file of exactly 512 bytes fails in every zone with no exemption
 # (a Lynx boot ROM, and so any firmware-like image, has that size).
+# A text file can carry an image too, and lynx-run reads content given as hex
+# text, so two text-side rules apply in every zone (a file whose SHA-256 is a
+# manifest `sha256 = ` value is exempt from both, and only from these):
+#   - hex text that decodes to exactly 512 bytes: the whole file is hex digit
+#     pairs, whitespace and # comments (the lynx-run --content syntax) and the
+#     pairs number 512;
+#   - a run of 200 or more base64 characters (letters, digits, + and /) on one
+#     line, which is what an encoded image on a single line looks like.
+# Not covered, by design of a conservative rule: an image split across many
+# short base64 lines, a C array of byte values, and other encodings
+# (docs/policy/clean-room.md).
 #
 # Findings name the rule and the path, never the content. Exit 1 on any
 # finding, 2 on a usage error.
@@ -144,6 +155,60 @@ in_manifest() {
 nfiles=0
 n512=0
 
+# Text files collected for the text-side rules, which run in bulk (one awk pass
+# over the list, not one process per file).
+: >"$tmp/textfiles"
+
+# $1 is a file with the names of text files, one per line; $2 describes the zone
+# in a finding. One awk pass prints "L path" for a file with a run of 200 or more
+# base64 characters on a line (a line shorter than that is skipped at once, and no
+# regular-expression interval is used: it is slow in some greps) and "H path" for
+# a file that is hex text (comments and whitespace removed, nothing but hex digits
+# left) of exactly 1024 digits, which is 512 bytes. Each is a finding unless the
+# file is binary (owned by the other rules) or its SHA-256 is manifested. An awk
+# problem is a finding: the scan fails closed.
+scan_text_files() {
+  [ -s "$1" ] || return 0
+  # shellcheck disable=SC2016 # the awk program is single-quoted on purpose
+  tr '\n' '\000' <"$1" | xargs -0 awk '
+    function emit() {
+      if (file == "") return
+      if (longrun) print "L " file
+      if (!bad && digits == 1024) print "H " file
+    }
+    FNR == 1 { emit(); file = FILENAME; longrun = 0; bad = 0; digits = 0 }
+    {
+      line = $0
+      if (!longrun && length(line) >= 200) {
+        rest = line
+        while (match(rest, /[A-Za-z0-9+\/]+/)) {
+          if (RLENGTH >= 200) { longrun = 1; break }
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+      }
+      if (!bad) {
+        sub(/#.*/, "", line)
+        gsub(/[ \t\r\f]/, "", line)
+        if (line ~ /[^0-9A-Fa-f]/) bad = 1
+        digits += length(line)
+      }
+    }
+    END { emit() }' >"$tmp/text.hits" 2>"$tmp/text.err" || found 'text scan failed' "$2"
+  if [ -s "$tmp/text.err" ]; then
+    found 'text scan failed' "$2"
+  fi
+  while IFS= read -r th; do
+    tf=${th#? }
+    if is_nontext "$tf" || in_manifest "$tf"; then
+      continue
+    fi
+    case $th in
+      "L "*) found 'long base64 or hex run in a text file' "$tf" ;;
+      "H "*) found 'hex text decoding to exactly 512 bytes' "$tf" ;;
+    esac
+  done <"$tmp/text.hits"
+}
+
 # The rules shared by a non-pin file. $1 path, $2 zone: source, toolchain, other.
 check_plain() {
   cp_path=$1
@@ -160,6 +225,7 @@ check_plain() {
     return 0
   fi
   if ! is_nontext "$cp_path"; then
+    printf '%s\n' "$cp_path" >>"$tmp/textfiles"
     return 0
   fi
   if [ "$cp_size" -eq 512 ]; then
@@ -213,6 +279,9 @@ scan_pin_dir() {
       found 'firmware-like 512-byte binary' "$pd_f"
     fi
   done <"$tmp/pd512"
+  # The text-side rules for the whole pin directory.
+  find "$pd" -type f >"$tmp/pdfiles"
+  scan_text_files "$tmp/pdfiles" "$pd"
   # The list rule: a non-text file whose pair is on neither list.
   LC_ALL=C comm -23 "$tmp/present" "$tmp/allow.sorted" >"$tmp/unlisted"
   while IFS= read -r pd_row; do
@@ -277,6 +346,8 @@ case $mode in
     done <"$tmp/all"
     ;;
 esac
+
+scan_text_files "$tmp/textfiles" "the scanned tree"
 
 if [ -s "$tmp/findings" ]; then
   LC_ALL=C sort -u "$tmp/findings" >&2

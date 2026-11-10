@@ -194,6 +194,94 @@ rm -f "$iso/esc.dat"
 accept source_esc_removed scan_src
 ok source_control_bytes
 
+# --- text-side rules (WR-06) ----------------------------------------------------
+
+# hexfile FILE BYTES PER_LINE: BYTES bytes of hex text, PER_LINE bytes a line, from
+# a deterministic byte sequence; written as text only.
+hexfile() {
+  hf_i=0
+  : >"$1"
+  while [ "$hf_i" -lt "$2" ]; do
+    printf '%02x' $(((hf_i * 7 + 3) % 256)) >>"$1"
+    hf_i=$((hf_i + 1))
+    if [ $((hf_i % $3)) -eq 0 ] || [ "$hf_i" -eq "$2" ]; then
+      printf '\n' >>"$1"
+    fi
+  done
+}
+
+hexfile "$iso/image.hex" 512 32
+reject text_hex512 scan_src 'scan-binaries: hex text decoding to exactly 512 bytes: '
+printf 'sha256 = %s\n' "$(sha_of "$iso/image.hex")" >"$iso/fixtures/manifests/image.manifest"
+accept text_hex512_manifested scan_src
+rm -f "$iso/fixtures/manifests/image.manifest"
+reject text_hex512_unmanifested_again scan_src 'scan-binaries: hex text decoding to exactly 512 bytes: '
+rm -f "$iso/image.hex"
+accept text_hex512_removed scan_src
+ok text_hex_512_rejected_unless_manifested
+
+# The layout does not hide it: other line widths, comments, blank lines, CRLF.
+hexfile "$iso/image.hex" 512 16
+reject text_hex512_width16 scan_src 'scan-binaries: hex text decoding to exactly 512 bytes: '
+{
+  printf '# a boot image, as hex text\n\n'
+  hexfile "$work/body.hex" 512 8
+  sed 's/$/ # row/' "$work/body.hex"
+  printf '\n# end\n'
+} >"$iso/image.hex"
+reject text_hex512_comments scan_src 'scan-binaries: hex text decoding to exactly 512 bytes: '
+hexfile "$work/body.hex" 512 32
+sed 's/$/\r/' "$work/body.hex" >"$iso/image.hex"
+reject text_hex512_crlf scan_src 'scan-binaries: hex text decoding to exactly 512 bytes: '
+rm -f "$iso/image.hex"
+accept text_hex512_layouts_removed scan_src
+ok text_hex_layout_variants_rejected
+
+# Other sizes are not firmware-sized hex text: 511 and 513 bytes, and a digest.
+hexfile "$iso/image.hex" 511 32
+accept text_hex511 scan_src
+hexfile "$iso/image.hex" 513 32
+accept text_hex513 scan_src
+printf '%s\n' "$(sha_of "$iso/readme.txt")" >"$iso/image.hex"
+accept text_digest_line scan_src
+rm -f "$iso/image.hex"
+ok text_hex_other_sizes_accepted
+
+# A long base64-like run on one line is rejected unless manifested; a shorter run
+# and prose are not.
+head -c 684 /dev/zero | tr '\000' 'Q' >"$iso/blob.b64"
+printf '\n' >>"$iso/blob.b64"
+reject text_base64_run scan_src 'scan-binaries: long base64 or hex run in a text file: '
+printf 'sha256 = %s\n' "$(sha_of "$iso/blob.b64")" >"$iso/fixtures/manifests/b64.manifest"
+accept text_base64_manifested scan_src
+rm -f "$iso/fixtures/manifests/b64.manifest"
+reject text_base64_unmanifested_again scan_src 'scan-binaries: long base64 or hex run in a text file: '
+head -c 199 /dev/zero | tr '\000' 'Q' >"$iso/blob.b64"
+printf '\n' >>"$iso/blob.b64"
+accept text_base64_199 scan_src
+head -c 200 /dev/zero | tr '\000' 'Q' >"$iso/blob.b64"
+printf '\n' >>"$iso/blob.b64"
+reject text_base64_200 scan_src 'scan-binaries: long base64 or hex run in a text file: '
+{
+  i=0
+  while [ "$i" -lt 60 ]; do
+    printf 'word%s ' "$i"
+    i=$((i + 1))
+  done
+  printf '\n'
+} >"$iso/blob.b64"
+accept text_long_prose_line scan_src
+rm -f "$iso/blob.b64"
+ok text_long_run_threshold
+
+# The same rules in the build tree: another build path and the pin zone (where a
+# file on the archive list is still a finding).
+hexfile "$B/other/image.hex" 512 32
+reject text_hex512_other scan_art 'scan-binaries: hex text decoding to exactly 512 bytes: '
+rm -f "$B/other/image.hex"
+accept text_hex512_other_removed scan_art
+ok text_hex_512_in_build_tree
+
 # --- pin zone -----------------------------------------------------------------
 
 PD=$B/pins/x
@@ -295,6 +383,16 @@ write_build_list "$pin_digest" bin/tool lib/x.lib
 accept pins_build_512_removed scan_art
 ok pins_build_listed_512_rejected
 
+hexfile "$PD/image.hex" 512 32
+write_build_list "$pin_digest" bin/tool lib/x.lib
+reject pins_text_hex512 scan_art 'scan-binaries: hex text decoding to exactly 512 bytes: '
+write_pin_list listed.bin notes.txt image.hex
+reject pins_text_hex512_listed scan_art 'scan-binaries: hex text decoding to exactly 512 bytes: '
+rm -f "$PD/image.hex"
+write_pin_list listed.bin notes.txt
+accept pins_text_hex512_removed scan_art
+ok pins_text_hex_512_rejected_even_when_listed
+
 # --- toolchain-output zone (the CMake binary dir) -----------------------------
 
 gen_magic "$CB/a.o" "$ELF" 100
@@ -346,7 +444,8 @@ accept other_manifest_removed scan_art
 ok other_build_file_passes_only_when_manifested
 
 # A 512-byte text file is not a binary.
-head -c 511 /dev/zero | tr '\000' 'a' >"$B/other/text512.txt"
+# Words with spaces, so the line holds no long base64-like run.
+head -c 511 /dev/zero | tr '\000' 'a' | sed 's/aaaa/aaa /g' | head -c 511 >"$B/other/text512.txt"
 printf '\n' >>"$B/other/text512.txt"
 if [ "$(size_of "$B/other/text512.txt")" -ne 512 ]; then
   fail text512 "the fixture is not 512 bytes"
