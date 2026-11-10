@@ -15,6 +15,7 @@
 #include "cpu/flat_bus.h"
 #include "internal.h"
 #include "lynxplosion.h"
+#include "bundle.h"
 #include "sha256.h"
 
 /* The retained Phase 1 tracer image: byte i = (7*i + 3) mod 256 for i =
@@ -70,6 +71,32 @@ static const uint8_t watch_program[] = {
     0x4Cu, 0x00u, 0x02u
 };
 
+/* Read the watched start, write just before the range, write start, end-1,
+   then just after it. The three writes make the half-open contract visible. */
+static const uint8_t watch_range_program[] = {
+    0xADu, 0x00u, 0x04u,             /* LDA $0400 (reads never hit) */
+    0xA9u, 0x11u, 0x8Du, 0xFFu, 0x03u, /* STA $03FF: just before */
+    0xA9u, 0x22u, 0x8Du, 0x00u, 0x04u, /* STA $0400: range start */
+    0xA9u, 0x33u, 0x8Du, 0x01u, 0x04u, /* STA $0401: end-1 */
+    0xA9u, 0x44u, 0x8Du, 0x02u, 0x04u, /* STA $0402: just after */
+    0x4Cu, 0x00u, 0x02u
+};
+
+/* The counter changes only after the watched store has completed. Replaying
+   the same store on resume therefore leaves the independent counter at zero. */
+static const uint8_t watch_count_program[] = {
+    0xA9u, 0x5Au, 0x8Du, 0x00u, 0x04u, /* LDA #$5A; STA $0400 */
+    0xEEu, 0x01u, 0x04u,             /* INC $0401 */
+    0x4Cu, 0x00u, 0x02u              /* JMP $0200 */
+};
+
+/* MAPCTL is set by guest code before a watch on the last address. */
+static const uint8_t watch_last_address_program[] = {
+    0xA9u, 0x08u, 0x8Du, 0xF9u, 0xFFu, /* LDA #$08; STA $FFF9 */
+    0xA9u, 0xC7u, 0x8Du, 0xFFu, 0xFFu, /* LDA #$C7; STA $FFFF */
+    0x4Cu, 0x00u, 0x02u
+};
+
 static void make_bll_header(uint8_t *object, size_t len, uint16_t load_addr);
 static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t payload_len,
                                uint32_t load_addr);
@@ -83,7 +110,10 @@ enum {
     API_FAULT_WRONG_MAP_BIT,
     API_FAULT_SPECIAL_ADDRESS_ORDER,
     API_FAULT_RAW_AS_MAPPED,
-    API_FAULT_ROM_FALLBACK
+    API_FAULT_ROM_FALLBACK,
+    API_FAULT_STOP_BEFORE_STORE,
+    API_FAULT_REPEAT_STORE,
+    API_FAULT_WATCH_IN_DIGEST
 };
 static int g_api_fault;
 
@@ -1414,6 +1444,14 @@ static void case_watch_post_write(void)
     CHECK_EQ_U64(lynx_advance(m, 26u, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
     CHECK_EQ_U64(consumed, 26u);
+    if (g_api_fault == API_FAULT_STOP_BEFORE_STORE) {
+        /* Named local mutant: present the state a pre-store stop would expose. */
+        m->ram[0x0400u] = 0u;
+    }
+    if (m->ram[0x0400u] != 0x5Au) {
+        fprintf(stderr, "watch returned before store committed\n");
+        check_failures++;
+    }
     CHECK(consumed <= 26u);
     CHECK_EQ_U64(ticks_of(m), 26u);
     CHECK_EQ_HEX(m->ram[0x0400u], 0x5Au);
@@ -1443,6 +1481,131 @@ static void case_watch_post_write(void)
     lynx_machine_deinit(m);
 }
 
+static void case_watch_range_edges(const lynx_config *cfg)
+{
+    lynx_machine *m = init_in(machine_buf, cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, watch_range_program, sizeof watch_range_program, 0x0200u),
+                 LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 2u), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    lynx_watch_event event;
+
+    /* The initial read and preceding $03FF store cannot trigger [0400,0402). */
+    CHECK_EQ_U64(lynx_advance(m, 100u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(m->ram[0x03FFu], 0x11u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0x22u);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 1u);
+    CHECK_EQ_U64(event.address, 0x0400u);
+    CHECK_EQ_U64(event.value, 0x22u);
+
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 2u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 100u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(m->ram[0x0401u], 0x33u);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 1u);
+    CHECK_EQ_U64(event.address, 0x0401u);
+    CHECK_EQ_U64(event.value, 0x33u);
+
+    /* Exactly 30 more guest ticks include the $0402 store, outside the range. */
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 2u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 30u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 30u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(m->ram[0x0402u], 0x44u);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    lynx_machine_deinit(m);
+}
+
+static void case_watch_counting_store(const lynx_config *cfg)
+{
+    lynx_machine *m = init_in(machine_buf, cfg);
+    if (m == NULL) {
+        return;
+    }
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    lynx_watch_event event;
+    CHECK_EQ_U64(load_bll_at(m, watch_count_program, sizeof watch_count_program, 0x0200u),
+                 LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 26u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(m->ram[0x0400u], 0x5Au);
+    CHECK_EQ_U64(m->ram[0x0401u], 0u);
+
+    if (g_api_fault == API_FAULT_REPEAT_STORE) {
+        /* A bounded white-box mutant rewinds to the just-completed STA before
+           rearming. Correct continuation proceeds to INC $0401 instead. */
+        m->cpu.pc = 0x0202u;
+        m->cpu.opcode = 0u;
+        m->cpu.step = 0u;
+        m->cpu.ea = 0u;
+        m->cpu.tmp = 0u;
+        m->cpu.flags = 0u;
+        lynx__cpu_repost(&m->cpu, lynx__cpu_table(m->cpu.profile));
+        CHECK(lynx__cpu_state_valid(&m->cpu, lynx__cpu_table(m->cpu.profile)));
+    }
+
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    const uint64_t continuation_budget =
+        g_api_fault == API_FAULT_REPEAT_STORE ? 25u : 30u;
+    CHECK_EQ_U64(lynx_advance(m, continuation_budget, &consumed, &stop), LYNX_OK);
+    if (stop != LYNX_STOP_BUDGET || m->ram[0x0401u] != 1u) {
+        fprintf(stderr, "watch continuation replayed first store before counter increment\n");
+        check_failures++;
+    }
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(m->ram[0x0401u], 1u);
+    lynx_machine_deinit(m);
+
+    /* A real store to another address changes RAM without producing a hit. */
+    m = init_in(machine_buf, cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, watch_count_program, sizeof watch_count_program, 0x0200u),
+                 LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0402u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 56u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(m->ram[0x0400u], 0x5Au);
+    CHECK_EQ_U64(m->ram[0x0401u], 1u);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    lynx_machine_deinit(m);
+}
+
+static void case_watch_last_address(const lynx_config *cfg)
+{
+    lynx_machine *m = init_in(machine_buf, cfg);
+    if (m == NULL) {
+        return;
+    }
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    lynx_watch_event event;
+    CHECK_EQ_U64(load_bll_at(m, watch_last_address_program,
+                             sizeof watch_last_address_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0xFFFFu, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 100u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(m->mapctl, 0x08u);
+    CHECK_EQ_U64(m->ram[0xFFFFu], 0xC7u);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 1u);
+    CHECK_EQ_U64(event.address, 0xFFFFu);
+    CHECK_EQ_U64(event.value, 0xC7u);
+    lynx_machine_deinit(m);
+}
+
 static void case_watch_controls(void)
 {
     lynx_config cfg;
@@ -1461,6 +1624,14 @@ static void case_watch_controls(void)
     CHECK_EQ_U64(lynx_watch_get(m, NULL), LYNX_ERR_ARGUMENT);
     CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
     const uint64_t config_tick = ticks_of(m);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(ticks_of(m), config_tick);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    CHECK_EQ_U64(lynx_watch_clear(m), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_clear(m), LYNX_OK);
+    CHECK_EQ_U64(ticks_of(m), config_tick);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
 
     uint64_t consumed = UINT64_MAX;
     lynx_stop_reason stop = LYNX_STOP_WATCH;
@@ -1484,6 +1655,8 @@ static void case_watch_controls(void)
 
     memcpy(snap_a, m, MSIZE);
     CHECK_EQ_U64(lynx_watch_configure(m, 0xFFFFu, 2u), LYNX_ERR_RANGE);
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x10000u, 1u), LYNX_ERR_RANGE);
     CHECK_UNCHANGED(m, snap_a);
     CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 0u), LYNX_ERR_ARGUMENT);
     CHECK_UNCHANGED(m, snap_a);
@@ -1589,6 +1762,53 @@ static void case_watch_controls(void)
     CHECK_EQ_U64(lynx_watch_clear(m), LYNX_ERR_STATE);
     CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_ERR_STATE);
     CHECK_EQ_U64(event.hit, UINT32_C(0xA5A5A5A5));
+
+    case_watch_range_edges(&cfg);
+    case_watch_counting_store(&cfg);
+    case_watch_last_address(&cfg);
+}
+
+static void case_watch_independent(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *a = init_in(machine_buf, &cfg);
+    lynx_machine *b = init_in(buf_b, &cfg);
+    if (a == NULL || b == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(a, watch_range_program, sizeof watch_range_program, 0x0200u),
+                 LYNX_OK);
+    CHECK_EQ_U64(load_bll_at(b, watch_range_program, sizeof watch_range_program, 0x0200u),
+                 LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(a, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(b, 0x0401u, 1u), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    lynx_watch_event event_a;
+    lynx_watch_event event_b;
+
+    CHECK_EQ_U64(lynx_advance(a, 80u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(lynx_advance(b, 90u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(lynx_watch_get(b, &event_b), LYNX_OK);
+    CHECK_EQ_U64(event_b.hit, 0u);
+    CHECK_EQ_U64(lynx_advance(a, 10u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(lynx_advance(b, 20u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(lynx_watch_get(a, &event_a), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_get(b, &event_b), LYNX_OK);
+    CHECK_EQ_U64(event_a.address, 0x0400u);
+    CHECK_EQ_U64(event_a.value, 0x22u);
+    CHECK_EQ_U64(event_b.address, 0x0401u);
+    CHECK_EQ_U64(event_b.value, 0x33u);
+    CHECK_EQ_U64(lynx_watch_get(a, &event_a), LYNX_OK);
+    CHECK_EQ_U64(event_a.address, 0x0400u);
+    CHECK_EQ_U64(event_a.value, 0x22u);
+    lynx_machine_deinit(a);
+    lynx_machine_deinit(b);
 }
 
 /* CPU_STATE as documented in the public header. */
@@ -1931,6 +2151,25 @@ static unsigned char blob_bad[SNAP_TOTAL + 1];
 static unsigned char blob_c[SNAP_TOTAL + 1];
 static unsigned char at_top[sizeof(struct lynx_machine)];
 
+static void inject_watch_digest(char digest_hex[65], const lynx_watch_event *event)
+{
+    char material[160];
+    const int length = snprintf(material, sizeof material, "%s:%u:%u:%u:%llu:%llu",
+                                digest_hex, event->hit, event->address, event->value,
+                                (unsigned long long)event->hit_tick,
+                                (unsigned long long)event->return_tick);
+    if (length > 0 && (size_t)length < sizeof material) {
+        lynx__sha256 sha;
+        uint8_t bytes[32];
+        lynx__sha256_init(&sha);
+        lynx__sha256_update(&sha, material, (size_t)length);
+        lynx__sha256_final(&sha, bytes);
+        lynx__sha256_hex(bytes, digest_hex);
+    } else {
+        CHECK(0 && "watch digest mutant input must fit");
+    }
+}
+
 /* Saves m into dst and checks the documented postconditions. Returns 0 on success. */
 static int save_into(const lynx_machine *m, unsigned char *dst)
 {
@@ -2078,6 +2317,23 @@ static void case_snapshot_continue(void)
     CHECK_EQ_U64(consumed, 26u);
     CHECK_EQ_U64(ticks_of(watched), 26u);
     CHECK_EQ_U64(ticks_of(plain), 26u);
+
+    /* The runner's observation digest describes the same guest path and final
+       tick; watch state is host-only and is deliberately absent. */
+    const bundle_run final_run = {NULL, 26u, 26u, LYNX_STOP_BUDGET};
+    char watched_digest[65] = {0};
+    char plain_digest[65] = {0};
+    CHECK_EQ_U64(bundle_observe(watched, &final_run, watched_digest), 0u);
+    CHECK_EQ_U64(bundle_observe(plain, &final_run, plain_digest), 0u);
+    if (g_api_fault == API_FAULT_WATCH_IN_DIGEST) {
+        lynx_watch_event hit;
+        CHECK_EQ_U64(lynx_watch_get(watched, &hit), LYNX_OK);
+        inject_watch_digest(watched_digest, &hit);
+    }
+    if (strcmp(watched_digest, plain_digest) != 0) {
+        fprintf(stderr, "host watch state leaked into bundle observation digest\n");
+        check_failures++;
+    }
 
     /* A hit is host observation only: the two guest states serialize alike. */
     CHECK_EQ_U64(save_into(watched, blob_v), 0u);
@@ -3392,6 +3648,7 @@ static const struct {
     {"snapshot_roundtrip", case_snapshot_roundtrip},
     {"snapshot_continue", case_snapshot_continue},
     {"watch_controls", case_watch_controls},
+    {"watch_independent", case_watch_independent},
     {"watch_post_write", case_watch_post_write},
 };
 
@@ -3414,6 +3671,15 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[1], "rom_unavailable") == 0 &&
                    strcmp(argv[2], "fault-fallback-to-ram") == 0) {
             g_api_fault = API_FAULT_ROM_FALLBACK;
+        } else if (strcmp(argv[1], "watch_post_write") == 0 &&
+                   strcmp(argv[2], "fault-stop-before-store") == 0) {
+            g_api_fault = API_FAULT_STOP_BEFORE_STORE;
+        } else if (strcmp(argv[1], "watch_controls") == 0 &&
+                   strcmp(argv[2], "fault-repeat-store") == 0) {
+            g_api_fault = API_FAULT_REPEAT_STORE;
+        } else if (strcmp(argv[1], "snapshot_continue") == 0 &&
+                   strcmp(argv[2], "fault-watch-in-digest") == 0) {
+            g_api_fault = API_FAULT_WATCH_IN_DIGEST;
         } else {
             fprintf(stderr, "usage: lynx-test-api <case> [named-fault]\n");
             return 2;

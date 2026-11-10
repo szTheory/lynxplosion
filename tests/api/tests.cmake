@@ -1,5 +1,5 @@
 add_executable(lynx-test-api ${CMAKE_CURRENT_LIST_DIR}/test_api.c)
-target_link_libraries(lynx-test-api PRIVATE lynx_core)
+target_link_libraries(lynx-test-api PRIVATE lynx_bundle)
 # The white-box checks read the instance layout, so the tests see core/internal.h.
 target_include_directories(lynx-test-api PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/tests)
 lynx_warnings(lynx-test-api)
@@ -45,6 +45,9 @@ lynx_add_test(NAME api.reset_power_on COMMAND lynx-test-api reset_power_on LABEL
 lynx_add_test(NAME api.snapshot_refusal COMMAND lynx-test-api snapshot_refusal LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.snapshot_roundtrip COMMAND lynx-test-api snapshot_roundtrip LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.snapshot_continue COMMAND lynx-test-api snapshot_continue LABELS api TIMEOUT 60)
+lynx_add_test(NAME api.watch_controls COMMAND lynx-test-api watch_controls LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.watch_independent COMMAND lynx-test-api watch_independent LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.watch_post_write COMMAND lynx-test-api watch_post_write LABELS api TIMEOUT 30)
 lynx_add_test(NAME core.sha256 COMMAND lynx-test-api sha256 LABELS core TIMEOUT 30)
 
 # One persistent control per public contract groups its isolated fault cases.
@@ -72,6 +75,15 @@ elseif(FAULT_GROUP STREQUAL "rom")
   set(positive_case rom_unavailable)
   set(fault_cases
     "rom_unavailable|fault-fallback-to-ram|stop == LYNX_STOP_UNAVAILABLE failed")
+elseif(FAULT_GROUP STREQUAL "watch")
+  set(positive_case watch_controls)
+  set(fault_cases
+    "watch_post_write|fault-stop-before-store|watch returned before store committed"
+    "watch_controls|fault-repeat-store|watch continuation replayed first store before counter increment")
+elseif(FAULT_GROUP STREQUAL "snapshot")
+  set(positive_case snapshot_continue)
+  set(fault_cases
+    "snapshot_continue|fault-watch-in-digest|host watch state leaked into bundle observation digest")
 else()
   message(FATAL_ERROR "api fault control: unknown FAULT_GROUP ${FAULT_GROUP}")
 endif()
@@ -112,3 +124,11 @@ lynx_add_test(NAME memory.rom_unavailable.self_test
   COMMAND ${CMAKE_COMMAND} "-DTEST_BINARY=$<TARGET_FILE:lynx-test-api>" -DFAULT_GROUP=rom
     -P "${API_FAULT_BATCH}"
   LABELS memory TIMEOUT 30)
+lynx_add_test(NAME api.snapshot_continue.self_test
+  COMMAND ${CMAKE_COMMAND} "-DTEST_BINARY=$<TARGET_FILE:lynx-test-api>" -DFAULT_GROUP=snapshot
+    -P "${API_FAULT_BATCH}"
+  LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.watch_controls.self_test
+  COMMAND ${CMAKE_COMMAND} "-DTEST_BINARY=$<TARGET_FILE:lynx-test-api>" -DFAULT_GROUP=watch
+    -P "${API_FAULT_BATCH}"
+  LABELS api TIMEOUT 30)

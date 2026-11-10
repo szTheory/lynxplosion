@@ -27,8 +27,13 @@ api.seam_agreement.lynx1	api
 api.seam_agreement.lynx2	api
 api.seam_agreement.none	api
 api.snapshot_continue	api
+api.snapshot_continue.self_test	api
 api.snapshot_refusal	api
 api.snapshot_roundtrip	api
+api.watch_controls	api
+api.watch_controls.self_test	api
+api.watch_independent	api
+api.watch_post_write	api
 core.cpu_includes	core
 core.cpu_includes.self_test	core
 core.includes	core

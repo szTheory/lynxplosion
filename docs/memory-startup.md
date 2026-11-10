@@ -55,6 +55,35 @@ CPU reset register values likewise remain unverified while the Lynx I/II and
 CPU baseline decision O1 is open. The current flat five-master-tick timing is
 `PLACEHOLDER`, not a hardware timing claim.
 
+## Snapshot continuation and write-watch observations
+
+Snapshots contain guest machine state only. Watch configuration and hit history
+belong to the host observer and are absent from both snapshot bytes and the
+runner's guest observation digest. A successful restore clears the host watch
+configuration and event after all guest-state validation and application have
+succeeded, so the host must explicitly rearm it. A refused restore preserves the
+whole instance, including any active watch and prior hit. Snapshot bytes at the
+same guest state therefore remain identical with a watch configured, after a
+watch hit, and with no watch.
+
+A watch matches actual CPU writes in its bounded half-open range. The current
+contract records the bus grant tick and returns `LYNX_STOP_WATCH` at grant+1,
+after the write, CPU request completion and next-ready tick are committed.
+Resuming execution does not repeat that store. Reads do not match. Operations on
+one instance require caller serialization; independent instances own separate
+watch state.
+
+For segmented, watched and restored paths, compare guest observations at the
+same final guest tick. Normalize the bundle run metadata to cumulative requested
+budget, total guest ticks and the final stop reason; intermediate host `WATCH`
+returns are not part of the guest result. No guest-digest or golden rebaseline
+was needed for this change: host-only watch state did not alter public guest
+observations or normalized digest inputs. The permanent API and determinism
+controls compare serialized state, RAM, registers, identity, time and digests;
+the golden digest remains unchanged. These checks establish same-build
+repeatability, not hardware accuracy. DET-03's remaining unclassified probe is
+still a flagged assumption; these tests do not mark it automatically classified.
+
 No baseline or suite-pass compatibility claim is made. O5 (project licence),
 O6 (clean-room policy) and the firmware/BIOS rights stop remain open. Public
 distribution of copyrighted firmware or game content, physical hardware tests,
