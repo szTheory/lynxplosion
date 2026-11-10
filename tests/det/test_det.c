@@ -219,6 +219,10 @@ static void case_two_instances(char **args)
     CHECK_EQ_U64(fresh_dir(dir_b), 0);
     CHECK_EQ_U64(bundle_write(dir_a, a.m, &run_a, obs_w_a, bundle_a), 0);
     CHECK_EQ_U64(bundle_write(dir_b, b.m, &run_b, obs_w_b, bundle_b), 0);
+    /* A missing run or machine is a refusal, not a crash (the header promises it). */
+    CHECK(bundle_write(dir_a, a.m, NULL, obs_w_a, bundle_a) != 0);
+    CHECK(bundle_write(dir_a, NULL, &run_a, obs_w_a, bundle_a) != 0);
+    CHECK(bundle_observe(a.m, NULL, obs_a) != 0);
     CHECK(strcmp(obs_w_a, obs_a) == 0);
     CHECK(strcmp(obs_w_b, obs_b) == 0);
     CHECK(strcmp(bundle_a, bundle_b) == 0);

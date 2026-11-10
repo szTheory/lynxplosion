@@ -138,7 +138,7 @@ static void obs_digest(const entry *sorted, size_t count, char hex[65])
 int bundle_observe(const lynx_machine *m, const bundle_run *run, char obs_digest_hex[65])
 {
     entry e[3];
-    if (obs_digest_hex == NULL || obs_entries(m, run, e) != 0) {
+    if (m == NULL || run == NULL || obs_digest_hex == NULL || obs_entries(m, run, e) != 0) {
         return 1;
     }
     qsort(e, 3, sizeof e[0], entry_cmp);
@@ -296,7 +296,8 @@ int bundle_write(const char *dir, const lynx_machine *m, const bundle_run *run,
     size_t i;
     int rc = 1;
 
-    if (dir == NULL || obs_digest_hex == NULL || bundle_digest_hex == NULL) {
+    if (dir == NULL || m == NULL || run == NULL || obs_digest_hex == NULL ||
+        bundle_digest_hex == NULL) {
         return 1;
     }
     manifest_len = manifest_text(m, run, manifest, sizeof manifest);
