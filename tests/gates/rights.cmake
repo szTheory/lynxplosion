@@ -29,3 +29,13 @@ lynx_add_test(NAME hygiene.pii.self_test
   COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/hygiene/pii_control.sh
     ${PROJECT_SOURCE_DIR}
   LABELS hygiene TIMEOUT 60)
+
+# The one control that carries the real multi-megabyte vector samples: it copies
+# them into a temporary repository, seeds leaks and a long base64 run at the end
+# of the large files and asserts both real scans (hygiene.sh and scan-binaries.sh)
+# still read them to the last byte. The other self-tests use small synthetic
+# trees on purpose.
+lynx_add_test(NAME hygiene.large_text.self_test
+  COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/hygiene/large_text_control.sh
+    ${PROJECT_SOURCE_DIR}
+  LABELS hygiene TIMEOUT 60)
