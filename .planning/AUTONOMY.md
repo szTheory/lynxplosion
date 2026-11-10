@@ -54,6 +54,12 @@ For every discuss phase (and milestone discussion):
   feedback.
 - When a `human_needed` item can be turned into an automated check, do that
   before asking the owner.
+- Generated GSD/TDD reports can include local checkout paths even when the
+  test command is relative. Keep private raw logs in temporary storage;
+  normalize path presentation in repository evidence without changing exit
+  status, test identity or failure provenance. Run tree hygiene before
+  committing generated evidence. Do not rely on the later full gate to catch
+  paths already copied into local history (Phase 3 lesson, 2026-11-10).
 
 ## CI and CD efficiency review
 

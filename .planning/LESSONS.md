@@ -82,3 +82,27 @@ fraction of the projected tokens.
 **Open follow-ups.** Test fragility: `cpu.vectors.malformed`/`complete_mode` fail when the repo path is
 about 170 characters (diagnostic truncation); the bus tick stamp is plumbed but unobserved until a device
 consumes it (Phase 4).
+
+## Phase 3: In-progress integration lessons (2026-11-10)
+
+**Generated evidence needs the same privacy checks as source.** A TDD RED JSON
+record captured local checkout paths in report/command/console fields. Tree
+normalization alone did not repair historical copies. The unpublished-only
+repair checked live remote main, changed only that evidence in six historical
+trees, and preserved both the final committed tree and all working changes.
+See the Phase 3 `03-HISTORY-REPAIR.md` audit. Check generated reports before
+their first commit; preserve observed failure semantics when normalizing paths.
+
+**Validate scanner behavior with valid long text too.** On this macOS host,
+`iconv` writing valid long UTF-8 to `/dev/null` misclassified a progress line as
+binary. A seeded valid-text control reproduced the issue. The fix changes the
+validation sink while preserving iconv failure handling and existing invalid
+UTF-8/control-byte rejection. The full local gate subsequently passed all 98
+tests, artifact accounting and history hygiene; Linux qualification remains
+part of final Phase 3 delivery.
+
+**Binary input migrations include test-output ownership.** Moving runner tests
+from text payloads to binary BLL objects exposed leftover temporary inputs and
+a manually compiled API probe to the artifact gate. Clean up only test-owned
+files after successful checks; do not add an artifact exemption to make the
+gate green.
