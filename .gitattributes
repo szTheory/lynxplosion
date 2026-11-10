@@ -1,0 +1,2 @@
+# Vector data is hashed byte for byte: never convert line endings.
+fixtures/vectors/sst65x02/* -text
