@@ -7,6 +7,20 @@ lynx_warnings(lynx-test-cpu)
 lynx_sanitize(lynx-test-cpu)
 set_target_properties(lynx-test-cpu PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
 
+# The per-opcode vector runner and its strict reader (test-side code, not core).
+add_executable(lynx-test-cpu-vectors
+  ${CMAKE_CURRENT_LIST_DIR}/test_cpu_vectors.c ${CMAKE_CURRENT_LIST_DIR}/sst_reader.c)
+target_link_libraries(lynx-test-cpu-vectors PRIVATE lynx_core)
+target_include_directories(lynx-test-cpu-vectors PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/tests)
+lynx_warnings(lynx-test-cpu-vectors)
+lynx_sanitize(lynx-test-cpu-vectors)
+set_target_properties(lynx-test-cpu-vectors PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
+
+# The reader rejects every listed malformation with a located message (exit 1
+# here means a malformed input was accepted or reported without its location).
+lynx_add_test(NAME cpu.vectors.reader_malformed COMMAND lynx-test-cpu-vectors self-test-reader
+  LABELS cpu TIMEOUT 60)
+
 lynx_add_test(NAME cpu.cycles COMMAND lynx-test-cpu cycles LABELS cpu TIMEOUT 30)
 lynx_add_test(NAME cpu.tables COMMAND lynx-test-cpu tables LABELS cpu TIMEOUT 30)
 
