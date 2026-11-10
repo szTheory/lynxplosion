@@ -102,7 +102,7 @@ check_identity() { # $1 is an email; $2 says where it came from
 
 # The reader is called indirectly, as check_file's $2. A tracked file deleted
 # from the working tree is still read from the index.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 tree_show() { if [ -f "$1" ]; then cat "$1"; else git show ":$1"; fi; }
 
 mode=${1:---tree}
