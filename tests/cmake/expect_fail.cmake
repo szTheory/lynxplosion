@@ -4,6 +4,8 @@
 # Fault prevented: a negative control that passes on any failure. A bare
 # WILL_FAIL accepts a crash, a typo or a missing file as success; this passes
 # only when CMD exits with exactly CODE and its output matches REGEX.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 foreach(var CMD CODE REGEX)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "expect_fail: -D${var} is required")

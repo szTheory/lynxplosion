@@ -4,6 +4,8 @@
 #
 # Fault prevented: a runner that crashes, hangs or writes on bad input, or that
 # silently defaults to a seeded RAM policy, would corrupt the evidence.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 foreach(var RUNNER CONTENT WORK TRAP_HEX TRAP_TICKS TRAP_STOP)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "runner_cli: -D${var}= is required and must not be empty")

@@ -4,6 +4,8 @@
 # that downloads over plain HTTP or with a truncated digest. Each case writes a
 # faulty pins file at run time (nothing faulty is committed), runs the real lint
 # in a separate process and requires exit 1 and the finding.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 foreach(var SCRIPTS WORK)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "pins_controls: -D${var} is required")

@@ -6,6 +6,8 @@
 # tests/**/*.cmake, cmake/*.cmake or CMakeLists.txt sets one of the test
 # properties below. The names are built by concatenation so this file does not
 # match itself.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 if(NOT IS_DIRECTORY "${ROOT}")
   message(FATAL_ERROR "no_skip: -DROOT=<source dir> is required")
 endif()

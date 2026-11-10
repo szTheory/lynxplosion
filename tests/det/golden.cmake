@@ -5,6 +5,8 @@
 # Fault prevented: a digest that depends on the compiler (padding, signed
 # shift, evaluation order) passes every same-build test and breaks only on the
 # other platform.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 foreach(var RUNNER CONTENT GOLDEN WORK)
   if(NOT DEFINED ${var})
     message(FATAL_ERROR "golden: -D${var}= is required")

@@ -4,6 +4,8 @@
 # provenance notice losing a required statement without anything failing. It
 # reads ROOT/docs/policy/clean-room.md, ROOT/docs/policy/exposure-record.md and
 # ROOT/docs/provenance.md, reports every finding, then fails.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 if(NOT DEFINED ROOT OR "${ROOT}" STREQUAL "")
   message(FATAL_ERROR "docs_policy: -DROOT is required")
 endif()

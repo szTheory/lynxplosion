@@ -3,6 +3,8 @@
 #
 # Fault prevented: a runner whose output depends on the process (an address, a
 # clock, a path, an uninitialised byte) would still pass a single-run test.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 foreach(var RUNNER CONTENT CONTENT_SHA256 WORK)
   if(NOT DEFINED ${var})
     message(FATAL_ERROR "two_runs: -D${var}= is required")

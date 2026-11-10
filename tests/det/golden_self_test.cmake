@@ -4,6 +4,8 @@
 # Fault prevented: a golden comparison that passes whatever the golden holds.
 # The edited copy is built here, at test time, from the committed golden with
 # its last hex digit changed; it is never committed.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 foreach(var RUNNER CONTENT GOLDEN WORK SCRIPTS)
   if(NOT DEFINED ${var})
     message(FATAL_ERROR "golden_self_test: -D${var}= is required")

@@ -5,6 +5,8 @@
 # lines name the owner project as the source it was taken from must appear, by
 # repository path in backticks, in PROVENANCE. PROVENANCE must also mention the
 # other notices the repository owes. Findings are reported together, then fail.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 if(NOT DEFINED ROOT OR "${ROOT}" STREQUAL "" OR NOT DEFINED PROVENANCE
     OR "${PROVENANCE}" STREQUAL "")
   message(FATAL_ERROR "provenance: -DROOT and -DPROVENANCE are required")

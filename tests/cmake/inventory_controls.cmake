@@ -8,6 +8,8 @@
 # vacuous pass cannot satisfy a case.
 #   MODE=junit        tests/cmake/check_junit.cmake
 #   MODE=registered   tests/cmake/inventory_equal.cmake
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
 foreach(var MODE SCRIPTS WORK)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "inventory_controls: -D${var} is required")
