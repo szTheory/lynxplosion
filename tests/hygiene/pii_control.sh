@@ -114,6 +114,7 @@ real_git=$(command -v git)
 # shellcheck disable=SC2016 # the wrapper's own variables are written literally
 {
   printf '#!/bin/sh\n'
+  printf 'if [ -n "${LYNX_FAIL:-}" ]; then case " $* " in *" $LYNX_FAIL "*) exit 2 ;; esac; fi\n'
   printf 'case " $* " in *" ls-files "*) ls -A "$LYNX_SCRATCH" >"$LYNX_SNAP" ;; esac\n'
   printf 'exec "$LYNX_REAL_GIT" "$@"\n'
 } >"$shim/git"
@@ -301,6 +302,18 @@ reject history_message_same_line_home history 'hygiene: home path: message of '
 )
 accept history_message_same_line_removed history
 ok history_same_line_leaks
+
+# A git failure is never an empty or clean history (WR-01): a revision that does
+# not exist, a failing git grep and a failing git log each fail the scan.
+bogus_rev() { hyg --history bogusrev; }
+with_failing_git() { (cd "$iso" && PATH="$shim:$PATH" LYNX_FAIL="$1" LYNX_REAL_GIT="$real_git" LYNX_SCRATCH="$scratch" LYNX_SNAP="$work/snap2" sh scripts/hygiene.sh --history); }
+failing_grep() { with_failing_git grep; }
+failing_log() { with_failing_git log; }
+reject history_bogus_revision bogus_rev 'hygiene: cannot list commits'
+reject history_failing_grep failing_grep 'hygiene: git grep failed: commit '
+reject history_failing_log failing_log 'hygiene: cannot read message: commit '
+accept history_still_clean history
+ok history_git_failure_fails_closed
 
 # The repository itself was not touched.
 if [ -n "$(find "$repo" -name 'secret.txt' -print 2>/dev/null)" ]; then

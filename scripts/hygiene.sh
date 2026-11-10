@@ -119,6 +119,24 @@ check_identity() { # $1 is an email; $2 says where it came from
 # shellcheck disable=SC2317,SC2329
 tree_show() { if [ -f "$1" ]; then cat "$1"; else git show ":$1"; fi; }
 
+# $1 and $2 as in leaks (an empty $2 allows nothing); $3 is a commit and $4 the
+# finding name. A git grep failure (status above 1) is itself a finding: git's
+# status is never discarded behind a pipe.
+scan_commit() {
+  sc_rc=0
+  git grep -I -h -o -E -e "$1" "$3" -- . ":!$SELF" >"$work/matches" 2>/dev/null || sc_rc=$?
+  if [ "$sc_rc" -gt 1 ]; then
+    found 'git grep failed' "commit $3"
+    return 0
+  fi
+  if [ "$sc_rc" -eq 1 ]; then
+    return 0
+  fi
+  if [ -z "$2" ] || unallowed "$2" <"$work/matches"; then
+    found "$4" "commit $3"
+  fi
+}
+
 mode=${1:---tree}
 [ $# -gt 0 ] && shift
 case $mode in
@@ -132,30 +150,38 @@ case $mode in
     ;;
   --history)
     [ $# -gt 0 ] || set -- --all
-    for c in $(git rev-list "$@"); do
-      if git grep -I -h -o -E -e "$HOME_PATH" "$c" -- . ":!$SELF" 2>/dev/null | unallowed "$HOME_OK"; then
-        found 'home path' "commit $c"
-      fi
-      if git grep -I -h -o -E -e "$EMAIL" "$c" -- . ":!$SELF" 2>/dev/null | unallowed "$EMAIL_OK"; then
-        found 'email' "commit $c"
-      fi
-      if git grep -I -h -E -e "$CREDENTIAL" "$c" -- . ":!$SELF" 2>/dev/null | grep -q .; then
-        found 'credential' "commit $c"
-      fi
+    # A failing rev-list is a failure of the scan, never an empty history.
+    if ! git rev-list "$@" >"$work/revs" 2>/dev/null; then
+      printf 'hygiene: cannot list commits: git rev-list failed\n' >&2
+      exit 1
+    fi
+    if [ ! -s "$work/revs" ]; then
+      printf 'hygiene: history: no commits selected, nothing scanned (visible)\n' >&2
+    fi
+    while IFS= read -r c; do
+      scan_commit "$HOME_PATH" "$HOME_OK" "$c" 'home path'
+      scan_commit "$EMAIL" "$EMAIL_OK" "$c" 'email'
+      scan_commit "$CREDENTIAL" '' "$c" 'credential'
       # A squash merge copies the pull request's title and body into the
       # message, so messages are scanned as well.
-      if git log -1 --format=%B "$c" | leaks "$HOME_PATH" "$HOME_OK"; then
-        found 'home path' "message of $c"
+      if git log -1 --format=%B "$c" >"$work/msg" 2>/dev/null; then
+        if leaks "$HOME_PATH" "$HOME_OK" <"$work/msg"; then found 'home path' "message of $c"; fi
+        if leaks "$EMAIL" "$EMAIL_OK" <"$work/msg"; then found 'email' "message of $c"; fi
+        if has "$CREDENTIAL" <"$work/msg"; then found 'credential' "message of $c"; fi
+      else
+        found 'cannot read message' "commit $c"
       fi
-      if git log -1 --format=%B "$c" | leaks "$EMAIL" "$EMAIL_OK"; then
-        found 'email' "message of $c"
+      if author=$(git log -1 --format=%ae "$c" 2>/dev/null); then
+        check_identity "$author" "$c"
+      else
+        found 'cannot read identity' "commit $c"
       fi
-      if git log -1 --format=%B "$c" | has "$CREDENTIAL"; then
-        found 'credential' "message of $c"
+      if committer=$(git log -1 --format=%ce "$c" 2>/dev/null); then
+        check_identity "$committer" "$c"
+      else
+        found 'cannot read identity' "commit $c"
       fi
-      check_identity "$(git log -1 --format=%ae "$c")" "$c"
-      check_identity "$(git log -1 --format=%ce "$c")" "$c"
-    done
+    done <"$work/revs"
     ;;
   *)
     printf 'usage: %s --tree | --history [rev-list args]\n' "$0" >&2
