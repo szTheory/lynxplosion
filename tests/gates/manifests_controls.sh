@@ -235,4 +235,22 @@ if grep -q 'covered' "$work/sig.out"; then
 fi
 [ -z "$(ls -A "$work/tmp")" ] || fail signal_cleanup "the scratch directory was left behind"
 ok signal_exit
+
+# WR-05 and IN-09: the validator this check runs refuses a glob character in the
+# tier list and an empty required list as usage errors (exit 2). The directory
+# holds letters-only file names that an unquoted expansion would have turned
+# into tier words.
+mkdir -p "$work/glob"
+: >"$work/glob/A"
+: >"$work/glob/Abc"
+: >"$work/glob/empty.kv"
+for bad_list in "A*" "*" "[A]"; do
+  rc=0
+  (cd "$work/glob" && sh "$repo/scripts/validate-kv.sh" --required "claim" --startup-tiers "$bad_list" "$work/glob/empty.kv") >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 2 ] || fail validator_glob "tier list \"$bad_list\": expected exit 2, got $rc"
+done
+rc=0
+(cd "$work/glob" && sh "$repo/scripts/validate-kv.sh" --required "" "$work/glob/empty.kv") >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 2 ] || fail validator_required "an empty required list: expected exit 2, got $rc"
+ok validator_glob
 rm -rf "$work"

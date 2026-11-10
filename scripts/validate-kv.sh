@@ -19,7 +19,8 @@
 #   - with --no-host-data, a value must not start with "/" or "~", contain a
 #     home-directory path, or contain a YYYY-MM-DD date.
 # Every finding is printed as "validate-kv: <file>: ..." on standard error.
-# Exit status: 0 clean, 1 findings, 2 usage error.
+# The --required list must name at least one key, and --startup-tiers must not
+# hold glob characters (* ? [). Exit status: 0 clean, 1 findings, 2 usage error.
 #
 # Fault prevented: a manifest that is accepted although it merges a repeated
 # key, omits the build identity or leaks a host path or a date into evidence.
@@ -71,10 +72,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ "$have_required" -eq 1 ] || usage
+# An empty (or all-blank) required list would let an empty file pass.
+case $required in
+  *[!\ ]*) ;;
+  *) usage ;;
+esac
 [ $# -ge 1 ] || usage
 
 # Every tier name is a letter, then letters, digits and underscores; the list is
 # not empty. A malformed list is a usage error, never a silently empty vocabulary.
+# A glob character is a usage error too: the unquoted list below would be
+# expanded against the current directory by the shell, while awk later splits the
+# unexpanded string, so the two views of the list would disagree.
+case $tiers in
+  *[*?[]*) usage ;;
+esac
 tier_count=0
 for tier in $tiers; do
   case $tier in

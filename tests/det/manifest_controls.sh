@@ -132,6 +132,39 @@ for bad_list in "" "1x" "a-b"; do
 done
 printf 'manifest_controls: tier_list_usage: ok\n'
 
+# WR-05: a glob character in the tier list is a usage error. Unquoted, the list
+# would be expanded against the current directory, so the directory below holds
+# letters-only file names that an expansion would turn into "valid" tier words
+# (the shell and the awk validator would then disagree about the list).
+abs_validator=$(cd "$(dirname "$validator")" && pwd -P)/validate-kv.sh
+abs_work=$(cd "$work" && pwd -P)
+mkdir -p "$work/globdir"
+: >"$work/globdir/A"
+: >"$work/globdir/Abc"
+for bad_list in "A*" "*" "A?" "[A]" "A [x"; do
+  status=0
+  (cd "$work/globdir" && sh "$abs_validator" --required "$required" --startup-tiers "$bad_list" "$abs_work/valid.kv") \
+    >"$work/tier_glob.out" 2>&1 || status=$?
+  if [ "$status" -ne 2 ]; then
+    printf 'manifest_controls: tier_list_glob: list "%s": expected exit 2, got %s\n' "$bad_list" "$status" >&2
+    exit 1
+  fi
+done
+printf 'manifest_controls: tier_list_glob: ok\n'
+
+# IN-09: an empty --required list is a usage error, so an empty file cannot pass
+# a check that requires nothing.
+: >"$work/empty.kv"
+for bad_required in "" " "; do
+  status=0
+  sh "$validator" --required "$bad_required" "$work/empty.kv" >"$work/required_empty.out" 2>&1 || status=$?
+  if [ "$status" -ne 2 ]; then
+    printf 'manifest_controls: required_empty: list "%s": expected exit 2, got %s\n' "$bad_required" "$status" >&2
+    exit 1
+  fi
+done
+printf 'manifest_controls: required_empty: ok\n'
+
 base | sed 's/^evidence_tier = R$/evidence_tier = T9/' >"$work/evidence_tier.kv"
 reject evidence_tier 'evidence_tier: bad evidence_tier'
 
