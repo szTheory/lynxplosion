@@ -850,7 +850,9 @@ static unsigned probe_undefined(const sst_vector *v, unsigned profile, const lyn
     unsigned failed = 0;
     unsigned i;
     load_initial(v, &cpu, t, profile);
-    before = cpu;
+    /* memcpy, not struct assignment: the copy keeps the padding bytes that the
+       memcmp below reads, so equal states compare equal. */
+    memcpy(&before, &cpu, sizeof cpu);
     for (i = 0; i < v->initial.nram; i++) {
         touched_before[i] = g_bus.mem[v->initial.ram_addr[i]];
     }
