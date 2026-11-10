@@ -9,7 +9,19 @@
 #   sample  verify every download against upstream.sha256, then write the two
 #           committed sample containers fixtures/vectors/sst65x02/<variant>.sample
 #           (the first 32 objects of each file, upstream bytes verbatim).
-#   run     arrives in plan 02-05 (all vectors per file through the runner).
+#   run     verify every download against upstream.sha256, rebuild both sample
+#           containers and require them to equal the committed ones byte for
+#           byte, then run all 10,000 vectors of each of the 256 whole files
+#           through lynx-test-cpu-vectors (complete mode, the check preset's
+#           build, built here if missing) under none (synertek data, 32 rows
+#           asserted undefined), lynx1 (synertek) and lynx2 (rockwell), and the
+#           two cross pairings (rockwell under lynx1, synertek under lynx2) to
+#           record the full-data failing opcode sets. Exit 0 only if the three
+#           same-profile runs have zero failures, both cross pairings fail on
+#           exactly the 32 bit-operation opcodes ($x7 and $xF) and both samples
+#           are equal. Results files (op, passed, failed per run row) are copied
+#           to build/vectors-full/<name>.results with their SHA-256 printed.
+#           This is the 2 GB network lane: run it by hand, never from the check.
 #
 # Several modes in one invocation (for example "pin sample") run in the order
 # given and share one work directory and one verified download set, so the large
@@ -102,6 +114,20 @@ fi
 
 downloaded=0
 
+# The record must exist, name the pinned commit and hold 512 rows.
+check_record() {
+  if [ ! -f "$record" ]; then
+    fail "no pin record at fixtures/vectors/sst65x02/upstream.sha256; run the pin mode first"
+  fi
+  if ! grep -q "^# commit $COMMIT\$" "$record"; then
+    fail "the pin record does not name commit $COMMIT"
+  fi
+  rows=$(awk '$1 !~ /^#/ { n++ } END { print n + 0 }' "$record")
+  if [ "$rows" -ne 512 ]; then
+    fail "the pin record has $rows rows, not 512"
+  fi
+}
+
 # Download every file once per invocation, size-capped, https only. Any failure
 # aborts the run naming the file.
 ensure_downloads() {
@@ -173,6 +199,78 @@ build_sample() {
   done
 }
 
+# The failing opcodes of a results file (op, passed, failed), space separated.
+failing_set() {
+  awk -F'\t' '$3 > 0 { printf "%s%s", sep, $1; sep = " " } END { print "" }' "$1"
+}
+
+# The 32 bit-operation opcodes, $x7 and $xF, in ascending order.
+bitop_set() {
+  s=""
+  for h in $HEXDIGITS; do
+    for l in 7 f; do
+      s="$s${s:+ }$h$l"
+    done
+  done
+  printf '%s\n' "$s"
+}
+
+lane_status=0
+
+# run_same NAME VARIANT --profile P: all vectors of the variant under the profile;
+# the runner must exit 0 (zero failures).
+run_same() {
+  rs_name=$1
+  rs_started=$(date +%s)
+  rs_rc=0
+  "$runner" complete "$3" "$4" --dir "$work/dl" --variant "$2" --results "$work/$rs_name.results" \
+    >"$work/$rs_name.log" 2>&1 || rs_rc=$?
+  cat "$work/$rs_name.log"
+  cp "$work/$rs_name.results" "$root/build/vectors-full/$rs_name.results"
+  echo "vectors-full: run: $rs_name ($2 under $4): runner exit $rs_rc in $(($(date +%s) - rs_started)) s, results sha256 $(sha_of "$work/$rs_name.results")"
+  if [ "$rs_rc" -ne 0 ]; then
+    echo "vectors-full: run: $rs_name: FAILED, expected zero failing vectors" >&2
+    lane_status=1
+  fi
+}
+
+# run_cross NAME VARIANT --profile P: the other variant's data under the profile; the
+# runner must exit 1 and the failing opcodes must be exactly the 32 bit-operation
+# opcodes. The set is printed with what is extra or absent (the profile-diff spike).
+run_cross() {
+  rc_name=$1
+  rc_started=$(date +%s)
+  rc_rc=0
+  "$runner" complete "$3" "$4" --dir "$work/dl" --variant "$2" --results "$work/$rc_name.results" \
+    >"$work/$rc_name.log" 2>&1 || rc_rc=$?
+  cat "$work/$rc_name.log"
+  cp "$work/$rc_name.results" "$root/build/vectors-full/$rc_name.results"
+  rc_got=$(failing_set "$work/$rc_name.results")
+  rc_want=$(bitop_set)
+  rc_count=$(printf '%s\n' "$rc_got" | wc -w | tr -d ' ')
+  rc_extra=""
+  for rc_op in $rc_got; do
+    case " $rc_want " in
+      *" $rc_op "*) ;;
+      *) rc_extra="$rc_extra $rc_op" ;;
+    esac
+  done
+  rc_absent=""
+  for rc_op in $rc_want; do
+    case " $rc_got " in
+      *" $rc_op "*) ;;
+      *) rc_absent="$rc_absent $rc_op" ;;
+    esac
+  done
+  echo "vectors-full: run: $rc_name ($2 under $4): runner exit $rc_rc in $(($(date +%s) - rc_started)) s, results sha256 $(sha_of "$work/$rc_name.results")"
+  echo "vectors-full: run: $rc_name failing opcodes ($rc_count): $rc_got"
+  echo "vectors-full: run: $rc_name beyond the 32 bit-operation opcodes:${rc_extra:- none}; bit-operation opcodes not failing:${rc_absent:- none}"
+  if [ "$rc_rc" -ne 1 ] || [ "$rc_got" != "$rc_want" ]; then
+    echo "vectors-full: run: $rc_name: FAILED, expected exit 1 and exactly the 32 bit-operation opcodes failing" >&2
+    lane_status=1
+  fi
+}
+
 for mode in "$@"; do
   case $mode in
     pin)
@@ -202,16 +300,7 @@ for mode in "$@"; do
       echo "vectors-full: pin: wrote $want_files rows and the LICENSE"
       ;;
     sample)
-      if [ ! -f "$record" ]; then
-        fail "no pin record at fixtures/vectors/sst65x02/upstream.sha256; run the pin mode first"
-      fi
-      if ! grep -q "^# commit $COMMIT\$" "$record"; then
-        fail "the pin record does not name commit $COMMIT"
-      fi
-      rows=$(awk '$1 !~ /^#/ { n++ } END { print n + 0 }' "$record")
-      if [ "$rows" -ne 512 ]; then
-        fail "the pin record has $rows rows, not 512"
-      fi
+      check_record
       if [ ! -f "$out/LICENSE" ] || [ "$(sha_of "$out/LICENSE")" != "$LICENSE_SHA256" ]; then
         fail "fixtures/vectors/sst65x02/LICENSE is missing or is not the upstream text"
       fi
@@ -233,8 +322,36 @@ for mode in "$@"; do
       done
       ;;
     run)
-      echo "vectors-full: run mode arrives in plan 02-05" >&2
-      exit 2
+      check_record
+      ensure_downloads
+      while IFS= read -r rel; do
+        verify_against_record "$rel"
+      done <"$list"
+      echo "vectors-full: run: all $want_files downloads match the pin record"
+      for variant in $VARIANTS; do
+        build_sample "$variant" >"$work/$variant.sample"
+        if ! cmp -s "$work/$variant.sample" "$out/$variant.sample"; then
+          fail "the committed $variant.sample is not what the verified files give"
+        fi
+      done
+      echo "vectors-full: run: both samples equal the committed ones byte for byte"
+      runner=$root/build/check/tests/lynx-test-cpu-vectors
+      if [ ! -x "$runner" ]; then
+        (cd "$root" && cmake --preset check && cmake --build --preset check) || fail "the check preset did not build"
+      fi
+      if [ ! -x "$runner" ]; then
+        fail "$runner is missing after the build"
+      fi
+      mkdir -p "$root/build/vectors-full"
+      run_same none synertek65c02 --profile none
+      run_same lynx1 synertek65c02 --profile lynx1
+      run_same lynx2 rockwell65c02 --profile lynx2
+      run_cross cross-lynx1-rockwell65c02 rockwell65c02 --profile lynx1
+      run_cross cross-lynx2-synertek65c02 synertek65c02 --profile lynx2
+      if [ "$lane_status" -ne 0 ]; then
+        fail "run: at least one lane did not give its expected result (see the lines above)"
+      fi
+      echo "vectors-full: run: three same-profile runs clean, both cross pairings fail on exactly the 32 bit-operation opcodes"
       ;;
   esac
 done

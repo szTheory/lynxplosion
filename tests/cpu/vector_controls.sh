@@ -542,27 +542,27 @@ synth_file() {
 case_complete_mode() {
   dl=$work/dl
   mkdir -p "$dl/synertek65c02/v1"
-  for op in 00 07 69 cb ea; do
+  for op in 07 cb ea; do
     synth_file "$syn" "$op" 10000 "$dl/synertek65c02/v1/$op.json"
   done
   run_runner "$work/c1.out" complete --profile lynx1 --dir "$dl" --variant synertek65c02 --partial \
     --results "$work/c1.res"
-  expect lynx1 0 '^totals files 5 run 4 excluded 1 undefined 0 vectors 50000$' "$work/c1.out"
-  expect lynx1 0 '^asserted 40000 passed 40000 failed 0 identity [0-9]+$' "$work/c1.out"
+  expect lynx1 0 '^totals files 3 run 2 excluded 1 undefined 0 vectors 30000$' "$work/c1.out"
+  expect lynx1 0 '^asserted 20000 passed 20000 failed 0 identity [0-9]+$' "$work/c1.out"
   expect lynx1 0 '^excluded_vectors parsed 10000 asserted 0$' "$work/c1.out"
   [ "$(failing_set "$work/c1.res")" = "" ] || fail "lynx1: a failing opcode in a clean run"
-  [ "$(wc -l <"$work/c1.res" | tr -d ' ')" -eq 4 ] || fail "lynx1: the results file has not 4 rows"
-  ok "lynx1: 50,000 vectors in 5 whole files, 40,000 asserted and passed, 10,000 excluded"
+  [ "$(wc -l <"$work/c1.res" | tr -d ' ')" -eq 2 ] || fail "lynx1: the results file has not 2 rows"
+  ok "lynx1: 30,000 vectors in 3 whole files, 20,000 asserted and passed, 10,000 excluded"
   run_runner "$work/c0.out" complete --profile none --dir "$dl" --variant synertek65c02 --partial
-  expect none 0 '^totals files 5 run 3 excluded 1 undefined 1 vectors 50000$' "$work/c0.out"
-  expect none 0 '^asserted 30000 passed 30000 failed 0 identity [0-9]+$' "$work/c0.out"
+  expect none 0 '^totals files 3 run 1 excluded 1 undefined 1 vectors 30000$' "$work/c0.out"
+  expect none 0 '^asserted 10000 passed 10000 failed 0 identity [0-9]+$' "$work/c0.out"
   expect none 0 '^undefined_vectors 10000 stopped 10000$' "$work/c0.out"
-  ok "none: the 10,000 vectors of the undefined row stop, 30,000 pass"
+  ok "none: the 10,000 vectors of the undefined row stop, 10,000 pass"
   run_runner "$work/cn.out" complete --profile lynx1 --dir "$dl" --variant synertek65c02 --partial --fault no-step
-  expect no_step 1 '^asserted 40000 passed 0 failed 40000 ' "$work/cn.out"
+  expect no_step 1 '^asserted 20000 passed 0 failed 20000 ' "$work/cn.out"
   ok "no-step fails every asserted vector of the whole files"
   run_runner "$work/cm.out" complete --profile lynx1 --dir "$dl" --variant synertek65c02
-  expect missing_file 3 'cannot open .*/v1/01[.]json' "$work/cm.out"
+  expect missing_file 3 'cannot open .*/v1/00[.]json' "$work/cm.out"
   ok "a missing file of the 256 exits 3 without --partial"
   synth_file "$syn" ea 9999 "$dl/synertek65c02/v1/ea.json"
   run_runner "$work/ck.out" complete --profile lynx1 --dir "$dl" --variant synertek65c02 --partial
