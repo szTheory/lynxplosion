@@ -179,4 +179,16 @@ case $first in
   *aaa.manifest*) ok sorted_findings ;;
   *) fail sorted_findings "the first finding is not for aaa.manifest: $first" ;;
 esac
+# 15. A file under fixtures/manifests/ that is not a manifest is an uncovered
+# fixture, at the top level and below it (the directory is not an exemption).
+make_tree "$t"
+printf 'not a manifest\n' >"$t/fixtures/manifests/blob.dat"
+expect_reject manifests_dir_other_file "$t" \
+  "check-manifests: uncovered fixture: fixtures/manifests/blob.dat"
+make_tree "$t"
+mkdir "$t/fixtures/manifests/sub"
+write_manifest "$t/fixtures/manifests/sub/b.manifest" "$other64" fixtures/a.txt
+expect_reject manifests_dir_nested_manifest "$t" \
+  "check-manifests: uncovered fixture: fixtures/manifests/sub/b.manifest"
+
 rm -rf "$work"

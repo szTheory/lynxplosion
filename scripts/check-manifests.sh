@@ -11,8 +11,9 @@
 # and the checks below hold across the whole set:
 #   - no two manifests carry the same sha256 (an ambiguous identity);
 #   - every "files" entry is a relative path under fixtures/ and exists;
-#   - every file under fixtures/ other than the manifests themselves is named
-#     by some manifest's "files" value.
+#   - every file under fixtures/ other than the manifests themselves (the
+#     *.manifest files directly in fixtures/manifests) is named by some
+#     manifest's "files" value; any other file there is uncovered.
 # Manifests are visited in LC_ALL=C sorted order, so findings are stable, and
 # validation does not depend on the key order inside a file.
 #
@@ -115,8 +116,10 @@ sort -k1,1 -k2,2 "$work/shas" |
 
 # Every fixture is covered.
 sort -u "$work/covered" >"$work/covered.sorted"
-find "$root/fixtures" -type f ! -path "$root/fixtures/manifests/*" 2>/dev/null |
-  sed "s|^$root/||" | sort >"$work/present"
+# Only the manifests themselves, at the top of fixtures/manifests, are exempt:
+# any other file there, or in a directory below it, must be covered like the rest.
+find "$root/fixtures" -type f 2>/dev/null |
+  sed "s|^$root/||" | grep -v -x 'fixtures/manifests/[^/][^/]*\.manifest' | sort >"$work/present"
 comm -23 "$work/present" "$work/covered.sorted" |
   sed 's|^|check-manifests: uncovered fixture: |' >>"$findings"
 
