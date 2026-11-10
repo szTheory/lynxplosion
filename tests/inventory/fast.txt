@@ -27,6 +27,8 @@ core.no_float	core
 core.no_float.self_test	core
 core.sha256	core
 cpu.cycles	cpu
+cpu.scenarios.lynx1	cpu
+cpu.scenarios.lynx2	cpu
 cpu.tables	cpu
 cpu.tables.self_test	cpu
 cpu.vectors.complete_mode	cpu

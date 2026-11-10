@@ -59,6 +59,20 @@ foreach(lynx_vec_control IN ITEMS wrong_profile wrong_profile_reverse no_step co
     LABELS cpu TIMEOUT 120)
 endforeach()
 
+# Authored scenario vectors (interrupts, latency, BRK, NMI, reset, the lynx-tests
+# Test 8 shape, bit operations and the page and wrap edges), each tagged with its
+# source and an unverified flag. One test per profile.
+add_executable(lynx-test-cpu-scenarios ${CMAKE_CURRENT_LIST_DIR}/test_cpu_scenarios.c)
+target_link_libraries(lynx-test-cpu-scenarios PRIVATE lynx_core)
+target_include_directories(lynx-test-cpu-scenarios PRIVATE ${PROJECT_SOURCE_DIR}/core ${PROJECT_SOURCE_DIR}/tests)
+lynx_warnings(lynx-test-cpu-scenarios)
+lynx_sanitize(lynx-test-cpu-scenarios)
+set_target_properties(lynx-test-cpu-scenarios PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
+foreach(lynx_scen_profile IN ITEMS lynx1 lynx2)
+  lynx_add_test(NAME cpu.scenarios.${lynx_scen_profile}
+    COMMAND lynx-test-cpu-scenarios ${lynx_scen_profile} LABELS cpu TIMEOUT 30)
+endforeach()
+
 lynx_add_test(NAME cpu.cycles COMMAND lynx-test-cpu cycles LABELS cpu TIMEOUT 30)
 lynx_add_test(NAME cpu.tables COMMAND lynx-test-cpu tables LABELS cpu TIMEOUT 30)
 
