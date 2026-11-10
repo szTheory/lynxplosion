@@ -9,9 +9,9 @@
    unqualified for the Lynx: its instruction sets and cycle counts come from
    other vendors' datasheets, a hardware-informed test and software-model
    vectors, and every cycle costs a PLACEHOLDER five master ticks. No profile
-   is a baseline. Phase 3 is adding the MAPCTL memory map in slices; until the
-   decoder lands, all addresses except the FFF9 MAPCTL write route still use
-   raw RAM. The raw RAM image loader remains temporarily for existing callers. */
+   is a baseline. Normal content starts from a strict BLL tier-A direct load.
+   CPU accesses use MAPCTL's four overlays; mapped device, ROM, vector and
+   MAPCTL-read routes without an implemented target stop as unavailable. */
 #ifndef LYNXPLOSION_H
 #define LYNXPLOSION_H
 
@@ -36,11 +36,12 @@ enum {
     LYNX_ERR_SNAPSHOT_VERSION = 7,  /* snapshot format version not supported */
     LYNX_ERR_SNAPSHOT_MISMATCH = 8, /* snapshot from another build, config or content */
     LYNX_ERR_CAPACITY = 9,          /* output buffer smaller than the snapshot */
-    LYNX_ERR_UNAVAILABLE = 10       /* mapped device/content is not implemented */
+    LYNX_ERR_UNAVAILABLE = 10       /* requested mapped observation is unavailable */
 };
 
 /* Why lynx_advance returned. FRAME, WATCH and HALT are reserved: later
-   phases may report them, this build never does. */
+   phases may report them, this build never does. UNAVAILABLE leaves the
+   pending CPU request uncompleted at its grant. */
 typedef uint32_t lynx_stop_reason;
 enum {
     LYNX_STOP_BUDGET = 0,   /* the tick budget was used up */
@@ -177,6 +178,16 @@ lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len);
    boundary whose opcode the Lynx profiles define differently, once the
    previous cycle has ended, without fetching it: nothing further is consumed
    or changed, and a repeated call stops at the same place with *consumed 0.
+
+   A public BLL machine stops with LYNX_STOP_UNAVAILABLE when a due CPU request
+   maps to an unimplemented Suzy/Mikey target, absent ROM/vector content, or a
+   MAPCTL read. Only writes to the MAPCTL latch are implemented there. The
+   unavailable request is not completed: its CPU request and backing bytes are
+   preserved at the grant. *consumed includes prior completed cycles in the
+   call; a repeated non-zero-budget call at the same request returns
+   LYNX_OK/LYNX_STOP_UNAVAILABLE with *consumed 0. This stop takes precedence
+   over LYNX_STOP_UNDEFINED for an unavailable opcode fetch. It is a project
+   limitation, not a claim about physical readback or bus electrical values.
 
    Guest time never wraps: no cycle is started whose end could come within
    65,536 ticks of the 64-bit limit (guest time never exceeds UINT64_MAX -

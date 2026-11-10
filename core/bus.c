@@ -30,6 +30,29 @@ _Static_assert(sizeof lynx__cost == (size_t)LYNX__COST_MODEL_COUNT * LYNX__REGIO
                "cost table dimensions");
 _Static_assert(LYNX__CK_COUNT == 11, "the cost tables list 11 cycle kinds");
 
+lynx__bus_route lynx__bus_decode(uint8_t mapctl, uint16_t addr)
+{
+    if (addr == 0xFFF8u) {
+        return LYNX__BUS_ROUTE_RAM;
+    }
+    if (addr == 0xFFF9u) {
+        return LYNX__BUS_ROUTE_MAPCTL;
+    }
+    if (addr >= 0xFC00u && addr <= 0xFCFFu) {
+        return (mapctl & 0x01u) != 0u ? LYNX__BUS_ROUTE_RAM : LYNX__BUS_ROUTE_SUZY;
+    }
+    if (addr >= 0xFD00u && addr <= 0xFDFFu) {
+        return (mapctl & 0x02u) != 0u ? LYNX__BUS_ROUTE_RAM : LYNX__BUS_ROUTE_MIKEY;
+    }
+    if (addr >= 0xFE00u && addr <= 0xFFF7u) {
+        return (mapctl & 0x04u) != 0u ? LYNX__BUS_ROUTE_RAM : LYNX__BUS_ROUTE_ROM;
+    }
+    if (addr >= 0xFFFAu) {
+        return (mapctl & 0x08u) != 0u ? LYNX__BUS_ROUTE_RAM : LYNX__BUS_ROUTE_VECTOR;
+    }
+    return LYNX__BUS_ROUTE_RAM;
+}
+
 lynx__bus_timing lynx__bus_timing_of(uint8_t model, uint8_t region, uint8_t kind)
 {
     lynx__bus_timing t;

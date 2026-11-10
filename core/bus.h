@@ -18,9 +18,20 @@
 /* Cost model ids. An id at or above LYNX__COST_MODEL_COUNT is invalid. */
 enum { LYNX__COST_FLAT5 = 0, LYNX__COST_TEST_SKEW = 1, LYNX__COST_MODEL_COUNT = 2 };
 
-/* Address regions. Phase 2 has one: everything is RAM-priced. Page mode, Suzy,
-   Mikey and audio memory regions arrive with the device phases. */
+/* Address regions used for timing. flat5 still prices every CPU access as a
+   PLACEHOLDER five ticks; route decoding is kept separate from timing. */
 enum { LYNX__REGION_RAM = 0, LYNX__REGION_COUNT = 1 };
+
+/* CPU-visible destination selected by MAPCTL. Unsupported destinations are
+   kept distinct so execution and inspection cannot fall back to backing RAM. */
+typedef enum lynx__bus_route {
+    LYNX__BUS_ROUTE_RAM = 0,
+    LYNX__BUS_ROUTE_SUZY = 1,
+    LYNX__BUS_ROUTE_MIKEY = 2,
+    LYNX__BUS_ROUTE_ROM = 3,
+    LYNX__BUS_ROUTE_VECTOR = 4,
+    LYNX__BUS_ROUTE_MAPCTL = 5
+} lynx__bus_route;
 
 /* The price of one cycle: ticks the cycle lasts and the offset inside it at
    which the data is sampled (0 in Phase 2). */
@@ -35,7 +46,11 @@ typedef struct lynx__bus_timing {
    bounds, but the result then means nothing. */
 lynx__bus_timing lynx__bus_timing_of(uint8_t model, uint8_t region, uint8_t kind);
 
-/* The region an address belongs to. Always LYNX__REGION_RAM in Phase 2. */
+/* Pure CPU-side decoder. MAPCTL bits 0–3 select RAM over the four windows;
+   FFF8 and FFF9 are fixed exceptions. */
+lynx__bus_route lynx__bus_decode(uint8_t mapctl, uint16_t addr);
+
+/* The region an address belongs to. Timing stays flat5/PLACEHOLDER here. */
 uint8_t lynx__bus_region_of(uint16_t addr);
 
 /* True for a cost model id this build defines. Takes the full-width value so a

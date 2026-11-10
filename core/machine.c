@@ -273,40 +273,69 @@ lynx_status lynx__machine_set_cost_model(struct lynx_machine *m, uint32_t model)
     return LYNX_OK;
 }
 
-/* The side-effect-free raw-RAM read the UNDEFINED check uses to look at the
-   next opcode without fetching it. MAPCTL guest readback is still unverified. */
+/* Read the instruction byte after the route precheck has established that the
+   CPU sees RAM. This is not a public mapped peek and does not complete a bus
+   request. */
 static uint8_t bus_peek(const struct lynx_machine *m, uint16_t addr)
 {
     return m->ram[addr];
 }
 
-/* Performs one granted bus cycle through the instance-owned access seam.
-   FFF9 writes reach the provisional MAPCTL latch; the rest still uses raw RAM
-   until the full decoder lands. stamp is unused by this partial map slice. */
-static uint8_t bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint8_t flags,
-                          uint64_t stamp)
+/* Whether the pending CPU request has an implemented target. The private
+   vector identity intentionally retains its separate flat RAM bus. */
+static bool bus_request_available(const struct lynx_machine *m, uint16_t addr, uint8_t flags)
+{
+    if (m->content_format == LYNX__CONTENT_TEST_FLAT) {
+        return true;
+    }
+    const lynx__bus_route route = lynx__bus_decode(m->mapctl, addr);
+    if (route == LYNX__BUS_ROUTE_RAM) {
+        return true;
+    }
+    return route == LYNX__BUS_ROUTE_MAPCTL && (flags & LYNX__CF_WRITE) != 0u;
+}
+
+/* Performs one granted CPU bus cycle through the same MAPCTL decoder used by
+   the opcode precheck. Unsupported targets never read or write hidden RAM. */
+static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint8_t flags,
+                       uint64_t stamp, uint8_t *result)
 {
     (void)stamp;
-    /* The private vector lane bypasses mapped-device policy before the
-       normal MAPCTL decoder. It exists only to retain flat-bus model evidence. */
+    const bool write = (flags & LYNX__CF_WRITE) != 0u;
     if (m->content_format == LYNX__CONTENT_TEST_FLAT) {
-        if ((flags & LYNX__CF_WRITE) != 0u) {
+        if (write) {
             m->ram[addr] = data;
-            return data;
+            *result = data;
+        } else {
+            *result = m->ram[addr];
         }
-        return m->ram[addr];
+        return true;
     }
-    if ((flags & LYNX__CF_WRITE) != 0u) {
-        if (addr == 0xFFF9u) {
-            /* Deterministic provisional policy: retain every written bit.
-               Reserved-bit and guest readback behavior are not qualified. */
-            m->mapctl = data;
-            return data;
+
+    switch (lynx__bus_decode(m->mapctl, addr)) {
+    case LYNX__BUS_ROUTE_RAM:
+        if (write) {
+            m->ram[addr] = data;
+            *result = data;
+        } else {
+            *result = m->ram[addr];
         }
-        m->ram[addr] = data;
-        return data;
+        return true;
+    case LYNX__BUS_ROUTE_MAPCTL:
+        if (!write) {
+            return false;
+        }
+        /* Provisional policy: retain all eight written bits. */
+        m->mapctl = data;
+        *result = data;
+        return true;
+    case LYNX__BUS_ROUTE_SUZY:
+    case LYNX__BUS_ROUTE_MIKEY:
+    case LYNX__BUS_ROUTE_ROM:
+    case LYNX__BUS_ROUTE_VECTOR:
+        return false;
     }
-    return m->ram[addr];
+    return false;
 }
 
 /* Half-open budget: every bus cycle that can be granted before target is
@@ -342,17 +371,25 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
             }
             m->guest_ticks = m->cpu_ready_at;
         }
+        const uint16_t addr = m->cpu.req_addr;
+        const uint8_t flags = m->cpu.req_flags;
+        if (!bus_request_available(m, addr, flags)) {
+            *stop = LYNX_STOP_UNAVAILABLE;
+            break;
+        }
         if (lynx__cpu_at_boundary(&m->cpu) && m->cpu.req_kind == LYNX__CK_OPCODE &&
-            !lynx__cpu_opcode_defined(m->cpu.profile, bus_peek(m, m->cpu.req_addr))) {
+            !lynx__cpu_opcode_defined(m->cpu.profile, bus_peek(m, addr))) {
             *stop = LYNX_STOP_UNDEFINED;
             break;
         }
         const uint64_t grant = m->guest_ticks; /* no stalls before Phase 4 */
-        const uint16_t addr = m->cpu.req_addr;
         const lynx__bus_timing price =
             lynx__bus_timing_of(m->cost_model, lynx__bus_region_of(addr), m->cpu.req_kind);
-        const uint8_t data =
-            bus_access(m, addr, m->cpu.req_data, m->cpu.req_flags, grant + price.sample);
+        uint8_t data = 0u;
+        if (!bus_access(m, addr, m->cpu.req_data, flags, grant + price.sample, &data)) {
+            *stop = LYNX_STOP_UNAVAILABLE;
+            break;
+        }
         lynx__cpu_complete(&m->cpu, table, data, 0u); /* no interrupt lines before Phase 4 */
         m->cpu_ready_at = grant + price.ticks;
     }
