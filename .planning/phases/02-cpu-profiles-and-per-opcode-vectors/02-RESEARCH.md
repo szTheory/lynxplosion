@@ -449,7 +449,7 @@ void lynx__cpu_repost(lynx__cpu *c, const lynx__cpu_decode *t);                 
 - Dispatch is `switch (mode)` then `switch (step)` for the sequence, and `switch (kind)` for the
   operation; no function pointers, no pointer tables. At fetch completion `opcode = data`, the row
   is read once, and the row's `mode` selects the sequence for the following steps.
-- `lynx__cpu_state_valid` accepts a state iff: `profile <= 2`; `p & 0x30 == 0x30`; `flags` has no
+- `lynx__cpu_state_valid` accepts a state iff: `profile <= 2`; `(p & 0x30) == 0x30`; `flags` has no
   bit outside `0x3F`; `step == 0` implies `opcode == 0 && ea == 0 && tmp == 0`; `step` is below the
   longest step count of the row's mode (a per-mode `const` table of 8-bit lengths); the row of
   `opcode` is defined for the profile when `step > 0` and the sequence is not an interrupt entry.
@@ -1318,42 +1318,58 @@ inventory header and the profile document, never as passed; no owner review is p
 | A7 | NMI hijack and taken-branch IRQ delay are not modelled | 4.4 | Unverified list covers it |
 | A8 | The CMD G65SC02 table (`$x7/$xF` as 1 byte, 1 cycle) is the datasheet alternative for lynx1 | 4.3 | Only if the planner chooses the lens-1 alternative (OQ1) |
 
-## Open Questions (each with a recommendation; the planner marks them RESOLVED)
+## Open Questions (RESOLVED)
+
+Each question below carries its resolution and the plan and task that settle it (planner, 2026-11-09).
 
 1. **OQ1: lynx1 `$x7/$xF` shape.** CONTEXT says follow the source variant; lens 1 preferred 1-byte
    NOPs from the CMD table and lens 4 hand-decoded the tracer assuming 1 byte. Recommendation:
    follow CONTEXT (synertek vector shapes: `$x7` 2-byte, `$xF` 3-byte), flag `F_UNV_SHAPE`, tier
    `state`, reason `shape-unsourced-for-lynx1`. Test 7 cannot tell the difference. Switching later is a
    table edit plus one inventory row change.
+   **RESOLVED: synertek vector shapes (`$x7` 2-byte, `$xF` 3-byte) with `F_UNV_SHAPE`, tier `state`, reason `shape-unsourced-for-lynx1` (02-01 Task 1 table rows; 02-04 Task 2 inventory).**
 2. **OQ2: one or two new registers.** CONTEXT adds `LYNX_REG_CPU_STATE` only. One 32-bit value
    cannot carry the latches, step, opcode, `ea`, `tmp`, ready delta and cost model. Recommendation: two
    ids (`CPU_STATE`, `CPU_LATCH`), `LYNX_REG_COUNT = 8`, so `det.sensitivity_state` can flip every
    field through the public API.
+   **RESOLVED: two ids, `LYNX_REG_CPU_STATE = 6` and `LYNX_REG_CPU_LATCH = 7`, `LYNX_REG_COUNT = 8` (02-09 Task 1; field flips in 02-10 Task 3).**
 3. **OQ3: power-on values.** Recommendation: A=X=Y=0, S=`$FD`, P reads `$34`, all latches clear; mark unverified.
+   **RESOLVED: A=X=Y=0, S=`$FD`, P reads `$34`, latches clear, all unverified (02-01 Task 1 `lynx__cpu_init`; documented in 02-11 Task 1).**
 4. **OQ4: `tier` label.** The gate asserts identical classes for `full` and `state`; the tier only
    selects `--trace` comparability and claim wording. Recommendation: keep it (cheap, CONTEXT
    asks for it), and state this in the inventory header so it is not mistaken for a stronger
    assertion.
+   **RESOLVED: kept as a label; the inventory header states that `full` and `state` rows assert the same fields (02-04 Task 2).**
 5. **OQ5: UNDEFINED versus in-flight time.** Recommendation: the rule in 4.5 (advance to
    `cpu_ready_at`, then stop; BUDGET wins when `guest_ticks == target`).
+   **RESOLVED: the 4.5 rule; BUDGET wins when `guest_ticks == target`, the next call reports UNDEFINED (02-09 Task 1; tested in 02-09 Task 2).**
 6. **OQ6: poison.** Recommendation: address-hashed, formula in 5.4; keep the formula in the
    inventory header (`poison = hash167`) so a change is reviewed.
+   **RESOLVED: address-hashed `(a*167+13)>>3`, recorded in the inventory header (02-04 Task 2; proven non-vacuous by the reverse control in 02-05 Task 1).**
 7. **OQ7: table argument versus profile index.** Recommendation: pass `const lynx__cpu_decode *` to
    `complete` (needed for the mutant control without core changes).
+   **RESOLVED: `lynx__cpu_complete` takes a `const lynx__cpu_decode *` table argument (02-01 Task 1; used by the mutant controls in 02-05 Task 1 and 02-06 Task 2).**
 8. **OQ8: sample sections.** Recommendation: freeze the container header in 5.2 and the grammar in
    5.3 in the plan, including `lines L` per section.
+   **RESOLVED: container header and grammar frozen as written, including `lines L` (02-03 Task 1 writer; 02-04 Task 1 reader).**
 9. **OQ9: CI trigger for the full lane.** Recommendation: none in Phase 2; measure once at
    verification (`time sh scripts/vectors-full.sh run`), record, decide at the CI efficiency review.
+   **RESOLVED: no CI trigger in Phase 2; wall time measured at verification and decided in the CI efficiency review (02-11 Tasks 2 and 3).**
 10. **OQ10: directed edge vectors.** The sample contains no `JMP ($xxFF)`. Recommendation: author
     them (5.7) rather than increasing N; the full lane finds sample escapes.
+   **RESOLVED: directed authored scenario vectors (02-06 Task 2); the full lane is the backstop (02-11 Task 2).**
 11. **OQ11: `api.seam_agreement` size.** Recommendation: one vector per opcode per profile (512
     restores of 64 KiB, well under 1 s).
+   **RESOLVED: one vector per run-row opcode per profile, including `none` (02-10 Task 2).**
 12. **OQ12: reset sequence stack cycles.** Recommendation: reads, marked chosen and unverified.
+   **RESOLVED: three STACK_READ cycles, marked chosen and unverified (02-01 Task 3).**
 13. **OQ13: where the ca65 compare runs.** Recommendation: the assembly happens in a new `check.sh`
     step after `probe` (needs the pinned toolchain, like `toolchain.probe`); the CTest compare reads
     `build/toolchain/*.bin`, and a missing file prints "run scripts/check.sh" like `toolchain_probe.cmake`.
+   **RESOLVED: assembly in a `check.sh` step `cpu-fixtures` after `probe`, CTest byte comparison `fixtures.cpu_asm` (02-07 Task 2).**
 14. **OQ14: `$5C` cycles.** Sheets say 8, vectors say 4. Recommendation: 4 (vectors) with `state` tier and
     `cycles-conflict-sources`; nothing asserts it.
+   **RESOLVED: 4 cycles (vector shape), tier `state`, reason `cycles-conflict-sources` (02-01 Task 1; 02-04 Task 2).**
 
 ## Flagged Risks
 

@@ -126,7 +126,7 @@ Plans:
 - [ ] 02-03-PLAN.md — Pinned SingleStepTests sample, pin record, licence, manifests, provenance; vectors-full.sh pin/sample (CPU-01)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 02-04-PLAN.md — Strict reader, vector runner, committed per-profile inventories, cpu.vectors.lynx1/lynx2 (CPU-01, CPU-02)
+- [ ] 02-04-PLAN.md — Strict reader, vector runner, committed per-profile inventories, cpu.vectors.none/lynx1/lynx2 (CPU-01, CPU-02)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 02-05-PLAN.md — Wrong-profile and other named-fault controls, pin lint, full-lane run mode (CPU-05, CPU-01)
