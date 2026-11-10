@@ -1367,6 +1367,44 @@ static void snapshot_forged_cpu_states(void)
     CHECK_EQ_U64(((struct lynx_machine *)buf_b)->cpu.step, 3u);
 }
 
+/* The guest-time limit through a snapshot (WR-03): a state at the limit is
+   reachable and restores, with the last cycle ending up to 255 ticks past it;
+   lynx_advance then returns LYNX_OK, LYNX_STOP_BUDGET and consumed 0 (the
+   documented signal for the end of guest time). One tick above the limit is
+   refused, instance untouched. */
+static void snapshot_tick_limit(void)
+{
+    const uint64_t limit = UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM;
+    lynx_machine *src = snap_instance(machine_buf, SNAP_SEED, churn_loop, sizeof churn_loop, 0x0200u);
+    lynx_machine *dst = snap_instance(buf_b, SNAP_SEED, churn_loop, sizeof churn_loop, 0x0200u);
+    if (src == NULL || dst == NULL) {
+        return;
+    }
+    advance_ticks(src, 2063u); /* inside an instruction and inside a cycle */
+    CHECK_EQ_U64(save_into(src, blob_c), 0u);
+    memcpy(snap_b, buf_b, MSIZE);
+    memcpy(blob_bad, blob_c, SNAP_TOTAL);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, limit + 1u, 8u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, limit + 1u, 8u);
+    rehash_payload(blob_bad);
+    RESTORE_EXPECT(dst, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_b);
+    /* At the limit, with a cycle ending 254 ticks past it. */
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, limit, 8u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, limit + 254u, 8u);
+    rehash_payload(blob_bad);
+    CHECK_EQ_U64(lynx_snapshot_restore(dst, blob_bad, SNAP_TOTAL), LYNX_OK);
+    uint64_t ticks = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(dst, &ticks), LYNX_OK);
+    CHECK_EQ_U64(ticks, limit);
+    uint64_t consumed = 99u;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(dst, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(lynx_guest_ticks(dst, &ticks), LYNX_OK);
+    CHECK_EQ_U64(ticks, limit);
+}
+
 static void case_snapshot_refusal(void)
 {
     lynx_machine *m = snap_instance(machine_buf, SNAP_SEED, churn_loop, sizeof churn_loop, 0x0200u);
@@ -1509,6 +1547,19 @@ static void case_snapshot_refusal(void)
     VALUE_REFUSED(m, blob_v, PAY_READY_AT, ticks + 256u, 8u, snap_a);   /* beyond +255 */
     VALUE_REFUSED(m, blob_v, PAY_READY_AT, ticks - 1u, 8u, snap_a);     /* before guest time */
     VALUE_REFUSED(m, blob_v, PAY_READY_AT, UINT64_MAX, 8u, snap_a);
+    /* Guest time above the lynx_advance limit is a state no run reaches (WR-03):
+       the span check alone passes these (ready == ticks), the limit check refuses. */
+    {
+        const uint64_t limit = UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM;
+        static const uint64_t past_limit[] = {1u, 2u, 255u, 0x10000u};
+        for (size_t i = 0u; i < sizeof past_limit / sizeof past_limit[0]; i++) {
+            memcpy(blob_bad, blob_v, SNAP_TOTAL);
+            put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, limit + past_limit[i], 8u);
+            put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, limit + past_limit[i], 8u);
+            rehash_payload(blob_bad);
+            RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+        }
+    }
 
     /* The reverse cost-model case: a test_skew instance refuses a flat5 blob. */
     CHECK_EQ_U64(lynx__machine_set_cost_model(m, LYNX__COST_TEST_SKEW), LYNX_OK);
@@ -1553,6 +1604,7 @@ static void case_snapshot_refusal(void)
     CHECK_UNCHANGED(machine_buf, at_top);
 
     snapshot_forged_cpu_states();
+    snapshot_tick_limit();
 }
 
 /* ---- the CPU programs with hand-derived values (API-03, CPU-02, CPU-03) ---- */

@@ -170,7 +170,13 @@ lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t le
    or changed, and a repeated call stops at the same place with *consumed 0.
 
    Guest time never wraps: no cycle is started whose end could come within
-   65,536 ticks of the 64-bit limit. */
+   65,536 ticks of the 64-bit limit (guest time never exceeds UINT64_MAX -
+   65,536). At that limit lynx_advance is not an error and has no stop reason
+   of its own: it returns LYNX_OK with LYNX_STOP_BUDGET and a *consumed below
+   budget, and *consumed is 0 once the limit is reached. A host loop that
+   subtracts *consumed from a remaining budget must therefore treat a
+   LYNX_STOP_BUDGET return with *consumed 0 and a non-zero budget as the end
+   of guest time, not as progress to retry. */
 lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
                          lynx_stop_reason *stop);
 
@@ -234,7 +240,10 @@ const char *lynx_build_id(void);
    hash, then every field value. Only then does it apply the state. A refused
    restore leaves the machine byte-identical. LYNX_ERR_SNAPSHOT_INVALID means
    malformed or corrupted, LYNX_ERR_SNAPSHOT_VERSION an unsupported format
-   version, LYNX_ERR_SNAPSHOT_MISMATCH another build or identity. */
+   version, LYNX_ERR_SNAPSHOT_MISMATCH another build or identity. A state no
+   run reaches is malformed: a CPU field combination real execution never
+   produces, or a guest time above UINT64_MAX - 65,536 (the lynx_advance
+   limit), is refused as LYNX_ERR_SNAPSHOT_INVALID. */
 lynx_status lynx_snapshot_size(const lynx_machine *m, size_t *size);
 lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, size_t *written);
 lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t len);

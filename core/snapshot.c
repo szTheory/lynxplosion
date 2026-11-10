@@ -313,6 +313,14 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     if (ready < ticks || ready - ticks > 255u) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
+    /* Guest time never passes the limit lynx_advance enforces, so a state
+       beyond it is one no run reaches: lynx_advance would report success with
+       nothing consumed forever. ready may exceed the limit by the duration of
+       the last cycle (a cycle granted just below it), which the span check
+       above bounds; ticks itself may equal the limit. */
+    if (ticks > UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM) {
+        return LYNX_ERR_SNAPSHOT_INVALID;
+    }
 
     /* Apply: one step, field by field, no failure path. The pending bus
        request is recomputed from the restored state. */
