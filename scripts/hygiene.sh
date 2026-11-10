@@ -37,12 +37,16 @@ HOME_OK='(/Users/|/home/)runner'
 # Any address except GitHub noreply, the AI co-author noreply, documentation
 # domains and SSH remotes.
 EMAIL='[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z][A-Za-z]+'
-EMAIL_OK='@users\.noreply\.github\.com|noreply@github\.com|noreply@anthropic\.com|@example\.(com|org|net)|git@github\.com'
+EMAIL_OK='[A-Za-z0-9._%+-]+@users\.noreply\.github\.com|noreply@github\.com|noreply@anthropic\.com|[A-Za-z0-9._%+-]+@example\.(com|org|net)|git@github\.com'
 # Credential-shaped tokens: GitHub, AWS, PEM private keys, Slack, Google API.
 CREDENTIAL='ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|gh[ousr]_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}'
 
-# stdin is text. True if some line matches $1 and does not match $2.
-leaks() { grep -E -e "$1" | grep -v -E -e "$2" | grep -q .; }
+# stdin is text. True if some match of $1 is not, as a whole, an allowed form $2.
+# Only the matches are tested (-o), and an allowed form must be the entire match,
+# so an allowed token cannot hide a leak on the same line or inside a longer name.
+leaks() { grep -E -o -e "$1" | grep -v -E -e "^($2)\$" | grep -q .; }
+# stdin is a list of matches (git grep -o). True if one is not, as a whole, allowed.
+unallowed() { grep -v -E -e "^($1)\$" | grep -q .; }
 # stdin is text. True if some line matches $1.
 has() { grep -q -E -e "$1"; }
 
@@ -121,10 +125,10 @@ case $mode in
   --history)
     [ $# -gt 0 ] || set -- --all
     for c in $(git rev-list "$@"); do
-      if git grep -I -h -E -e "$HOME_PATH" "$c" -- . ":!$SELF" 2>/dev/null | grep -v -E -e "$HOME_OK" | grep -q .; then
+      if git grep -I -h -o -E -e "$HOME_PATH" "$c" -- . ":!$SELF" 2>/dev/null | unallowed "$HOME_OK"; then
         found 'home path' "commit $c"
       fi
-      if git grep -I -h -E -e "$EMAIL" "$c" -- . ":!$SELF" 2>/dev/null | grep -v -E -e "$EMAIL_OK" | grep -q .; then
+      if git grep -I -h -o -E -e "$EMAIL" "$c" -- . ":!$SELF" 2>/dev/null | unallowed "$EMAIL_OK"; then
         found 'email' "commit $c"
       fi
       if git grep -I -h -E -e "$CREDENTIAL" "$c" -- . ":!$SELF" 2>/dev/null | grep -q .; then

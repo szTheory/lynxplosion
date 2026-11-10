@@ -125,6 +125,17 @@ accept allowed_forms tree
 rm -f "$iso/allowed.txt"
 ok allowed_forms_accepted
 
+# An allowed token never hides a leak on the same line, and an allowed form is
+# matched as a whole token, not as a substring of a longer name (CR-01).
+case_text same_line_email notes.txt "contact $fake_email or git${at}github.com" 'hygiene: email: '
+case_text same_line_email_reversed notes.txt "git${at}github.com or $fake_email" 'hygiene: email: '
+case_text same_line_noreply notes.txt "noreply${at}anthropic.com and $fake_email" 'hygiene: email: '
+case_text same_line_home notes.txt "/home/runner/x and $fake_home/y" 'hygiene: home path: '
+case_text same_line_home_reversed notes.txt "$fake_home/y and /home/runner/x" 'hygiene: home path: '
+case_text email_suffix_of_allowed notes.txt "digit${at}github.com" 'hygiene: email: '
+case_text email_prefix_of_allowed notes.txt "user${at}example.com.$home_c.io" 'hygiene: email: '
+case_text home_prefix_of_allowed notes.txt "/home/runner$home_c/x" 'hygiene: home path: '
+
 # A binary file is owned by the binary scan; this scan does not read it.
 {
   printf '\000\001 %s\n' "$fake_home"
@@ -216,6 +227,46 @@ reject history_message_path history 'hygiene: home path: message of '
 )
 accept history_message_removed history
 ok history_home_path_in_message
+
+# The same-line cases in history: a blob and a message (CR-01).
+(
+  cd "$iso"
+  printf '%s\n' "$fake_home/y and /home/runner/x" >d.txt
+  git add d.txt
+  git commit -q -m "add d"
+)
+reject history_blob_same_line_home history 'hygiene: home path: commit '
+(
+  cd "$iso"
+  git reset -q --hard HEAD~1
+)
+accept history_blob_same_line_removed history
+(
+  cd "$iso"
+  printf '%s\n' "contact $fake_email or git${at}github.com" >d.txt
+  git add d.txt
+  git commit -q -m "add d"
+)
+reject history_blob_same_line_email history 'hygiene: email: commit '
+(
+  cd "$iso"
+  git reset -q --hard HEAD~1
+)
+accept history_blob_same_line_email_removed history
+(
+  cd "$iso"
+  printf 'four\n' >e.txt
+  git add e.txt
+  git commit -q -m "mail $fake_email or git${at}github.com, dir /home/runner/x and $fake_home/z"
+)
+reject history_message_same_line_email history 'hygiene: email: message of '
+reject history_message_same_line_home history 'hygiene: home path: message of '
+(
+  cd "$iso"
+  git reset -q --hard HEAD~1
+)
+accept history_message_same_line_removed history
+ok history_same_line_leaks
 
 # The repository itself was not touched.
 if [ -n "$(find "$repo" -name 'secret.txt' -print 2>/dev/null)" ]; then
