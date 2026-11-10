@@ -1,0 +1,665 @@
+/* Independent parser for the consumer's bounded P3 snapshot and PCM WAV.
+   This file intentionally includes no emulator or runner headers. */
+#include <ctype.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+enum {
+    PPM_LIMIT = 4096,
+    MANIFEST_LIMIT = 2048,
+    WAV_DATA_BYTES = 1600,
+    WAV_SIZE = 44 + WAV_DATA_BYTES,
+    FIELD_COUNT = 12,
+    VALUE_CAP = 160
+};
+
+typedef enum field_id {
+    FIELD_ARTIFACT = 0,
+    FIELD_IMAGE_FORMAT,
+    FIELD_WIDTH,
+    FIELD_HEIGHT,
+    FIELD_GUEST_TICK,
+    FIELD_STARTUP,
+    FIELD_PROFILE,
+    FIELD_CONTENT_SHA256,
+    FIELD_PALETTE,
+    FIELD_INTERPRETATION,
+    FIELD_AUDIO,
+    FIELD_WAV
+} field_id;
+
+typedef struct fields {
+    char value[FIELD_COUNT][VALUE_CAP];
+    unsigned present;
+} fields;
+
+static const char *const field_names[FIELD_COUNT] = {
+    "artifact", "image_format", "width", "height", "guest_tick", "startup",
+    "profile", "content_sha256", "palette", "interpretation", "audio", "wav"
+};
+
+static void set_error(char *error, size_t cap, const char *message)
+{
+    if (cap > 0u) {
+        (void)snprintf(error, cap, "%s", message);
+    }
+}
+
+static int path_join(const char *directory, const char *name, char *out, size_t cap)
+{
+    int length = snprintf(out, cap, "%s/%s", directory, name);
+    return length < 0 || (size_t)length >= cap ? 1 : 0;
+}
+
+static int read_bounded(const char *path, size_t limit, uint8_t **out,
+                        size_t *length, char *error, size_t error_cap)
+{
+    FILE *file = fopen(path, "rb");
+    uint8_t *buffer;
+    size_t got;
+    int extra;
+    int failed;
+    if (file == NULL) {
+        set_error(error, error_cap, "cannot open artifact; provide a complete consumer output directory");
+        return 1;
+    }
+    buffer = malloc(limit == 0u ? 1u : limit);
+    if (buffer == NULL) {
+        (void)fclose(file);
+        set_error(error, error_cap, "cannot allocate bounded artifact buffer; reduce the input size");
+        return 1;
+    }
+    got = fread(buffer, 1u, limit, file);
+    extra = fgetc(file);
+    failed = ferror(file) != 0;
+    if (fclose(file) != 0) {
+        failed = 1;
+    }
+    if (failed != 0 || extra != EOF) {
+        free(buffer);
+        set_error(error, error_cap, "artifact exceeds its size bound or could not be read; regenerate the diagnostic output");
+        return 1;
+    }
+    *out = buffer;
+    *length = got;
+    return 0;
+}
+
+static int lookup_field(const char *key, size_t key_len, field_id *id)
+{
+    unsigned index;
+    for (index = 0u; index < FIELD_COUNT; index++) {
+        if (strlen(field_names[index]) == key_len &&
+            memcmp(field_names[index], key, key_len) == 0) {
+            *id = (field_id)index;
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int parse_field_lines(const uint8_t *text, size_t length, int comments,
+                             fields *out, size_t *end_offset, char *error,
+                             size_t error_cap)
+{
+    size_t offset = 0u;
+    memset(out, 0, sizeof *out);
+    while (offset < length) {
+        size_t line_len = 0u;
+        size_t start;
+        size_t delimiter = SIZE_MAX;
+        size_t cursor;
+        field_id id;
+        unsigned bit;
+        while (offset + line_len < length && text[offset + line_len] != (uint8_t)'\n') {
+            line_len++;
+        }
+        if (line_len == 0u || line_len > 255u || offset + line_len == length ||
+            memchr(text + offset, '\r', line_len) != NULL ||
+            memchr(text + offset, '\0', line_len) != NULL) {
+            set_error(error, error_cap, "metadata line is empty, overlong, or missing LF; regenerate the artifact metadata");
+            return 1;
+        }
+        if (comments != 0) {
+            if (text[offset] != (uint8_t)'#') {
+                *end_offset = offset;
+                return 0;
+            }
+            if (line_len < 4u || text[offset + 1u] != (uint8_t)' ') {
+                set_error(error, error_cap, "PPM metadata comment is malformed; regenerate the diagnostic P3 header");
+                return 1;
+            }
+            start = offset + 2u;
+        } else {
+            start = offset;
+        }
+        for (cursor = start; cursor + 2u < offset + line_len; cursor++) {
+            if (text[cursor] == (uint8_t)' ' && text[cursor + 1u] == (uint8_t)'=' &&
+                text[cursor + 2u] == (uint8_t)' ') {
+                delimiter = cursor;
+                break;
+            }
+        }
+        if (delimiter == SIZE_MAX || delimiter == start ||
+            lookup_field((const char *)(text + start), delimiter - start, &id) != 0) {
+            set_error(error, error_cap, "metadata contains an unknown field or lacks ' = '; regenerate from the diagnostic consumer");
+            return 1;
+        }
+        bit = 1u << (unsigned)id;
+        if ((out->present & bit) != 0u) {
+            set_error(error, error_cap, "metadata repeats a field; regenerate a single complete manifest");
+            return 1;
+        }
+        {
+            size_t value_start = delimiter + 3u;
+            size_t value_len = offset + line_len - value_start;
+            if (value_len == 0u || value_len >= VALUE_CAP ||
+                memchr(text + value_start, '\t', value_len) != NULL) {
+                set_error(error, error_cap, "metadata value is empty or exceeds its bound; regenerate the artifact");
+                return 1;
+            }
+            memcpy(out->value[id], text + value_start, value_len);
+            out->value[id][value_len] = '\0';
+        }
+        out->present |= bit;
+        offset += line_len + 1u;
+    }
+    *end_offset = offset;
+    return 0;
+}
+
+static int expect_field(const fields *parsed, field_id id, const char *expected,
+                        char *error, size_t error_cap)
+{
+    unsigned bit = 1u << (unsigned)id;
+    if ((parsed->present & bit) == 0u || strcmp(parsed->value[id], expected) != 0) {
+        (void)snprintf(error, error_cap,
+                       "metadata field %s is missing or incorrect; regenerate a Phase 3 diagnostic snapshot",
+                       field_names[id]);
+        return 1;
+    }
+    return 0;
+}
+
+static int valid_sha256(const char *value)
+{
+    size_t index;
+    if (strlen(value) != 64u) {
+        return 0;
+    }
+    for (index = 0u; index < 64u; index++) {
+        unsigned char ch = (unsigned char)value[index];
+        if (!((ch >= (unsigned char)'0' && ch <= (unsigned char)'9') ||
+              (ch >= (unsigned char)'a' && ch <= (unsigned char)'f'))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int valid_profile(const char *value)
+{
+    return strcmp(value, "none") == 0 || strcmp(value, "lynx1") == 0 ||
+           strcmp(value, "lynx2") == 0;
+}
+
+static int validate_ppm(const uint8_t *ppm, size_t length, fields *image_fields,
+                        char *error, size_t error_cap)
+{
+    size_t offset = 0u;
+    size_t data_offset = 0u;
+    size_t samples = 0u;
+    unsigned y;
+    if (length == 0u || memchr(ppm, '\0', length) != NULL) {
+        set_error(error, error_cap, "snapshot.ppm is empty or contains NUL; regenerate the P3 snapshot");
+        return 1;
+    }
+    if (length < 3u || memcmp(ppm, "P3\n", 3u) != 0) {
+        set_error(error, error_cap, "snapshot.ppm is not plain P3; regenerate the unscaled diagnostic snapshot");
+        return 1;
+    }
+    offset = 3u;
+    if (parse_field_lines(ppm + offset, length - offset, 1, image_fields,
+                          &data_offset, error, error_cap) != 0) {
+        return 1;
+    }
+    offset += data_offset;
+    if (offset > length || length - offset < 1u) {
+        set_error(error, error_cap, "snapshot.ppm header is truncated; regenerate the 8x8 P3 snapshot");
+        return 1;
+    }
+    {
+        static const char dimension_line[] = "8 8\n255\n";
+        size_t n = sizeof dimension_line - 1u;
+        if (length - offset < n || memcmp(ppm + offset, dimension_line, n) != 0) {
+            set_error(error, error_cap, "snapshot.ppm dimensions or max value are not 8x8/255; regenerate the original diagnostic snapshot");
+            return 1;
+        }
+        offset += n;
+    }
+    for (y = 0u; y < 8u; y++) {
+        unsigned x;
+        for (x = 0u; x < 8u; x++) {
+            unsigned component;
+            unsigned pen = (x + 2u * y) & 15u;
+            unsigned expected[3] = {
+                pen * 17u,
+                (15u - pen) * 17u,
+                ((pen * 3u) & 15u) * 17u
+            };
+            for (component = 0u; component < 3u; component++) {
+                size_t token_start;
+                unsigned value = 0u;
+                while (offset < length && isspace((unsigned char)ppm[offset]) != 0) {
+                    offset++;
+                }
+                token_start = offset;
+                while (offset < length && ppm[offset] >= (uint8_t)'0' &&
+                       ppm[offset] <= (uint8_t)'9') {
+                    unsigned digit = (unsigned)(ppm[offset] - (uint8_t)'0');
+                    if (value > 25u || (value == 25u && digit > 5u)) {
+                        set_error(error, error_cap, "snapshot.ppm sample exceeds 255; regenerate the diagnostic palette output");
+                        return 1;
+                    }
+                    value = value * 10u + digit;
+                    offset++;
+                }
+                if (offset == token_start || value != expected[component]) {
+                    set_error(error, error_cap, "snapshot.ppm pixel differs from diagnostic-palette-v1; regenerate from the validated guest pixels");
+                    return 1;
+                }
+                samples++;
+                if (samples > 192u) {
+                    set_error(error, error_cap, "snapshot.ppm has more than 192 color samples; regenerate the exact 8x8 output");
+                    return 1;
+                }
+            }
+        }
+    }
+    while (offset < length && isspace((unsigned char)ppm[offset]) != 0) {
+        offset++;
+    }
+    if (samples != 192u || offset != length) {
+        set_error(error, error_cap, "snapshot.ppm sample count or trailing data is invalid; regenerate the exact 8x8 output");
+        return 1;
+    }
+    (void)data_offset;
+    return 0;
+}
+
+static uint16_t load_u16le(const uint8_t *bytes)
+{
+    return (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8));
+}
+
+static uint32_t load_u32le(const uint8_t *bytes)
+{
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+}
+
+static int validate_wav(const uint8_t *wav, size_t length, char *error,
+                        size_t error_cap)
+{
+    if (length != WAV_SIZE || memcmp(wav, "RIFF", 4u) != 0 ||
+        memcmp(wav + 8u, "WAVEfmt ", 8u) != 0 ||
+        memcmp(wav + 36u, "data", 4u) != 0) {
+        set_error(error, error_cap, "silence.wav is not the exact bounded RIFF/WAVE layout; regenerate the placeholder output");
+        return 1;
+    }
+    if (load_u32le(wav + 4u) != (uint32_t)(WAV_SIZE - 8) ||
+        load_u32le(wav + 16u) != 16u || load_u16le(wav + 20u) != 1u ||
+        load_u16le(wav + 22u) != 1u || load_u32le(wav + 24u) != 8000u ||
+        load_u32le(wav + 28u) != 16000u || load_u16le(wav + 32u) != 2u ||
+        load_u16le(wav + 34u) != 16u || load_u32le(wav + 40u) != WAV_DATA_BYTES) {
+        set_error(error, error_cap, "silence.wav chunk sizes or PCM format are invalid; regenerate mono 8000Hz signed16le placeholder silence");
+        return 1;
+    }
+    if (memchr(wav + 44u, 1, WAV_DATA_BYTES) != NULL) {
+        set_error(error, error_cap, "silence.wav contains non-zero placeholder samples; regenerate the 800-sample silence block");
+        return 1;
+    }
+    {
+        size_t index;
+        for (index = 44u; index < length; index++) {
+            if (wav[index] != 0u) {
+                set_error(error, error_cap, "silence.wav contains non-zero placeholder samples; regenerate the 800-sample silence block");
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int validate_directory(const char *directory, char *error, size_t error_cap)
+{
+    uint8_t *ppm = NULL;
+    uint8_t *manifest = NULL;
+    uint8_t *wav = NULL;
+    size_t ppm_len = 0u;
+    size_t manifest_len = 0u;
+    size_t wav_len = 0u;
+    size_t ppm_data_offset = 0u;
+    fields ppm_fields;
+    fields manifest_fields;
+    char path[4096];
+    int result = 1;
+    const unsigned required_ppm = (1u << FIELD_ARTIFACT) | (1u << FIELD_GUEST_TICK) |
+        (1u << FIELD_STARTUP) | (1u << FIELD_PROFILE) | (1u << FIELD_CONTENT_SHA256) |
+        (1u << FIELD_PALETTE) | (1u << FIELD_INTERPRETATION);
+    const unsigned required_manifest = (1u << FIELD_COUNT) - 1u;
+
+    if (directory == NULL || strlen(directory) >= sizeof path - sizeof("/snapshot.manifest")) {
+        set_error(error, error_cap, "output directory path exceeds its bound; choose a shorter destination path");
+        goto done;
+    }
+    if (path_join(directory, "snapshot.ppm", path, sizeof path) != 0 ||
+        read_bounded(path, PPM_LIMIT, &ppm, &ppm_len, error, error_cap) != 0) {
+        goto done;
+    }
+    if (path_join(directory, "snapshot.manifest", path, sizeof path) != 0 ||
+        read_bounded(path, MANIFEST_LIMIT, &manifest, &manifest_len, error, error_cap) != 0) {
+        goto done;
+    }
+    if (path_join(directory, "silence.wav", path, sizeof path) != 0 ||
+        read_bounded(path, WAV_SIZE, &wav, &wav_len, error, error_cap) != 0) {
+        goto done;
+    }
+    if (validate_ppm(ppm, ppm_len, &ppm_fields, error, error_cap) != 0 ||
+        parse_field_lines(manifest, manifest_len, 0, &manifest_fields,
+                          &ppm_data_offset, error, error_cap) != 0) {
+        goto done;
+    }
+    if (ppm_fields.present != required_ppm) {
+        set_error(error, error_cap, "snapshot PPM comments have missing or unexpected fields; regenerate the complete diagnostic metadata");
+        goto done;
+    }
+    if (manifest_fields.present != required_manifest) {
+        unsigned index;
+        for (index = 0u; index < FIELD_COUNT; index++) {
+            if ((manifest_fields.present & (1u << index)) == 0u) {
+                (void)snprintf(error, error_cap,
+                    "metadata field %s is missing; regenerate the complete diagnostic manifest",
+                    field_names[index]);
+                break;
+            }
+        }
+        if (manifest_fields.present == required_manifest) {
+            set_error(error, error_cap, "snapshot manifest contains unexpected fields; regenerate the complete diagnostic manifest");
+        }
+        goto done;
+    }
+    if (expect_field(&manifest_fields, FIELD_ARTIFACT, "SNAPSHOT", error, error_cap) != 0 ||
+        expect_field(&manifest_fields, FIELD_IMAGE_FORMAT, "P3", error, error_cap) != 0 ||
+        expect_field(&manifest_fields, FIELD_WIDTH, "8", error, error_cap) != 0 ||
+        expect_field(&manifest_fields, FIELD_HEIGHT, "8", error, error_cap) != 0 ||
+        expect_field(&manifest_fields, FIELD_GUEST_TICK, "5000", error, error_cap) != 0 ||
+        expect_field(&manifest_fields, FIELD_STARTUP, "A", error, error_cap) != 0 ||
+        expect_field(&manifest_fields, FIELD_PALETTE, "diagnostic-palette-v1", error, error_cap) != 0 ||
+        expect_field(&manifest_fields, FIELD_INTERPRETATION,
+                     "diagnostic-owned pixels; no canonical Lynx video claim", error, error_cap) != 0 ||
+        expect_field(&manifest_fields, FIELD_AUDIO, "placeholder silence pending Phase6", error, error_cap) != 0 ||
+        expect_field(&manifest_fields, FIELD_WAV, "PCM mono 8000Hz signed16le; 800 zero samples", error, error_cap) != 0) {
+        goto done;
+    }
+    if (!valid_profile(manifest_fields.value[FIELD_PROFILE]) ||
+        !valid_sha256(manifest_fields.value[FIELD_CONTENT_SHA256]) ||
+        strcmp(ppm_fields.value[FIELD_ARTIFACT], manifest_fields.value[FIELD_ARTIFACT]) != 0 ||
+        strcmp(ppm_fields.value[FIELD_GUEST_TICK], manifest_fields.value[FIELD_GUEST_TICK]) != 0 ||
+        strcmp(ppm_fields.value[FIELD_STARTUP], manifest_fields.value[FIELD_STARTUP]) != 0 ||
+        strcmp(ppm_fields.value[FIELD_PROFILE], manifest_fields.value[FIELD_PROFILE]) != 0 ||
+        strcmp(ppm_fields.value[FIELD_CONTENT_SHA256], manifest_fields.value[FIELD_CONTENT_SHA256]) != 0 ||
+        strcmp(ppm_fields.value[FIELD_PALETTE], manifest_fields.value[FIELD_PALETTE]) != 0 ||
+        strcmp(ppm_fields.value[FIELD_INTERPRETATION], manifest_fields.value[FIELD_INTERPRETATION]) != 0) {
+        set_error(error, error_cap, "snapshot comment and manifest identity disagree; regenerate both from one accepted BLL run");
+        goto done;
+    }
+    if (expect_field(&ppm_fields, FIELD_ARTIFACT, "SNAPSHOT", error, error_cap) != 0 ||
+        expect_field(&ppm_fields, FIELD_GUEST_TICK, "5000", error, error_cap) != 0 ||
+        expect_field(&ppm_fields, FIELD_STARTUP, "A", error, error_cap) != 0 ||
+        expect_field(&ppm_fields, FIELD_PALETTE, "diagnostic-palette-v1", error, error_cap) != 0 ||
+        expect_field(&ppm_fields, FIELD_INTERPRETATION,
+                     "diagnostic-owned pixels; no canonical Lynx video claim", error, error_cap) != 0) {
+        goto done;
+    }
+    if (validate_wav(wav, wav_len, error, error_cap) != 0) {
+        goto done;
+    }
+    result = 0;
+done:
+    free(ppm);
+    free(manifest);
+    free(wav);
+    (void)ppm_data_offset;
+    return result;
+}
+
+static int write_owned_file(const char *path, const void *bytes, size_t length)
+{
+    FILE *file = fopen(path, "wb");
+    int failed;
+    if (file == NULL) {
+        return 1;
+    }
+    failed = fwrite(bytes, 1u, length, file) != length;
+    if (fclose(file) != 0) {
+        failed = 1;
+    }
+    return failed;
+}
+
+static int build_sample_ppm(char *out, size_t cap, int corrupt_pixel)
+{
+    size_t used = 0u;
+    unsigned y;
+    int n = snprintf(out, cap,
+        "P3\n"
+        "# artifact = SNAPSHOT\n"
+        "# guest_tick = 5000\n"
+        "# startup = A\n"
+        "# profile = none\n"
+        "# content_sha256 = 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
+        "# palette = diagnostic-palette-v1\n"
+        "# interpretation = diagnostic-owned pixels; no canonical Lynx video claim\n"
+        "8 8\n255\n");
+    if (n < 0 || (size_t)n >= cap) {
+        return 1;
+    }
+    used = (size_t)n;
+    for (y = 0u; y < 8u; y++) {
+        unsigned x;
+        for (x = 0u; x < 8u; x++) {
+            unsigned pen = (x + 2u * y) & 15u;
+            unsigned red = pen * 17u;
+            unsigned green = (15u - pen) * 17u;
+            unsigned blue = ((pen * 3u) & 15u) * 17u;
+            if (corrupt_pixel != 0 && x == 0u && y == 0u) {
+                red = 1u;
+            }
+            n = snprintf(out + used, cap - used, "%u %u %u%s", red, green, blue,
+                         x == 7u ? "\n" : " ");
+            if (n < 0 || (size_t)n >= cap - used) {
+                return 1;
+            }
+            used += (size_t)n;
+        }
+    }
+    return (int)used;
+}
+
+static int build_sample_manifest(char *out, size_t cap, int omit_hash)
+{
+    int n;
+    if (omit_hash != 0) {
+        n = snprintf(out, cap,
+            "artifact = SNAPSHOT\nimage_format = P3\nwidth = 8\nheight = 8\n"
+            "guest_tick = 5000\nstartup = A\nprofile = none\n"
+            "palette = diagnostic-palette-v1\n"
+            "interpretation = diagnostic-owned pixels; no canonical Lynx video claim\n"
+            "audio = placeholder silence pending Phase6\n"
+            "wav = PCM mono 8000Hz signed16le; 800 zero samples\n");
+    } else {
+        n = snprintf(out, cap,
+            "artifact = SNAPSHOT\nimage_format = P3\nwidth = 8\nheight = 8\n"
+            "guest_tick = 5000\nstartup = A\nprofile = none\n"
+            "content_sha256 = 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
+            "palette = diagnostic-palette-v1\n"
+            "interpretation = diagnostic-owned pixels; no canonical Lynx video claim\n"
+            "audio = placeholder silence pending Phase6\n"
+            "wav = PCM mono 8000Hz signed16le; 800 zero samples\n");
+    }
+    return n < 0 || (size_t)n >= cap ? -1 : n;
+}
+
+static void store_u16le(uint8_t *bytes, uint16_t value)
+{
+    bytes[0] = (uint8_t)(value & 0xFFu);
+    bytes[1] = (uint8_t)(value >> 8);
+}
+
+static void store_u32le(uint8_t *bytes, uint32_t value)
+{
+    bytes[0] = (uint8_t)(value & 0xFFu);
+    bytes[1] = (uint8_t)((value >> 8) & 0xFFu);
+    bytes[2] = (uint8_t)((value >> 16) & 0xFFu);
+    bytes[3] = (uint8_t)(value >> 24);
+}
+
+static int build_sample_wav(uint8_t out[WAV_SIZE], int corrupt_length)
+{
+    memset(out, 0, WAV_SIZE);
+    memcpy(out, "RIFF", 4u);
+    store_u32le(out + 4u, (uint32_t)(WAV_SIZE - 8) - (corrupt_length != 0 ? 1u : 0u));
+    memcpy(out + 8u, "WAVEfmt ", 8u);
+    store_u32le(out + 16u, 16u);
+    store_u16le(out + 20u, 1u);
+    store_u16le(out + 22u, 1u);
+    store_u32le(out + 24u, 8000u);
+    store_u32le(out + 28u, 16000u);
+    store_u16le(out + 32u, 2u);
+    store_u16le(out + 34u, 16u);
+    memcpy(out + 36u, "data", 4u);
+    store_u32le(out + 40u, WAV_DATA_BYTES);
+    return 0;
+}
+
+static int write_sample_set(const char *directory, int corrupt_pixel,
+                            int corrupt_wav, int omit_hash)
+{
+    char path[4096];
+    char ppm[PPM_LIMIT];
+    char manifest[MANIFEST_LIMIT];
+    uint8_t wav[WAV_SIZE];
+    int ppm_len = build_sample_ppm(ppm, sizeof ppm, corrupt_pixel);
+    int manifest_len = build_sample_manifest(manifest, sizeof manifest, omit_hash);
+    if (ppm_len < 0 || manifest_len < 0 || build_sample_wav(wav, corrupt_wav) != 0) {
+        return 1;
+    }
+    if (path_join(directory, "snapshot.ppm", path, sizeof path) != 0 ||
+        write_owned_file(path, ppm, (size_t)ppm_len) != 0 ||
+        path_join(directory, "snapshot.manifest", path, sizeof path) != 0 ||
+        write_owned_file(path, manifest, (size_t)manifest_len) != 0 ||
+        path_join(directory, "silence.wav", path, sizeof path) != 0 ||
+        write_owned_file(path, wav, sizeof wav) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
+static int expect_rejection(const char *directory, const char *phrase)
+{
+    char error[256] = {0};
+    if (validate_directory(directory, error, sizeof error) == 0 ||
+        strstr(error, phrase) == NULL) {
+        fprintf(stderr, "artifact-check self-test: expected rejection '%s', got '%s'\n",
+                phrase, error);
+        return 1;
+    }
+    return 0;
+}
+
+static int self_test(void)
+{
+    char directory[] = "/tmp/lynxplosion-artifacts-XXXXXX";
+    char path[4096];
+    char error[256] = {0};
+    int temp_file;
+    int failed = 0;
+    temp_file = mkstemp(directory);
+    if (temp_file < 0) {
+        fprintf(stderr, "artifact-check self-test: cannot create isolated temporary directory\n");
+        return 1;
+    }
+    if (close(temp_file) != 0 || remove(directory) != 0 || mkdir(directory, 0700) != 0) {
+        (void)remove(directory);
+        fprintf(stderr, "artifact-check self-test: cannot prepare isolated temporary directory\n");
+        return 1;
+    }
+    if (write_sample_set(directory, 0, 0, 0) != 0 ||
+        validate_directory(directory, error, sizeof error) != 0) {
+        fprintf(stderr, "artifact-check self-test: valid control failed: %s\n", error);
+        failed = 1;
+        goto done;
+    }
+    if (write_sample_set(directory, 1, 0, 0) != 0 ||
+        expect_rejection(directory, "pixel differs") != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (write_sample_set(directory, 0, 1, 0) != 0 ||
+        expect_rejection(directory, "chunk sizes or PCM") != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (write_sample_set(directory, 0, 0, 1) != 0 ||
+        expect_rejection(directory, "content_sha256") != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (write_sample_set(directory, 0, 0, 0) != 0 ||
+        validate_directory(directory, error, sizeof error) != 0) {
+        fprintf(stderr, "artifact-check self-test: accepted control did not recover: %s\n", error);
+        failed = 1;
+    }
+done:
+    if (path_join(directory, "snapshot.ppm", path, sizeof path) == 0) {
+        (void)remove(path);
+    }
+    if (path_join(directory, "snapshot.manifest", path, sizeof path) == 0) {
+        (void)remove(path);
+    }
+    if (path_join(directory, "silence.wav", path, sizeof path) == 0) {
+        (void)remove(path);
+    }
+    if (rmdir(directory) != 0) {
+        fprintf(stderr, "artifact-check self-test: could not remove its isolated temporary directory\n");
+        failed = 1;
+    }
+    if (failed != 0) {
+        return 1;
+    }
+    puts("artifact-check self-test: P3/WAV/metadata accepted; pixel, WAV-size and metadata controls rejected");
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    char error[256] = {0};
+    if (argc == 2 && strcmp(argv[1], "self-test") == 0) {
+        return self_test();
+    }
+    if (argc == 2 && validate_directory(argv[1], error, sizeof error) == 0) {
+        puts("artifact-check: SNAPSHOT P3 and placeholder PCM WAV are valid");
+        return 0;
+    }
+    if (argc == 2) {
+        fprintf(stderr, "artifact-check: %s\n", error);
+        return 1;
+    }
+    fprintf(stderr, "Usage: lynx-check-artifacts <output-directory> | self-test\n");
+    return 2;
+}

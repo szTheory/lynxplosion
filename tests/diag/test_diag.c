@@ -1435,6 +1435,52 @@ done:
     return result;
 }
 
+static int corrupt_pixels_mode(const char *input_path, const char *hex_path,
+                               const char *output_path)
+{
+    static const uint8_t packed_pixels[PIXELS_SIZE] = {
+        0x01u, 0x23u, 0x45u, 0x67u, 0x23u, 0x45u, 0x67u, 0x89u,
+        0x45u, 0x67u, 0x89u, 0xABu, 0x67u, 0x89u, 0xABu, 0xCDu,
+        0x89u, 0xABu, 0xCDu, 0xEFu, 0xABu, 0xCDu, 0xEFu, 0x01u,
+        0xCDu, 0xEFu, 0x01u, 0x23u, 0xEFu, 0x01u, 0x23u, 0x45u
+    };
+    uint8_t *bll = NULL;
+    size_t length = 0u;
+    size_t offset;
+    size_t match = SIZE_MAX;
+    int result = 1;
+    if (read_bll_file(input_path, &bll, &length) != 0 ||
+        check_header(bll, length, hex_path) != 0) {
+        goto done;
+    }
+    if (length < sizeof packed_pixels) {
+        (void)fail("positive source fixture is shorter than its pixel fault pattern");
+        goto done;
+    }
+    for (offset = 0u; offset <= length - sizeof packed_pixels; offset++) {
+        if (memcmp(bll + offset, packed_pixels, sizeof packed_pixels) == 0) {
+            if (match != SIZE_MAX) {
+                (void)fail("positive source fixture contains ambiguous packed pixel pattern");
+                goto done;
+            }
+            match = offset;
+        }
+    }
+    if (match == SIZE_MAX) {
+        (void)fail("positive source fixture lacks the exact packed pixel pattern");
+        goto done;
+    }
+    bll[match] ^= 0x10u;
+    if (write_bytes_exclusive(output_path, bll, length) != 0) {
+        goto done;
+    }
+    printf("diag fault: derived bad-pixels control from one packed guest pixel byte\n");
+    result = 0;
+done:
+    free(bll);
+    return result;
+}
+
 static int hex_digit_value(uint8_t value)
 {
     if (value >= (uint8_t)'0' && value <= (uint8_t)'9') {
@@ -1823,6 +1869,9 @@ int main(int argc, char **argv)
     }
     if (argc == 5 && strcmp(argv[1], "corrupt-map") == 0) {
         return corrupt_map_mode(argv[2], argv[3], argv[4]);
+    }
+    if (argc == 5 && strcmp(argv[1], "corrupt-pixels") == 0) {
+        return corrupt_pixels_mode(argv[2], argv[3], argv[4]);
     }
     if (argc == 6 && strcmp(argv[1], "bundle") == 0) {
         return bundle_mode(argv[2], argv[3], argv[4], argv[5]);

@@ -84,6 +84,15 @@ lynx_warnings(lynx-run)
 lynx_sanitize(lynx-run)
 set_target_properties(lynx-run PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/runner)
 
+# Independent public-API consumer for the Phase 3 diagnostic snapshot. Its only
+# project include surface and linked library come from lynx_core's public API.
+add_executable(lynx-consume consumer/main.c)
+target_link_libraries(lynx-consume PRIVATE lynx_core)
+target_compile_definitions(lynx-consume PRIVATE _POSIX_C_SOURCE=200809L)
+lynx_warnings(lynx-consume)
+lynx_sanitize(lynx-consume)
+set_target_properties(lynx-consume PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/consumer)
+
 if(LYNX_TESTS)
   enable_testing()
   include(cmake/Tests.cmake)
