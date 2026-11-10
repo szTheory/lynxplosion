@@ -138,6 +138,9 @@ void lynx_machine_deinit(lynx_machine *m);
    startup-state reset beside it. */
 lynx_status lynx_reset(lynx_machine *m);
 
+/* Load a complete BS93/BLL object (strict tier-A direct load). */
+lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len);
+
 /* PROVISIONAL raw RAM image loader, replaced in Phase 3. Re-applies the
    power-on RAM policy and CPU state, copies len bytes of bytes to load_addr
    and starts the CPU at an instruction boundary with the program counter at

@@ -182,6 +182,14 @@ lynx_status lynx_load_ram_image(lynx_machine *m, const uint8_t *bytes, size_t le
     return LYNX_OK;
 }
 
+lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len)
+{
+    (void)m;
+    (void)bytes;
+    (void)len;
+    return LYNX_ERR_STATE;
+}
+
 lynx_status lynx__machine_set_cost_model(struct lynx_machine *m, uint32_t model)
 {
     if (m == NULL || !machine_valid(m) || !lynx__bus_cost_model_valid(model)) {

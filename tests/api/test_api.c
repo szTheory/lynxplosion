@@ -58,6 +58,12 @@ static const uint8_t wrap_image[16] = {
 /* One byte: the bit-op slot $07, so profile none stops before it. */
 static const uint8_t trap_image[1] = {0x07};
 
+/* A 10-byte BS93 header and a 13-byte tracer payload at $0200. */
+static const uint8_t bll_tracer[] = {
+    0x80, 0x08, 0x02, 0x00, 0x00, 0x17, 'B', 'S', '9', '3',
+    0xA9, 0x0C, 0x8D, 0xF9, 0xFF, 0xA9, 0xA5, 0x8D, 0x00, 0x04, 0x4C, 0x0A, 0x02,
+};
+
 /* Instance memory for the tests: aligned for any type, sized from the core's
    own layout. */
 static _Alignas(max_align_t) unsigned char machine_buf[sizeof(struct lynx_machine)];
@@ -191,6 +197,21 @@ static void case_build_id(void)
     CHECK(again == id);
     CHECK(strcmp(again, id) == 0);
     CHECK_EQ_U64(strlen(lynx__build_id), len);
+}
+
+static lynx_machine *init_in(void *mem, const lynx_config *cfg);
+
+static void case_bll_tracer(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    }
+    const int passed = check_failures == failures_before;
+    printf("TAP version 13\n1..1\n%s 1 - api.bll_tracer\n", passed ? "ok" : "not ok");
 }
 
 /* ---- Shared helpers for the contract cases (plan 01-06) ------------------
@@ -2301,6 +2322,7 @@ static const struct {
 } cases[] = {
     {"advance_budget", case_advance_budget},
     {"advance_slicing", case_advance_slicing},
+    {"bll_tracer", case_bll_tracer},
     {"build_id", case_build_id},
     {"cost_model", case_cost_model},
     {"cpu_program", case_cpu_program},

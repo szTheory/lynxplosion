@@ -1,0 +1,10 @@
+{
+  "command": "build/check/tests/lynx-test-api bll_tracer",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.bll_tracer\n",
+  "targetTest": "api.bll_tracer",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "lynx_load_bll accepts the valid 23-byte BS93 object at $0200 and returns LYNX_OK",
+  "actual": "The target assertion failed because the API seam returned LYNX_ERR_STATE (5).",
+  "semanticAssessment": "The named target executed and failed on the assertion that a valid hand-authored BS93 object is accepted. Instance initialization succeeded; there was no build, setup, load, or unrelated test failure."
+}
