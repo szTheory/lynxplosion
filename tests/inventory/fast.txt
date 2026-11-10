@@ -17,7 +17,9 @@ api.instances_independent	api
 api.load_refusal_unchanged	api
 api.profile_select	api
 api.reset_power_on	api
-api.seam_agreement	api
+api.seam_agreement.lynx1	api
+api.seam_agreement.lynx2	api
+api.seam_agreement.none	api
 api.snapshot_refusal	api
 api.snapshot_roundtrip	api
 core.cpu_includes	core

@@ -131,10 +131,22 @@ lynx_add_test(NAME cpu.tables.self_test
 # run-row opcode per profile, restored through a recomputed format-2 snapshot and
 # advanced by the seam's cycle count; under none every vector of the 32 undefined
 # rows must stop with UNDEFINED and leave the instance byte-identical.
-lynx_add_test(NAME api.seam_agreement
-  COMMAND ${CMAKE_COMMAND}
-    -DTOOL=$<TARGET_FILE:lynx-test-cpu-vectors>
-    -DVEC_DIR=${lynx_vec_dir}
-    -DMANIFESTS=${lynx_vec_manifests}
-    -P ${CMAKE_CURRENT_LIST_DIR}/seam_agreement.cmake
-  LABELS api TIMEOUT 120)
+foreach(case IN ITEMS none:synertek65c02 lynx1:synertek65c02 lynx2:rockwell65c02)
+  string(REPLACE ":" ";" lynx_sa_parts "${case}")
+  list(GET lynx_sa_parts 0 lynx_sa_profile)
+  list(GET lynx_sa_parts 1 lynx_sa_variant)
+  lynx_add_test(NAME api.seam_agreement.${lynx_sa_profile}
+    COMMAND ${CMAKE_COMMAND}
+      -DTOOL=$<TARGET_FILE:lynx-test-cpu-vectors>
+      -DVEC_DIR=${lynx_vec_dir}
+      -DMANIFESTS=${lynx_vec_manifests}
+      -DPROFILE=${lynx_sa_profile}
+      -DVARIANT=${lynx_sa_variant}
+      -P ${CMAKE_CURRENT_LIST_DIR}/seam_agreement.cmake
+    LABELS api TIMEOUT 120)
+endforeach()
+# CTest starts higher-cost tests first. The none run (1,024 undefined-row
+# restores) is the longest single test and the other two are the next longest,
+# so all three start at once instead of the longest finishing last.
+set_tests_properties(api.seam_agreement.none PROPERTIES COST 100)
+set_tests_properties(api.seam_agreement.lynx1 api.seam_agreement.lynx2 PROPERTIES COST 50)
