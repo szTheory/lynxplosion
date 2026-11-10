@@ -13,7 +13,8 @@
 #           containers and require them to equal the committed ones byte for
 #           byte, then run all 10,000 vectors of each of the 256 whole files
 #           through lynx-test-cpu-vectors (complete mode, the check preset's
-#           build, built here if missing) under none (synertek data, 32 rows
+#           build, always rebuilt here first: a stale or locally edited binary
+#           must not carry the evidence of a 2 GB lane) under none (synertek data, 32 rows
 #           asserted undefined), lynx1 (synertek) and lynx2 (rockwell), and the
 #           two cross pairings (rockwell under lynx1, synertek under lynx2) to
 #           record the full-data failing opcode sets. Exit 0 only if the three
@@ -22,6 +23,9 @@
 #           are equal. Results files (op, passed, failed per run row) are copied
 #           to build/vectors-full/<name>.results with their SHA-256 printed.
 #           This is the 2 GB network lane: run it by hand, never from the check.
+#   build   only the build step of run: configure and build the check preset
+#           (incremental), no network. tests/cpu/vector_controls.sh lane_script
+#           runs it against a fake cmake to prove the runner is always rebuilt.
 #
 # Several modes in one invocation (for example "pin sample") run in the order
 # given and share one work directory and one verified download set, so the large
@@ -49,7 +53,7 @@ LICENSE_SHA256=5fb64d1f2e4d74fabc85c768e1f6ffa73b95dc93e217c55acfe7e4a89ba32b04
 BASE=https://raw.githubusercontent.com/$REPO/$COMMIT
 
 usage() {
-  echo "usage: vectors-full.sh MODE [MODE...]   (MODE: pin | sample | run)" >&2
+  echo "usage: vectors-full.sh MODE [MODE...]   (MODE: pin | sample | run | build)" >&2
   exit 2
 }
 
@@ -63,7 +67,7 @@ if [ $# -lt 1 ]; then
 fi
 for mode in "$@"; do
   case $mode in
-    pin | sample | run) ;;
+    pin | sample | run | build) ;;
     *) usage ;;
   esac
 done
@@ -271,8 +275,22 @@ run_cross() {
   fi
 }
 
+# Always build (incremental, cheap): an older or locally edited binary must not
+# carry the evidence of the lane. Sets runner.
+build_runner() {
+  runner=$root/build/check/tests/lynx-test-cpu-vectors
+  (cd "$root" && cmake --preset check && cmake --build --preset check) || fail "the check preset did not build"
+  if [ ! -x "$runner" ]; then
+    fail "$runner is missing after the build"
+  fi
+}
+
 for mode in "$@"; do
   case $mode in
+    build)
+      build_runner
+      echo "vectors-full: build: $runner is built from the working tree"
+      ;;
     pin)
       ensure_downloads
       lic=$work/LICENSE
@@ -335,13 +353,7 @@ for mode in "$@"; do
         fi
       done
       echo "vectors-full: run: both samples equal the committed ones byte for byte"
-      runner=$root/build/check/tests/lynx-test-cpu-vectors
-      if [ ! -x "$runner" ]; then
-        (cd "$root" && cmake --preset check && cmake --build --preset check) || fail "the check preset did not build"
-      fi
-      if [ ! -x "$runner" ]; then
-        fail "$runner is missing after the build"
-      fi
+      build_runner
       mkdir -p "$root/build/vectors-full"
       run_same none synertek65c02 --profile none
       run_same lynx1 synertek65c02 --profile lynx1

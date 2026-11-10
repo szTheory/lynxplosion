@@ -3,7 +3,7 @@
 #   tests/cpu/vector_controls.sh CASE ROOT RUNNER SCRATCH
 #
 # CASE is one of: wrong_profile wrong_profile_reverse no_step corrupt_expect
-# malformed inventory_drift sample_identity mutant_profile complete_mode.
+# malformed inventory_drift sample_identity mutant_profile complete_mode lane_script.
 # ROOT is the repository root, RUNNER the lynx-test-cpu-vectors executable and
 # SCRATCH a directory under the build tree.
 #
@@ -570,6 +570,65 @@ case_complete_mode() {
   ok "a file of 9,999 objects exits 3"
 }
 
+# ---- the full-lane script (scripts/vectors-full.sh), offline -------------------
+#
+# The lane itself needs 2 GB of network data, so these controls run copies of
+# the real script in a fake repository under the work directory, with a fake
+# cmake on PATH where a build is involved, and never touch the network.
+
+# lane_root DIR: a fake repository root with a copy of the lane script.
+lane_root() {
+  mkdir -p "$1/scripts" "$1/build/check/tests" "$1/fixtures/vectors/sst65x02"
+  cp "$root/scripts/vectors-full.sh" "$1/scripts/vectors-full.sh" || fail "could not copy the lane script"
+}
+
+# WR-04: the run mode must build the runner before running it, always. A stale
+# binary (older, or edited locally) must never carry the evidence of a 2 GB lane.
+lane_runner_build() {
+  fr=$work/lane-build
+  lane_root "$fr"
+  mkdir -p "$fr/bin"
+  printf '#!/bin/sh\necho stale\n' >"$fr/build/check/tests/lynx-test-cpu-vectors"
+  chmod +x "$fr/build/check/tests/lynx-test-cpu-vectors"
+  # The fake cmake logs its arguments; its build step replaces the runner.
+  # shellcheck disable=SC2016 # the stub, not this shell, expands these
+  {
+    printf '#!/bin/sh\n'
+    printf 'printf "%%s\\n" "$*" >>"%s/cmake.log"\n' "$fr"
+    printf 'case $1 in\n'
+    printf '  --build) printf "#!/bin/sh\\necho fresh\\n" >"%s/build/check/tests/lynx-test-cpu-vectors"\n' "$fr"
+    printf '    chmod +x "%s/build/check/tests/lynx-test-cpu-vectors" ;;\n' "$fr"
+    printf 'esac\n'
+  } >"$fr/bin/cmake"
+  chmod +x "$fr/bin/cmake"
+  rc=0
+  PATH="$fr/bin:$PATH" sh "$fr/scripts/vectors-full.sh" build >"$work/lane-build.out" 2>&1 || rc=$?
+  expect lane_build 0 'vectors-full: build: ' "$work/lane-build.out"
+  [ -f "$fr/cmake.log" ] || fail "lane_build: cmake was never called"
+  grep -qx -- '--preset check' "$fr/cmake.log" || fail "lane_build: no configure of the check preset"
+  grep -qx -- '--build --preset check' "$fr/cmake.log" || fail "lane_build: no build of the check preset"
+  [ "$("$fr/build/check/tests/lynx-test-cpu-vectors")" = fresh ] || fail "lane_build: the stale runner was not replaced"
+  # The build must also fail closed: a failing cmake ends the mode with exit 1.
+  printf '#!/bin/sh\nexit 1\n' >"$fr/bin/cmake"
+  rc=0
+  PATH="$fr/bin:$PATH" sh "$fr/scripts/vectors-full.sh" build >"$work/lane-build2.out" 2>&1 || rc=$?
+  expect lane_build_fail 1 'the check preset did not build' "$work/lane-build2.out"
+  # The run mode calls the same build unconditionally, before the first lane:
+  # no guard around the call, and it precedes run_same.
+  awk '
+    /^    run\)$/ { inrun = 1; next }
+    inrun && /^      ;;$/ { exit }
+    inrun && /^      build_runner$/ { b = NR }
+    inrun && /^      run_same none / { if (!r) { r = NR } }
+    END { exit (b > 0 && r > b) ? 0 : 1 }
+  ' "$fr/scripts/vectors-full.sh" || fail "lane_build: the run mode does not call build_runner unconditionally before its first lane"
+  ok "the run mode builds the check preset before running; a stale runner is replaced; a failed build is fatal"
+}
+
+case_lane_script() {
+  lane_runner_build
+}
+
 case $name in
   wrong_profile) case_wrong_profile ;;
   wrong_profile_reverse) case_wrong_profile_reverse ;;
@@ -580,6 +639,7 @@ case $name in
   sample_identity) case_sample_identity ;;
   mutant_profile) case_mutant_profile ;;
   complete_mode) case_complete_mode ;;
+  lane_script) case_lane_script ;;
   *)
     echo "vector_controls: unknown case '$name'" >&2
     exit 2

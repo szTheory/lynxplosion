@@ -44,6 +44,7 @@ cpu.tables.self_test	cpu
 cpu.vectors.complete_mode	cpu
 cpu.vectors.corrupt_expect	cpu
 cpu.vectors.inventory_drift	cpu
+cpu.vectors.lane_script	cpu
 cpu.vectors.lynx1	cpu
 cpu.vectors.lynx2	cpu
 cpu.vectors.malformed	cpu

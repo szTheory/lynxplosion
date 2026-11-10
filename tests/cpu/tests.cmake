@@ -52,7 +52,7 @@ endforeach()
 # mode on synthetic 10,000-object files, so that runner path is checked offline.
 find_program(LYNX_SH sh REQUIRED)
 foreach(lynx_vec_control IN ITEMS wrong_profile wrong_profile_reverse no_step corrupt_expect
-    malformed inventory_drift sample_identity mutant_profile complete_mode)
+    malformed inventory_drift sample_identity mutant_profile complete_mode lane_script)
   lynx_add_test(NAME cpu.vectors.${lynx_vec_control}
     COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/cpu/vector_controls.sh ${lynx_vec_control}
       ${PROJECT_SOURCE_DIR} $<TARGET_FILE:lynx-test-cpu-vectors> ${LYNX_SCRATCH_DIR}/vectors
