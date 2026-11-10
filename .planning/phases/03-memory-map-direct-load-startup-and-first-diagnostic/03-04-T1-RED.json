@@ -1,0 +1,10 @@
+{
+  "command": "ctest --test-dir /tmp/lynxplosion-03-04-red/build --output-junit /tmp/lynxplosion-03-04-red/T1-red.raw.xml --output-on-failure",
+  "exitCode": 8,
+  "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"(empty)\"\n\ttests=\"1\"\n\tfailures=\"1\"\n\tdisabled=\"0\"\n\tskipped=\"0\"\n\thostname=\"\"\n\ttime=\"0\"\n\ttimestamp=\"2026-11-10T13:27:16\"\n\t>\n\t<testcase name=\"memory.map_matrix\" classname=\"memory.map_matrix\" time=\"0.364642\" status=\"fail\">\n\t\t<failure message=\"Failed\"/>\n\t\t<properties/>\n\t\t<system-out>./tests/api/test_api.c:410: stop == LYNX_STOP_UNAVAILABLE failed: 0 != 5\n./tests/api/test_api.c:411: CHECK(consumed &lt; 512u) failed\n./tests/api/test_api.c:412: m-&gt;cpu.req_addr == addr failed: 525 != 64512\n./tests/api/test_api.c:418: consumed == 0u failed: 512 != 0\n./tests/api/test_api.c:419: stop == LYNX_STOP_UNAVAILABLE failed: 0 != 5\n./tests/api/test_api.c:420: instance buffer changed by a call that must not change it\n</system-out>\n\t</testcase>\n</testsuite>\n",
+  "targetTest": "memory.map_matrix",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "MAPCTL bit 0 clear makes the FC00 CPU read stop as LYNX_STOP_UNAVAILABLE before the request completes",
+  "actual": "The actual target assertion failed: stop was LYNX_STOP_BUDGET (0), consumed the full 512 ticks, and advanced past FC00",
+  "semanticAssessment": "The memory.map_matrix target executed. The first FC00 read with MAPCTL bit 0 clear failed the planned stop assertion: the old raw-RAM path returned BUDGET, consumed all 512 ticks, and advanced beyond FC00. This is the intended missing-decoder behavior, not a compile, setup, fixture, or unrelated failure."
+}

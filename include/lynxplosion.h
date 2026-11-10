@@ -35,7 +35,8 @@ enum {
     LYNX_ERR_SNAPSHOT_INVALID = 6,  /* malformed, truncated or corrupted snapshot */
     LYNX_ERR_SNAPSHOT_VERSION = 7,  /* snapshot format version not supported */
     LYNX_ERR_SNAPSHOT_MISMATCH = 8, /* snapshot from another build, config or content */
-    LYNX_ERR_CAPACITY = 9           /* output buffer smaller than the snapshot */
+    LYNX_ERR_CAPACITY = 9,          /* output buffer smaller than the snapshot */
+    LYNX_ERR_UNAVAILABLE = 10       /* mapped device/content is not implemented */
 };
 
 /* Why lynx_advance returned. FRAME, WATCH and HALT are reserved: later
@@ -46,7 +47,8 @@ enum {
     LYNX_STOP_FRAME = 1,    /* reserved */
     LYNX_STOP_WATCH = 2,    /* reserved */
     LYNX_STOP_HALT = 3,     /* reserved */
-    LYNX_STOP_UNDEFINED = 4 /* profile NONE reached an opcode the Lynx profiles disagree on */
+    LYNX_STOP_UNDEFINED = 4, /* profile NONE reached an opcode the Lynx profiles disagree on */
+    LYNX_STOP_UNAVAILABLE = 5 /* the pending CPU bus route has no implemented target */
 };
 
 /* Hardware profile, fixed per instance at init. Ids are append-only and are

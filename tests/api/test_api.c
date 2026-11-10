@@ -355,6 +355,180 @@ static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t p
     return result;
 }
 
+/* CPU-only reads and writes use a BLL program that selects MAPCTL through the
+   guest bus before touching one address. The oracle below is hand-derived
+   from the four independent Epyx overlay windows; unmapped targets must stop
+   before the CPU request completes. */
+static int map_target_is_ram(uint8_t mapctl, uint16_t addr)
+{
+    if (addr < 0xFC00u || addr == 0xFFF8u) {
+        return 1;
+    }
+    if (addr == 0xFFF9u) {
+        return 0; /* MAPCTL is write-only in this provisional guest policy. */
+    }
+    if (addr <= 0xFCFFu) {
+        return (mapctl & 0x01u) != 0u;
+    }
+    if (addr <= 0xFDFFu) {
+        return (mapctl & 0x02u) != 0u;
+    }
+    if (addr <= 0xFFF7u) {
+        return (mapctl & 0x04u) != 0u;
+    }
+    return (mapctl & 0x08u) != 0u;
+}
+
+static void map_read_one(uint8_t mapctl, uint16_t addr)
+{
+    const uint8_t program[] = {
+        0xA9u, mapctl, 0x8Du, 0xF9u, 0xFFu,       /* LDA #mapctl; STA $FFF9 */
+        0xADu, (uint8_t)addr, (uint8_t)(addr >> 8), /* LDA $addr */
+        0x8Du, 0x00u, 0x03u, 0x4Cu, 0x0Bu, 0x02u /* STA $0300; JMP $020B */
+    };
+    const uint8_t sentinel = (uint8_t)(0xA5u ^ (uint8_t)addr ^ mapctl);
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, program, sizeof program, 0x0200u), LYNX_OK);
+    m->ram[addr] = sentinel;
+    m->ram[0x0300u] = 0u;
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 512u, &consumed, &stop), LYNX_OK);
+    if (map_target_is_ram(mapctl, addr)) {
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 512u);
+        CHECK_EQ_U64(m->ram[0x0300u], sentinel);
+        return;
+    }
+
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK(consumed < 512u);
+    CHECK_EQ_U64(m->cpu.req_addr, addr);
+    CHECK_EQ_U64(m->ram[addr], sentinel);
+    memcpy(snap_a, m, MSIZE);
+    consumed = UINT64_MAX;
+    stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 512u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_UNCHANGED(m, snap_a);
+}
+
+static void map_write_one(uint8_t mapctl, uint16_t addr)
+{
+    const uint8_t value = (uint8_t)(0x5Au ^ (uint8_t)addr ^ mapctl);
+    const uint8_t sentinel = (uint8_t)~value;
+    const uint8_t program[] = {
+        0xA9u, mapctl, 0x8Du, 0xF9u, 0xFFu,       /* LDA #mapctl; STA $FFF9 */
+        0xA9u, value, 0x8Du, (uint8_t)addr, (uint8_t)(addr >> 8),
+        0x4Cu, 0x0Au, 0x02u /* JMP $020A */
+    };
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, program, sizeof program, 0x0200u), LYNX_OK);
+    m->ram[addr] = sentinel;
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 512u, &consumed, &stop), LYNX_OK);
+    if (map_target_is_ram(mapctl, addr)) {
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 512u);
+        CHECK_EQ_U64(m->ram[addr], value);
+        return;
+    }
+
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK(consumed < 512u);
+    CHECK_EQ_U64(m->cpu.req_addr, addr);
+    CHECK_EQ_U64(m->ram[addr], sentinel);
+    memcpy(snap_a, m, MSIZE);
+    consumed = UINT64_MAX;
+    stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 512u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_UNCHANGED(m, snap_a);
+}
+
+static void map_latch_one(uint8_t value)
+{
+    const uint8_t raw_sentinel = (uint8_t)(value ^ 0xC3u);
+    const uint8_t program[] = {
+        0xA9u, value, 0x8Du, 0xF9u, 0xFFu, 0x4Cu, 0x05u, 0x02u
+    };
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, program, sizeof program, 0x0200u), LYNX_OK);
+    m->ram[0xFFF9u] = raw_sentinel;
+    ADVANCE_EXPECT(m, 100u, 100u, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(m->mapctl, value);
+    CHECK_EQ_U64(m->ram[0xFFF9u], raw_sentinel);
+}
+
+static void case_map_matrix(void)
+{
+    static const uint16_t boundaries[] = {
+        0xFBFFu, 0xFC00u, 0xFCFFu, 0xFD00u, 0xFDFFu, 0xFE00u,
+        0xFFF7u, 0xFFF8u, 0xFFF9u, 0xFFFAu, 0xFFFFu
+    };
+    static const uint16_t window_writes[] = {
+        0xFC00u, 0xFCFFu, 0xFD00u, 0xFDFFu, 0xFE00u,
+        0xFFF7u, 0xFFF8u, 0xFFFAu, 0xFFFFu
+    };
+    for (uint32_t mapctl = 0u; mapctl < 16u; mapctl++) {
+        for (size_t i = 0u; i < sizeof boundaries / sizeof boundaries[0]; i++) {
+            const int before = check_failures;
+            map_read_one((uint8_t)mapctl, boundaries[i]);
+            if (check_failures != before) {
+                return;
+            }
+        }
+        for (size_t i = 0u; i < sizeof window_writes / sizeof window_writes[0]; i++) {
+            const int before = check_failures;
+            map_write_one((uint8_t)mapctl, window_writes[i]);
+            if (check_failures != before) {
+                return;
+            }
+        }
+    }
+    for (uint32_t value = 0u; value <= UINT8_MAX; value++) {
+        const int before = check_failures;
+        map_latch_one((uint8_t)value);
+        if (check_failures != before) {
+            return;
+        }
+    }
+    /* Mapped absent vectors must win over profile-none's opcode disagreement. */
+    const uint8_t undefined_vector[] = {0x07u};
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        CHECK_EQ_U64(load_bll_at(m, undefined_vector, sizeof undefined_vector, 0xFFFAu), LYNX_OK);
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_BUDGET;
+        CHECK_EQ_U64(lynx_advance(m, 50u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+        CHECK_EQ_U64(consumed, 0u);
+        CHECK_EQ_U64(m->cpu.req_addr, 0xFFFAu);
+    }
+}
+
 static void case_bll_load(void)
 {
     const int failures_before = check_failures;
@@ -2656,6 +2830,7 @@ static const struct {
     {"init_refusal", case_init_refusal},
     {"inspect_pure", case_inspect_pure},
     {"instances_independent", case_instances_independent},
+    {"map_matrix", case_map_matrix},
     {"load_refusal_unchanged", case_load_refusal_unchanged},
     {"profile_divergence", case_profile_divergence},
     {"profile_select", case_profile_select},
