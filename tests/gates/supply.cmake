@@ -17,6 +17,26 @@ lynx_add_test(NAME policy.pins.self_test
     -P ${LYNX_TEST_SCRIPTS}/pins_controls.cmake
   LABELS policy TIMEOUT 30)
 
+# The vector pin record is complete and trustworthy: an https source, a full
+# commit, exactly 512 well-formed rows in byte order, both variants and all 256
+# opcodes each. The self-test copies the real record, applies one fault per
+# case at run time (http URL, 41-digit commit, 63-digit digest, 511 rows, a
+# repeated row, an unsorted row, a path outside the two variants) and requires
+# exit 1 with the finding and its line; the unchanged copy must pass.
+lynx_add_test(NAME policy.vectors_pin
+  COMMAND ${CMAKE_COMMAND}
+    -DFILE=${PROJECT_SOURCE_DIR}/fixtures/vectors/sst65x02/upstream.sha256
+    -P ${LYNX_TEST_SCRIPTS}/vectors_pin.cmake
+  LABELS policy TIMEOUT 30)
+
+lynx_add_test(NAME policy.vectors_pin.self_test
+  COMMAND ${CMAKE_COMMAND}
+    -DSCRIPTS=${LYNX_TEST_SCRIPTS}
+    -DRECORD=${PROJECT_SOURCE_DIR}/fixtures/vectors/sst65x02/upstream.sha256
+    -DWORK=${LYNX_SCRATCH_DIR}/gates/vectors_pin
+    -P ${LYNX_TEST_SCRIPTS}/vectors_pin_controls.cmake
+  LABELS policy TIMEOUT 60)
+
 # No test or build definition names a network tool or a download command. The
 # self-test scans a fixture whose two files do; the fixture text is assembled
 # from parts here, so no committed file contains a network token and the scan
