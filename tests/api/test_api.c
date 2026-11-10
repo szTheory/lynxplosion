@@ -1329,6 +1329,44 @@ static void value_refused(lynx_machine *m, const unsigned char *src, size_t off,
 }
 #define VALUE_REFUSED(m, src, off, v, n, ref) value_refused((m), (src), (off), (v), (n), (ref), __LINE__)
 
+/* Forged CPU fields in a snapshot whose payload hash is recomputed, so only the
+   CPU reachability check can refuse (WR-01, WR-02): a take latch no completion
+   leaves set, and a pending micro-operation real execution skips. The control
+   blob is a real state of a taken BNE that crosses a page, with the
+   page-cross cycle pending; it must restore. */
+static void snapshot_forged_cpu_states(void)
+{
+    static const unsigned char bne_cross[2] = {0xD0u, 0x10u}; /* at $02FD: target $030F */
+    lynx_machine *src = snap_instance(machine_buf, SNAP_SEED, bne_cross, sizeof bne_cross, 0x02FDu);
+    lynx_machine *dst = snap_instance(buf_b, SNAP_SEED, bne_cross, sizeof bne_cross, 0x02FDu);
+    if (src == NULL || dst == NULL) {
+        return;
+    }
+    struct lynx_machine *w = (struct lynx_machine *)machine_buf;
+    for (uint32_t i = 0u; i < 100u && w->cpu.step != 3u; i++) {
+        advance_ticks(src, 1u);
+    }
+    CHECK_EQ_U64(w->cpu.opcode, 0xD0u);
+    CHECK_EQ_U64(w->cpu.step, 3u);
+    CHECK_EQ_HEX(w->cpu.ea, 0x0110u); /* offset with BR_CROSSED */
+    CHECK_EQ_U64(save_into(src, blob_c), 0u);
+    memcpy(snap_b, buf_b, MSIZE);
+    const unsigned char *pay = blob_c + LYNX__SNAPSHOT_HEADER_LEN;
+    uint64_t p = pay[PAY_P];
+    CHECK((p & 0x02u) == 0u); /* Z clear: the branch is taken */
+    /* WR-02: the cross cycle belongs to a taken, crossing branch only. */
+    VALUE_REFUSED(dst, blob_c, PAY_P, p | 0x02u, 1u, snap_b);    /* Z set: not taken */
+    VALUE_REFUSED(dst, blob_c, PAY_EA, 0x0010u, 2u, snap_b);     /* crossing never recorded */
+    VALUE_REFUSED(dst, blob_c, PAY_EA, 0x0210u, 2u, snap_b);     /* BR_SAME_PAGE: cycle skipped */
+    VALUE_REFUSED(dst, blob_c, PAY_EA, 0x0310u, 2u, snap_b);
+    /* WR-01 on the same state. */
+    VALUE_REFUSED(dst, blob_c, PAY_FLAGS, 0x01u, 1u, snap_b);
+    VALUE_REFUSED(dst, blob_c, PAY_FLAGS, 0x02u, 1u, snap_b);
+    /* Control: the unedited blob restores, so every refusal above was its edit. */
+    CHECK_EQ_U64(lynx_snapshot_restore(dst, blob_c, SNAP_TOTAL), LYNX_OK);
+    CHECK_EQ_U64(((struct lynx_machine *)buf_b)->cpu.step, 3u);
+}
+
 static void case_snapshot_refusal(void)
 {
     lynx_machine *m = snap_instance(machine_buf, SNAP_SEED, churn_loop, sizeof churn_loop, 0x0200u);
@@ -1456,6 +1494,9 @@ static void case_snapshot_refusal(void)
     VALUE_REFUSED(m, blob_v, PAY_P, pay[PAY_P] & ~0x20u, 1u, snap_a);   /* P bit 5 clear */
     VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x40u, 1u, snap_a);             /* undefined latch bit */
     VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x80u, 1u, snap_a);             /* undefined latch bit */
+    VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x01u, 1u, snap_a);             /* IRQ_TAKE: never left set */
+    VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x02u, 1u, snap_a);             /* NMI_TAKE: never left set */
+    VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x03u, 1u, snap_a);
     VALUE_REFUSED(m, blob_v, PAY_RESERVED, 0x0001u, 2u, snap_a);        /* reserved bytes */
     VALUE_REFUSED(m, blob_v, PAY_RESERVED, 0x8000u, 2u, snap_a);
     VALUE_REFUSED(m, blob_v, PAY_STEP, 0xFFu, 1u, snap_a);              /* step past the script */
@@ -1510,6 +1551,8 @@ static void case_snapshot_refusal(void)
        so every refusal above was the edit. */
     CHECK_EQ_U64(lynx_snapshot_restore(m, blob_v, SNAP_TOTAL), LYNX_OK);
     CHECK_UNCHANGED(machine_buf, at_top);
+
+    snapshot_forged_cpu_states();
 }
 
 /* ---- the CPU programs with hand-derived values (API-03, CPU-02, CPU-03) ---- */

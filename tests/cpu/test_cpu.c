@@ -837,12 +837,15 @@ static void check_state_validity(void)
     b.profile = 3u;
     CHECK(!lynx__cpu_state_valid(&b, t));
 
-    /* A boundary holds canonical zeros; every latch pattern inside 0x3F is legal. */
+    /* A boundary holds canonical zeros; the NMI latches and the sequence bits
+       (0x3C) are legal in every combination. The two take latches (bits 0 and 1)
+       are set by a POLL cycle and consumed by the same completion, so no reached
+       state holds either (WR-01). */
     c = setup_cpu(2u, 0x0200u, lda, 2u, 0x34u);
     b = c;
-    b.flags = 0x0Fu;
+    b.flags = 0x0Cu;
     CHECK(lynx__cpu_state_valid(&b, t));
-    b.flags = 0x3Fu; /* reset sequence pending at step 0 */
+    b.flags = 0x3Cu; /* reset sequence pending at step 0 */
     CHECK(lynx__cpu_state_valid(&b, t));
     b = c;
     b.opcode = 1u;
@@ -863,6 +866,97 @@ static void check_state_validity(void)
     b.profile = 2u;
     CHECK(lynx__cpu_state_valid(&b, lynx__cpu_table(2u)));
     printf("cycles: state validity refusals checked\n");
+}
+
+/* Forged states that look like real ones (WR-01, WR-02): a take latch that no
+   completion leaves set, and a pending micro-operation that real execution
+   would have skipped. Each forgery starts from a state real execution reaches
+   (asserted accepted first, so the refusal cannot pass for a different reason). */
+static void check_state_forgeries(void)
+{
+    static const uint8_t bne[2] = {0xD0u, 0x10u};  /* at $02FD: target $030F crosses a page */
+    static const uint8_t lda_abx[3] = {0xBDu, 0xF0u, 0x02u};
+    static const uint8_t adc_imm[2] = {0x69u, 0x01u};
+    lynx__cpu c;
+    lynx__cpu b;
+    const lynx__cpu_decode *t = lynx__cpu_table(2u);
+    unsigned i;
+
+    /* WR-01: the take latches, at a boundary, mid-instruction and in a sequence. */
+    c = setup_cpu(2u, 0x0200u, adc_imm, 2u, 0x34u);
+    for (i = 1u; i <= 3u; i++) {
+        b = c;
+        b.flags = (uint8_t)i;
+        CHECK(!lynx__cpu_state_valid(&b, t));
+    }
+    flat_bus_run_cycles(&g_bus, &c, t, 1u);
+    CHECK(lynx__cpu_state_valid(&c, t));
+    for (i = 1u; i <= 3u; i++) {
+        b = c;
+        b.flags = (uint8_t)(c.flags | i);
+        CHECK(!lynx__cpu_state_valid(&b, t));
+    }
+    b = c;
+    b.flags = (uint8_t)(0x20u | 0x01u); /* an IRQ entry sequence with a take latch */
+    b.opcode = 0u;
+    b.step = 0u;
+    b.tmp = 0u;
+    b.ea = 0u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b.flags = 0x20u;
+    CHECK(lynx__cpu_state_valid(&b, t));
+
+    /* WR-02: a taken, page-crossing branch holds BR_CROSSED in ea above the offset. */
+    c = setup_cpu(2u, 0x02FDu, bne, 2u, 0x34u); /* Z clear: BNE is taken */
+    flat_bus_run_cycles(&g_bus, &c, t, 2u);     /* fetch, offset: BR_TAKEN pending */
+    CHECK(c.step == 2u && lynx__cpu_state_valid(&c, t));
+    b = c;
+    b.ea = (uint16_t)(c.ea | 0x100u); /* BR_CROSSED before the taken cycle ran */
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b = c;
+    b.p = (uint8_t)(c.p | 0x02u); /* Z set: BNE not taken, the taken cycle is skipped */
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    flat_bus_run_cycles(&g_bus, &c, t, 1u);     /* BR_CROSS_REL pending */
+    CHECK(c.step == 3u && (c.ea >> 8) == 1u && lynx__cpu_state_valid(&c, t));
+    b = c;
+    b.p = (uint8_t)(c.p | 0x02u); /* the not-taken branch the review described */
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b = c;
+    b.ea = (uint16_t)(c.ea & 0xFFu); /* answer not recorded */
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b.ea = (uint16_t)((c.ea & 0xFFu) | 0x200u); /* BR_SAME_PAGE: the cycle is skipped */
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b.ea = (uint16_t)((c.ea & 0xFFu) | 0x300u);
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b = c;
+    b.ea = 0xFFFFu;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+
+    /* The page-cross dummy of an indexed read runs only when the index crossed. */
+    c = setup_cpu(2u, 0x0200u, lda_abx, 3u, 0x34u);
+    c.x = 0x20u; /* $02F0 + $20 crosses */
+    flat_bus_run_cycles(&g_bus, &c, t, 3u);
+    CHECK(c.step == 3u && c.tmp == 1u && lynx__cpu_state_valid(&c, t));
+    b = c;
+    b.tmp = 0u; /* no crossing: the dummy cycle is skipped */
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b.tmp = 2u;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    b.tmp = 0xFFu;
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    c = setup_cpu(2u, 0x0200u, lda_abx, 3u, 0x34u);
+    c.x = 0x01u; /* no crossing: the read follows directly */
+    flat_bus_run_cycles(&g_bus, &c, t, 3u);
+    CHECK(c.step == 4u && c.tmp == 0u && lynx__cpu_state_valid(&c, t));
+
+    /* The decimal extra cycle exists only with D set. */
+    c = setup_cpu(2u, 0x0200u, adc_imm, 2u, 0x38u);
+    flat_bus_run_cycles(&g_bus, &c, t, 2u);
+    CHECK(c.step == 2u && lynx__cpu_state_valid(&c, t));
+    b = c;
+    b.p = (uint8_t)(c.p & ~0x08u);
+    CHECK(!lynx__cpu_state_valid(&b, t));
+    printf("cycles: forged latch and skipped micro-operation states refused\n");
 }
 
 /* Every state reached by real execution is accepted: all opcodes of every
@@ -960,6 +1054,7 @@ static int case_cycles(void)
     check_decimal();
     check_interrupts();
     check_state_validity();
+    check_state_forgeries();
     check_validity_sweep();
     printf("cycles: %u cases; tags SST-MODEL %u, WDC %u, RKW %u, INFERRED %u (all unverified for the Lynx)\n",
            count, g_tag_sst, g_tag_wdc, g_tag_rkw, g_tag_inf);

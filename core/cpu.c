@@ -855,11 +855,36 @@ static uint8_t max_slot(uint8_t mode)
     return s;
 }
 
+/* The pending micro-operation is one real execution reaches: a conditional one
+   only when its condition holds, with the helper fields in the form the earlier
+   micro-operations leave them (tmp is the page-cross flag at the cross dummies;
+   ea above the offset byte is 0 before the branch taken cycle and BR_CROSSED
+   before the cross cycle). */
+static bool pending_reached(const lynx__cpu *c, const lynx__cpu_decode *t, uint8_t mode)
+{
+    uint8_t u = lynx__script[mode][slot_of(c)];
+    if (!uop_active(c, t, u)) {
+        return false;
+    }
+    switch (u) {
+    case U_X_S_C:
+    case U_X_D_C: return c->tmp == 1u;
+    case U_BR_TAKEN: return (c->ea >> 8) == 0u;
+    case U_BR_CROSS_REL:
+    case U_BR_CROSS_ZP: return (c->ea >> 8) == 1u;
+    default: return true;
+    }
+}
+
 bool lynx__cpu_state_valid(const lynx__cpu *c, const lynx__cpu_decode *t)
 {
     uint8_t seq;
     uint8_t mode;
-    if (c->profile > 2u || (c->p & 0x30u) != 0x30u || (c->flags & ~0x3Fu) != 0u) {
+    /* The two take latches (IRQ_TAKE, NMI_TAKE) are set by a POLL cycle and
+       consumed by finish() in the same completion, so no reached state holds
+       either; only the NMI latches and the sequence bits are legal. */
+    if (c->profile > 2u || (c->p & 0x30u) != 0x30u ||
+        (c->flags & ~(LYNX__CS_NMI_PENDING | LYNX__CS_NMI_PREV | LYNX__CS_SEQ_MASK)) != 0u) {
         return false;
     }
     seq = seq_of(c);
@@ -872,7 +897,7 @@ bool lynx__cpu_state_valid(const lynx__cpu *c, const lynx__cpu_decode *t)
             return false;
         }
         mode = mode_of(c, t);
-        return (uint32_t)c->step + 1u <= max_slot(mode);
+        return (uint32_t)c->step + 1u <= max_slot(mode) && pending_reached(c, t, mode);
     }
     if (c->step == 0u) {
         return true;
@@ -884,5 +909,5 @@ bool lynx__cpu_state_valid(const lynx__cpu *c, const lynx__cpu_decode *t)
     if (mode == LYNX__M_ENTRY || mode == LYNX__M_RESETSEQ) {
         return false;
     }
-    return c->step <= max_slot(mode);
+    return c->step <= max_slot(mode) && pending_reached(c, t, mode);
 }
