@@ -1,15 +1,16 @@
 ---
 phase: "3"
 slug: "memory-map-direct-load-startup-and-first-diagnostic"
-status: in-progress
+status: validated
 nyquist_compliant: false
-wave_0_complete: false
+wave_0_complete: true
 created: "2026-11-10"
+audited: "2026-11-10"
 ---
 
 # Phase 3 — Validation Strategy
 
-> Executable coverage is assigned to 03-01 through 03-09 in sequential waves; see 03-PLANNING-AUDIT.md and 03-EDGE-RESOLUTIONS.json. Planned test IDs are registered and the 03-09 local and Ubuntu 24.04 gates pass. Final phase review, security review, exact-head CI and validation sign-off remain pending.
+> **Coverage verdict: PARTIAL.** The in-scope behavior and its negative controls are automated and registered. One Plan 03-09 publication interruption assertion is missing; see Task 03-09 T1 below. This is a test-coverage result, separate from phase qualification: parent code/security review and exact-head CI are still pending.
 
 ## Test Infrastructure
 
@@ -17,89 +18,101 @@ created: "2026-11-10"
 |---|---|
 | **Framework** | CTest, C test executables, CMake-script and POSIX shell controls; exact fast-inventory gate |
 | **Config** | `CMakePresets.json`, `tests/tests.cmake`, `cmake/Tests.cmake`, `tests/inventory/fast.txt` |
-| **Quick run** | `cmake --preset check && cmake --build --preset check && ctest --preset check -R '^(api|memory|diag|runner|consumer|det|fixture|docs)\.'` |
-| **Full suite** | `scripts/check.sh` |
-| **Measured runtime** | 03-09 `sh scripts/check.sh`: 82 s on macOS arm64 and 74 s in Ubuntu 24.04 arm64. CTest took 33.11 s and 22.40 s respectively. |
-| **Fast feedback** | 03-09 targeted `consumer.public_api`: 0.56 s on macOS and 0.14 s on Ubuntu. |
-
-## Sampling Rate
-
-- **After each task:** Run its direct executable case or nonempty targeted CTest slice from the plan.
-- **At integration:** Full `sh scripts/check.sh` locally and in Linux; inspect CI critical path for the exact tested head. Repeat affected checks after accepted review/security fixes.
-- **Before phase verification:** Full local and CI gate green, review/security findings fixed, inventory and claim hash aligned.
-- Full local/Linux suite results are recorded below; phase-wide coverage and review sign-off remain pending.
+| **Targeted command** | `cmake --build --preset check --target lynx-test-api lynx-test-diag lynx-consume lynx-consume-test lynx-check-artifacts lynx-run`, then the CTest command below |
+| **Focused CTest command** | `ctest --preset check --no-tests=error --output-on-failure -R '^(api\.(bll_|snapshot_|watch_|memory_peek_pure|inspect_pure|seam_agreement\.)|memory\.|runner\.cli|fixture\.bll_header|diag\.|consumer\.|det\.(diagnostic_restore|manifest_fields|two_instances|two_runs|golden|sensitivity))'` |
+| **Focused retest** | 41/41 passed on macOS arm64 after rebuilding the current API, diagnostic and consumer targets; 11.61 s CTest wall time. The large full-data CPU-vector lane was not run. |
+| **Full suite / exact inventory** | `sh scripts/check.sh`; current CTest registers 120 tests, matching the 120 non-comment rows in `tests/inventory/fast.txt`. Inventory SHA-256 and claim `inventory_sha256`: `1e5eee703b7d5a8009c1cb05fd20625b228418d1eedbd92f18c53f6dc1625654`. |
+| **Recorded local/Linux qualification** | Plan 03-09 checkpoint: 120/120, zero declared skips; macOS arm64 82 s total / 33.11 s CTest, Ubuntu 24.04 arm64 74 s total / 22.40 s CTest. These are checkpoint results; no exact-head CI result is recorded. |
 
 ## Requirement-Level Verification Map
 
-| Requirement | Candidate automated tests | Negative controls / expected refusal | File exists / status |
+| Requirement | Behavioral tests and negative controls | Coverage |
+|---|---|---|
+| MEM-01 | `memory.map_matrix`, `memory.map_matrix.self_test`, `api.memory_peek_pure`, `api.memory_peek_pure.self_test`; all 16 low-nibble values, window boundaries, special FFF8/FFF9 ordering, raw/mapped separation, and wrong-route mutants. | **COVERED** — software routing contract only; device behavior, readback policy and hardware accuracy remain unverified. |
+| MEM-02 | `api.bll_tracer`, `api.bll_load`, `api.bll_alias`, `fixture.bll_header(.self_test)`; strict header/length/range, empty/truncated/trailing/wrapped inputs, overlap and unchanged-instance refusals, one-byte and maximum payload boundaries, full-object identity, and actual guest execution. | **COVERED** |
+| MEM-03 | `det.manifest_fields(.self_test)`, `runner.cli`, `consumer.*`, `docs.claim_template`; startup A and identity fields, missing/empty/conflicting tag controls, canonical manifest and claim inventory binding. | **COVERED** |
+| MEM-04 | `api.bll_tracer`, `api.bll_load`, `runner.cli`, `memory.rom_unavailable(.self_test)`; cart/unknown container refusal, no raw/firmware CLI path, unavailable ROM/vector read/write/fetch, and RAM-selected positive controls. | **COVERED** — proves supported-interface limits; it does not establish rights provenance for arbitrary caller-supplied bytes. |
+| EVD-01 | `fixtures.cpu_asm`, `fixture.bll_header(.self_test)`, `diag.result_symbol`, `diag.result_controls`, `det.diagnostic_restore(.self_test)`; independent symbol/result/pixel checks plus no-run, broken guest, timeout, malformed/duplicate/range symbol, each result-field mutation and rehashed invalid snapshot controls. | **COVERED** — flat5 tick bounds are PLACEHOLDER evidence, not hardware timing. |
+| API-08 | `api.watch_post_write`, `api.watch_controls(.self_test)`, `api.watch_independent`; committed store/tick/continuation, half-open budget, range edges, rearm, instance isolation, and stop-before-store/repeated-store mutants. | **COVERED** |
+| DET-03 | `api.snapshot_continue(.self_test)`, `api.snapshot_refusal`, `det.diagnostic_restore(.self_test)`, `det.two_instances`; uninterrupted, sliced, watched and restored observations at common ticks; rehashed invalid-state refusal preserves state. | **COVERED** — equality establishes repeatability, not hardware accuracy. |
+| HB-01 | `consumer.snapshot_ppm`, `consumer.public_api`, `consumer.refusal_controls`; independently parsed exact 8x8 P3 samples/palette and SNAPSHOT/tick/content/startup/profile metadata; empty or wrong pixel data refuses. | **COVERED** — diagnostic snapshot, not a frame or video-accuracy claim. |
+| CON-01 | `consumer.public_api`, `consumer.snapshot_ppm`, `consumer.silence_wav`, `consumer.refusal_controls`; public-header boundary, independent PPM/WAV parser, exact silence samples/metadata, invalid-input refusal, existing-path preservation, injected write/close failures and concurrent publishers. | **PARTIAL** — Phase 3 delivers the documented snapshot/silence portion; real frame/audio streams are later-phase work. The interruption assertion in Task 03-09 T1 is also missing. |
+
+## Per-Task Coverage Map
+
+The map contains both tasks from each of the nine plans. “Covered” means the planned behavioral evidence exists and was either run in the focused retest or recorded in that plan/checkpoint. Overall qualification gates are listed separately below.
+
+| Task | Requirements | Test evidence | Status |
 |---|---|---|---|
-| MEM-01 | `memory.map_matrix`, `api.memory_peek_pure` | Wrong bit/window mutant; FFF8/FFF9 boundary mutant; raw RAM must remain visible while CPU mapping changes | Registered; local/Linux full gates pass; review/CI pending |
-| MEM-02 | `api.bll_load`, `fixture.bll_header` | Bad marker/magic/endian/length, empty body, truncated/trailing, range wrap, machine-buffer overlap; full instance byte-identical on refusal | Registered; local/Linux full gates pass; review/CI pending |
-| MEM-03 | `det.manifest_fields`, `det.manifest_fields.self_test`, `docs.claim_template` | Missing/wrong startup tier, stale claim inventory hash | Registered; local/Linux full gates pass; review/CI pending |
-| MEM-04 | `api.bll_load`, `runner.cli`, `memory.rom_unavailable` | BLL API rejects unknown/cart/firmware-shaped input and has no firmware option; mapped absent ROM stops explicitly, never RAM/zero BIOS | Registered; local/Linux full gates pass; review/CI pending |
-| EVD-01 | `diag.result_symbol`, `diag.result_controls` | No-run, broken guest, bad magic/schema, zero progress, zero done, corrupt result, timeout | Registered; local/Linux full gates pass; review/CI pending |
-| API-08 | `api.watch_post_write`, `api.watch_controls` | No-hit, just-outside range, rearm/double-write mutant; matching write must already be visible at stop | Registered; local/Linux full gates pass; review/CI pending |
-| DET-03 | `api.snapshot_continue`, `det.diagnostic_restore` | Bad version/hash/identity/invalid state; refusal preserves full machine; split-budget restore mutant | Registered; local/Linux full gates pass; review/CI pending |
-| HB-01 | `consumer.snapshot_ppm` | Empty/unexecuted pixel buffer or wrong expected pixel must fail; metadata says SNAPSHOT, not frame | Registered; local/Linux full gates pass; review/CI pending |
-| CON-01 | `consumer.public_api`, `consumer.silence_wav` | Consumer cannot include internal headers; malformed PPM/WAV structure and nonzero “silence” samples fail | Registered; local/Linux full gates pass; review/CI pending |
+| 03-01 T1 — strict BLL guest path | MEM-02, MEM-04 | `api.bll_tracer` | COVERED |
+| 03-01 T2 — snapshot identity and latch | MEM-01, MEM-02, MEM-04, DET-03 | `api.snapshot_roundtrip`, `api.snapshot_refusal`, `api.bll_identity` | COVERED |
+| 03-02 T1 — loader ownership/refusals | MEM-02, MEM-04 | `api.bll_load`, `api.bll_alias`, `api.bll_tracer` | COVERED |
+| 03-02 T2 — runner startup metadata | MEM-03, MEM-04 | `runner.cli`, `det.manifest_fields(.self_test)`, `det.two_instances`, `det.sensitivity` | COVERED |
+| 03-03 T1 — caller migration/private CPU seam | MEM-02, MEM-04, DET-03 | `api.seam_agreement.*`, `api.advance_*`, existing `cpu.vectors.*` inventory; full-data vector lane excluded | COVERED |
+| 03-03 T2 — raw API removal/manifest controls | MEM-03, MEM-04 | `runner.cli`, `det.manifest_fields(.self_test)`, `det.two_runs`, `det.golden(.self_test)`, `det.sensitivity` | COVERED |
+| 03-04 T1 — MAPCTL route matrix | MEM-01, MEM-04 | `memory.map_matrix(.self_test)` | COVERED |
+| 03-04 T2 — pure inspection/unavailable policy | MEM-01, MEM-04 | `api.memory_peek_pure(.self_test)`, `api.inspect_pure`, `memory.rom_unavailable(.self_test)`, `det.golden(.self_test)` | COVERED |
+| 03-05 T1 — permanent map/refusal controls | MEM-01, MEM-04 | `memory.map_matrix(.self_test)`, `api.memory_peek_pure(.self_test)`, `memory.rom_unavailable(.self_test)` | COVERED |
+| 03-05 T2 — post-write watch | API-08 | `api.watch_post_write`, `api.watch_controls(.self_test)` | COVERED |
+| 03-06 T1 — restore/watch isolation | API-08, DET-03 | `api.snapshot_continue(.self_test)`, `api.snapshot_refusal`, `det.two_instances` | COVERED |
+| 03-06 T2 — persistent watch edges | API-08, DET-03 | `api.watch_post_write`, `api.watch_controls(.self_test)`, `api.watch_independent`, `api.snapshot_continue(.self_test)` | COVERED |
+| 03-07 T1 — original diagnostic fixture | EVD-01, MEM-02, MEM-03 | `fixtures.cpu_asm`, `fixture.bll_header(.self_test)`, `hygiene.manifests(.self_test)` | COVERED |
+| 03-07 T2 — result/symbol/continuation oracle | EVD-01, API-08, DET-03 | `diag.result_symbol`, `diag.result_controls`, `det.diagnostic_restore(.self_test)` | COVERED |
+| 03-08 T1 — runner agreement/provenance | EVD-01, MEM-03, DET-03 | `diag.result_controls`, `fixture.bll_header(.self_test)`, `runner.cli`, `docs.provenance`, `policy.*` | COVERED |
+| 03-08 T2 — public consumer output | HB-01, CON-01, MEM-03 | `consumer.public_api`, `consumer.snapshot_ppm`, `consumer.silence_wav`, `consumer.refusal_controls` | COVERED |
+| 03-09 T1 — atomic consumer publication | HB-01, CON-01 | `consumer.refusal_controls` verifies conflicting publishers and write/close failures, but does not interrupt a process between staging and publish. | PARTIAL |
+| 03-09 T2 — docs and delivery qualification | All Phase 3 requirements | Local and Ubuntu `sh scripts/check.sh` results in `03-09-CHECKPOINT.md`; exact-head CI is not recorded. | COVERED for test coverage; CI qualification pending |
 
-*Candidate IDs must be registered in CTest and listed exactly in `tests/inventory/fast.txt` before they can count as coverage. Add each named-fault control to the inventory; update the existing claim's inventory hash in the same change.*
+### Missing assertion and recommended test
 
-## Cross-Cutting Invariants
+`consumer.refusal_controls` proves concurrent publishers yield one complete winner and one refusal, and injected write/close failures leave no final output path. There is no deterministic control that interrupts a consumer after it has created staging files but before the exclusive directory rename. Therefore the test does not establish the planned interruption assertion: **after process interruption, the final destination is absent, and any leftover private staging directory contains no `snapshot.manifest` success marker.**
 
-- **Load/refusal:** Seed a valid running machine before each bad-object case. Assert byte-identical machine state on refusal, including input overlap; mutate/free source bytes after success and verify object identity/state are unchanged.
-- **Startup/identity:** Init, reset and successful load begin with MAPCTL zero; PC is the BLL payload address. Hash the complete BLL object, report payload address/length separately. The diagnostic's own CPU write sets MAPCTL to `$0C`. Header-only mutation must change full-object identity.
-- **Map/inspection:** Exercise every one of the 16 low-nibble combinations and each boundary. Raw RAM inspection and CPU-mapped peek remain independent, side-effect-free observations.
-- **Watch:** Hit only after the matching CPU write completes; check byte, CPU continuation, tick and rearm. Watch settings/hit reporting do not enter guest-state digest. A watched run continued to the same final tick matches an uninterrupted run.
-- **Snapshots:** Include MAPCTL/startup/container identity and guest state; restore into fresh same-identity machine and compare public final observations with uninterrupted run. Invalid restores leave target unchanged.
-- **Guest evidence:** Result address comes from `-Ln` symbols; independently check nonzero magic/done, schema, semantic progress, error field and guest-time bounds. Compare expected PPM pixels from fixture constants, not from result output.
-- **Rights and outputs:** Original source/config/header recipe and fixture identity are manifested. Keep WAV under temporary output and clean it; never add an unmanifested binary fixture. No BIOS or game content.
-- **Consumer boundary:** Build separate C target against only public API; it obtains result/pixels from raw guest RAM, emits P3 PPM with SNAPSHOT/tick/content/startup/profile/palette metadata and valid integer PCM silence WAV.
+Recommended test: add a test-only barrier/pause point after staged PPM/WAV creation and before manifest publication/rename. Have the parent test wait for that explicit readiness signal, terminate the child, then assert the final destination is absent and any owned leftover staging directory has no `snapshot.manifest`. Avoid a timing-only kill loop. This gap is routed to the parent; no production or test source was changed in this audit.
 
-## Wave 0 Requirements
+## Residual Assumptions and Prohibitions
 
-- [ ] Add test registration/inventory scaffolding for `memory.*`, `api.bll_*`, `api.watch_*`, `diag.*`, `consumer.*`; retain and extend existing `det.manifest_fields` and `det.manifest_fields.self_test` startup checks and registered negative controls.
-- [ ] Add original diagnostic source, project linker config/header recipe, generated symbol output and a source/text fixture representation plus manifest/provenance fields. Do not commit a raw firmware-like binary.
-- [ ] Extend API refusal/snapshot test helpers for whole-instance equality and snapshot field controls.
-- [ ] Add independent consumer target and temporary-output WAV validator.
-- [ ] Preserve existing CTest/inventory/rights gates; no framework installation is needed.
+The edge probe retains all 14 original observations: nine have explicit predicates and five remain flagged unclassified. Their relevant tests now run, but they remain flagged in the source classification because software observations cannot establish the missing hardware/rights premise.
 
-## Manual-Only Verifications
+| Probe item | Test evidence | Audit disposition |
+|---|---|---|
+| API-08 idempotency | `api.watch_controls(.self_test)` | Explicit behavior covered. |
+| API-08 concurrency/instance isolation | `api.watch_independent` | Caller-serialized operations and interleaved independent instances covered. |
+| DET-03 common-tick continuation | `api.snapshot_continue(.self_test)`, `det.diagnostic_restore(.self_test)` | Behavioral equality covered; not an accuracy claim. |
+| MEM-01 route policy | `memory.map_matrix(.self_test)`, `memory.rom_unavailable(.self_test)` | Software route/refusal assertions covered; hardware readback/device policy stays unverified. |
+| MEM-02 loader edges | `api.bll_load`, `api.bll_alias` | Empty, exact-end, overlap, refusal ordering and ownership controls covered. |
+| MEM-03 startup tags | `det.manifest_fields(.self_test)` | Empty/conflict/order controls covered. |
+| MEM-04 firmware boundary | `runner.cli`, `api.bll_load`, `memory.rom_unavailable(.self_test)` | No distinct firmware input path is exposed; rights/provenance of arbitrary caller bytes remains outside this proof. |
+| EVD-01 result meaning | `diag.result_controls`, `diag.result_symbol` | No-run, broken, timeout, field corruption and symbol faults covered; physical accuracy is not. |
+| HB-01 pixel/palette interpretation | `consumer.snapshot_ppm`, `consumer.refusal_controls` | Independent diagnostic pixel/output contract covered; no canonical video claim. |
+| CON-01 publisher concurrency | `consumer.refusal_controls` | Competing publishers yield one complete output and one refusal; interruption remains the separate PARTIAL gap above. |
 
-None planned. Repository behavior, PPM/WAV structure, CI and evidence packaging are automatable. Physical hardware and firmware checks are explicitly outside this phase and remain owner-gated; do not report them as phase evidence.
+Two descriptor-less prohibitions in Plan 03-09 remain flagged-unverified: do not present tier-A repeatability as BIOS boot/cartridge compatibility/hardware accuracy/adopted model baseline; do not use firmware, commercial games or emulator implementation source to manufacture a diagnostic, licence or release authorization. Tests do not clear owner-gated rights, hardware or release decisions.
 
 ## Validation Sign-Off
 
-- [ ] Every planned task has automated verification or a Wave 0 dependency.
-- [ ] No three consecutive implementation tasks lack a targeted automated check.
-- [ ] All Wave 0 gaps resolved before relying on the coverage map.
-- [ ] No watch-mode commands.
-- [ ] Local feedback latency measured and below the agreed bound.
-- [ ] `nyquist_compliant: true` only after validation audit verifies full coverage.
+- [x] Plans 03-01 through 03-09 have task-level automated checks; Task 03-09 T1 retains one explicit interruption-control gap.
+- [x] The focused current retest is nonempty and the exact inventory remains 120 tests with zero declared skips in recorded full-gate runs.
+- [x] The full-data CPU-vector lane was not run as part of this audit.
+- [x] Local/macOS and Ubuntu full-gate evidence is recorded in the Plan 03-09 checkpoint.
+- [ ] `nyquist_compliant: true` — withheld until the deterministic interruption assertion is added and passes.
 
-**Planning map:** 03-01 BLL tracer/identity/snapshot; 03-02 ownership controls/strict runner; 03-03 complete caller/manifest migration and private flat-vector seam; 03-04 MAPCTL/pure inspection and its intentional golden change; 03-05 permanent map controls/post-write watch; 03-06 watch/restore/digest equivalence and any intentional guest-digest golden change; 03-07 original diagnostic/result oracle; 03-08 runner agreement/public consumer; 03-09 atomic artifacts/full local/Linux/exact-head CI qualification.
+## Phase Qualification (separate from coverage)
 
-**Exact planned additions:** api.bll_tracer, api.bll_load, api.bll_alias, api.bll_identity; memory.map_matrix, memory.map_matrix.self_test, api.memory_peek_pure, api.memory_peek_pure.self_test, memory.rom_unavailable, memory.rom_unavailable.self_test; api.watch_post_write, api.watch_controls, api.watch_independent, api.snapshot_continue, api.watch_controls.self_test, api.snapshot_continue.self_test; fixture.bll_header, fixture.bll_header.self_test, diag.result_symbol, diag.result_controls, det.diagnostic_restore, det.diagnostic_restore.self_test; consumer.public_api, consumer.snapshot_ppm, consumer.silence_wav, consumer.refusal_controls. Driver variants are subcases under these exact IDs. Every direct executable mode names its exact inventory ID beside the command in its task verify block. Existing det.manifest_fields and det.manifest_fields.self_test are extended rather than duplicated.
+| Gate | Status |
+|---|---|
+| macOS local full check | Recorded pass: 120/120, zero declared skips. |
+| Ubuntu 24.04 local full check | Recorded pass: 120/120, zero declared skips. |
+| Parent code review | Pending. |
+| Parent security review | Pending. |
+| Exact-head CI | Pending; no CI run is recorded in the Plan 03-09 checkpoint. |
+| Plan 03-09 summary | Intentionally pending parent review and exact-head CI; implementation, docs and local/Linux checks are recorded in `03-09-CHECKPOINT.md`. |
 
-**Golden ownership:** 03-04 declares and updates tests/golden/skeleton.digest for the new MAPCTL observation only after independent CPU/RAM/tick checks. 03-06 declares it for intentional normalized guest-digest changes, never for observer configuration/hit history. 03-09 runs local/Linux golden and negative controls without changing expected values to hide failure. Cross-compiler equality and CI bind to the exact final tested head.
+**Hardware and rights boundary:** no physical hardware, BIOS, commercial game content, release or publication qualification is included. MAPCTL/device policy, timing and snapshot/pixel repeatability are not hardware-accuracy evidence.
 
-**Probe:** nine classified edges have explicit planned predicates. Five unclassified assumptions remain flagged with concrete tests/manual evidence review; two descriptor-less prohibition recalls remain flagged-unverified. No hardware/rights authority is inferred from software checks.
+## Validation Audit 2026-11-10
 
-**Approval:** routine implementation and local/Linux qualification are authorized; rights, physical testing, licence, release and publication stops remain owner-gated.
-
-## 03-09 Interim Qualification Evidence
-
-This is implementation evidence only; parent review, security review, exact-head CI and final phase coverage audit are not complete.
-
-| Environment | Command | Result |
-|---|---|---|
-| macOS arm64, Apple clang 21.0.0.21000101, CMake 4.4.3, Ninja 1.13.2, ShellCheck 0.11.0 | `sh scripts/check.sh` | 120/120 tests, 0 declared skips; CTest 33.11 s, workflow 34 s, full check 82 s; artifact scan 6,478 files and one exactly 512 bytes. |
-| Ubuntu 24.04 arm64 container, GCC 13.3, CMake 3.28.3, Ninja 1.11.1, ShellCheck 0.9.0 | `sh scripts/check.sh` in isolated source copy; OS packages `build-essential cmake ninja-build shellcheck curl git ca-certificates` | 120/120 tests, 0 declared skips; CTest 22.40 s, workflow 22 s, full check 74 s; artifact scan 6,319 files and one exactly 512 bytes. |
-
-`det.golden` and `det.golden.self_test` passed on both compilers without changing golden values. The `consumer.*` registrations are exactly `consumer.public_api`, `consumer.snapshot_ppm`, `consumer.silence_wav` and `consumer.refusal_controls`. The fast inventory hash and `docs/claims/skeleton-repeatability.claim` both equal `1e5eee703b7d5a8009c1cb05fd20625b228418d1eedbd92f18c53f6dc1625654`.
-
-The documented temporary demo was run after `scripts/check.sh`: the consumer emitted an 8x8 P3 `SNAPSHOT` at guest tick 5000, startup A, profile none, with BLL SHA `16ecb83e09554082f1d51212bbe7c31fd67d33ba68873bca3441308eec284ba0`; the independent artifact checker accepted the PPM and placeholder PCM WAV. File sizes were 960-byte PPM, 1,644-byte WAV and 384-byte manifest. No generated artifacts were retained.
-
-The first Ubuntu container setup lacked `ca-certificates` and stopped before project tests; adding that Ubuntu OS package resolved setup. The next run exposed that GCC warns rather than fails for an implicit private-symbol declaration. The public-boundary probe now uses `-Werror=implicit-function-declaration`; its targeted test passes on both compilers and the corrected Linux full gate passes. No project dependency was installed, and no full-data vector lane was run.
-
-
+| Metric | Count |
+|---|---|
+| Gaps found | 1 |
+| Resolved | 0 |
+| Escalated | 1 |
