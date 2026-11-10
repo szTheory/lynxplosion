@@ -2,17 +2,17 @@
 gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Evidence Harness and Walking Skeleton
-status: executing
-stopped_at: Completed 01-12-PLAN.md
-last_updated: "2026-11-10T00:00:11.780Z"
+status: verifying
+stopped_at: Completed 01-13-PLAN.md
+last_updated: "2026-11-10T00:16:31.089Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 1 execution started
-state_head: d60f595e8aa780c2d427ef6f0dbaff9b0b776ffc
+state_head: b5987171e3bd614be808aac14b6c23265542be62
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
   percent: 0
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 
 Phase: 1 (Evidence Harness and Walking Skeleton) — EXECUTING
 Plan: 13 of 13
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-11-09 — Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -68,6 +68,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 1 P10 | 45min | 2 tasks | 9 files |
 | Phase 1 P11 | 40min | 3 tasks | 8 files |
 | Phase 1 P12 | 35 min | 2 tasks | 12 files |
+| Phase 1 P13 | 25min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,9 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-11: non-text means a control byte or invalid UTF-8 (never NUL alone); exactly-512-byte non-text files fail in every zone; scan-binaries findings go to stderr, summary line to stdout
 - [Phase 1]: 01-11: hygiene.sh keeps only --tree and --history, reads text files only, excludes only itself; binaries are owned by scan-binaries.sh
 - [Phase 1]: 01-12: claims are bound to the SHA-256 of the exact fast.txt bytes; regenerate with sh scripts/check-claims.sh --inventory-sha256 after re-running evidence; profile stays none while O1 is open; clean-room and exposure record remain DRAFT pending O6
+- [Phase 1]: 01-13: no actions/cache for cc65; the step takes 11-16 s on the runner, under the 30 s rule (measured candidate recorded in 01-13-SUMMARY)
+- [Phase 1]: 01-13: ctest runs with 4 parallel jobs in the check test preset; every test has its own scratch path, 8 parallel runs green
+- [Phase 1]: 01-13: cc65 tool hashes differ between macOS clang and Linux gcc builds; only the linked probe hash (e2fdd981...) must match and does
 
 ### Pending Todos
 
@@ -123,6 +127,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T00:00:11.747Z
-Stopped at: Completed 01-12-PLAN.md
+Last session: 2026-11-10T00:16:31.065Z
+Stopped at: Completed 01-13-PLAN.md
 Resume file: None
