@@ -5,6 +5,11 @@
 #
 # Fault prevented: a digest that ignores an input (or a runner that ignores a
 # flag) would make every equality test pass for the wrong reason.
+# Script mode starts with old policies on CMake 3.28 (CI): without these,
+# while(TRUE) below is false there and the occurrence count reads 0.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
+
 foreach(var RUNNER CONTENT FLIP_FROM FLIP_TO WORK)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "sensitivity: -D${var}= is required and must not be empty")

@@ -6,6 +6,11 @@
 #
 # Fault prevented: a manifest that drifts in key order, rounds a tick count,
 # leaks a host path or date, or is accepted by a validator that checks nothing.
+# Script mode starts with old policies on CMake 3.28 (CI): without these,
+# while(TRUE) below is false there and the occurrence count reads 0.
+cmake_minimum_required(VERSION 3.25)
+cmake_policy(VERSION 3.25)
+
 foreach(var RUNNER CONTENT WORK SH VALIDATE TRAP_FROM TRAP_TO TRAP_TICKS TRAP_STOP)
   if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
     message(FATAL_ERROR "manifest_fields: -D${var}= is required and must not be empty")
