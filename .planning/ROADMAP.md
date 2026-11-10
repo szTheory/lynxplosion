@@ -113,7 +113,41 @@ Plans:
   4. Tests cover IRQ entry, CLI/SEI latency, WAI/STP and reserved-opcode NOP lengths, and each follows the selected profile's documented behaviour. Each expected value cites its source or is marked unverified.
 **Owner gates**: O1 (baseline model). Both profiles are built and neither is named baseline. No CPU-profile compatibility claim is made until O1 is decided.
 **Research flag**: Deeper research needed before planning: which SingleStepTests directory applies to each profile and which opcodes to exclude; decimal-mode and reserved-opcode cycle counts (unsourced); the shape of the bus-cycle interface (AD-01 spike).
-**Plans**: TBD
+**Plans:** 11 plans
+
+Plans:
+**Wave 1**
+- [ ] 02-01-PLAN.md — CPU core and profile tables as a white-box unit: tracer slice, all modes, decimal, interrupts, include gate (CPU-02, CPU-03, CPU-04)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 02-02-PLAN.md — startup_tier `none` vocabulary with controls; Phase 2 exposure record; claim-template vector note (CPU-01)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 02-03-PLAN.md — Pinned SingleStepTests sample, pin record, licence, manifests, provenance; vectors-full.sh pin/sample (CPU-01)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 02-04-PLAN.md — Strict reader, vector runner, committed per-profile inventories, cpu.vectors.lynx1/lynx2 (CPU-01, CPU-02)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 02-05-PLAN.md — Wrong-profile and other named-fault controls, pin lint, full-lane run mode (CPU-05, CPU-01)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 02-06-PLAN.md — Authored per-cycle scenario vectors with source tags: latency, Test 8 replica, BRK/NMI/reset, bit ops, edges (CPU-04, CPU-02)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 02-07-PLAN.md — sum-trap and churn-loop fixtures with hand-derived traces; ca65 re-assembly gate (CPU-03, CPU-02)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 02-08-PLAN.md — Bus cost model (flat5 PLACEHOLDER, test_skew); det gates parameterised, golden unchanged (CPU-03)
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [ ] 02-09-PLAN.md — Machine switch: S2 budget loop, UNDEFINED, profiles per instance, new registers, snapshot format 2, golden and claim re-baseline (CPU-02, CPU-03, CPU-04)
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 02-10-PLAN.md — Public-path tests: runner --profile, profile select/divergence, cost model, slicing, seam agreement, profile agreement (CPU-02, CPU-03, CPU-05)
+
+**Wave 11** *(blocked on Wave 10 completion)*
+- [ ] 02-11-PLAN.md — Profile document, README, full vector lane, push, CI by head SHA, CI efficiency review (CPU-01..05)
 
 ### Phase 3: Memory Map, Direct-Load Startup and First Diagnostic
 **Goal**: An original diagnostic starts through rights-clean startup tier A on the real memory map, reports pass or fail through a RAM result block, and produces a first labelled, viewable snapshot.
@@ -198,7 +232,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Evidence Harness and Walking Skeleton | 13/13 | Complete    | 2026-11-09 |
-| 2. CPU Profiles and Per-Opcode Vectors | 0/TBD | Not started | - |
+| 2. CPU Profiles and Per-Opcode Vectors | 0/11 | Planned | - |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 0/TBD | Not started | - |
 | 4. Timers, Interrupts and First Public Suites | 0/TBD | Not started | - |
 | 5. Display, Raw Video and Input | 0/TBD | Not started | - |
