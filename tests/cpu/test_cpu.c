@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "bus.h"
 #include "check.h"
 #include "cpu.h"
 #include "cpu/flat_bus.h"
@@ -915,6 +916,38 @@ static void check_validity_sweep(void)
     printf("cycles: %u real states accepted by lynx__cpu_state_valid\n", states);
 }
 
+/* The price of a cycle kind belongs to the cycle contract, and it lives on the
+   bus side: flat5 is the all-5 PLACEHOLDER, test_skew has distinct non-zero
+   costs per kind (the test's own copy of the numbers, in enum lynx__ck order),
+   and an unknown model id is invalid. */
+static void check_costs(void)
+{
+    static const uint8_t skew[LYNX__CK_COUNT] = {4, 6, 3, 10, 7, 9, 8, 11, 12, 13, 14};
+    unsigned r, k, j;
+    for (r = 0; r < (unsigned)LYNX__REGION_COUNT; r++) {
+        for (k = 0; k < (unsigned)LYNX__CK_COUNT; k++) {
+            lynx__bus_timing f = lynx__bus_timing_of(LYNX__COST_FLAT5, (uint8_t)r, (uint8_t)k);
+            lynx__bus_timing s = lynx__bus_timing_of(LYNX__COST_TEST_SKEW, (uint8_t)r, (uint8_t)k);
+            CHECK(f.ticks == 5u && f.sample == 0u);
+            CHECK(s.ticks == skew[k] && s.sample == 0u);
+            CHECK(s.ticks != 0u);
+            for (j = 0; j < k; j++) {
+                CHECK(skew[j] != skew[k]);
+            }
+        }
+    }
+    CHECK(lynx__bus_cost_model_valid(0u));
+    CHECK(lynx__bus_cost_model_valid(1u));
+    CHECK(!lynx__bus_cost_model_valid(2u));
+    CHECK(!lynx__bus_cost_model_valid(0xFFFFFFFFu));
+    for (k = 0; k < 0x10000u; k += 0x101u) {
+        CHECK(lynx__bus_region_of((uint16_t)k) == (uint8_t)LYNX__REGION_RAM);
+    }
+    CHECK(lynx__bus_region_of(0x0000u) == (uint8_t)LYNX__REGION_RAM);
+    CHECK(lynx__bus_region_of(0xFFFFu) == (uint8_t)LYNX__REGION_RAM);
+    printf("cycles: cost models checked (flat5 all 5, test_skew distinct, ids 0 and 1 valid)\n");
+}
+
 static int case_cycles(void)
 {
     unsigned i;
@@ -923,6 +956,7 @@ static int case_cycles(void)
     for (i = 0; i < count; i++) {
         run_cycase(&cycases[i]);
     }
+    check_costs();
     check_decimal();
     check_interrupts();
     check_state_validity();
