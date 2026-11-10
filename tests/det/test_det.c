@@ -222,6 +222,340 @@ static bundle_run instance_run(const instance *in)
     return run;
 }
 
+static void require_same_public_guest(const char *path, const lynx_machine *reference,
+                                     const lynx_machine *candidate)
+{
+    static uint8_t ram_reference[LYNX_ADDRESS_SPACE];
+    static uint8_t ram_candidate[LYNX_ADDRESS_SPACE];
+    uint32_t regs_reference[LYNX_REG_COUNT];
+    uint32_t regs_candidate[LYNX_REG_COUNT];
+    uint64_t ticks_reference = 0u;
+    uint64_t ticks_candidate = 0u;
+    lynx_identity id_reference;
+    lynx_identity id_candidate;
+    uint8_t peek_reference = 0xA5u;
+    uint8_t peek_candidate = 0x5Au;
+    size_t size_reference = 0u;
+    size_t size_candidate = 0u;
+    size_t written_reference = 0u;
+    size_t written_candidate = 0u;
+    uint8_t *snapshot_reference = NULL;
+    uint8_t *snapshot_candidate = NULL;
+    uint32_t reg;
+
+    CHECK_EQ_U64(lynx_read_memory(reference, 0u, ram_reference, sizeof ram_reference), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_memory(candidate, 0u, ram_candidate, sizeof ram_candidate), LYNX_OK);
+    if (memcmp(ram_reference, ram_candidate, sizeof ram_reference) != 0) {
+        fprintf(stderr, "watch_snapshot: %s raw RAM differs from uninterrupted execution\n", path);
+        check_failures++;
+    }
+    for (reg = 0u; reg < LYNX_REG_COUNT; reg++) {
+        CHECK_EQ_U64(lynx_read_register(reference, reg, &regs_reference[reg]), LYNX_OK);
+        CHECK_EQ_U64(lynx_read_register(candidate, reg, &regs_candidate[reg]), LYNX_OK);
+    }
+    if (memcmp(regs_reference, regs_candidate, sizeof regs_reference) != 0) {
+        fprintf(stderr, "watch_snapshot: %s public registers differ from uninterrupted execution\n",
+                path);
+        check_failures++;
+    }
+    CHECK_EQ_U64(lynx_guest_ticks(reference, &ticks_reference), LYNX_OK);
+    CHECK_EQ_U64(lynx_guest_ticks(candidate, &ticks_candidate), LYNX_OK);
+    CHECK_EQ_U64(ticks_candidate, ticks_reference);
+    CHECK_EQ_U64(lynx_get_identity(reference, &id_reference), LYNX_OK);
+    CHECK_EQ_U64(lynx_get_identity(candidate, &id_candidate), LYNX_OK);
+    if (id_reference.profile != id_candidate.profile ||
+        id_reference.ram_policy != id_candidate.ram_policy ||
+        id_reference.ram_seed != id_candidate.ram_seed ||
+        id_reference.has_content != id_candidate.has_content ||
+        id_reference.content_addr != id_candidate.content_addr ||
+        id_reference.content_len != id_candidate.content_len ||
+        id_reference.content_format != id_candidate.content_format ||
+        id_reference.startup_tier != id_candidate.startup_tier ||
+        id_reference.entry_addr != id_candidate.entry_addr ||
+        id_reference.object_len != id_candidate.object_len ||
+        memcmp(id_reference.content_sha256, id_candidate.content_sha256,
+               sizeof id_reference.content_sha256) != 0) {
+        fprintf(stderr, "watch_snapshot: %s identity differs from uninterrupted execution\n", path);
+        check_failures++;
+    }
+    CHECK_EQ_U64(lynx_read_cpu_memory(reference, 0xFFF9u, &peek_reference, 1u),
+                 LYNX_ERR_UNAVAILABLE);
+    CHECK_EQ_U64(lynx_read_cpu_memory(candidate, 0xFFF9u, &peek_candidate, 1u),
+                 LYNX_ERR_UNAVAILABLE);
+    CHECK_EQ_HEX(peek_reference, 0xA5u);
+    CHECK_EQ_HEX(peek_candidate, 0x5Au);
+    CHECK_EQ_U64(lynx_snapshot_size(reference, &size_reference), LYNX_OK);
+    CHECK_EQ_U64(lynx_snapshot_size(candidate, &size_candidate), LYNX_OK);
+    CHECK_EQ_U64(size_candidate, size_reference);
+    snapshot_reference = malloc(size_reference);
+    snapshot_candidate = malloc(size_candidate);
+    CHECK(snapshot_reference != NULL);
+    CHECK(snapshot_candidate != NULL);
+    if (snapshot_reference != NULL && snapshot_candidate != NULL) {
+        CHECK_EQ_U64(lynx_snapshot_save(reference, snapshot_reference, size_reference,
+                                        &written_reference), LYNX_OK);
+        CHECK_EQ_U64(lynx_snapshot_save(candidate, snapshot_candidate, size_candidate,
+                                        &written_candidate), LYNX_OK);
+        CHECK_EQ_U64(written_reference, size_reference);
+        CHECK_EQ_U64(written_candidate, size_candidate);
+        if (memcmp(snapshot_reference, snapshot_candidate, size_reference) != 0) {
+            fprintf(stderr, "watch_snapshot: %s guest snapshots differ from uninterrupted execution\n",
+                    path);
+            check_failures++;
+        }
+    }
+    free(snapshot_reference);
+    free(snapshot_candidate);
+}
+
+/* The watch proof deliberately uses only common CPU opcodes and a real RAM
+   store. Every compared bundle_run describes the aggregate path to the same
+   final tick, so intermediate WATCH returns never enter guest equality. */
+static void watch_snapshot_agreement(void)
+{
+    static const uint8_t program[] = {
+        0xA9u, 0x5Au,             /* LDA #$5A */
+        0x8Du, 0x00u, 0x04u,      /* STA $0400 */
+        0x4Cu, 0x00u, 0x02u       /* JMP $0200 */
+    };
+    static const uint32_t profiles[] = {
+        LYNX_PROFILE_NONE, LYNX_PROFILE_LYNX1, LYNX_PROFILE_LYNX2
+    };
+    static const uint32_t cost_models[] = {LYNX__COST_FLAT5, LYNX__COST_TEST_SKEW};
+    static const uint64_t slices[] = {1u, 127u, 512u, 2048u};
+    enum { BASELINE = 0, SLICED = 1, WATCHED = 2, RESTORED = 3, SOURCE = 4, INSTANCE_COUNT = 5 };
+    const uint64_t final_tick = 4096u;
+    size_t profile_index;
+    size_t cost_index;
+
+    for (profile_index = 0u; profile_index < sizeof profiles / sizeof profiles[0]; profile_index++) {
+        for (cost_index = 0u; cost_index < sizeof cost_models / sizeof cost_models[0]; cost_index++) {
+            instance machines[INSTANCE_COUNT] = {{0}};
+            uint64_t requested[4] = {0u, 0u, 0u, 0u};
+            uint64_t ticks[4] = {0u, 0u, 0u, 0u};
+            char digests[4][65];
+            bundle_run runs[4];
+            uint8_t *snapshot = NULL;
+            size_t snapshot_size = 0u;
+            size_t machine_index;
+            uint64_t used = 0u;
+            uint64_t elapsed = 0u;
+            lynx_stop_reason stop = LYNX_STOP_HALT;
+            lynx_status status = LYNX_OK;
+            unsigned watch_hits = 0u;
+            uint64_t checkpoint_requested = 0u;
+            uint64_t checkpoint_tick = 0u;
+
+            for (machine_index = 0u; machine_index < INSTANCE_COUNT; machine_index++) {
+                if (instance_make_p(&machines[machine_index], profiles[profile_index], program,
+                                    sizeof program) != 0 || machines[machine_index].m == NULL) {
+                    fprintf(stderr, "watch_snapshot: failed to create profile %s instance\n",
+                            lynx_profile_name(profiles[profile_index]));
+                    check_failures++;
+                    goto combo_cleanup;
+                }
+                CHECK_EQ_U64(lynx__machine_set_cost_model(machines[machine_index].m,
+                                                          cost_models[cost_index]), LYNX_OK);
+            }
+
+            status = lynx_advance(machines[BASELINE].m, final_tick, &used, &stop);
+            CHECK_EQ_U64(status, LYNX_OK);
+            CHECK_EQ_U64(used, final_tick);
+            CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+            if (status != LYNX_OK || used != final_tick || stop != LYNX_STOP_BUDGET) {
+                goto combo_cleanup;
+            }
+            ticks[BASELINE] = used;
+            requested[BASELINE] = final_tick;
+
+            elapsed = 0u;
+            machine_index = 0u;
+            while (elapsed < final_tick) {
+                const uint64_t remaining = final_tick - elapsed;
+                uint64_t budget = slices[machine_index % (sizeof slices / sizeof slices[0])];
+                if (budget > remaining) {
+                    budget = remaining;
+                }
+                machine_index++;
+                used = 0u;
+                stop = LYNX_STOP_HALT;
+                requested[SLICED] += budget;
+                status = lynx_advance(machines[SLICED].m, budget, &used, &stop);
+                CHECK_EQ_U64(status, LYNX_OK);
+                CHECK_EQ_U64(used, budget);
+                CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+                if (status != LYNX_OK || used != budget || stop != LYNX_STOP_BUDGET) {
+                    goto combo_cleanup;
+                }
+                elapsed += used;
+            }
+            ticks[SLICED] = elapsed;
+
+            CHECK_EQ_U64(lynx_watch_configure(machines[WATCHED].m, 0x0400u, 1u), LYNX_OK);
+            elapsed = 0u;
+            while (elapsed < final_tick) {
+                const uint64_t remaining = final_tick - elapsed;
+                uint64_t watch_used = 0u;
+                stop = LYNX_STOP_HALT;
+                requested[WATCHED] += remaining;
+                status = lynx_advance(machines[WATCHED].m, remaining, &watch_used, &stop);
+                CHECK_EQ_U64(status, LYNX_OK);
+                CHECK(watch_used > 0u && watch_used <= remaining);
+                if (status != LYNX_OK || watch_used == 0u || watch_used > remaining) {
+                    goto combo_cleanup;
+                }
+                elapsed += watch_used;
+                if (stop == LYNX_STOP_WATCH) {
+                    lynx_watch_event event;
+                    memset(&event, 0, sizeof event);
+                    CHECK_EQ_U64(lynx_watch_get(machines[WATCHED].m, &event), LYNX_OK);
+                    CHECK_EQ_U64(event.hit, 1u);
+                    CHECK_EQ_U64(event.address, 0x0400u);
+                    CHECK_EQ_U64(event.value, 0x5Au);
+                    CHECK_EQ_U64(event.return_tick, event.hit_tick + 1u);
+                    watch_hits++;
+                    if (elapsed < final_tick) {
+                        CHECK_EQ_U64(lynx_watch_configure(machines[WATCHED].m, 0x0400u, 1u),
+                                     LYNX_OK);
+                    } else {
+                        uint64_t zero_used = 1u;
+                        lynx_stop_reason final_stop = LYNX_STOP_HALT;
+                        CHECK_EQ_U64(lynx_advance(machines[WATCHED].m, 0u, &zero_used,
+                                                  &final_stop), LYNX_OK);
+                        CHECK_EQ_U64(zero_used, 0u);
+                        CHECK_EQ_U64(final_stop, LYNX_STOP_BUDGET);
+                    }
+                } else {
+                    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+                    CHECK_EQ_U64(elapsed, final_tick);
+                    if (stop != LYNX_STOP_BUDGET || elapsed != final_tick) {
+                        goto combo_cleanup;
+                    }
+                }
+            }
+            CHECK(watch_hits > 1u);
+            ticks[WATCHED] = elapsed;
+
+            /* Stop at a reachable mid-instruction, in-cycle point, then restore
+               into a freshly loaded equal-identity destination with a host watch armed. */
+            used = 0u;
+            stop = LYNX_STOP_HALT;
+            status = lynx_advance(machines[SOURCE].m, 1024u, &used, &stop);
+            CHECK_EQ_U64(status, LYNX_OK);
+            CHECK_EQ_U64(used, 1024u);
+            CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+            if (status != LYNX_OK || used != 1024u || stop != LYNX_STOP_BUDGET) {
+                goto combo_cleanup;
+            }
+            checkpoint_requested = 1024u;
+            for (unsigned probe = 0u;
+                 !(machines[SOURCE].m->cpu.step != 0u &&
+                   machines[SOURCE].m->cpu_ready_at > machines[SOURCE].m->guest_ticks);
+                 probe++) {
+                if (probe >= 512u) {
+                    fprintf(stderr, "watch_snapshot: no mid-instruction/in-cycle checkpoint\n");
+                    check_failures++;
+                    goto combo_cleanup;
+                }
+                used = 0u;
+                stop = LYNX_STOP_HALT;
+                status = lynx_advance(machines[SOURCE].m, 1u, &used, &stop);
+                CHECK_EQ_U64(status, LYNX_OK);
+                CHECK_EQ_U64(used, 1u);
+                CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+                if (status != LYNX_OK || used != 1u || stop != LYNX_STOP_BUDGET) {
+                    goto combo_cleanup;
+                }
+                checkpoint_requested++;
+            }
+            CHECK(machines[SOURCE].m->cpu.step != 0u);
+            CHECK(machines[SOURCE].m->cpu_ready_at > machines[SOURCE].m->guest_ticks);
+            checkpoint_tick = machines[SOURCE].m->guest_ticks;
+            CHECK(checkpoint_tick < final_tick);
+            if (checkpoint_tick >= final_tick) {
+                goto combo_cleanup;
+            }
+            CHECK_EQ_U64(lynx_snapshot_size(machines[SOURCE].m, &snapshot_size), LYNX_OK);
+            snapshot = malloc(snapshot_size);
+            CHECK(snapshot != NULL);
+            if (snapshot == NULL) {
+                goto combo_cleanup;
+            }
+            {
+                size_t written = 0u;
+                CHECK_EQ_U64(lynx_snapshot_save(machines[SOURCE].m, snapshot, snapshot_size,
+                                                &written), LYNX_OK);
+                CHECK_EQ_U64(written, snapshot_size);
+            }
+            CHECK_EQ_U64(lynx_watch_configure(machines[RESTORED].m, 0x0400u, 1u), LYNX_OK);
+            CHECK_EQ_U64(lynx_snapshot_restore(machines[RESTORED].m, snapshot, snapshot_size),
+                         LYNX_OK);
+            {
+                lynx_watch_event event;
+                memset(&event, 0xA5, sizeof event);
+                CHECK_EQ_U64(lynx_watch_get(machines[RESTORED].m, &event), LYNX_OK);
+                CHECK_EQ_U64(event.hit, 0u);
+                CHECK_EQ_U64(event.address, 0u);
+            }
+            used = 0u;
+            stop = LYNX_STOP_HALT;
+            status = lynx_advance(machines[RESTORED].m, final_tick - checkpoint_tick, &used, &stop);
+            CHECK_EQ_U64(status, LYNX_OK);
+            CHECK_EQ_U64(used, final_tick - checkpoint_tick);
+            CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+            if (status != LYNX_OK || used != final_tick - checkpoint_tick ||
+                stop != LYNX_STOP_BUDGET) {
+                goto combo_cleanup;
+            }
+            ticks[RESTORED] = checkpoint_tick + used;
+            requested[RESTORED] = checkpoint_requested + (final_tick - checkpoint_tick);
+
+            runs[BASELINE] = (bundle_run){NULL, requested[BASELINE], ticks[BASELINE],
+                                          LYNX_STOP_BUDGET};
+            runs[SLICED] = (bundle_run){NULL, requested[SLICED], ticks[SLICED],
+                                        LYNX_STOP_BUDGET};
+            runs[WATCHED] = (bundle_run){NULL, requested[WATCHED], ticks[WATCHED],
+                                         LYNX_STOP_BUDGET};
+            runs[RESTORED] = (bundle_run){NULL, requested[RESTORED], ticks[RESTORED],
+                                          LYNX_STOP_BUDGET};
+            {
+                lynx_machine *paths[4] = {machines[BASELINE].m, machines[SLICED].m,
+                                          machines[WATCHED].m, machines[RESTORED].m};
+                const char *names[4] = {"uninterrupted", "split-budget", "watched/rearmed",
+                                        "restored"};
+                for (machine_index = 0u; machine_index < 4u; machine_index++) {
+                    CHECK_EQ_U64(ticks[machine_index], final_tick);
+                    CHECK_EQ_U64(bundle_observe(paths[machine_index], &runs[machine_index],
+                                                digests[machine_index]), 0);
+                    require_same_public_guest(names[machine_index], machines[BASELINE].m,
+                                              paths[machine_index]);
+                    if (machine_index != BASELINE &&
+                        strcmp(digests[machine_index], digests[BASELINE]) != 0) {
+                        fprintf(stderr, "watch_snapshot: %s digest differs for profile %s cost %u\n",
+                                names[machine_index], lynx_profile_name(profiles[profile_index]),
+                                cost_models[cost_index]);
+                        check_failures++;
+                    }
+                }
+            }
+            if (check_failures == 0) {
+                printf("watch_snapshot: profile=%s cost=%u tick=%llu digest=%s hits=%u\n",
+                       lynx_profile_name(profiles[profile_index]), cost_models[cost_index],
+                       (unsigned long long)final_tick, digests[BASELINE], watch_hits);
+            }
+
+combo_cleanup:
+            free(snapshot);
+            for (machine_index = 0u; machine_index < INSTANCE_COUNT; machine_index++) {
+                if (machines[machine_index].m != NULL) {
+                    lynx_machine_deinit(machines[machine_index].m);
+                }
+                free(machines[machine_index].mem);
+            }
+        }
+    }
+}
+
 /* Two instances in one process, advanced interleaved in 512-tick chunks, each
    written as a whole bundle into its own fresh directory. DET-02. */
 static void case_two_instances(char **args)
@@ -340,6 +674,7 @@ static void case_two_instances(char **args)
         text_a = NULL;
         text_b = NULL;
     }
+    watch_snapshot_agreement();
     if (check_failures == 0) {
         printf("two_instances: ok observation %s bundle %s\n", obs_a, bundle_a);
     }

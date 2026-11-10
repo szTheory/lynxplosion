@@ -36,8 +36,10 @@
    profile, RAM policy, seed and loaded content: the identity comes from the
    instance, so a blob cannot assert its own compatibility. It validates in a
    fixed order, all before the first write, and then applies in one step that
-   cannot fail. A refused restore leaves the instance byte-identical. Formats
-   1 and 2 are refused as version errors.
+   cannot fail. A refused restore leaves the instance byte-identical. After
+   that guest-state apply succeeds, host-only watch configuration and hit
+   reporting are cleared; callers must explicitly rearm after restore.
+   Formats 1 and 2 are refused as version errors.
 
    Reversibility: restore needs the same build, so no old snapshot is ever
    accepted and the format may change in any later build without migration. */
@@ -360,5 +362,8 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     m->cpu_ready_at = ready;
     m->mapctl = payload[P_MAPCTL];
     memcpy(m->ram, payload + P_RAM, LYNX_ADDRESS_SPACE);
+    /* Every refusal check is above. Successful restore resumes guest state
+       without carrying the host's previous debugger observation forward. */
+    (void)lynx_watch_clear(m);
     return LYNX_OK;
 }

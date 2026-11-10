@@ -2067,6 +2067,9 @@ static void case_snapshot_continue(void)
     uint64_t consumed = 0u;
     lynx_stop_reason stop = LYNX_STOP_BUDGET;
     CHECK_EQ_U64(lynx_watch_configure(watched, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(save_into(watched, blob_v), 0u);
+    CHECK_EQ_U64(save_into(plain, blob_c), 0u);
+    CHECK(memcmp(blob_v, blob_c, SNAP_TOTAL) == 0); /* armed configuration is host-only */
     CHECK_EQ_U64(lynx_advance(watched, 26u, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
     CHECK_EQ_U64(consumed, 26u);

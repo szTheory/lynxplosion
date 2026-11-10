@@ -66,7 +66,10 @@ static int entry_cmp(const void *a, const void *b)
     return strcmp(((const entry *)a)->name, ((const entry *)b)->name);
 }
 
-/* The three canonical observation byte strings. */
+/* The three canonical guest observation byte strings. RAM, public registers
+   (including MAPCTL), and guest time are included; host watch configuration
+   and events are never read. run metadata records the caller's final aggregate
+   result, so segmented paths must normalize it before comparing digests. */
 static int collect(const lynx_machine *m, const bundle_run *run, uint8_t *ram, uint8_t regs[],
                    uint8_t tbuf[])
 {
