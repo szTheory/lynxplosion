@@ -93,6 +93,12 @@ lynx_add_test(NAME det.sensitivity
     -P ${CMAKE_CURRENT_LIST_DIR}/sensitivity.cmake
   LABELS det TIMEOUT 60)
 
+# The golden workload is profile-independent: none, lynx1 and lynx2 give the same
+# registers, RAM, guest time and observation digest (the committed golden).
+lynx_add_test(NAME det.profile_agreement
+  COMMAND lynx-test-det profile_agreement ${LYNX_CPU_LOOP_CONTENT} ${LYNX_CPU_LOOP_GOLDEN}
+  LABELS det TIMEOUT 60)
+
 lynx_add_test(NAME det.sensitivity_state
   COMMAND lynx-test-det state_sensitivity ${LYNX_CPU_LOOP_CONTENT}
   LABELS det TIMEOUT 60)

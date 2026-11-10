@@ -114,10 +114,11 @@ typedef struct instance {
     int all_budget_stops;
 } instance;
 
-static int instance_make(instance *in, const uint8_t *content, size_t len)
+static int instance_make_p(instance *in, uint32_t profile, const uint8_t *content, size_t len)
 {
     lynx_config cfg;
     lynx_config_default(&cfg);
+    cfg.profile = profile;
     cfg.ram_policy = LYNX_RAM_POLICY_SPLITMIX64;
     cfg.ram_seed = SEED;
     memset(in, 0, sizeof *in);
@@ -130,6 +131,11 @@ static int instance_make(instance *in, const uint8_t *content, size_t len)
         return 1;
     }
     return lynx_load_ram_image(in->m, content, len, LOAD_ADDR) == LYNX_OK ? 0 : 1;
+}
+
+static int instance_make(instance *in, const uint8_t *content, size_t len)
+{
+    return instance_make_p(in, LYNX_PROFILE_NONE, content, len);
 }
 
 static void instance_advance(instance *in)
@@ -279,20 +285,76 @@ static lynx_machine *copy_machine(const lynx_machine *src)
     return (lynx_machine *)mem;
 }
 
-/* A digest that ignores state would make every equality test vacuous. One bit
-   of a register, of guest time and of a RAM byte must each change it; an
-   unmodified copy must not. */
+/* ---- det.sensitivity_state ---- */
+
+/* Each flip changes one piece of machine state in a copy of the machine, then
+   brings the CPU's derived request back in line with it (lynx__cpu_repost), the
+   way a restore does. The flip is checked to leave a state real execution can
+   reach, so the digest changes through the public read path (registers,
+   including ids 6 and 7, RAM and guest time) and not through a refusal. */
+typedef struct flip {
+    const char *name;
+    void (*apply)(lynx_machine *m);
+} flip;
+
+static void flip_pc(lynx_machine *m) { m->cpu.pc ^= 1u; }
+static void flip_a(lynx_machine *m) { m->cpu.a ^= 1u; }
+static void flip_x(lynx_machine *m) { m->cpu.x ^= 1u; }
+static void flip_y(lynx_machine *m) { m->cpu.y ^= 1u; }
+static void flip_s(lynx_machine *m) { m->cpu.s ^= 1u; }
+/* Bit 0, the carry: bits 4 and 5 always read as set, so they cannot show a flip. */
+static void flip_p(lynx_machine *m) { m->cpu.p ^= 1u; }
+/* A defined latch bit that is clear in the base state. */
+static void flip_flags(lynx_machine *m) { m->cpu.flags ^= LYNX__CS_NMI_PREV; }
+/* Another cycle of the same instruction (PLA is mid-instruction at 4096 ticks). */
+static void flip_step(lynx_machine *m) { m->cpu.step = m->cpu.step == 1u ? 2u : 1u; }
+/* Another opcode of the same addressing mode: PLA becomes PLY (both pull). */
+static void flip_opcode(lynx_machine *m) { m->cpu.opcode = 0x7Au; }
+static void flip_ea(lynx_machine *m) { m->cpu.ea ^= 1u; }
+static void flip_tmp(lynx_machine *m) { m->cpu.tmp ^= 1u; }
+/* Within the allowed range [guest_ticks, guest_ticks + 255]. */
+static void flip_ready_at(lynx_machine *m) { m->cpu_ready_at = m->guest_ticks + 2u; }
+static void flip_cost_model(lynx_machine *m) { m->cost_model = LYNX__COST_TEST_SKEW; }
+static void flip_guest_ticks(lynx_machine *m)
+{
+    m->guest_ticks ^= 1u;
+    m->cpu_ready_at ^= 1u; /* keeps cpu_ready_at - guest_ticks and the range as they were */
+}
+static void flip_ram(lynx_machine *m) { m->ram[0x0100u] ^= 1u; }
+
+/* A digest that ignores state would make every equality test vacuous. Every
+   piece of state the machine holds, one bit or one value at a time, must change
+   it: registers, the CPU's position inside the instruction, its latches, the
+   cost model, guest time and RAM. An unmodified copy must not change it. */
 static void case_state_sensitivity(char **args)
 {
+    static const flip flips[] = {
+        {"cpu.pc", flip_pc},
+        {"register a", flip_a},
+        {"register x", flip_x},
+        {"register y", flip_y},
+        {"register s", flip_s},
+        {"register p (carry)", flip_p},
+        {"cpu latch flags", flip_flags},
+        {"cpu step", flip_step},
+        {"cpu opcode", flip_opcode},
+        {"cpu ea", flip_ea},
+        {"cpu tmp", flip_tmp},
+        {"cpu_ready_at", flip_ready_at},
+        {"cost model", flip_cost_model},
+        {"guest time", flip_guest_ticks},
+        {"ram byte 0x0100", flip_ram},
+    };
+    enum { NFLIPS = sizeof flips / sizeof flips[0] };
+    static char digests[NFLIPS][65];
     uint8_t *content = NULL;
     size_t content_len = 0;
     instance base;
-    lynx_machine *copy[4];
+    lynx_machine *copy;
     char want[65];
     char got[65];
     size_t i;
-    static const char *const name[4] = {"unmodified copy", "register a", "guest time",
-                                        "ram byte 0x0100"};
+    size_t j;
 
     CHECK_EQ_U64(bundle_read_hex(args[0], &content, &content_len), 0);
     if (content == NULL) {
@@ -312,37 +374,134 @@ static void case_state_sensitivity(char **args)
         CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
     }
     CHECK_EQ_U64(digest_of(base.m, want), 0);
+    /* The base state is mid-instruction (PLA, step 2), the position the step and
+       opcode flips rely on. */
+    CHECK_EQ_HEX(base.m->cpu.opcode, 0x68u);
+    CHECK_EQ_HEX(base.m->cpu.step, 2u);
+    CHECK(lynx__cpu_state_valid(&base.m->cpu, lynx__cpu_table(base.m->cpu.profile)));
 
-    for (i = 0; i < 4; i++) {
-        copy[i] = copy_machine(base.m);
-        CHECK(copy[i] != NULL);
-        if (copy[i] == NULL) {
+    copy = copy_machine(base.m);
+    CHECK(copy != NULL);
+    if (copy != NULL) {
+        CHECK_EQ_U64(digest_of(copy, got), 0);
+        if (strcmp(got, want) != 0) {
+            fprintf(stderr, "sensitivity_state: unmodified copy: digest changed without a change\n");
+            check_failures++;
+        }
+        free(copy);
+    }
+    for (i = 0; i < NFLIPS; i++) {
+        copy = copy_machine(base.m);
+        CHECK(copy != NULL);
+        if (copy == NULL) {
             continue;
         }
-        if (i == 1) {
-            copy[i]->cpu.a ^= 1u;
-        } else if (i == 2) {
-            copy[i]->guest_ticks ^= 1u;
-        } else if (i == 3) {
-            copy[i]->ram[0x0100u] ^= 1u;
+        flips[i].apply(copy);
+        lynx__cpu_repost(&copy->cpu, lynx__cpu_table(copy->cpu.profile));
+        if (!lynx__cpu_state_valid(&copy->cpu, lynx__cpu_table(copy->cpu.profile)) ||
+            copy->cpu_ready_at < copy->guest_ticks || copy->cpu_ready_at - copy->guest_ticks > 255u) {
+            fprintf(stderr, "sensitivity_state: %s: the flip left a state execution cannot reach\n",
+                    flips[i].name);
+            check_failures++;
         }
-        CHECK_EQ_U64(digest_of(copy[i], got), 0);
-        if (i == 0) {
-            if (strcmp(got, want) != 0) {
-                fprintf(stderr, "sensitivity_state: %s: digest changed without a change\n",
-                        name[i]);
-                check_failures++;
-            }
-        } else if (strcmp(got, want) == 0) {
-            fprintf(stderr, "sensitivity_state: %s: digest unchanged\n", name[i]);
+        CHECK_EQ_U64(digest_of(copy, digests[i]), 0);
+        if (strcmp(digests[i], want) == 0) {
+            fprintf(stderr, "sensitivity_state: %s: digest unchanged\n", flips[i].name);
             check_failures++;
         } else {
-            printf("sensitivity_state: %s: digest differs (%s)\n", name[i], got);
+            printf("sensitivity_state: %s: digest differs (%s)\n", flips[i].name, digests[i]);
         }
-        free(copy[i]);
+        free(copy);
+    }
+    /* No two flips collapse to one digest. */
+    for (i = 0; i < NFLIPS; i++) {
+        for (j = i + 1u; j < NFLIPS; j++) {
+            if (strcmp(digests[i], digests[j]) == 0) {
+                fprintf(stderr, "sensitivity_state: %s and %s give the same digest\n", flips[i].name,
+                        flips[j].name);
+                check_failures++;
+            }
+        }
     }
     printf("sensitivity_state: base digest %s\n", want);
     free(base.mem);
+}
+
+/* ---- det.profile_agreement ---- */
+
+/* The golden workload (churn-loop, seeded RAM, 4096 ticks) uses only opcodes the
+   lynx1 and lynx2 tables define identically, so profile none, lynx1 and lynx2
+   must give the same observation: the same eight registers, the same RAM, the
+   same guest time and therefore the same observation digest (the one the golden
+   file commits). The manifest's "profile = " line differs by design and is not
+   part of the observation digest, so it is excluded from this comparison. */
+static void case_profile_agreement(char **args)
+{
+    static const uint32_t profiles[3] = {LYNX_PROFILE_NONE, LYNX_PROFILE_LYNX1, LYNX_PROFILE_LYNX2};
+    uint8_t *content = NULL;
+    size_t content_len = 0;
+    instance in[3];
+    char golden[65];
+    char digest[3][65];
+    static uint8_t ram[3][LYNX_ADDRESS_SPACE];
+    uint32_t regs[3][LYNX_REG_COUNT];
+    uint64_t ticks[3];
+    size_t i;
+    uint32_t r;
+
+    CHECK_EQ_U64(bundle_read_hex(args[0], &content, &content_len), 0);
+    CHECK_EQ_U64(read_golden(args[1], golden), 0);
+    if (content == NULL || check_failures != 0) {
+        free(content);
+        return;
+    }
+    for (i = 0; i < 3u; i++) {
+        unsigned chunk;
+        CHECK_EQ_U64(instance_make_p(&in[i], profiles[i], content, content_len), 0);
+        if (in[i].m == NULL) {
+            free(content);
+            return;
+        }
+        for (chunk = 0; chunk < CHUNKS; chunk++) {
+            instance_advance(&in[i]);
+        }
+        CHECK_EQ_U64(in[i].consumed, BUDGET);
+        CHECK(in[i].all_budget_stops);
+        /* The instance holds the profile the host chose. */
+        {
+            lynx_identity id;
+            CHECK_EQ_U64(lynx_get_identity(in[i].m, &id), LYNX_OK);
+            CHECK_EQ_U64(id.profile, profiles[i]);
+        }
+        CHECK_EQ_U64(lynx_read_memory(in[i].m, 0, ram[i], LYNX_ADDRESS_SPACE), LYNX_OK);
+        for (r = 0; r < LYNX_REG_COUNT; r++) {
+            CHECK_EQ_U64(lynx_read_register(in[i].m, r, &regs[i][r]), LYNX_OK);
+        }
+        CHECK_EQ_U64(lynx_guest_ticks(in[i].m, &ticks[i]), LYNX_OK);
+        CHECK_EQ_U64(digest_of(in[i].m, digest[i]), 0);
+        /* Every profile reproduces the committed golden. */
+        if (strcmp(digest[i], golden) != 0) {
+            fprintf(stderr, "profile_agreement: profile %s digest %s, golden %s\n",
+                    lynx_profile_name(profiles[i]), digest[i], golden);
+            check_failures++;
+        }
+    }
+    for (i = 1; i < 3u; i++) {
+        CHECK(memcmp(ram[0], ram[i], LYNX_ADDRESS_SPACE) == 0);
+        CHECK(memcmp(regs[0], regs[i], sizeof regs[0]) == 0);
+        CHECK_EQ_U64(ticks[0], ticks[i]);
+        CHECK(strcmp(digest[0], digest[i]) == 0);
+    }
+    if (check_failures == 0) {
+        printf("profile_agreement: none, lynx1 and lynx2 agree, observation %s\n", digest[0]);
+    }
+    for (i = 0; i < 3u; i++) {
+        if (in[i].m != NULL) {
+            lynx_machine_deinit(in[i].m);
+        }
+        free(in[i].mem);
+    }
+    free(content);
 }
 
 static const struct {
@@ -350,6 +509,7 @@ static const struct {
     int args; /* arguments after the case name */
     void (*run)(char **args);
 } cases[] = {
+    {"profile_agreement", 2, case_profile_agreement},
     {"state_sensitivity", 1, case_state_sensitivity},
     {"two_instances", 3, case_two_instances},
 };

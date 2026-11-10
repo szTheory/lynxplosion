@@ -56,6 +56,7 @@ det.golden	det
 det.golden.self_test	det
 det.manifest_fields	det
 det.manifest_fields.self_test	det
+det.profile_agreement	det
 det.sensitivity	det
 det.sensitivity_state	det
 det.two_instances	det
