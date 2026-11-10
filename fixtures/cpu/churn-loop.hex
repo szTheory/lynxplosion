@@ -1,0 +1,5 @@
+# Project-authored test content (fixtures/cpu/churn-loop.s), assembled by the pinned cc65.
+# Load address 0x0200. 46 bytes. Never ends; reads seeded RAM.
+a2 00 a0 08 a9 00 85 40 a9 05 85 41 bd 00 04 45
+30 71 40 9d 00 06 2a 48 20 2b 02 68 85 30 e8 d0
+eb e6 31 80 e7 ea ea ea ea ea ea 04 32 60

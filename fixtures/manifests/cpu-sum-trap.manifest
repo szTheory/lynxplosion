@@ -1,0 +1,11 @@
+source = fixtures/cpu/sum-trap.s (project-authored)
+revision = in-repo
+recipe = ca65 --cpu 65SC02 and ld65 -C fixtures/cpu/raw-0200.cfg with the cc65 pin (scripts/check.sh cpu-fixtures step)
+sha256 = 6ae9bada8fb004f5756821c0e756267d2a2e44e6f68928fe27984906acc00f33
+licence = project source all rights reserved (O5 open)
+notices = none
+allowed_use = CPU program test content (golden workload / hand-derived trace)
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/cpu/sum-trap.s fixtures/cpu/sum-trap.hex fixtures/cpu/raw-0200.cfg

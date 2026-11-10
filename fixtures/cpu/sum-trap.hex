@@ -1,0 +1,5 @@
+# Project-authored test content (fixtures/cpu/sum-trap.s), assembled by the pinned cc65.
+# Load address 0x0200. 35 bytes. Terminates at the bit-op slot 0x07 (stop undefined).
+a2 05 a9 00 86 10 18 65 10 ca d0 f8 8d 00 03 20
+20 02 a2 ff bd 01 02 48 a9 00 68 07 ea ea ea ea
+e6 11 60

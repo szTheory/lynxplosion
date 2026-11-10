@@ -1,0 +1,11 @@
+source = fixtures/cpu/churn-loop.s (project-authored)
+revision = in-repo
+recipe = ca65 --cpu 65SC02 and ld65 -C fixtures/cpu/raw-0200.cfg with the cc65 pin (scripts/check.sh cpu-fixtures step)
+sha256 = dcee7216a88ff2ffaf3e4a2794c3369676fc47493d710f26cd8bbadd19745b77
+licence = project source all rights reserved (O5 open)
+notices = none
+allowed_use = CPU program test content (golden workload / hand-derived trace)
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/cpu/churn-loop.s fixtures/cpu/churn-loop.hex
