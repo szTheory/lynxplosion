@@ -38,6 +38,7 @@ docs.policy.self_test	docs
 docs.provenance	docs
 docs.provenance.self_test	docs
 fetch_pin.mismatch.self_test	fetch_pin
+hygiene.check_steps.self_test	hygiene
 hygiene.firmware_scan	hygiene
 hygiene.firmware_scan.self_test	hygiene
 hygiene.manifests	hygiene

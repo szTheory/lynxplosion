@@ -67,6 +67,14 @@ lynx_add_test(NAME hygiene.manifests.self_test
     ${PROJECT_SOURCE_DIR} ${LYNX_SCRATCH_DIR}/gates/manifests
   LABELS hygiene TIMEOUT 30)
 
+# A step of scripts/check.sh that fails before its last command, or a tool that
+# fails in the identities step, stops the run (set -e is off in a tested
+# function). The self-test runs the step machinery as written.
+lynx_add_test(NAME hygiene.check_steps.self_test
+  COMMAND ${LYNX_SH} ${PROJECT_SOURCE_DIR}/tests/gates/check_controls.sh
+    ${PROJECT_SOURCE_DIR}
+  LABELS hygiene TIMEOUT 30)
+
 # The probe .lnx built by the pinned cc65 (the probe step of scripts/check.sh)
 # has the SHA-256 its manifest records. The self-test points the same script at
 # a manifest copy whose identity is 64 zeros and requires the mismatch message.

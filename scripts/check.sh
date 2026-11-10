@@ -9,27 +9,49 @@ cd "$(dirname "$0")/.."
 
 total_start=$(date +%s)
 
+# --- step machinery (tests/gates/check_controls.sh runs this block as written) ---
+# A step runs bare, never under `if`, `!` or `||`: set -e is ignored inside any
+# function whose status is tested, which would let every command but the last of
+# a step fail silently. A failing step therefore ends the shell, and the EXIT
+# trap names the step that was running.
+current_step=
+on_exit() {
+  exit_rc=$?
+  if [ "$exit_rc" -ne 0 ] && [ -n "$current_step" ]; then
+    printf 'check: step %s failed\n' "$current_step" >&2
+  fi
+}
+trap on_exit EXIT
+trap 'exit 1' INT TERM
+
 # step NAME CMD... : print the step banner, run CMD, print the wall time.
 step() {
   step_name=$1
   shift
+  current_step=$step_name
   printf '== step %s\n' "$step_name"
   step_start=$(date +%s)
-  if ! "$@"; then
-    printf 'check: step %s failed\n' "$step_name" >&2
-    exit 1
-  fi
+  "$@"
   step_end=$(date +%s)
+  current_step=
   printf -- '-- step %s: %ss\n' "$step_name" "$((step_end - step_start))"
 }
+# --- end of step machinery ---
 
-# Prints the identity of every tool the check depends on.
+# Prints the identity of every tool the check depends on. A missing tool fails
+# the step; it never prints an empty identity.
 identities() {
-  printf 'cc: %s\n' "$(cc --version | head -n 1)"
-  printf 'cmake: %s\n' "$(cmake --version | head -n 1)"
-  printf 'ninja: %s\n' "$(ninja --version)"
-  printf 'shellcheck: %s\n' "$(shellcheck --version | grep '^version:')"
-  printf 'git: %s\n' "$(git --version)"
+  id_cc=$(cc --version) || return 1
+  id_cmake=$(cmake --version) || return 1
+  id_ninja=$(ninja --version) || return 1
+  id_shellcheck=$(shellcheck --version) || return 1
+  id_git=$(git --version) || return 1
+  id_shellcheck=$(printf '%s\n' "$id_shellcheck" | grep '^version:') || return 1
+  printf 'cc: %s\n' "$(printf '%s\n' "$id_cc" | head -n 1)"
+  printf 'cmake: %s\n' "$(printf '%s\n' "$id_cmake" | head -n 1)"
+  printf 'ninja: %s\n' "$id_ninja"
+  printf 'shellcheck: %s\n' "$id_shellcheck"
+  printf 'git: %s\n' "$id_git"
   if [ ! -f pins.txt ]; then
     printf 'check: pins.txt is missing\n' >&2
     return 1
@@ -173,7 +195,13 @@ run_cc65() {
 
   CC65_HOME=$PWD/$CC65_DIR
   export CC65_HOME
-  jobs=$(getconf _NPROCESSORS_ONLN)
+  jobs=$(getconf _NPROCESSORS_ONLN) || jobs=
+  case $jobs in
+    '' | *[!0-9]* | 0)
+      printf 'cc65: getconf gave no usable processor count; building with -j1\n'
+      jobs=1
+      ;;
+  esac
   # The cc65 Makefile embeds "git rev-parse --short HEAD" of whatever repository
   # encloses the tree (here: this one), so the tool bytes would change with every
   # commit of this repository. BUILD_ID is fixed to the pinned cc65 commit.
@@ -212,10 +240,16 @@ run_probe() {
         cl65 -t lynx -Ln probe.sym -o probe.lnx probe.c
   ) || return 1
   rm -f build/toolchain/probe.o build/toolchain/probe.s
+  if [ ! -f build/toolchain/probe.lnx ]; then
+    printf 'check: probe: cl65 produced no build/toolchain/probe.lnx\n' >&2
+    return 1
+  fi
   for probe_tool in cc65 ca65 ld65 cl65; do
-    printf 'cc65 tool sha256 %s %s\n' "$probe_tool" "$(sha_of "$CC65_DIR/bin/$probe_tool")"
+    probe_tool_sha=$(sha_of "$CC65_DIR/bin/$probe_tool") || return 1
+    printf 'cc65 tool sha256 %s %s\n' "$probe_tool" "$probe_tool_sha"
   done
-  printf 'probe sha256 = %s\n' "$(sha_of build/toolchain/probe.lnx)"
+  probe_sha=$(sha_of build/toolchain/probe.lnx) || return 1
+  printf 'probe sha256 = %s\n' "$probe_sha"
   probe_size=$(wc -c <build/toolchain/probe.lnx | tr -d ' ')
   printf 'probe size = %s\n' "$probe_size"
   if [ "$probe_size" -eq 512 ]; then
