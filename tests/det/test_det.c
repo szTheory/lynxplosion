@@ -320,7 +320,7 @@ static void case_state_sensitivity(char **args)
             continue;
         }
         if (i == 1) {
-            copy[i]->a ^= 1u;
+            copy[i]->cpu.a ^= 1u;
         } else if (i == 2) {
             copy[i]->guest_ticks ^= 1u;
         } else if (i == 3) {

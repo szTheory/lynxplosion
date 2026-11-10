@@ -104,7 +104,7 @@ if(NOT budget STREQUAL "0" OR NOT consumed STREQUAL "0")
   message(FATAL_ERROR "manifest_fields: a zero budget recorded tick_budget=${budget} ticks_consumed=${consumed}")
 endif()
 
-# (c) the largest budget on an image that halts: the fixture's bytes with
+# (c) the largest budget on an image that stops: the fixture's bytes with
 # TRAP_FROM replaced by TRAP_TO, written here at test time. The match is
 # unanchored and must be unique: the occurrences are counted, and any count but
 # 1 is a failure.

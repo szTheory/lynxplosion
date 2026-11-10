@@ -1,6 +1,6 @@
-claim = The skeleton workload produces the same observation digest across fresh runs, in-process instances and Apple clang and Linux gcc builds
+claim = The CPU churn-loop workload under profile none produces the same observation digest across fresh runs, in-process instances and Apple clang and Linux gcc builds
 profile = none
-content_sha256 = ab5f8b5cb9435354c7b58603592d5faf081e17ceb05f7a7c67f4b666f12ca457
+content_sha256 = dcee7216a88ff2ffaf3e4a2794c3369676fc47493d710f26cd8bbadd19745b77
 startup_tier = A
 evidence_tier = R
 inventory_sha256 = b4f3dd3f052e8087b0d1f675b808cc82f1664fa30a79c23b8c06df53a350c9fa

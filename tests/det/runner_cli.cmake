@@ -66,8 +66,8 @@ endif()
 message(STATUS "runner_cli: refusals leave no output: ok")
 
 # The full tick range is accepted. The largest budget needs content that stops
-# at once (TRAP_HEX, today the halt opcode 0xdb), or the run would simulate for
-# geological time.
+# at once (TRAP_HEX, the bit-op slot 0x07 that profile none stops before), or
+# the run would simulate for geological time.
 file(WRITE "${WORK}/halt.hex" "${TRAP_HEX}\n")
 expect("zero ticks" 0 ""
   --content "${CONTENT}" --load-addr 0200 --ticks 0 --out "${WORK}/zero")
