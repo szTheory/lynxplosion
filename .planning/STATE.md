@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Memory Map, Direct-Load Startup and First Diagnostic
 status: executing
-stopped_at: Completed 03-02-PLAN.md
-last_updated: "2026-11-10T17:09:45.850Z"
+stopped_at: Completed 03-03-PLAN.md
+last_updated: "2026-11-10T18:14:44.843Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 03 execution started
-state_head: 06f29b8502f29f7e2f0bd0541988b79c612f342b
+state_head: e473d90a3e4b3d86ef0092f6bf9736a5d27e98ad
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 33
-  completed_plans: 26
+  completed_plans: 27
   percent: 33
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 03 (Memory Map, Direct-Load Startup and First Diagnostic) — EXECUTING
-Plan: 3 of 9
+Plan: 4 of 9
 Status: Ready to execute
 Last activity: 2026-11-10 — Phase 03 execution started
 
@@ -83,6 +83,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 2 P11 | 90min | 3 tasks | 16 files |
 | Phase 03 P01 | 00:25:29 | 2 tasks | 8 files |
 | Phase 03 P02 | 00:26:42 | 2 tasks | 13 files |
+| Phase 03 P03 | 58 min | 2 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -144,6 +145,9 @@ Recent decisions affecting current work:
 - [Phase 03]: The runner accepts a complete binary BS93 object and derives the load and entry address from the core.
 - [Phase 03]: Runner manifests derive format, startup, complete-object hash, entry and payload fields from public identity.
 - [Phase 03]: The provisional raw-image API remains until plan 03-03 removes it.
+- [Phase 03]: Keep CPU-vector flat-bus machine-loop tests behind a private distinct identity that public BLL loading cannot select.
+- [Phase 03]: Require startup=A when present and require startup to match startup_tier when both manifest fields are present.
+- [Phase 03]: Retain the existing deterministic golden; complete-object identity and repeatability are not hardware-accuracy evidence.
 
 ### Pending Todos
 
@@ -170,6 +174,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T17:09:45.595Z
-Stopped at: Completed 03-02-PLAN.md
+Last session: 2026-11-10T18:14:44.638Z
+Stopped at: Completed 03-03-PLAN.md
 Resume file: None
