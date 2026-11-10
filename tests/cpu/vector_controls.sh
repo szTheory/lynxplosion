@@ -678,9 +678,32 @@ EOF
   ok "a runner without a results file is a failed lane, reported, not a silent exit"
 }
 
+# IN-05: a cross pairing must fail on exactly the 32 bit-operation opcodes AND
+# every failing row must account for all of the file's 10,000 vectors (passed +
+# failed); a truncated or garbled row with the right opcode set is refused.
+lane_cross_counts() {
+  for case in cross cross_short; do
+    lh=$work/lane-$case
+    lane_harness "$lh" "$case" <<'EOF'
+run_cross cross-lynx1-rockwell65c02 rockwell65c02 --profile lynx1
+echo "lane_status=$lane_status"
+EOF
+    rc=0
+    sh "$lh/harness.sh" >"$work/lane-$case.out" 2>&1 || rc=$?
+    if [ "$case" = cross ]; then
+      expect cross_counts_control 0 '^lane_status=0$' "$work/lane-$case.out"
+    else
+      expect cross_counts 0 '^lane_status=1$' "$work/lane-$case.out"
+      expect cross_counts 0 'FAILED.*10,000 vectors.*: 07$' "$work/lane-$case.out"
+    fi
+  done
+  ok "a cross pairing with the right opcode set but a row that does not add up to 10,000 vectors is refused"
+}
+
 case_lane_script() {
   lane_runner_build
   lane_results_missing
+  lane_cross_counts
 }
 
 case $name in

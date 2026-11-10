@@ -262,6 +262,9 @@ run_cross() {
   rc_got=$(failing_set "$work/$rc_name.results")
   rc_want=$(bitop_set)
   rc_count=$(printf '%s\n' "$rc_got" | wc -w | tr -d ' ')
+  # Every failing row must account for the file's 10,000 vectors, so a
+  # truncated or garbled row cannot hide behind the right opcode set.
+  rc_short=$(awk -F'\t' '$3 > 0 && $2 + $3 != 10000 { printf "%s%s", sep, $1; sep = " " } END { print "" }' "$work/$rc_name.results")
   rc_extra=""
   for rc_op in $rc_got; do
     case " $rc_want " in
@@ -279,6 +282,10 @@ run_cross() {
   echo "vectors-full: run: $rc_name ($2 under $4): runner exit $rc_rc in $(($(date +%s) - rc_started)) s, results sha256 $(sha_of "$work/$rc_name.results")"
   echo "vectors-full: run: $rc_name failing opcodes ($rc_count): $rc_got"
   echo "vectors-full: run: $rc_name beyond the 32 bit-operation opcodes:${rc_extra:- none}; bit-operation opcodes not failing:${rc_absent:- none}"
+  if [ -n "$rc_short" ]; then
+    echo "vectors-full: run: $rc_name: FAILED, failing rows that do not add up to 10,000 vectors (passed + failed): $rc_short" >&2
+    lane_status=1
+  fi
   if [ "$rc_rc" -ne 1 ] || [ "$rc_got" != "$rc_want" ]; then
     echo "vectors-full: run: $rc_name: FAILED, expected exit 1 and exactly the 32 bit-operation opcodes failing" >&2
     lane_status=1
