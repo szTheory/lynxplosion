@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: CPU Profiles and Per-Opcode Vectors
 status: executing
-stopped_at: Phase 1 complete, ready to plan Phase 2
-last_updated: "2026-11-10T03:00:47.649Z"
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-11-10T03:17:49.688Z"
 last_activity: 2026-11-09
-last_activity_desc: Phase 1 complete, transitioned to Phase 2
-state_head: 6e9650ace227d250e6bb2934a30c5b6074f9e5f1
+last_activity_desc: Phase 2 execution started
+state_head: b496ce311b4415a6b1a9aaef871675ba74ebec11
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 24
-  completed_plans: 13
+  completed_plans: 14
   percent: 17
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-09)
 
 **Core value:** Every compatibility claim is tied to an exact, named Lynx model/configuration and to reproducible evidence from a deterministic, observable machine.
-**Current focus:** Phase 1 — Evidence Harness and Walking Skeleton
+**Current focus:** Phase 2 — CPU Profiles and Per-Opcode Vectors
 
 ## Current Position
 
-Phase: 2 (CPU Profiles and Per-Opcode Vectors) — READY TO EXECUTE
-Plan: Not started
+Phase: 2 (CPU Profiles and Per-Opcode Vectors) — EXECUTING
+Plan: 2 of 11
 Status: Ready to execute
-Last activity: 2026-11-09 — Phase 1 complete, transitioned to Phase 2
+Last activity: 2026-11-09 — Phase 2 execution started
 
 Progress: [██░░░░░░░░] 17%
 
@@ -69,6 +69,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 1 P11 | 40min | 3 tasks | 8 files |
 | Phase 1 P12 | 35 min | 2 tasks | 12 files |
 | Phase 1 P13 | 25min | 2 tasks | 4 files |
+| Phase 2 P01 | one session | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -103,6 +104,10 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-13: no actions/cache for cc65; the step takes 11-16 s on the runner, under the 30 s rule (measured candidate recorded in 01-13-SUMMARY)
 - [Phase 1]: 01-13: ctest runs with 4 parallel jobs in the check test preset; every test has its own scratch path, 8 parallel runs green
 - [Phase 1]: 01-13: cc65 tool hashes differ between macOS clang and Linux gcc builds; only the linked probe hash (e2fdd981...) must match and does
+- [Phase 2]: Dispatch is a const (mode,slot) micro-operation script table plus a switch on the micro-operation, not hand-written switch (mode) then switch (step)
+- [Phase 2]: Branch taken-dummy records its page-cross answer in ea bits 8 and 9
+- [Phase 2]: Starting any interrupt entry clears both TAKE latches
+- [Phase 2]: lynx__cpu_table returns NULL above profile 2; opcode fetch request carries neither POLL nor LAST
 
 ### Pending Todos
 
@@ -130,6 +135,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T00:16:31.065Z
-Stopped at: Phase 1 complete, ready to plan Phase 2
+Last session: 2026-11-10T03:17:49.613Z
+Stopped at: Completed 02-01-PLAN.md
 Resume file: None

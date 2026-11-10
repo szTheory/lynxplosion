@@ -56,9 +56,9 @@ sequence, not a ceiling on the project goal.
 ### CPU
 
 - [ ] **CPU-01**: The 65C02-class CPU passes pinned per-opcode functional vectors for each defined profile, with an exact per-profile inventory
-- [ ] **CPU-02**: Lynx I and Lynx II CPU profiles exist as data (including RMB/SMB/BBR/BBS behavior), selectable per instance, with neither adopted as baseline until O1
-- [ ] **CPU-03**: All CPU memory accesses go through a tick-stamped bus-cycle interface so access costs (page-mode, normal, device) can vary per access
-- [ ] **CPU-04**: IRQ entry, CLI/SEI latency, WAI/STP and reserved-opcode NOP lengths follow the selected profile's documented behavior
+- [x] **CPU-02**: Lynx I and Lynx II CPU profiles exist as data (including RMB/SMB/BBR/BBS behavior), selectable per instance, with neither adopted as baseline until O1
+- [x] **CPU-03**: All CPU memory accesses go through a tick-stamped bus-cycle interface so access costs (page-mode, normal, device) can vary per access
+- [x] **CPU-04**: IRQ entry, CLI/SEI latency, WAI/STP and reserved-opcode NOP lengths follow the selected profile's documented behavior
 - [ ] **CPU-05**: A named-fault control (wrong profile selected) fails the bit-operation vectors
 
 ### Memory map and startup
@@ -198,9 +198,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DET-04 | Phase 1 | Complete |
 | DET-05 | Phase 6 | Pending |
 | CPU-01 | Phase 2 | Pending |
-| CPU-02 | Phase 2 | Pending |
-| CPU-03 | Phase 2 | Pending |
-| CPU-04 | Phase 2 | Pending |
+| CPU-02 | Phase 2 | Complete |
+| CPU-03 | Phase 2 | Complete |
+| CPU-04 | Phase 2 | Complete |
 | CPU-05 | Phase 2 | Pending |
 | MEM-01 | Phase 3 | Pending |
 | MEM-02 | Phase 3 | Pending |

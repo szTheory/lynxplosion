@@ -113,11 +113,11 @@ Plans:
   4. Tests cover IRQ entry, CLI/SEI latency, WAI/STP and reserved-opcode NOP lengths, and each follows the selected profile's documented behaviour. Each expected value cites its source or is marked unverified.
 **Owner gates**: O1 (baseline model). Both profiles are built and neither is named baseline. No CPU-profile compatibility claim is made until O1 is decided.
 **Research flag**: Deeper research needed before planning: which SingleStepTests directory applies to each profile and which opcodes to exclude; decimal-mode and reserved-opcode cycle counts (unsourced); the shape of the bus-cycle interface (AD-01 spike).
-**Plans:** 11 plans
+**Plans:** 1/11 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md — CPU core and profile tables as a white-box unit: tracer slice, all modes, decimal, interrupts, include gate (CPU-02, CPU-03, CPU-04)
+- [x] 02-01-PLAN.md — CPU core and profile tables as a white-box unit: tracer slice, all modes, decimal, interrupts, include gate (CPU-02, CPU-03, CPU-04)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 02-02-PLAN.md — startup_tier `none` vocabulary with controls; Phase 2 exposure record; claim-template vector note (CPU-01)
@@ -232,7 +232,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Evidence Harness and Walking Skeleton | 13/13 | Complete    | 2026-11-09 |
-| 2. CPU Profiles and Per-Opcode Vectors | 0/11 | Planned | - |
+| 2. CPU Profiles and Per-Opcode Vectors | 1/11 | In Progress | - |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 0/TBD | Not started | - |
 | 4. Timers, Interrupts and First Public Suites | 0/TBD | Not started | - |
 | 5. Display, Raw Video and Input | 0/TBD | Not started | - |
