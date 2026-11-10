@@ -2,9 +2,9 @@
 phase: "2"
 slug: "cpu-profiles-and-per-opcode-vectors"
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-11-09"
 ---
 
@@ -43,14 +43,14 @@ created: "2026-11-09"
 
 | Requirement | Test IDs (plan-task) | Negative control (plan-task) | Status |
 |-------------|----------------------|------------------------------|--------|
-| CPU-01 | `cpu.vectors.lynx1`, `cpu.vectors.lynx2`, `cpu.vectors.none` (02-04-T2; each compares `tests/inventory/vectors/<id>.txt` byte for byte, then asserts); full lane for none, lynx1, lynx2 (02-05-T3 script, run at 02-11-T2) | `cpu.vectors.no_step`, `.corrupt_expect`, `.malformed`, `.inventory_drift` (includes the none cases), `.sample_identity`, `.mutant_profile` (02-05-T1); `policy.vectors_pin.self_test` (02-05-T2); reader malformed self-test (02-04-T1) | ⬜ pending |
-| CPU-02 | `cpu.tables` (02-01-T2), `api.init_refusal` (02-09-T2), `api.profile_select`, `cpu.profile_divergence` (02-10-T1), `det.profile_agreement` (02-10-T3), `cpu.scenarios.lynx1/lynx2` bit-op scenarios (02-06-T2) | `cpu.tables.self_test` (02-01-T3); `cpu.vectors.mutant_profile` (02-05-T1); `cpu.scenarios.wrong_profile.self_test` (02-06-T2) | ⬜ pending |
-| CPU-03 | `cpu.cycles` incl. cost tables (02-01-T2, 02-08-T1), `core.cpu_includes` (02-01-T3), `fixtures.cpu_asm` (02-07-T2), `api.advance_budget` (02-09-T2), `api.cost_model`, `api.advance_slicing`, `api.seam_agreement` (02-10-T2) | `api.cost_model.self_test` (persistent constant-cost control, 02-10-T2); `core.cpu_includes.self_test` (02-01-T3); `fixtures.cpu_asm.self_test` (02-07-T2); `<=` loop mutation failing `api.advance_budget` is one-time evidence recorded in 02-09-SUMMARY (02-09-T2), not a persistent test | ⬜ pending |
-| CPU-04 | `cpu.cycles` interrupt/BRK/reset checks (02-01-T3), `cpu.scenarios.lynx1`, `cpu.scenarios.lynx2` with counts per source tag (02-06-T1/T2); WAI/STP evidence = absence in both tables (`cpu.tables`) plus the Test 8 replica | `cpu.scenarios.test8.self_test` (`$CB` as polling op fails, 02-06-T2) | ⬜ pending |
-| CPU-05 | `cpu.vectors.wrong_profile`, `cpu.vectors.wrong_profile_reverse` (02-05-T1; failing set = exactly the 32 `$x7/$xF` opcodes); `api.profile_select` (02-10-T1) | the controls are the evidence; `cpu.vectors.no_step` (02-05-T1) shows they exercise the CPU | ⬜ pending |
-| Phase 1 properties | `det.two_runs`, `det.two_instances`, `det.golden`, `det.sensitivity`, `det.sensitivity_state`, `api.init_refusal`, `api.load_refusal_unchanged`, `api.snapshot_roundtrip`, `api.snapshot_refusal`, `api.advance_budget` (02-09-T2/T3), `core.*`, `api.abi_symbols`, `hygiene.*`, `docs.*`, `policy.*`, tier vocabulary cases (02-02-T1) | existing controls, plus UNDEFINED stop leaves the buffer byte-identical (02-09-T2); `det.sensitivity_state` flips every new CPU field and the cost model (02-10-T3); golden unchanged across the neutral 02-08 | ⬜ pending |
+| CPU-01 | `cpu.vectors.lynx1`, `cpu.vectors.lynx2`, `cpu.vectors.none` (02-04-T2; each compares `tests/inventory/vectors/<id>.txt` byte for byte, then asserts); full lane for none, lynx1, lynx2 (02-05-T3 script, run at 02-11-T2) | `cpu.vectors.no_step`, `.corrupt_expect`, `.malformed`, `.inventory_drift` (includes the none cases), `.sample_identity`, `.mutant_profile` (02-05-T1); `policy.vectors_pin.self_test` (02-05-T2); reader malformed self-test (02-04-T1) | ✅ green |
+| CPU-02 | `cpu.tables` (02-01-T2), `api.init_refusal` (02-09-T2), `api.profile_select`, `cpu.profile_divergence` (02-10-T1), `det.profile_agreement` (02-10-T3), `cpu.scenarios.lynx1/lynx2` bit-op scenarios (02-06-T2) | `cpu.tables.self_test` (02-01-T3); `cpu.vectors.mutant_profile` (02-05-T1); `cpu.scenarios.wrong_profile.self_test` (02-06-T2) | ✅ green |
+| CPU-03 | `cpu.cycles` incl. cost tables (02-01-T2, 02-08-T1), `core.cpu_includes` (02-01-T3), `fixtures.cpu_asm` (02-07-T2), `api.advance_budget` (02-09-T2), `api.cost_model`, `api.advance_slicing`, `api.seam_agreement.none`, `.lynx1`, `.lynx2` (02-10-T2) | `api.cost_model.self_test` (persistent constant-cost control, 02-10-T2); `core.cpu_includes.self_test` (02-01-T3); `fixtures.cpu_asm.self_test` (02-07-T2); `<=` loop mutation failing `api.advance_budget` is one-time evidence recorded in 02-09-SUMMARY (02-09-T2), not a persistent test | ✅ green |
+| CPU-04 | `cpu.cycles` interrupt/BRK/reset checks (02-01-T3), `cpu.scenarios.lynx1`, `cpu.scenarios.lynx2` with counts per source tag (02-06-T1/T2); WAI/STP evidence = absence in both tables (`cpu.tables`) plus the Test 8 replica | `cpu.scenarios.test8.self_test` (`$CB` as polling op fails, 02-06-T2) | ✅ green |
+| CPU-05 | `cpu.vectors.wrong_profile`, `cpu.vectors.wrong_profile_reverse` (02-05-T1; failing set = exactly the 32 `$x7/$xF` opcodes); `api.profile_select` (02-10-T1) | the controls are the evidence; `cpu.vectors.no_step` (02-05-T1) shows they exercise the CPU | ✅ green |
+| Phase 1 properties | `det.two_runs`, `det.two_instances`, `det.golden`, `det.sensitivity`, `det.sensitivity_state`, `api.init_refusal`, `api.load_refusal_unchanged`, `api.snapshot_roundtrip`, `api.snapshot_refusal`, `api.advance_budget` (02-09-T2/T3), `core.*`, `api.abi_symbols`, `hygiene.*`, `docs.*`, `policy.*`, tier vocabulary cases (02-02-T1) | existing controls, plus UNDEFINED stop leaves the buffer byte-identical (02-09-T2); `det.sensitivity_state` flips every new CPU field and the cost model (02-10-T3); golden unchanged across the neutral 02-08 | ✅ green |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: ✅ green · ✅ green · ❌ red · ⚠️ flaky*
 
 ---
 
@@ -60,10 +60,10 @@ created: "2026-11-09"
 
 ## Wave 0 Requirements
 
-- [ ] `tests/cpu/` (reader, runner, scenarios, helper sh), `tests/inventory/vectors/*.txt`
-- [ ] `tests/cmake/cpu_includes.cmake`, `tests/cmake/cpu_fixtures.cmake`
-- [ ] `fixtures/vectors/**`, `fixtures/cpu/**`, `scripts/vectors-full.sh`
-- [ ] no test framework install is needed
+- [x] `tests/cpu/` (reader, runner, scenarios, helper sh), `tests/inventory/vectors/*.txt`
+- [x] `tests/cmake/cpu_includes.cmake`, `tests/cmake/cpu_fixtures.cmake`
+- [x] `fixtures/vectors/**`, `fixtures/cpu/**`, `scripts/vectors-full.sh`
+- [x] no test framework install is needed
 
 ---
 
@@ -75,11 +75,19 @@ All phase behaviors have automated verification. The full vector lane is a scrip
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 60s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 60s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-11-10
+
+## Validation Audit 2026-11-10
+
+| Metric | Count |
+|---|---|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
