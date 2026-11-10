@@ -200,6 +200,17 @@ timers and real IRQ sources (Phase 4), cartridge, boot, Suzy (later), any suite-
   no plain `char`; no pointer tables (Linux `.data.rel.ro` is reported by nm as `d`); no function
   pointers in the core.
 
+### Amendments from research (2026-11-09, orchestrator-accepted; refine CONTEXT estimates, no decision reopened)
+- Registers: one 32-bit register cannot expose all CPU state, so add `LYNX_REG_CPU_LATCH` beside `LYNX_REG_CPU_STATE` (`LYNX_REG_COUNT` becomes 8) to keep "every snapshot field is readable through the public API".
+- Snapshot format 2 carries about 17 bytes of new CPU state plus two 8-byte tick fields (the "about 12 bytes" above was an estimate); payload becomes 65,568 bytes. Layout stays Claude's discretion.
+- "No committed scripts in the check path" means no generator or converter scripts. The ca65 fixture gate adds one `check.sh` step and a committed linker `.cfg` that work like the existing toolchain probe.
+- Unlisted-read poison in the vector runner is address-hashed (`(a*167+13)>>3`, at least 12 distinguishing vectors per opcode), not a constant: a constant makes the reverse wrong-profile control pass vacuously for 8 of the 16 `$xF` opcodes. `final.ram` can list addresses absent from `initial.ram`, so the no-write check uses the union of both lists.
+- Under the exclusion/tier rules the retained tracer diverges as lynx1 ends at `$0207` and lynx2 at `$0234` (research section 7.3; an earlier draft's `$0205` was wrong).
+- Every plan that edits `tests/inventory/fast.txt` refreshes `docs/claims/skeleton-repeatability.claim`'s `inventory_sha256` in the same commit (the claim gate fails until it does).
+- Decimal-mode ADC/SBC follow the algorithms verified in research section 6.5 (0 mismatches over 1,152 sampled vectors); do not use the common compact SBC formula (about 6% mismatch).
+- lynx1 `$x7/$xF` shape follows the synertek vectors (2 and 3 bytes) per the exclusion rule and is marked unverified; the CMD datasheet says 1 byte.
+- Plan sequence from research section 9.3 is the starting point (core and tables; vector runner, sample, inventories, controls, full lane; scenario vectors; fixtures plus the ca65 gate; machine switch with the Phase 1 re-baseline and golden; public-path tests; docs and verification).
+
 ### Claude's Discretion
 - File and function names inside `core/` (e.g. `cpu.c`, `cpu.h`, `profile.def`, `bus.c`), the exact
   `cpu_state` bit assignments and snapshot byte layout, test names, the exact column layout of the
