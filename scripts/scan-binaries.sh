@@ -117,9 +117,12 @@ sha_of() {
 
 # True when the file is non-text: a control byte, or not valid UTF-8.
 is_nontext() {
-  nt_size=$(wc -c <"$1" | tr -d ' ')
-  nt_text=$(tr -d '\000-\010\013\016-\037\177' <"$1" | wc -c | tr -d ' ')
-  if [ "$nt_size" != "$nt_text" ]; then
+  # A file holds a control byte exactly when the file with those bytes deleted
+  # differs from it. Any status but "identical" (a difference, or cmp unable to
+  # compare) counts as non-text, so an unreadable file is never taken for text.
+  nt_in=$1 # the same file twice: read by tr, compared by cmp (never written)
+  nt_ref=$1
+  if ! tr -d '\000-\010\013\016-\037\177' <"$nt_in" | cmp -s - "$nt_ref"; then
     return 0
   fi
   if iconv -f UTF-8 -t UTF-8 <"$1" >/dev/null 2>&1; then

@@ -94,6 +94,12 @@ fake_ant=s$(printf 'k-an')t-$(rep c 24)
 fake_sk=s$(printf 'k-')$(rep d 40)
 fake_npm=np$(printf 'm_')$(rep e 36)
 fake_jwt=ey$(printf 'J')$(rep f 12).ey$(printf 'J')$(rep g 12).$(rep h 12)
+fake_aiza=AI$(printf 'za')$(rep a 35)
+fake_gho=gh$(printf 'o')_$(rep a 36)
+fake_ghu=gh$(printf 'u')_$(rep a 36)
+fake_ghs=gh$(printf 's')_$(rep a 36)
+fake_ghr=gh$(printf 'r')_$(rep a 36)
+fake_dashed=-Us$(printf 'ers')-$home_c-project-
 fake_root=/ro$(printf 'ot')/$home_c
 fake_win=C:/Us$(printf 'ers')/$home_c
 bs=$(printf '\134')
@@ -159,6 +165,15 @@ case_text credential_anthropic notes.txt "token $fake_ant" 'hygiene: credential:
 case_text credential_sk notes.txt "key=$fake_sk" 'hygiene: credential: '
 case_text credential_npm notes.txt "token $fake_npm" 'hygiene: credential: '
 case_text credential_jwt notes.txt "bearer $fake_jwt" 'hygiene: credential: '
+# The scan skips the three expression passes for a file with none of the fixed
+# strings in maybe_sensitive (scripts/hygiene.sh); these seed the forms the cases
+# above do not, so a missing string there is caught.
+case_text credential_google_api notes.txt "key $fake_aiza" 'hygiene: credential: '
+case_text credential_github_oauth notes.txt "token $fake_gho" 'hygiene: credential: '
+case_text credential_github_user notes.txt "token $fake_ghu" 'hygiene: credential: '
+case_text credential_github_server notes.txt "token $fake_ghs" 'hygiene: credential: '
+case_text credential_github_refresh notes.txt "token $fake_ghr" 'hygiene: credential: '
+case_text home_path_dashed notes.txt "folder $fake_dashed" 'hygiene: home path: '
 # The root account's home is not a person's, and a work directory named root is
 # common in scripts, so /root/ is deliberately not a pattern.
 printf '%s\n' "cp x $fake_root/.cache" >"$iso/rootdir.txt"

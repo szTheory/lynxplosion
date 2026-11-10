@@ -60,21 +60,51 @@ unallowed() { grep -v -E -e "^($1)\$" | grep -q .; }
 has() { grep -q -E -e "$1"; }
 
 # True when the file named by $1 is non-text: a control byte (NUL, a C0 control
-# other than tab, LF, FF and CR, or DEL) or invalid UTF-8.
+# other than tab, LF, FF and CR, or DEL) or invalid UTF-8. A file holds a control
+# byte exactly when the file with those bytes deleted differs from it (cmp).
+# Status 2 means the test itself could not run; the caller fails closed.
 is_nontext() {
-  nt_size=$($2 "$1" 2>/dev/null | wc -c | tr -d ' ')
-  nt_text=$($2 "$1" 2>/dev/null | tr -d '\000-\010\013\016-\037\177' | wc -c | tr -d ' ')
-  if [ "$nt_size" != "$nt_text" ]; then
-    return 0
-  fi
-  if $2 "$1" 2>/dev/null | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
+  nt_rc=0
+  nt_in=$1 # the same file twice: read by tr, compared by cmp (never written)
+  nt_ref=$1
+  tr -d '\000-\010\013\016-\037\177' <"$nt_in" 2>/dev/null | cmp -s - "$nt_ref" 2>/dev/null || nt_rc=$?
+  case $nt_rc in
+    0) ;;
+    1) return 0 ;;
+    *) return 2 ;;
+  esac
+  if iconv -f UTF-8 -t UTF-8 <"$1" >/dev/null 2>&1; then
     return 1
   fi
   return 0
 }
 
+# A necessary condition for every match of the three patterns: a match contains
+# one of these fixed strings (Users and /home/ for a home path, @ for an address,
+# and the literal opening of each credential form). A file without any of them
+# cannot hold a finding, so the regular-expression passes, which cost far more
+# than a fixed-string search, are skipped for it; a file with one is scanned by
+# the full rules exactly as before. This is what keeps a multi-megabyte data
+# file cheap. The strings sit one per line in three files in the scratch
+# directory (grep -F -f), so the tree scan and the history scan share one list.
+# Keep them in step with the patterns above (tests/hygiene/pii_control.sh seeds
+# every form).
+printf '%s\n' 'Users' '/home/' >"$work/lits.home"
+printf '%s\n' '@' >"$work/lits.email"
+printf '%s\n' 'ghp_' 'gho_' 'ghu_' 'ghs_' 'ghr_' 'github_pat_' 'AKIA' '-----BEGIN ' \
+  'xox' 'AIza' 'sk-' 'npm_' 'eyJ' >"$work/lits.cred"
+cat "$work/lits.home" "$work/lits.email" "$work/lits.cred" >"$work/lits.all"
+maybe_sensitive() { grep -q -F -f "$work/lits.all"; }
+# File $1 holds a match of a rule, as leaks and has decide it: the fixed-string
+# search for the rule's list ($2, a lits.* file) comes first, the expression
+# only when a string is there. file_leaks is leaks and file_has is has, each over
+# a file, with the rule's pattern $3 (and allowed form $4 for file_leaks).
+file_leaks() { grep -q -F -f "$2" "$1" && leaks "$3" "$4" <"$1"; }
+file_has() { grep -q -F -f "$2" "$1" && has "$3" <"$1"; }
+
 # $1 is a path; $2 is a command that prints that path's content. A file whose
-# content cannot be read is a finding, so the scan fails closed.
+# content cannot be read is a finding, so the scan fails closed. The content is
+# read once into a private copy and every rule reads that copy.
 check_file() {
   cf_reader=$2
   # A symlink is scanned by its target text, which names a path and can hold a
@@ -82,16 +112,26 @@ check_file() {
   if [ -L "$1" ]; then
     cf_reader=link_show
   fi
-  if ! $cf_reader "$1" >/dev/null 2>&1; then
+  if ! $cf_reader "$1" >"$work/content" 2>/dev/null; then
     found 'cannot read file' "$1"
     return 0
   fi
-  if is_nontext "$1" "$cf_reader"; then
+  cf_nt=0
+  is_nontext "$work/content" || cf_nt=$?
+  case $cf_nt in
+    0) return 0 ;;
+    1) ;;
+    *)
+      found 'cannot read file' "$1"
+      return 0
+      ;;
+  esac
+  if ! maybe_sensitive <"$work/content"; then
     return 0
   fi
-  if $cf_reader "$1" 2>/dev/null | leaks "$HOME_PATH" "$HOME_OK"; then found 'home path' "$1"; fi
-  if $cf_reader "$1" 2>/dev/null | leaks "$EMAIL" "$EMAIL_OK"; then found 'email' "$1"; fi
-  if $cf_reader "$1" 2>/dev/null | has "$CREDENTIAL"; then found 'credential' "$1"; fi
+  if file_leaks "$work/content" "$work/lits.home" "$HOME_PATH" "$HOME_OK"; then found 'home path' "$1"; fi
+  if file_leaks "$work/content" "$work/lits.email" "$EMAIL" "$EMAIL_OK"; then found 'email' "$1"; fi
+  if file_has "$work/content" "$work/lits.cred" "$CREDENTIAL"; then found 'credential' "$1"; fi
 }
 
 # The reader for a symlink, called indirectly as check_file's reader.
@@ -104,9 +144,10 @@ link_show() { readlink -- "$1"; }
 # name itself.
 check_names() {
   cn_names=$(cat)
-  if printf '%s\n' "$cn_names" | leaks "$HOME_PATH" "$HOME_OK"; then found 'home path' "a file name in $1"; fi
-  if printf '%s\n' "$cn_names" | leaks "$EMAIL" "$EMAIL_OK"; then found 'email' "a file name in $1"; fi
-  if printf '%s\n' "$cn_names" | has "$CREDENTIAL"; then found 'credential' "a file name in $1"; fi
+  printf '%s\n' "$cn_names" >"$work/cn"
+  if file_leaks "$work/cn" "$work/lits.home" "$HOME_PATH" "$HOME_OK"; then found 'home path' "a file name in $1"; fi
+  if file_leaks "$work/cn" "$work/lits.email" "$EMAIL" "$EMAIL_OK"; then found 'email' "a file name in $1"; fi
+  if file_has "$work/cn" "$work/lits.cred" "$CREDENTIAL"; then found 'credential' "a file name in $1"; fi
 }
 
 # $1 is a newline-separated list; $2 as in check_file. A name holding a newline
@@ -133,22 +174,71 @@ check_identity() { # $1 is an email; $2 says where it came from
 # shellcheck disable=SC2317,SC2329
 tree_show() { if [ -f "$1" ]; then cat -- "$1"; else git show ":$1"; fi; }
 
-# $1 and $2 as in leaks (an empty $2 allows nothing); $3 is a commit and $4 the
-# finding name. A git grep failure (status above 1) is itself a finding: git's
-# status is never discarded behind a pipe.
+# $1 and $2 as in leaks (an empty $2 allows nothing); $3 the finding name; $4 a
+# commit; the remaining arguments are pathspecs. A git grep failure (status
+# above 1) is itself a finding: git's status is never discarded behind a pipe.
+scan_rule() {
+  sr_re=$1
+  sr_allow=$2
+  sr_name=$3
+  sr_c=$4
+  shift 4
+  sr_rc=0
+  git grep -I -h -o -E -e "$sr_re" "$sr_c" -- "$@" >"$work/matches" 2>/dev/null || sr_rc=$?
+  if [ "$sr_rc" -gt 1 ]; then
+    found 'git grep failed' "commit $sr_c"
+    return 0
+  fi
+  if [ "$sr_rc" -eq 1 ]; then
+    return 0
+  fi
+  if [ -z "$sr_allow" ] || unallowed "$sr_allow" <"$work/matches"; then
+    found "$sr_name" "commit $sr_c"
+  fi
+}
+
+# $1 is a commit: its tree holds no home path, address or credential. git grep
+# first lists the files of the commit that hold one of the fixed strings of
+# lits.all, which is cheap even over a large data file; only those files go
+# through the three regular expressions, since no other file can hold a match.
+# A list that cannot be turned into exact pathspecs (a quoted name, or more than
+# 200 files) falls back to the whole tree, which is the plain scan. A failing
+# listing is the same finding the plain scan reports, once per rule.
 scan_commit() {
+  sc_c=$1
   sc_rc=0
-  git grep -I -h -o -E -e "$1" "$3" -- . >"$work/matches" 2>/dev/null || sc_rc=$?
+  git grep -I -l -F -f "$work/lits.all" "$sc_c" -- . >"$work/cands" 2>/dev/null || sc_rc=$?
   if [ "$sc_rc" -gt 1 ]; then
-    found 'git grep failed' "commit $3"
+    found 'git grep failed' "commit $sc_c"
+    found 'git grep failed' "commit $sc_c"
+    found 'git grep failed' "commit $sc_c"
     return 0
   fi
   if [ "$sc_rc" -eq 1 ]; then
     return 0
   fi
-  if [ -z "$2" ] || unallowed "$2" <"$work/matches"; then
-    found "$4" "commit $3"
+  set --
+  sc_n=0
+  sc_exact=1
+  while IFS= read -r sc_line; do
+    case $sc_line in
+      "$sc_c":\"*) sc_exact=0 ;;
+      "$sc_c":*) ;;
+      *) sc_exact=0 ;;
+    esac
+    sc_n=$((sc_n + 1))
+    if [ "$sc_exact" -eq 0 ] || [ "$sc_n" -gt 200 ]; then
+      sc_exact=0
+      break
+    fi
+    set -- "$@" ":(literal)${sc_line#"$sc_c":}"
+  done <"$work/cands"
+  if [ "$sc_exact" -eq 0 ]; then
+    set -- .
   fi
+  scan_rule "$HOME_PATH" "$HOME_OK" 'home path' "$sc_c" "$@"
+  scan_rule "$EMAIL" "$EMAIL_OK" 'email' "$sc_c" "$@"
+  scan_rule "$CREDENTIAL" '' 'credential' "$sc_c" "$@"
 }
 
 # $1 is a commit. Scans the names of the files it changed and the target text of
@@ -169,9 +259,9 @@ scan_changes() {
       found 'cannot read symlink' "commit $1"
     fi
   done <"$work/blobs"
-  if leaks "$HOME_PATH" "$HOME_OK" <"$work/links"; then found 'home path' "commit $1"; fi
-  if leaks "$EMAIL" "$EMAIL_OK" <"$work/links"; then found 'email' "commit $1"; fi
-  if has "$CREDENTIAL" <"$work/links"; then found 'credential' "commit $1"; fi
+  if file_leaks "$work/links" "$work/lits.home" "$HOME_PATH" "$HOME_OK"; then found 'home path' "commit $1"; fi
+  if file_leaks "$work/links" "$work/lits.email" "$EMAIL" "$EMAIL_OK"; then found 'email' "commit $1"; fi
+  if file_has "$work/links" "$work/lits.cred" "$CREDENTIAL"; then found 'credential' "commit $1"; fi
 }
 
 mode=${1:---tree}
@@ -198,16 +288,14 @@ case $mode in
       printf 'hygiene: history: no commits selected, nothing scanned (visible)\n' >&2
     fi
     while IFS= read -r c; do
-      scan_commit "$HOME_PATH" "$HOME_OK" "$c" 'home path'
-      scan_commit "$EMAIL" "$EMAIL_OK" "$c" 'email'
-      scan_commit "$CREDENTIAL" '' "$c" 'credential'
+      scan_commit "$c"
       scan_changes "$c"
       # A squash merge copies the pull request's title and body into the
       # message, so messages are scanned as well.
       if git log -1 --format=%B "$c" >"$work/msg" 2>/dev/null; then
-        if leaks "$HOME_PATH" "$HOME_OK" <"$work/msg"; then found 'home path' "message of $c"; fi
-        if leaks "$EMAIL" "$EMAIL_OK" <"$work/msg"; then found 'email' "message of $c"; fi
-        if has "$CREDENTIAL" <"$work/msg"; then found 'credential' "message of $c"; fi
+        if file_leaks "$work/msg" "$work/lits.home" "$HOME_PATH" "$HOME_OK"; then found 'home path' "message of $c"; fi
+        if file_leaks "$work/msg" "$work/lits.email" "$EMAIL" "$EMAIL_OK"; then found 'email' "message of $c"; fi
+        if file_has "$work/msg" "$work/lits.cred" "$CREDENTIAL"; then found 'credential' "message of $c"; fi
       else
         found 'cannot read message' "commit $c"
       fi
