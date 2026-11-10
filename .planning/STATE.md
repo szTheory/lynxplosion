@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: CPU Profiles and Per-Opcode Vectors
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-11-10T03:23:30.401Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-11-10T03:32:37.949Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 2 execution started
-state_head: ec04b3121787a812975aa2dd04cb260bdface71d
+state_head: c554608e53af66cd7aaece49e3aac6b160450bf7
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 24
-  completed_plans: 15
+  completed_plans: 16
   percent: 17
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 2 (CPU Profiles and Per-Opcode Vectors) — EXECUTING
-Plan: 3 of 11
+Plan: 4 of 11
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 2 execution started
 
@@ -71,6 +71,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 1 P13 | 25min | 2 tasks | 4 files |
 | Phase 2 P01 | one session | 3 tasks | 12 files |
 | Phase 2 P02 | one session | 2 tasks | 8 files |
+| Phase 2 P03 | 7 min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -110,6 +111,8 @@ Recent decisions affecting current work:
 - [Phase 2]: Starting any interrupt entry clears both TAKE latches
 - [Phase 2]: lynx__cpu_table returns NULL above profile 2; opcode fetch request carries neither POLL nor LAST
 - [Phase 2]: 02-02: validate-kv.sh --startup-tiers list (default A); fixture manifests and claims accept none, run manifests A only; malformed list is usage error
+- [Phase 2]: 02-03: sample containers keep the three-line header, so files are 3201546 and 3230210 bytes (bodies equal the research sizes 3201335 and 3229999)
+- [Phase 2]: 02-03: vectors-full.sh takes several modes in one invocation sharing one work dir; full download is about 2.0 GB and 190 s
 
 ### Pending Todos
 
@@ -137,6 +140,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T03:23:30.331Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-11-10T03:32:37.878Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
