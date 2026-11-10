@@ -1,11 +1,15 @@
 /* Independent parser for the consumer's bounded P3 snapshot and PCM WAV.
    This file intentionally includes no emulator or runner headers. */
 #include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 enum {
@@ -452,6 +456,58 @@ static int write_owned_file(const char *path, const void *bytes, size_t length)
     return failed;
 }
 
+static int replace_file_text(const char *path, size_t limit, const char *before,
+                             const char *after)
+{
+    uint8_t bytes[PPM_LIMIT];
+    uint8_t updated[PPM_LIMIT];
+    uint8_t *read_bytes = NULL;
+    size_t length = 0u;
+    size_t before_len = strlen(before);
+    size_t after_len = strlen(after);
+    size_t index;
+    size_t found = SIZE_MAX;
+    char error[256] = {0};
+    if (limit > sizeof bytes || read_bounded(path, limit, &read_bytes, &length,
+                                             error, sizeof error) != 0) {
+        free(read_bytes);
+        return 1;
+    }
+    for (index = 0u; index + before_len <= length; index++) {
+        if (memcmp(read_bytes + index, before, before_len) == 0) {
+            found = index;
+            break;
+        }
+    }
+    if (found == SIZE_MAX || after_len > sizeof updated - (length - before_len)) {
+        free(read_bytes);
+        return 1;
+    }
+    memcpy(updated, read_bytes, found);
+    memcpy(updated + found, after, after_len);
+    memcpy(updated + found + after_len, read_bytes + found + before_len,
+           length - found - before_len);
+    length = length - before_len + after_len;
+    free(read_bytes);
+    return write_owned_file(path, updated, length);
+}
+
+static int set_file_byte(const char *path, long offset, int value)
+{
+    FILE *file = fopen(path, "r+b");
+    int failed = 0;
+    if (file == NULL) {
+        return 1;
+    }
+    if (fseek(file, offset, SEEK_SET) != 0 || fputc(value, file) == EOF) {
+        failed = 1;
+    }
+    if (fclose(file) != 0) {
+        failed = 1;
+    }
+    return failed;
+}
+
 static int build_sample_ppm(char *out, size_t cap, int corrupt_pixel)
 {
     size_t used = 0u;
@@ -610,13 +666,68 @@ static int self_test(void)
         failed = 1;
         goto done;
     }
+    if (write_sample_set(directory, 0, 0, 0) != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (path_join(directory, "snapshot.ppm", path, sizeof path) != 0 ||
+        replace_file_text(path, PPM_LIMIT, "P3\n", "P6\n") != 0 ||
+        expect_rejection(directory, "not plain P3") != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (write_sample_set(directory, 0, 0, 0) != 0 ||
+        path_join(directory, "snapshot.ppm", path, sizeof path) != 0 ||
+        replace_file_text(path, PPM_LIMIT, "0 255 0", "999 255 0") != 0 ||
+        expect_rejection(directory, "sample exceeds 255") != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (write_sample_set(directory, 0, 0, 0) != 0 ||
+        path_join(directory, "snapshot.ppm", path, sizeof path) != 0 ||
+        replace_file_text(path, PPM_LIMIT, "85 170 255\n", "85 170 255\n0\n") != 0 ||
+        expect_rejection(directory, "sample count or trailing data is invalid") != 0) {
+        failed = 1;
+        goto done;
+    }
     if (write_sample_set(directory, 0, 1, 0) != 0 ||
         expect_rejection(directory, "chunk sizes or PCM") != 0) {
         failed = 1;
         goto done;
     }
+    if (write_sample_set(directory, 0, 0, 0) != 0 ||
+        path_join(directory, "silence.wav", path, sizeof path) != 0 ||
+        set_file_byte(path, 0L, 'N') != 0 ||
+        expect_rejection(directory, "exact bounded RIFF/WAVE layout") != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (write_sample_set(directory, 0, 0, 0) != 0 ||
+        path_join(directory, "silence.wav", path, sizeof path) != 0 ||
+        set_file_byte(path, 4L, 0xFF) != 0 || set_file_byte(path, 5L, 0xFF) != 0 ||
+        set_file_byte(path, 6L, 0xFF) != 0 || set_file_byte(path, 7L, 0xFF) != 0 ||
+        expect_rejection(directory, "chunk sizes or PCM") != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (write_sample_set(directory, 0, 0, 0) != 0 ||
+        path_join(directory, "silence.wav", path, sizeof path) != 0 ||
+        set_file_byte(path, 44L, 1) != 0 ||
+        expect_rejection(directory, "non-zero placeholder samples") != 0) {
+        failed = 1;
+        goto done;
+    }
     if (write_sample_set(directory, 0, 0, 1) != 0 ||
         expect_rejection(directory, "content_sha256") != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (write_sample_set(directory, 0, 0, 0) != 0 ||
+        path_join(directory, "snapshot.manifest", path, sizeof path) != 0 ||
+        replace_file_text(path, MANIFEST_LIMIT,
+            "diagnostic-owned pixels; no canonical Lynx video claim",
+            "frame pixels; no canonical Lynx video claim") != 0 ||
+        expect_rejection(directory, "metadata field interpretation is missing or incorrect") != 0) {
         failed = 1;
         goto done;
     }
@@ -646,11 +757,146 @@ done:
     return 0;
 }
 
+static int wait_for_child(pid_t child, int *exit_code)
+{
+    int status;
+    pid_t waited;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited != child || !WIFEXITED(status)) {
+        return 1;
+    }
+    *exit_code = WEXITSTATUS(status);
+    return 0;
+}
+
+static int directory_has_exact_artifacts(const char *directory)
+{
+    DIR *stream = opendir(directory);
+    struct dirent *entry;
+    unsigned seen = 0u;
+    int valid = stream != NULL;
+    if (stream == NULL) {
+        return 0;
+    }
+    while ((entry = readdir(stream)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (strcmp(entry->d_name, "snapshot.ppm") == 0) {
+            seen |= 1u;
+        } else if (strcmp(entry->d_name, "silence.wav") == 0) {
+            seen |= 2u;
+        } else if (strcmp(entry->d_name, "snapshot.manifest") == 0) {
+            seen |= 4u;
+        } else {
+            valid = 0;
+        }
+    }
+    if (closedir(stream) != 0 || seen != 7u) {
+        valid = 0;
+    }
+    return valid;
+}
+
+static int remove_publication_output(const char *directory)
+{
+    static const char *const names[] = {
+        "snapshot.ppm", "silence.wav", "snapshot.manifest"
+    };
+    char path[4096];
+    size_t index;
+    for (index = 0u; index < sizeof names / sizeof names[0]; index++) {
+        if (path_join(directory, names[index], path, sizeof path) != 0 ||
+            unlink(path) != 0) {
+            return 1;
+        }
+    }
+    return rmdir(directory) == 0 ? 0 : 1;
+}
+
+static int publication_control(const char *consumer, const char *content,
+                               const char *symbols, const char *output)
+{
+    int gate[2] = {-1, -1};
+    pid_t children[2] = {-1, -1};
+    int exit_codes[2] = {-1, -1};
+    unsigned index;
+    char release[2] = {'x', 'x'};
+    char error[256] = {0};
+    int result = 1;
+
+    if (pipe(gate) != 0) {
+        fputs("artifact-check: cannot create the publication start gate\n", stderr);
+        return 1;
+    }
+    for (index = 0u; index < 2u; index++) {
+        children[index] = fork();
+        if (children[index] == 0) {
+            char ready;
+            (void)close(gate[1]);
+            if (read(gate[0], &ready, 1u) != 1) {
+                _exit(126);
+            }
+            (void)close(gate[0]);
+            execl(consumer, consumer, "--content", content, "--symbols", symbols,
+                  "--out", output, "--profile", "none", (char *)NULL);
+            _exit(127);
+        }
+        if (children[index] < 0) {
+            break;
+        }
+    }
+    (void)close(gate[0]);
+    if (index != 2u || write(gate[1], release, sizeof release) != (ssize_t)sizeof release) {
+        (void)close(gate[1]);
+        for (index = 0u; index < 2u; index++) {
+            if (children[index] > 0) {
+                (void)wait_for_child(children[index], &exit_codes[index]);
+            }
+        }
+        fputs("artifact-check: could not start both competing publishers\n", stderr);
+        return 1;
+    }
+    (void)close(gate[1]);
+    for (index = 0u; index < 2u; index++) {
+        if (wait_for_child(children[index], &exit_codes[index]) != 0) {
+            fputs("artifact-check: a competing publisher did not exit normally\n", stderr);
+            goto done;
+        }
+    }
+    if (!((exit_codes[0] == 0 && exit_codes[1] == 1) ||
+          (exit_codes[0] == 1 && exit_codes[1] == 0))) {
+        fprintf(stderr,
+                "artifact-check: expected exactly one complete publication and one refusal; got exits %d and %d\n",
+                exit_codes[0], exit_codes[1]);
+        goto done;
+    }
+    if (!directory_has_exact_artifacts(output) ||
+        validate_directory(output, error, sizeof error) != 0) {
+        fprintf(stderr, "artifact-check: winning publication is incomplete: %s\n",
+                error[0] == '\0' ? "unexpected output entry or missing artifact" : error);
+        goto done;
+    }
+    if (remove_publication_output(output) != 0) {
+        fputs("artifact-check: could not clean its own successful publication fixture\n", stderr);
+        goto done;
+    }
+    puts("artifact-check: concurrent publishers yielded one intact directory and one refusal");
+    result = 0;
+done:
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     char error[256] = {0};
     if (argc == 2 && strcmp(argv[1], "self-test") == 0) {
         return self_test();
+    }
+    if (argc == 6 && strcmp(argv[1], "publication") == 0) {
+        return publication_control(argv[2], argv[3], argv[4], argv[5]);
     }
     if (argc == 2 && validate_directory(argv[1], error, sizeof error) == 0) {
         puts("artifact-check: SNAPSHOT P3 and placeholder PCM WAV are valid");
