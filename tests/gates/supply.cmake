@@ -122,3 +122,35 @@ lynx_add_test(NAME toolchain.probe.self_test
     "-DREGEX=differs from"
     -P ${LYNX_TEST_SCRIPTS}/expect_fail.cmake
   LABELS toolchain TIMEOUT 30)
+
+# The committed hex of each CPU fixture program equals the bytes the pinned
+# ca65/ld65 assemble from the committed source (the cpu-fixtures step of
+# scripts/check.sh writes build/toolchain/<name>.bin). The self-test points the
+# same script at a hex copy of churn-loop with one data byte changed and
+# requires the "differs from" finding.
+lynx_add_test(NAME fixtures.cpu_asm
+  COMMAND ${CMAKE_COMMAND}
+    -DBINDIR=${PROJECT_SOURCE_DIR}/build/toolchain
+    -DHEXDIR=${PROJECT_SOURCE_DIR}/fixtures/cpu
+    -DNAMES=sum-trap,churn-loop
+    -P ${LYNX_TEST_SCRIPTS}/cpu_fixtures.cmake
+  LABELS toolchain TIMEOUT 30)
+
+set(lynx_cpu_fx_wrong ${LYNX_SCRATCH_DIR}/gates/cpu_fixtures)
+file(REMOVE_RECURSE ${lynx_cpu_fx_wrong})
+file(READ ${PROJECT_SOURCE_DIR}/fixtures/cpu/churn-loop.hex lynx_cpu_fx_text)
+# The data byte 08 of "ldy #$08" (offset 3) becomes 09.
+string(REPLACE "a2 00 a0 08 " "a2 00 a0 09 " lynx_cpu_fx_text "${lynx_cpu_fx_text}")
+file(WRITE ${lynx_cpu_fx_wrong}/churn-loop.hex "${lynx_cpu_fx_text}")
+set(lynx_cpu_fx_cmd
+  ${CMAKE_COMMAND}
+    -DBINDIR=${PROJECT_SOURCE_DIR}/build/toolchain
+    -DHEXDIR=${lynx_cpu_fx_wrong}
+    -DNAMES=churn-loop
+    -P ${LYNX_TEST_SCRIPTS}/cpu_fixtures.cmake)
+string(REPLACE ";" "$<SEMICOLON>" lynx_cpu_fx_cmd "${lynx_cpu_fx_cmd}")
+lynx_add_test(NAME fixtures.cpu_asm.self_test
+  COMMAND ${CMAKE_COMMAND} "-DCMD=${lynx_cpu_fx_cmd}" -DCODE=1
+    "-DREGEX=differs from"
+    -P ${LYNX_TEST_SCRIPTS}/expect_fail.cmake
+  LABELS toolchain TIMEOUT 30)

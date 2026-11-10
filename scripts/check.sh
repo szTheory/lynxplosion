@@ -304,6 +304,41 @@ run_workflow() {
   cmake --workflow --preset check
 }
 
+# Assembles the two CPU fixture programs with the pinned ca65/ld65 and the
+# committed linker config. The compare against the committed hex runs in the
+# fixtures.cpu_asm gate (tests/cmake/cpu_fixtures.cmake); this step only builds
+# build/toolchain/<name>.bin and prints its SHA-256.
+run_cpu_fixtures() {
+  if [ ! -x "$CC65_DIR/bin/ca65" ] || [ ! -x "$CC65_DIR/bin/ld65" ]; then
+    printf 'check: cpu-fixtures: %s/bin/ca65 or ld65 is missing\n' "$CC65_DIR" >&2
+    return 1
+  fi
+  CC65_HOME=$PWD/$CC65_DIR
+  export CC65_HOME
+  mkdir -p build/toolchain
+  cpu_fx_cfg=build/toolchain/raw-0200.cfg
+  for cpu_fx in sum-trap churn-loop; do
+    rm -f "build/toolchain/$cpu_fx.bin" "build/toolchain/$cpu_fx.o" "build/toolchain/$cpu_fx.s"
+    cp "fixtures/cpu/$cpu_fx.s" "build/toolchain/$cpu_fx.s"
+    cp fixtures/cpu/raw-0200.cfg "$cpu_fx_cfg"
+    (
+      cd build/toolchain &&
+        env -i PATH="$CC65_HOME/bin:/usr/bin:/bin" CC65_HOME="$CC65_HOME" \
+          ca65 --cpu 65SC02 -o "$cpu_fx.o" "$cpu_fx.s" &&
+        env -i PATH="$CC65_HOME/bin:/usr/bin:/bin" CC65_HOME="$CC65_HOME" \
+          ld65 -C raw-0200.cfg -o "$cpu_fx.bin" "$cpu_fx.o"
+    ) || return 1
+    rm -f "build/toolchain/$cpu_fx.o" "build/toolchain/$cpu_fx.s"
+    if [ ! -f "build/toolchain/$cpu_fx.bin" ]; then
+      printf 'check: cpu-fixtures: no build/toolchain/%s.bin was produced\n' "$cpu_fx" >&2
+      return 1
+    fi
+    cpu_fx_sha=$(sha_of "build/toolchain/$cpu_fx.bin") || return 1
+    printf 'cpu fixture sha256 %s %s\n' "$cpu_fx" "$cpu_fx_sha"
+  done
+  rm -f "$cpu_fx_cfg"
+}
+
 # Scans the build tree for rights-bearing or unlisted binaries (scripts/scan-binaries.sh).
 # Runs only after the workflow and JUnit steps, never while tests may be writing
 # files. Finder metadata files are removed first, visibly: they are the one
@@ -342,6 +377,7 @@ step identities identities
 step pins run_pins
 step cc65 run_cc65
 step probe run_probe
+step cpu-fixtures run_cpu_fixtures
 
 step shellcheck run_shellcheck
 step workflow run_workflow
