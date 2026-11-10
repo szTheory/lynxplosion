@@ -117,6 +117,9 @@ typedef struct instance {
 static int instance_make_p(instance *in, uint32_t profile, const uint8_t *content, size_t len)
 {
     lynx_config cfg;
+    uint8_t *object;
+    size_t object_len;
+    lynx_status load_status;
     lynx_config_default(&cfg);
     cfg.profile = profile;
     cfg.ram_policy = LYNX_RAM_POLICY_SPLITMIX64;
@@ -130,7 +133,67 @@ static int instance_make_p(instance *in, uint32_t profile, const uint8_t *conten
     if (lynx_machine_init(in->mem, lynx_machine_size(), &cfg, &in->m) != LYNX_OK) {
         return 1;
     }
-    return lynx_load_ram_image(in->m, content, len, LOAD_ADDR) == LYNX_OK ? 0 : 1;
+    if (content == NULL || len == 0u || len > UINT16_MAX - 10u) {
+        return 1;
+    }
+    object_len = len + 10u;
+    object = malloc(object_len);
+    if (object == NULL) {
+        return 1;
+    }
+    object[0] = 0x80u;
+    object[1] = 0x08u;
+    object[2] = (uint8_t)(LOAD_ADDR >> 8);
+    object[3] = (uint8_t)LOAD_ADDR;
+    object[4] = (uint8_t)(object_len >> 8);
+    object[5] = (uint8_t)object_len;
+    object[6] = 'B';
+    object[7] = 'S';
+    object[8] = '9';
+    object[9] = '3';
+    memcpy(object + 10u, content, len);
+    load_status = lynx_load_bll(in->m, object, object_len);
+    free(object);
+    return load_status == LYNX_OK ? 0 : 1;
+}
+
+static void digest_hex(const uint8_t digest[32], char hex[65])
+{
+    static const char digits[] = "0123456789abcdef";
+    size_t i;
+    for (i = 0; i < 32u; i++) {
+        hex[2u * i] = digits[digest[i] >> 4];
+        hex[2u * i + 1u] = digits[digest[i] & 0x0Fu];
+    }
+    hex[64] = '\0';
+}
+
+static int read_manifest(const char *dir, char *buf, size_t cap)
+{
+    char path[4096];
+    FILE *f;
+    size_t n;
+    int extra;
+    int failed;
+    int written = snprintf(path, sizeof path, "%s/run.manifest", dir);
+    if (written < 0 || (size_t)written >= sizeof path || cap < 2u) {
+        return 1;
+    }
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return 1;
+    }
+    n = fread(buf, 1u, cap - 1u, f);
+    extra = fgetc(f);
+    failed = ferror(f) || extra != EOF;
+    if (fclose(f) != 0) {
+        failed = 1;
+    }
+    if (failed) {
+        return 1;
+    }
+    buf[n] = '\0';
+    return 0;
 }
 
 static int instance_make(instance *in, const uint8_t *content, size_t len)
@@ -177,6 +240,10 @@ static void case_two_instances(char **args)
     char obs_w_b[65];
     char bundle_a[65];
     char bundle_b[65];
+    char manifest[1024];
+    char identity_sha[65];
+    char want_line[128];
+    lynx_identity identity;
     instance a;
     instance b;
     bundle_run run_a;
@@ -225,6 +292,28 @@ static void case_two_instances(char **args)
     CHECK_EQ_U64(fresh_dir(dir_b), 0);
     CHECK_EQ_U64(bundle_write(dir_a, a.m, &run_a, obs_w_a, bundle_a), 0);
     CHECK_EQ_U64(bundle_write(dir_b, b.m, &run_b, obs_w_b, bundle_b), 0);
+    CHECK_EQ_U64(lynx_get_identity(a.m, &identity), LYNX_OK);
+    CHECK_EQ_U64(identity.content_format, LYNX_CONTENT_BS93);
+    CHECK_EQ_U64(identity.startup_tier, LYNX_STARTUP_A);
+    CHECK_EQ_U64(identity.content_addr, LOAD_ADDR);
+    CHECK_EQ_U64(identity.entry_addr, LOAD_ADDR);
+    CHECK_EQ_U64(identity.content_len, content_len);
+    CHECK_EQ_U64(identity.object_len, content_len + 10u);
+    digest_hex(identity.content_sha256, identity_sha);
+    CHECK_EQ_U64(read_manifest(dir_a, manifest, sizeof manifest), 0);
+    CHECK(strstr(manifest, "content_format = bs93\n") != NULL);
+    CHECK(strstr(manifest, "startup = A\n") != NULL);
+    CHECK(strstr(manifest, "startup_tier = A\n") != NULL);
+    (void)snprintf(want_line, sizeof want_line, "content_sha256 = %s\n", identity_sha);
+    CHECK(strstr(manifest, want_line) != NULL);
+    (void)snprintf(want_line, sizeof want_line, "entry_addr = 0x%04x\n", LOAD_ADDR);
+    CHECK(strstr(manifest, want_line) != NULL);
+    (void)snprintf(want_line, sizeof want_line, "object_len = %zu\n", content_len + 10u);
+    CHECK(strstr(manifest, want_line) != NULL);
+    (void)snprintf(want_line, sizeof want_line, "payload_addr = 0x%04x\n", LOAD_ADDR);
+    CHECK(strstr(manifest, want_line) != NULL);
+    (void)snprintf(want_line, sizeof want_line, "payload_len = %zu\n", content_len);
+    CHECK(strstr(manifest, want_line) != NULL);
     /* A missing run or machine is a refusal, not a crash (the header promises it). */
     CHECK(bundle_write(dir_a, a.m, NULL, obs_w_a, bundle_a) != 0);
     CHECK(bundle_write(dir_a, NULL, &run_a, obs_w_a, bundle_a) != 0);

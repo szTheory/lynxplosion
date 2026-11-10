@@ -9,6 +9,7 @@ _Static_assert(sizeof(lynx_status) == 4, "status is 32 bits");
 _Static_assert(sizeof(lynx_stop_reason) == 4, "stop reason is 32 bits");
 _Static_assert(sizeof(lynx_config) == 24, "config layout");
 _Static_assert(sizeof(lynx_identity) == 80, "identity layout");
+_Static_assert(LYNX_CONTENT_RAW_RAM_IMAGE == 1, "legacy raw-image format remains available through 03-03");
 _Static_assert(LYNX_CONTENT_BS93 == 2, "BS93 content format id");
 _Static_assert(LYNX_STARTUP_A == 1, "tier A startup id");
 _Static_assert(LYNX_STOP_HALT == 3, "stop reason HALT value");
@@ -29,9 +30,11 @@ static lynx_status (*const machine_init_fn)(void *, size_t, const lynx_config *,
                                             lynx_machine **) = lynx_machine_init;
 static void (*const machine_deinit_fn)(lynx_machine *) = lynx_machine_deinit;
 static lynx_status (*const reset_fn)(lynx_machine *) = lynx_reset;
+/* Normal runner loads use the complete BS93 container. Keep the provisional
+   raw-image signature until 03-03 removes that legacy public entry point. */
+static lynx_status (*const load_bll_fn)(lynx_machine *, const uint8_t *, size_t) = lynx_load_bll;
 static lynx_status (*const load_ram_image_fn)(lynx_machine *, const uint8_t *, size_t,
                                               uint32_t) = lynx_load_ram_image;
-static lynx_status (*const load_bll_fn)(lynx_machine *, const uint8_t *, size_t) = lynx_load_bll;
 static lynx_status (*const advance_fn)(lynx_machine *, uint64_t, uint64_t *,
                                        lynx_stop_reason *) = lynx_advance;
 static lynx_status (*const read_register_fn)(const lynx_machine *, uint32_t,
