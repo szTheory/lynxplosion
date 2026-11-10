@@ -21,7 +21,10 @@ everything else fails, that link between claim, profile and evidence must hold.
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ One documented local check command aligned with the fast PR gate — Phase 1 (`scripts/check.sh`, same command in CI; CI green on the pushed HEAD)
+- ✓ Exact test inventories, named-fault negative controls and visible skips/missing/stale evidence — Phase 1 (57 tests accounted for once each; every gate has a seeded control)
+- ✓ A canonical machine-core skeleton behind a host API with instance ownership, bounded guest-time advancement, reset, errors and refusal postconditions, validated by whole-buffer comparison — Phase 1 (logical input, CPU, devices and raw outputs come in later phases)
+- ✓ Repeatable runs: two fresh runs and two in-process instances give identical artifact-bundle digests, labelled repeatability, not accuracy — Phase 1
 
 ### Active
 
@@ -66,8 +69,9 @@ with its own evidence plan.
 
 - Committing or redistributing BIOS images, commercial ROMs, saves, manuals or
   other rights-bearing assets — no documented permission (owner policy)
-- Public publication, release or repository visibility change — explicit
-  owner boundary; not authorized by bootstrap setup
+- Public release, firmware distribution or a licence decision — explicit owner
+  boundaries. The repository itself is public (owner decision, 2026-11-09), with
+  no PII or credentials; publishing a release or choosing a licence still needs the owner
 - Physical hardware qualification (Lynx I/II comparison, refresh-rate
   logic-analyzer calibration, two-console ComLynx cable tests) — requires
   hardware access and owner authority
@@ -207,4 +211,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-09 after initialization*
+*Last updated: 2026-11-09 after Phase 1*
