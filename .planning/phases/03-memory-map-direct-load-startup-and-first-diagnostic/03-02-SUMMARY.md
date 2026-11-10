@@ -73,7 +73,7 @@ actuals:
   tasks: 2
   commits: 3
 plan_head_before: d24653371cb0a412b6f70bef7a5e2dd370b93d49
-plan_head_after: 573efc5a1fd42331ee64d278a18c293cd0bbcd61
+plan_head_after: 06f29b8502f29f7e2f0bd0541988b79c612f342b
 duration: 00:26:42
 completed: 2026-11-10
 status: complete
@@ -121,8 +121,8 @@ A runner smoke loaded a 23-byte BLL object, ran 300 ticks, and confirmed the man
 ## Task Commits
 
 1. **Task 1: Prove BLL ownership, refusal boundaries and startup policy** — `fe57a9c`
-2. **Task 2 RED: Assert BLL runner identity metadata** — `d37170d`
-3. **Task 2 GREEN: Load strict binary BLL in runner** — `573efc5`
+2. **Task 2 RED: Assert BLL runner identity metadata** — `a1fd583`
+3. **Task 2 GREEN: Load strict binary BLL in runner** — `06f29b8`
 
 ## Files Created/Modified
 
@@ -161,7 +161,7 @@ This is a plan-level contribution to MEM-02, MEM-03 and MEM-04. No global requir
 - **Fix:** Repackaged its source fixture as a bounded BS93 object for each content variant.
 - **Files modified:** `tests/det/sensitivity.cmake`.
 - **Verification:** The full Task 2 focused command passed 5/5 after the migration.
-- **Commit:** `573efc5`; deviation recorded as fixed in `.planning/WINDOWS.md`.
+- **Commit:** `06f29b8`; deviation recorded as fixed in `.planning/WINDOWS.md`.
 
 ## Known Stubs
 
@@ -187,6 +187,6 @@ Plan 03-03 can remove the provisional public raw-image entry point and migrate t
 ## Self-Check: PASSED
 
 - Verified this summary and the persisted RED evidence file exist.
-- Verified task commits `fe57a9c`, `d37170d` and `573efc5` are ancestors of `plan_head_after`.
+- Verified task commits `fe57a9c`, `a1fd583` and `06f29b8` are ancestors of `plan_head_after`.
 - Verified the ledger range from `plan_head_before` through `plan_head_after` measures 3 task commits.
 
