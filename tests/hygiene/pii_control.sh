@@ -179,12 +179,58 @@ accept binary_skipped tree
 rm -f "$iso/blob.dat"
 ok binary_not_read
 
-# A file named in the scan's own skip (scripts/hygiene.sh) is the only exclusion:
-# the same text elsewhere is a finding even when the name looks similar.
+# No file is excluded from the scan, the script included: the same text in
+# scripts/hygiene.sh or in a file with a similar name is a finding (WR-10).
 printf '%s\n' "$fake_home" >"$iso/scripts/hygiene.sh.txt"
-reject only_self_excluded tree 'hygiene: home path: scripts/hygiene.sh.txt'
+reject similar_name_not_excluded tree 'hygiene: home path: scripts/hygiene.sh.txt'
 rm -f "$iso/scripts/hygiene.sh.txt"
-ok only_self_excluded
+cp "$iso/scripts/hygiene.sh" "$work/hygiene.orig"
+printf '# %s\n' "$fake_home" >>"$iso/scripts/hygiene.sh"
+reject script_itself_scanned tree 'hygiene: home path: scripts/hygiene.sh'
+cp "$work/hygiene.orig" "$iso/scripts/hygiene.sh"
+accept script_restored tree
+ok scan_excludes_no_file
+
+# A tracked symlink is read by its target text, in tree and history modes.
+ln -s "$fake_home/target" "$iso/link"
+reject symlink_target_home tree 'hygiene: home path: link'
+(
+  cd "$iso"
+  git add link
+  git commit -q -m "add link"
+)
+reject symlink_target_history history 'hygiene: home path: commit '
+(
+  cd "$iso"
+  git reset -q --hard HEAD~1
+)
+rm -f "$iso/link"
+accept symlink_removed tree
+ln -s ../readme.txt "$iso/okay_link"
+accept symlink_harmless tree
+rm -f "$iso/okay_link"
+ok symlink_target_scanned
+
+# A file name is scanned like content, and the finding does not print it.
+dashed=-Us${home_b%/}-$home_c-
+: >"$iso/$dashed-notes.txt"
+reject name_dashed_home tree 'hygiene: home path: a file name in the tree'
+if grep -q "$home_c" "$work/err"; then
+  fail name_not_printed "the finding printed the file name"
+fi
+(
+  cd "$iso"
+  git add -- "$dashed-notes.txt"
+  git commit -q -m "add named file"
+)
+reject name_history history 'hygiene: home path: a file name in commit '
+(
+  cd "$iso"
+  git reset -q --hard HEAD~1
+)
+rm -f "$iso/$dashed-notes.txt"
+accept name_removed tree
+ok file_names_scanned
 
 # --- history ------------------------------------------------------------------
 

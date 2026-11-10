@@ -23,8 +23,6 @@ git() { command git -c core.quotePath=false "$@"; }
 
 cd "$(git rev-parse --show-toplevel)"
 
-SELF=scripts/hygiene.sh
-
 # A private scratch directory with an unpredictable name (never a fixed name a
 # planted symlink could redirect), removed on every exit and on a signal.
 work=$(mktemp -d "${TMPDIR:-/tmp}/hygiene.XXXXXX") || {
@@ -77,22 +75,37 @@ is_nontext() {
 # $1 is a path; $2 is a command that prints that path's content. A file whose
 # content cannot be read is a finding, so the scan fails closed.
 check_file() {
-  if [ "$1" = "$SELF" ]; then
-    return 0
-  fi
+  cf_reader=$2
+  # A symlink is scanned by its target text, which names a path and can hold a
+  # home directory; the file it points at is its own entry when it is tracked.
   if [ -L "$1" ]; then
-    return 0
+    cf_reader=link_show
   fi
-  if ! $2 "$1" >/dev/null 2>&1; then
+  if ! $cf_reader "$1" >/dev/null 2>&1; then
     found 'cannot read file' "$1"
     return 0
   fi
-  if is_nontext "$1" "$2"; then
+  if is_nontext "$1" "$cf_reader"; then
     return 0
   fi
-  if $2 "$1" 2>/dev/null | leaks "$HOME_PATH" "$HOME_OK"; then found 'home path' "$1"; fi
-  if $2 "$1" 2>/dev/null | leaks "$EMAIL" "$EMAIL_OK"; then found 'email' "$1"; fi
-  if $2 "$1" 2>/dev/null | has "$CREDENTIAL"; then found 'credential' "$1"; fi
+  if $cf_reader "$1" 2>/dev/null | leaks "$HOME_PATH" "$HOME_OK"; then found 'home path' "$1"; fi
+  if $cf_reader "$1" 2>/dev/null | leaks "$EMAIL" "$EMAIL_OK"; then found 'email' "$1"; fi
+  if $cf_reader "$1" 2>/dev/null | has "$CREDENTIAL"; then found 'credential' "$1"; fi
+}
+
+# The reader for a symlink, called indirectly as check_file's reader.
+# shellcheck disable=SC2317,SC2329
+link_show() { readlink -- "$1"; }
+
+# stdin is a list of file names; $1 says where they came from. A name can carry
+# a home directory (an agent tool's dashed project folder) or a token, so names
+# are scanned with the same rules as content, and a finding never prints the
+# name itself.
+check_names() {
+  cn_names=$(cat)
+  if printf '%s\n' "$cn_names" | leaks "$HOME_PATH" "$HOME_OK"; then found 'home path' "a file name in $1"; fi
+  if printf '%s\n' "$cn_names" | leaks "$EMAIL" "$EMAIL_OK"; then found 'email' "a file name in $1"; fi
+  if printf '%s\n' "$cn_names" | has "$CREDENTIAL"; then found 'credential' "a file name in $1"; fi
 }
 
 # $1 is a newline-separated list; $2 as in check_file. A name holding a newline
@@ -117,14 +130,14 @@ check_identity() { # $1 is an email; $2 says where it came from
 # The reader is called indirectly, as check_file's $2. A tracked file deleted
 # from the working tree is still read from the index.
 # shellcheck disable=SC2317,SC2329
-tree_show() { if [ -f "$1" ]; then cat "$1"; else git show ":$1"; fi; }
+tree_show() { if [ -f "$1" ]; then cat -- "$1"; else git show ":$1"; fi; }
 
 # $1 and $2 as in leaks (an empty $2 allows nothing); $3 is a commit and $4 the
 # finding name. A git grep failure (status above 1) is itself a finding: git's
 # status is never discarded behind a pipe.
 scan_commit() {
   sc_rc=0
-  git grep -I -h -o -E -e "$1" "$3" -- . ":!$SELF" >"$work/matches" 2>/dev/null || sc_rc=$?
+  git grep -I -h -o -E -e "$1" "$3" -- . >"$work/matches" 2>/dev/null || sc_rc=$?
   if [ "$sc_rc" -gt 1 ]; then
     found 'git grep failed' "commit $3"
     return 0
@@ -137,6 +150,29 @@ scan_commit() {
   fi
 }
 
+# $1 is a commit. Scans the names of the files it changed and the target text of
+# the symlinks it adds or changes (git grep does not read a symlink).
+scan_changes() {
+  if ! git diff-tree -r --root --no-commit-id "$1" >"$work/raw" 2>/dev/null; then
+    found 'cannot read file names' "commit $1"
+    return 0
+  fi
+  cut -f2- "$work/raw" >"$work/names"
+  check_names "commit $1" <"$work/names"
+  : >"$work/links"
+  awk '$2 == "120000" { print $4 }' "$work/raw" >"$work/blobs"
+  while IFS= read -r sc_blob; do
+    if git cat-file blob "$sc_blob" >>"$work/links" 2>/dev/null; then
+      printf '\n' >>"$work/links"
+    else
+      found 'cannot read symlink' "commit $1"
+    fi
+  done <"$work/blobs"
+  if leaks "$HOME_PATH" "$HOME_OK" <"$work/links"; then found 'home path' "commit $1"; fi
+  if leaks "$EMAIL" "$EMAIL_OK" <"$work/links"; then found 'email' "commit $1"; fi
+  if has "$CREDENTIAL" <"$work/links"; then found 'credential' "commit $1"; fi
+}
+
 mode=${1:---tree}
 [ $# -gt 0 ] && shift
 case $mode in
@@ -146,6 +182,8 @@ case $mode in
       exit 1
     fi
     tree_list=$(tr '\0' '\n' <"$work/list")
+    printf '%s\n' "$tree_list" >"$work/names"
+    check_names 'the tree' <"$work/names"
     check_files "$tree_list" tree_show
     ;;
   --history)
@@ -162,6 +200,7 @@ case $mode in
       scan_commit "$HOME_PATH" "$HOME_OK" "$c" 'home path'
       scan_commit "$EMAIL" "$EMAIL_OK" "$c" 'email'
       scan_commit "$CREDENTIAL" '' "$c" 'credential'
+      scan_changes "$c"
       # A squash merge copies the pull request's title and body into the
       # message, so messages are scanned as well.
       if git log -1 --format=%B "$c" >"$work/msg" 2>/dev/null; then
