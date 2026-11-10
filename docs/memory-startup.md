@@ -57,6 +57,12 @@ CPU baseline decision O1 is open. The current flat five-master-tick timing is
 
 ## Snapshot continuation and write-watch observations
 
+Phase 3 snapshot format 3 records the expanded guest state, including startup
+and content identity. Earlier snapshot formats are refused. Snapshot
+continuation tests restore a fresh same-identity machine and compare its final
+guest observations with uninterrupted execution; this is repeatability
+evidence, not a hardware-accuracy result.
+
 Snapshots contain guest machine state only. Watch configuration and hit history
 belong to the host observer and are absent from both snapshot bytes and the
 runner's guest observation digest. A successful restore clears the host watch
@@ -83,6 +89,58 @@ controls compare serialized state, RAM, registers, identity, time and digests;
 the golden digest remains unchanged. These checks establish same-build
 repeatability, not hardware accuracy. DET-03's remaining unclassified probe is
 still a flagged assumption; these tests do not mark it automatically classified.
+
+## Public diagnostic consumer and runnable demo
+
+`lynx-consume` is a separate C program linked through `include/lynxplosion.h`.
+It loads the complete BLL object, resolves `diag_result` and `diag_pixels` from
+the matching `ld65 -Ln` file, runs the diagnostic and reads its guest RAM
+through public API calls. It validates the completion block and exact packed
+pixels before creating output.
+
+The consumer writes three files: `snapshot.ppm`, `silence.wav`, and
+`snapshot.manifest`. The P3 image is an unscaled 8x8 `SNAPSHOT` of
+diagnostic-owned pixel bytes using `diagnostic-palette-v1`; its metadata
+records the guest tick, startup tier, selected profile and complete BLL SHA.
+It is not display DMA, scanout, a canonical Lynx palette or a video frame. The
+WAV is mono 8000 Hz signed 16-bit little-endian PCM with exactly 800 zero
+samples; it is labelled placeholder silence pending Phase 6 audio.
+
+After input, symbols, result, pixels and metadata pass validation, the consumer
+writes each file into a private sibling staging directory and checks each
+write and close. It stages the manifest last, then publishes the whole
+directory with an exclusive no-replace rename (`renamex_np(RENAME_EXCL)` on
+macOS or `renameat2(RENAME_NOREPLACE)` on Linux). Existing directories, files
+and symlinks are refused without modification. If a process is interrupted
+before publication, a private staging directory may remain; it is not the
+requested output directory and has no published success manifest. Unsupported
+exclusive rename fails closed.
+
+`scripts/check.sh` runs CTest, whose diagnostic test drivers remove their
+isolated scratch directories and generated BLL/label inputs during cleanup.
+This recipe builds a fresh project-owned object and matching symbols in a
+unique temporary directory, so it works after the check has cleaned its test
+fixtures. Keep the generated files temporary and do not commit them.
+
+```sh
+sh scripts/check.sh
+demo_dir=$(mktemp -d "${TMPDIR:-/tmp}/lynxplosion-demo.XXXXXX")
+cc65_home="$PWD/build/pins/cc65"
+env -i PATH="$cc65_home/bin:/usr/bin:/bin" CC65_HOME="$cc65_home" \
+  "$cc65_home/bin/ca65" --cpu 65SC02 \
+  -o "$demo_dir/first.o" fixtures/diagnostic/first.s
+env -i PATH="$cc65_home/bin:/usr/bin:/bin" CC65_HOME="$cc65_home" \
+  "$cc65_home/bin/ld65" -C fixtures/diagnostic/bll.cfg \
+  -Ln "$demo_dir/first.lbl" -o "$demo_dir/first.bll" "$demo_dir/first.o"
+build/check/consumer/lynx-consume \
+  --content "$demo_dir/first.bll" --symbols "$demo_dir/first.lbl" \
+  --out "$demo_dir/output" --profile none
+build/check/tests/lynx-check-artifacts "$demo_dir/output"
+```
+
+The output directory is intentionally fresh and the command refuses to replace
+it. Inspect the PPM and manifest in `"$demo_dir/output"`; remove only this
+generated directory when finished with `rm -rf "$demo_dir"`.
 
 No baseline or suite-pass compatibility claim is made. O5 (project licence),
 O6 (clean-room policy) and the firmware/BIOS rights stop remain open. Public

@@ -77,6 +77,12 @@ Until then this list is the notice. It is an open question, not a decision.
 - The generated BLL's exact bytes identify a complete accepted object,
   including its header. Its identity is not a licence or permission to
   redistribute the fixture.
+- `lynx-consume` derives its P3 snapshot, manifest and placeholder WAV from
+  that project-owned fixture. The diagnostic palette is project-authored; the
+  WAV contains only zero-valued samples. These files are transient test/demo
+  outputs and are not committed as fixtures or presented as video/audio
+  captures of Lynx hardware. The demo recipe rebuilds the BLL and matching
+  `-Ln` symbols into a temporary directory after `scripts/check.sh` finishes.
 
 ## Pinned external sources (fetched at check time, never committed)
 

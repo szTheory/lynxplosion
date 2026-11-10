@@ -1,7 +1,7 @@
 ---
 phase: "3"
 slug: "memory-map-direct-load-startup-and-first-diagnostic"
-status: draft
+status: in-progress
 nyquist_compliant: false
 wave_0_complete: false
 created: "2026-11-10"
@@ -9,7 +9,7 @@ created: "2026-11-10"
 
 # Phase 3 — Validation Strategy
 
-> Executable coverage is assigned to 03-01 through 03-09 in sequential waves; see 03-PLANNING-AUDIT.md and 03-EDGE-RESOLUTIONS.json. All Phase 3 behavior is still pending; these are planned test IDs, not verified registrations.
+> Executable coverage is assigned to 03-01 through 03-09 in sequential waves; see 03-PLANNING-AUDIT.md and 03-EDGE-RESOLUTIONS.json. Planned test IDs are registered and the 03-09 local and Ubuntu 24.04 gates pass. Final phase review, security review, exact-head CI and validation sign-off remain pending.
 
 ## Test Infrastructure
 
@@ -19,29 +19,29 @@ created: "2026-11-10"
 | **Config** | `CMakePresets.json`, `tests/tests.cmake`, `cmake/Tests.cmake`, `tests/inventory/fast.txt` |
 | **Quick run** | `cmake --preset check && cmake --build --preset check && ctest --preset check -R '^(api|memory|diag|runner|consumer|det|fixture|docs)\.'` |
 | **Full suite** | `scripts/check.sh` |
-| **Estimated runtime** | Phase 2 baseline: about 47 s local / 27 s CI; Phase 3 delta must be measured after tests land. |
-| **Max feedback latency** | Target <60 s locally; measure after the first phase test slice. |
+| **Measured runtime** | 03-09 `sh scripts/check.sh`: 82 s on macOS arm64 and 74 s in Ubuntu 24.04 arm64. CTest took 33.11 s and 22.40 s respectively. |
+| **Fast feedback** | 03-09 targeted `consumer.public_api`: 0.56 s on macOS and 0.14 s on Ubuntu. |
 
 ## Sampling Rate
 
 - **After each task:** Run its direct executable case or nonempty targeted CTest slice from the plan.
 - **At integration:** Full `sh scripts/check.sh` locally and in Linux; inspect CI critical path for the exact tested head. Repeat affected checks after accepted review/security fixes.
 - **Before phase verification:** Full local and CI gate green, review/security findings fixed, inventory and claim hash aligned.
-- No phase tests have run; no behavior is marked green.
+- Full local/Linux suite results are recorded below; phase-wide coverage and review sign-off remain pending.
 
 ## Requirement-Level Verification Map
 
 | Requirement | Candidate automated tests | Negative controls / expected refusal | File exists / status |
 |---|---|---|---|
-| MEM-01 | `memory.map_matrix`, `api.memory_peek_pure` | Wrong bit/window mutant; FFF8/FFF9 boundary mutant; raw RAM must remain visible while CPU mapping changes | ❌ New Phase 3 tests pending |
-| MEM-02 | `api.bll_load`, `fixture.bll_header` | Bad marker/magic/endian/length, empty body, truncated/trailing, range wrap, machine-buffer overlap; full instance byte-identical on refusal | ❌ Pending |
-| MEM-03 | `det.manifest_fields`, `det.manifest_fields.self_test`, `docs.claim_template` | Missing/wrong startup tier, stale claim inventory hash | ❌ Pending |
-| MEM-04 | `api.bll_load`, `runner.cli`, `memory.rom_unavailable` | BLL API rejects unknown/cart/firmware-shaped input and has no firmware option; mapped absent ROM stops explicitly, never RAM/zero BIOS | ❌ Pending |
-| EVD-01 | `diag.result_symbol`, `diag.result_controls` | No-run, broken guest, bad magic/schema, zero progress, zero done, corrupt result, timeout | ❌ Pending |
-| API-08 | `api.watch_post_write`, `api.watch_controls` | No-hit, just-outside range, rearm/double-write mutant; matching write must already be visible at stop | ❌ Pending |
-| DET-03 | `api.snapshot_continue`, `det.diagnostic_restore` | Bad version/hash/identity/invalid state; refusal preserves full machine; split-budget restore mutant | ❌ Pending |
-| HB-01 | `consumer.snapshot_ppm` | Empty/unexecuted pixel buffer or wrong expected pixel must fail; metadata says SNAPSHOT, not frame | ❌ Pending |
-| CON-01 | `consumer.public_api`, `consumer.silence_wav` | Consumer cannot include internal headers; malformed PPM/WAV structure and nonzero “silence” samples fail | ❌ Pending |
+| MEM-01 | `memory.map_matrix`, `api.memory_peek_pure` | Wrong bit/window mutant; FFF8/FFF9 boundary mutant; raw RAM must remain visible while CPU mapping changes | Registered; local/Linux full gates pass; review/CI pending |
+| MEM-02 | `api.bll_load`, `fixture.bll_header` | Bad marker/magic/endian/length, empty body, truncated/trailing, range wrap, machine-buffer overlap; full instance byte-identical on refusal | Registered; local/Linux full gates pass; review/CI pending |
+| MEM-03 | `det.manifest_fields`, `det.manifest_fields.self_test`, `docs.claim_template` | Missing/wrong startup tier, stale claim inventory hash | Registered; local/Linux full gates pass; review/CI pending |
+| MEM-04 | `api.bll_load`, `runner.cli`, `memory.rom_unavailable` | BLL API rejects unknown/cart/firmware-shaped input and has no firmware option; mapped absent ROM stops explicitly, never RAM/zero BIOS | Registered; local/Linux full gates pass; review/CI pending |
+| EVD-01 | `diag.result_symbol`, `diag.result_controls` | No-run, broken guest, bad magic/schema, zero progress, zero done, corrupt result, timeout | Registered; local/Linux full gates pass; review/CI pending |
+| API-08 | `api.watch_post_write`, `api.watch_controls` | No-hit, just-outside range, rearm/double-write mutant; matching write must already be visible at stop | Registered; local/Linux full gates pass; review/CI pending |
+| DET-03 | `api.snapshot_continue`, `det.diagnostic_restore` | Bad version/hash/identity/invalid state; refusal preserves full machine; split-budget restore mutant | Registered; local/Linux full gates pass; review/CI pending |
+| HB-01 | `consumer.snapshot_ppm` | Empty/unexecuted pixel buffer or wrong expected pixel must fail; metadata says SNAPSHOT, not frame | Registered; local/Linux full gates pass; review/CI pending |
+| CON-01 | `consumer.public_api`, `consumer.silence_wav` | Consumer cannot include internal headers; malformed PPM/WAV structure and nonzero “silence” samples fail | Registered; local/Linux full gates pass; review/CI pending |
 
 *Candidate IDs must be registered in CTest and listed exactly in `tests/inventory/fast.txt` before they can count as coverage. Add each named-fault control to the inventory; update the existing claim's inventory hash in the same change.*
 
@@ -85,6 +85,21 @@ None planned. Repository behavior, PPM/WAV structure, CI and evidence packaging 
 
 **Probe:** nine classified edges have explicit planned predicates. Five unclassified assumptions remain flagged with concrete tests/manual evidence review; two descriptor-less prohibition recalls remain flagged-unverified. No hardware/rights authority is inferred from software checks.
 
-**Approval:** implementation evidence pending; no manual owner action is needed for routine execution.
+**Approval:** routine implementation and local/Linux qualification are authorized; rights, physical testing, licence, release and publication stops remain owner-gated.
+
+## 03-09 Interim Qualification Evidence
+
+This is implementation evidence only; parent review, security review, exact-head CI and final phase coverage audit are not complete.
+
+| Environment | Command | Result |
+|---|---|---|
+| macOS arm64, Apple clang 21.0.0.21000101, CMake 4.4.3, Ninja 1.13.2, ShellCheck 0.11.0 | `sh scripts/check.sh` | 120/120 tests, 0 declared skips; CTest 33.11 s, workflow 34 s, full check 82 s; artifact scan 6,478 files and one exactly 512 bytes. |
+| Ubuntu 24.04 arm64 container, GCC 13.3, CMake 3.28.3, Ninja 1.11.1, ShellCheck 0.9.0 | `sh scripts/check.sh` in isolated source copy; OS packages `build-essential cmake ninja-build shellcheck curl git ca-certificates` | 120/120 tests, 0 declared skips; CTest 22.40 s, workflow 22 s, full check 74 s; artifact scan 6,319 files and one exactly 512 bytes. |
+
+`det.golden` and `det.golden.self_test` passed on both compilers without changing golden values. The `consumer.*` registrations are exactly `consumer.public_api`, `consumer.snapshot_ppm`, `consumer.silence_wav` and `consumer.refusal_controls`. The fast inventory hash and `docs/claims/skeleton-repeatability.claim` both equal `1e5eee703b7d5a8009c1cb05fd20625b228418d1eedbd92f18c53f6dc1625654`.
+
+The documented temporary demo was run after `scripts/check.sh`: the consumer emitted an 8x8 P3 `SNAPSHOT` at guest tick 5000, startup A, profile none, with BLL SHA `16ecb83e09554082f1d51212bbe7c31fd67d33ba68873bca3441308eec284ba0`; the independent artifact checker accepted the PPM and placeholder PCM WAV. File sizes were 960-byte PPM, 1,644-byte WAV and 384-byte manifest. No generated artifacts were retained.
+
+The first Ubuntu container setup lacked `ca-certificates` and stopped before project tests; adding that Ubuntu OS package resolved setup. The next run exposed that GCC warns rather than fails for an implicit private-symbol declaration. The public-boundary probe now uses `-Werror=implicit-function-declaration`; its targeted test passes on both compilers and the corrected Linux full gate passes. No project dependency was installed, and no full-data vector lane was run.
 
 
