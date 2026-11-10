@@ -50,7 +50,8 @@ root=$(cd "$root" && pwd -P)
 validator=$(dirname "$0")/validate-kv.sh
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/lynx-manifests.XXXXXX")
-trap 'rm -rf "$work"' EXIT INT TERM
+trap 'rm -rf "$work"' EXIT
+trap 'exit 1' INT TERM
 findings=$work/findings
 : >"$findings"
 find "$root/fixtures/manifests" -maxdepth 1 -type f -name '*.manifest' 2>/dev/null |

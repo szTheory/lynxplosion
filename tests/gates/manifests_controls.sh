@@ -191,4 +191,35 @@ write_manifest "$t/fixtures/manifests/sub/b.manifest" "$other64" fixtures/a.txt
 expect_reject manifests_dir_nested_manifest "$t" \
   "check-manifests: uncovered fixture: fixtures/manifests/sub/b.manifest"
 
+# 16. A termination signal in the middle of a run ends the check with a failing
+# status and removes its scratch directory; it never completes as a pass. The
+# validator is replaced by one that signals the check that started it, then
+# returns success, which is exactly what let the old trap fall through to a
+# success line and exit 0.
+make_tree "$t"
+cat >"$t/scripts/validate-kv.sh" <<'EOF2'
+#!/bin/sh
+n=0
+while [ ! -s "$LYNX_PIDFILE" ] && [ "$n" -lt 100 ]; do
+  sleep 0.1
+  n=$((n + 1))
+done
+kill -TERM "$(cat "$LYNX_PIDFILE")"
+sleep 1
+exit 0
+EOF2
+mkdir -p "$work/tmp"
+rm -f "$work/pid"
+rc=0
+(
+  TMPDIR=$work/tmp LYNX_PIDFILE=$work/pid sh "$t/scripts/check-manifests.sh" --root "$t" >"$work/sig.out" 2>&1 &
+  printf '%s\n' "$!" >"$work/pid"
+  wait "$!"
+) || rc=$?
+[ "$rc" -ne 0 ] || fail signal_exit "a terminated check exited 0: $(cat "$work/sig.out")"
+if grep -q 'covered' "$work/sig.out"; then
+  fail signal_exit "a terminated check printed its success line"
+fi
+[ -z "$(ls -A "$work/tmp")" ] || fail signal_cleanup "the scratch directory was left behind"
+ok signal_exit
 rm -rf "$work"
