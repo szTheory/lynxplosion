@@ -1,6 +1,7 @@
 /* Artifact bundle writer: see bundle.h. Host side; the core never sees it. */
 #include "bundle.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -215,16 +216,37 @@ static size_t manifest_text(const lynx_machine *m, const bundle_run *run, char *
     return (size_t)n;
 }
 
+static int path_in(char *path, size_t cap, const char *dir, const char *name)
+{
+    int n = snprintf(path, cap, "%s/%s", dir, name);
+    return (n < 0 || (size_t)n >= cap) ? 1 : 0;
+}
+
+/* Removes dir/name if it exists: a file left by an earlier bundle, or a symlink
+   (the link itself goes, never its target). Returns 0 when it is gone. */
+static int clear_file(const char *dir, const char *name)
+{
+    char path[4096];
+    if (path_in(path, sizeof path, dir, name) != 0) {
+        return 1;
+    }
+    if (remove(path) != 0 && errno != ENOENT) {
+        return 1;
+    }
+    return 0;
+}
+
+/* Creates dir/name afresh: the old entry is removed and the new file is created
+   exclusively ("x"), so a link planted in between is refused, not followed. */
 static int write_file(const char *dir, const char *name, const void *data, size_t len)
 {
     char path[4096];
     FILE *f;
-    int n = snprintf(path, sizeof path, "%s/%s", dir, name);
     int ok;
-    if (n < 0 || (size_t)n >= sizeof path) {
+    if (clear_file(dir, name) != 0 || path_in(path, sizeof path, dir, name) != 0) {
         return 1;
     }
-    f = fopen(path, "wb");
+    f = fopen(path, "wbx");
     if (f == NULL) {
         return 1;
     }
@@ -306,6 +328,11 @@ int bundle_write(const char *dir, const lynx_machine *m, const bundle_run *run,
     }
     obs_digest(e, 4, obs_digest_hex);
     hash_hex(digests, digests_len, bundle_digest_hex);
+    /* digests.txt vouches for the other four files, so it and run.manifest go
+       first: a write that fails part way leaves no digests.txt beside new files. */
+    if (clear_file(dir, "digests.txt") != 0 || clear_file(dir, "run.manifest") != 0) {
+        goto done;
+    }
     if (write_hex_file(dir, "obs.ram.hex", ram, BUNDLE_RAM_LEN) != 0 ||
         write_hex_file(dir, "obs.regs.hex", regs, sizeof regs) != 0 ||
         write_hex_file(dir, "obs.time.hex", tbuf, sizeof tbuf) != 0 ||

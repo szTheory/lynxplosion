@@ -31,8 +31,12 @@ int bundle_observe(const lynx_machine *m, const bundle_run *run, char obs_digest
 
 /* Writes the bundle files into dir, which must already exist, and returns the
    observation digest and the bundle digest (SHA-256 of the whole digests.txt).
-   Refuses a machine with no loaded content. Returns 0 on success, non-zero on
-   a refusal or a file error. */
+   Refuses a machine with no loaded content. Every file is created afresh: an
+   earlier bundle's file, or a symlink at its name, is removed first and the new
+   file is created exclusively, and digests.txt and run.manifest are removed
+   before anything is written, so a write that fails part way leaves no
+   digests.txt beside new files. Returns 0 on success, non-zero on a refusal or
+   a file error. */
 int bundle_write(const char *dir, const lynx_machine *m, const bundle_run *run,
                  char obs_digest_hex[65], char bundle_digest_hex[65]);
 

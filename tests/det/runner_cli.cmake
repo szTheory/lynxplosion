@@ -88,3 +88,42 @@ foreach(line "ram_policy = zero" "ram_seed = 0x0000000000000000")
   endif()
 endforeach()
 message(STATUS "runner_cli: default ram policy recorded as zero and seed 0: ok")
+
+# A bundle written into a directory that holds an earlier bundle.
+# A write that fails part way must not leave the earlier digests.txt beside new
+# files: obs.regs.hex is made a non-empty directory so its file cannot be created.
+expect("first bundle" 0 ""
+  --content "${CONTENT}" --load-addr 0200 --ticks 16 --out "${WORK}/stale")
+if(NOT EXISTS "${WORK}/stale/digests.txt")
+  message(FATAL_ERROR "runner_cli: first bundle: digests.txt was not written")
+endif()
+file(REMOVE "${WORK}/stale/obs.regs.hex")
+file(MAKE_DIRECTORY "${WORK}/stale/obs.regs.hex")
+file(WRITE "${WORK}/stale/obs.regs.hex/blocker" "x\n")
+expect("failed rewrite" 1 "^lynx-run: cannot write the artifact bundle"
+  --content "${CONTENT}" --load-addr 0200 --ticks 32 --out "${WORK}/stale")
+if(EXISTS "${WORK}/stale/digests.txt")
+  message(FATAL_ERROR "runner_cli: failed rewrite: a stale digests.txt is left beside new files")
+endif()
+message(STATUS "runner_cli: a failed rewrite leaves no stale digests.txt: ok")
+
+# A symlink planted at a bundle file name is replaced, never followed: the file
+# it points at keeps its content.
+if(NOT CMAKE_HOST_WIN32)
+  file(MAKE_DIRECTORY "${WORK}/linked")
+  file(WRITE "${WORK}/victim.txt" "victim content\n")
+  file(CREATE_LINK "${WORK}/victim.txt" "${WORK}/linked/obs.ram.hex" SYMBOLIC)
+  file(CREATE_LINK "${WORK}/victim.txt" "${WORK}/linked/digests.txt" SYMBOLIC)
+  expect("symlinked output names" 0 ""
+    --content "${CONTENT}" --load-addr 0200 --ticks 16 --out "${WORK}/linked")
+  file(READ "${WORK}/victim.txt" victim)
+  if(NOT victim STREQUAL "victim content\n")
+    message(FATAL_ERROR "runner_cli: symlinked output names: the link target was overwritten")
+  endif()
+  foreach(name obs.ram.hex digests.txt)
+    if(IS_SYMLINK "${WORK}/linked/${name}")
+      message(FATAL_ERROR "runner_cli: symlinked output names: ${name} is still a symlink")
+    endif()
+  endforeach()
+  message(STATUS "runner_cli: symlinks at bundle names are replaced, not followed: ok")
+endif()
