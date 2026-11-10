@@ -441,6 +441,20 @@ lynx_status lynx_read_register(const lynx_machine *m, uint32_t reg, uint32_t *va
     return LYNX_OK;
 }
 
+/* Inspection destinations must be wholly outside the caller-owned instance.
+   Treat an integer-address range that wraps as an invalid output range too. */
+static bool output_overlaps_machine(const struct lynx_machine *m, const void *out, size_t len)
+{
+    const uintptr_t machine_begin = (uintptr_t)(const void *)m;
+    const uintptr_t output_begin = (uintptr_t)out;
+    if (sizeof *m > UINTPTR_MAX - machine_begin || len > UINTPTR_MAX - output_begin) {
+        return true;
+    }
+    const uintptr_t machine_end = machine_begin + sizeof *m;
+    const uintptr_t output_end = output_begin + (uintptr_t)len;
+    return output_begin < machine_end && machine_begin < output_end;
+}
+
 lynx_status lynx_read_memory(const lynx_machine *m, uint32_t addr, uint8_t *out, size_t len)
 {
     if (m == NULL || out == NULL || len == 0u) {
@@ -451,6 +465,9 @@ lynx_status lynx_read_memory(const lynx_machine *m, uint32_t addr, uint8_t *out,
     }
     if (addr >= LYNX_ADDRESS_SPACE || len > LYNX_ADDRESS_SPACE - addr) {
         return LYNX_ERR_RANGE;
+    }
+    if (output_overlaps_machine(m, out, len)) {
+        return LYNX_ERR_ARGUMENT;
     }
     memcpy(out, &m->ram[addr], len);
     return LYNX_OK;
