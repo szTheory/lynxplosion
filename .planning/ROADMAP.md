@@ -162,13 +162,13 @@ Plans:
   5. An independent consumer built only against the public API drives the core and renders a tick-stamped framebuffer snapshot to a viewable PNG or PPM labelled as a snapshot, not a frame. Its WAV writer is in place; the core produces silence until Phase 6.
 **Owner gates**: None for tier A. O8 is inherited (public C API). O2, O3 and O4 are not scheduled: no BIOS, boot ROM, boot shim or HLE decrypt. Tier A results are never boot, cartridge or loader evidence.
 **Research flag**: Deeper research needed before planning: per-register preset provenance (the DISPCTL sources disagree; cite Epyx or test values, never another emulator's); spike whether `lynx-bll.cfg` output equals the BS93 `.o` container (Disagreement 12). The fallback is `ca65`/`ld65` with a project config and packer.
-**Plans:** 3/9 plans executed
+**Plans:** 4/9 plans executed
 
 Plans:
 - [x] 03-01-PLAN.md — Strict BLL tracer and versioned guest identity
 - [x] 03-02-PLAN.md — BLL ownership proofs and strict runner startup
 - [x] 03-03-PLAN.md — Complete caller migration and private flat-vector seam
-- [ ] 03-04-PLAN.md — MAPCTL routes and pure mapped inspection
+- [x] 03-04-PLAN.md — MAPCTL routes and pure mapped inspection
 - [ ] 03-05-PLAN.md — Permanent map controls and post-write watch API
 - [ ] 03-06-PLAN.md — Watch isolation and equivalent snapshot continuation
 - [ ] 03-07-PLAN.md — Original source-built diagnostic and result oracle
@@ -244,7 +244,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Evidence Harness and Walking Skeleton | 13/13 | Complete    | 2026-11-09 |
 | 2. CPU Profiles and Per-Opcode Vectors | 11/11 | Complete    | 2026-11-10 |
-| 3. Memory Map, Direct-Load Startup and First Diagnostic | 3/9 | In Progress | - |
+| 3. Memory Map, Direct-Load Startup and First Diagnostic | 4/9 | In Progress | - |
 | 4. Timers, Interrupts and First Public Suites | 0/TBD | Not started | - |
 | 5. Display, Raw Video and Input | 0/TBD | Not started | - |
 | 6. Audio and Playable Checkpoint | 0/TBD | Not started | - |
