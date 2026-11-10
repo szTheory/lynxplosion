@@ -2,6 +2,7 @@
 
    lynx-run --content FILE.hex --load-addr HEX --ticks N --out DIR
             [--ram-policy zero|splitmix64] [--ram-seed HEX]
+            [--profile none|lynx1|lynx2]
 
    Builds one machine through the public API, loads the hex content at the
    load address, advances it by N master ticks and writes an artifact bundle
@@ -11,7 +12,10 @@
      bundle_digest <64 hex> (repeatability (R), not accuracy)
 
    Without --ram-policy and --ram-seed the RAM power-on policy is fixed 0x00
-   and the seed is 0. Exit status: 0 success, 1 runtime refusal (message
+   and the seed is 0. Without --profile the profile is none (neither Lynx
+   profile is ever a default). A run that stops at an opcode profile none does
+   not define still writes its bundle and exits 0; a note on standard error
+   names the opcode and the program counter. Exit status: 0 success, 1 runtime refusal (message
    "lynx-run: <reason>" on standard error), 2 usage error. */
 #define _POSIX_C_SOURCE 200809L
 
@@ -29,7 +33,7 @@
 
 static const char usage_line[] =
     "usage: lynx-run --content FILE.hex --load-addr HEX --ticks N --out DIR "
-    "[--ram-policy zero|splitmix64] [--ram-seed HEX]";
+    "[--ram-policy zero|splitmix64] [--ram-seed HEX] [--profile none|lynx1|lynx2]";
 
 static int usage_error(const char *reason, const char *what)
 {
@@ -107,12 +111,36 @@ static int make_dir(const char *path)
     return 1;
 }
 
+/* The core holds no message text: the note is built here from public reads
+   only (the program counter and the byte at it, which is the opcode the stop
+   is before). A failed read prints nothing; the stop itself is in the bundle. */
+static void undefined_note(const lynx_machine *m)
+{
+    uint32_t pc = 0;
+    uint8_t opcode = 0;
+    const char *name = lynx_profile_name(LYNX_PROFILE_NONE);
+    lynx_identity id;
+    if (lynx_read_register(m, LYNX_REG_PC, &pc) != LYNX_OK ||
+        lynx_read_memory(m, pc, &opcode, 1u) != LYNX_OK) {
+        return;
+    }
+    if (lynx_get_identity(m, &id) == LYNX_OK && lynx_profile_name(id.profile) != NULL) {
+        name = lynx_profile_name(id.profile);
+    }
+    fprintf(stderr,
+            "lynx-run: stopped at undefined opcode $%02X at PC $%04X under profile %s; "
+            "the two Lynx profiles disagree here; "
+            "select one with --profile lynx1 or --profile lynx2\n",
+            (unsigned)opcode, (unsigned)pc, name);
+}
+
 int main(int argc, char **argv)
 {
-    static const char *const flags[] = {"--content",    "--load-addr", "--ticks",
-                                        "--out",        "--ram-policy", "--ram-seed"};
-    enum { F_CONTENT, F_LOAD, F_TICKS, F_OUT, F_POLICY, F_SEED, F_COUNT };
-    const char *value[F_COUNT] = {NULL, NULL, NULL, NULL, NULL, NULL};
+    static const char *const flags[] = {"--content",    "--load-addr",  "--ticks",
+                                        "--out",        "--ram-policy", "--ram-seed",
+                                        "--profile"};
+    enum { F_CONTENT, F_LOAD, F_TICKS, F_OUT, F_POLICY, F_SEED, F_PROFILE, F_COUNT };
+    const char *value[F_COUNT] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL};
     uint64_t ticks = 0;
     uint64_t load_addr = 0;
     uint64_t seed = 0;
@@ -166,6 +194,18 @@ int main(int argc, char **argv)
             return usage_error("--ram-policy must be zero or splitmix64", value[F_POLICY]);
         }
     }
+    if (value[F_PROFILE] != NULL) {
+        /* A closed set: anything else is a usage error and the default stays none. */
+        if (strcmp(value[F_PROFILE], "none") == 0) {
+            cfg.profile = LYNX_PROFILE_NONE;
+        } else if (strcmp(value[F_PROFILE], "lynx1") == 0) {
+            cfg.profile = LYNX_PROFILE_LYNX1;
+        } else if (strcmp(value[F_PROFILE], "lynx2") == 0) {
+            cfg.profile = LYNX_PROFILE_LYNX2;
+        } else {
+            return usage_error("--profile must be none, lynx1 or lynx2", value[F_PROFILE]);
+        }
+    }
     if (value[F_SEED] != NULL) {
         if (parse_hex(value[F_SEED], 16, &seed) != 0) {
             return usage_error("--ram-seed must be 1 to 16 hex digits", value[F_SEED]);
@@ -201,6 +241,9 @@ int main(int argc, char **argv)
     if (lynx_advance(m, ticks, &run.ticks_consumed, &run.stop) != LYNX_OK) {
         runtime_error("the core refused to advance");
         goto done;
+    }
+    if (run.stop == LYNX_STOP_UNDEFINED) {
+        undefined_note(m);
     }
     if (make_dir(value[F_OUT]) != 0) {
         runtime_error("cannot create the output directory");

@@ -13,7 +13,7 @@
 #   PC 0x021C, X 0x0F, Y 0x08, S 0xFC, hand-derived in fixtures/cpu/churn-loop.s.
 # Regenerate (the runner defaults to profile none):
 #   build/check/runner/lynx-run --content fixtures/cpu/churn-loop.hex \
-#     --load-addr 0200 --ram-policy splitmix64 --ram-seed 0123456789abcdef \
+#     --load-addr 0200 --ram-policy splitmix64 --ram-seed 0123456789abcdef --profile none \
 #     --ticks 4096 --out <scratch dir>
 #   and copy the observation_digest value to the last line below.
 # Rule: regenerate only when machine behaviour changes on purpose (for example

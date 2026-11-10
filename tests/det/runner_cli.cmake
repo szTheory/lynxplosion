@@ -50,6 +50,10 @@ expect("bad load address" 2 "usage:"
   --content "${CONTENT}" --load-addr 02zz --ticks 16 --out "${WORK}/unused")
 expect("bad ram policy" 2 "usage:" ${good} --ram-policy random)
 expect("bad ram seed" 2 "usage:" ${good} --ram-seed 12345678901234567)
+expect("unknown profile" 2 "usage:" ${good} --profile foo)
+expect("profile with a capital" 2 "usage:" ${good} --profile LYNX1)
+expect("empty profile" 2 "usage:" ${good} --profile "")
+expect("repeated profile" 2 "usage:" ${good} --profile none --profile lynx1)
 expect("missing content file" 1 "^lynx-run: "
   --content "${WORK}/absent.hex" --load-addr 0200 --ticks 16 --out "${WORK}/unused")
 expect("malformed content" 1 "^lynx-run: "
@@ -130,3 +134,42 @@ if(NOT CMAKE_HOST_WIN32)
   endforeach()
   message(STATUS "runner_cli: symlinks at bundle names are replaced, not followed: ok")
 endif()
+
+# The profile is an explicit host choice: none without the flag, and the
+# manifest line comes from the core's own name for the id (neither Lynx profile
+# is ever a default). The content has no bit-operation opcode, so all three
+# profiles run it.
+foreach(profile none lynx1 lynx2)
+  expect("profile ${profile}" 0 ""
+    --content "${CONTENT}" --load-addr 0200 --ticks 16 --profile ${profile}
+    --out "${WORK}/profile-${profile}")
+  file(STRINGS "${WORK}/profile-${profile}/run.manifest" profile_lines REGEX "^profile = ")
+  if(NOT profile_lines STREQUAL "profile = ${profile}")
+    message(FATAL_ERROR "runner_cli: profile ${profile}: manifest says '${profile_lines}'")
+  endif()
+endforeach()
+file(STRINGS "${WORK}/default/run.manifest" default_profile REGEX "^profile = ")
+if(NOT default_profile STREQUAL "profile = none")
+  message(FATAL_ERROR "runner_cli: no flag: manifest says '${default_profile}', expected 'profile = none'")
+endif()
+message(STATUS "runner_cli: --profile selects the manifest profile, none by default: ok")
+
+# An UNDEFINED stop writes the bundle, exits 0 and tells the user which opcode
+# and PC stopped it and how to choose a profile. The content is the one-byte
+# bit-operation image (0x07 at 0x0200). Under a Lynx profile the same content
+# is defined and no note is printed.
+expect("undefined note" 0 "undefined opcode .*07.* at PC .*0200.*--profile"
+  --content "${WORK}/halt.hex" --load-addr 0200 --ticks 100 --out "${WORK}/undef")
+file(STRINGS "${WORK}/undef/run.manifest" undef_lines REGEX "^(profile|stop_reason|ticks_consumed) = ")
+if(NOT undef_lines STREQUAL "profile = none;ticks_consumed = 0;stop_reason = undefined")
+  message(FATAL_ERROR "runner_cli: undefined note: manifest says '${undef_lines}'")
+endif()
+if(NOT EXISTS "${WORK}/undef/digests.txt")
+  message(FATAL_ERROR "runner_cli: undefined note: the bundle was not written")
+endif()
+execute_process(COMMAND "${RUNNER}" --content "${WORK}/halt.hex" --load-addr 0200 --ticks 100
+  --profile lynx2 --out "${WORK}/undef2" RESULT_VARIABLE rc2 ERROR_VARIABLE err2 OUTPUT_QUIET)
+if(NOT rc2 EQUAL 0 OR err2 MATCHES "undefined opcode")
+  message(FATAL_ERROR "runner_cli: the bit-op image under lynx2: exit ${rc2}, stderr '${err2}'")
+endif()
+message(STATUS "runner_cli: the UNDEFINED stop writes a bundle, exits 0 and prints the note: ok")

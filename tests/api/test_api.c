@@ -25,7 +25,7 @@ static const uint8_t tracer_image[32] = {
 };
 
 /* fixtures/cpu/sum-trap.s as assembled by the pinned ca65 (load $0200). The
-   case "skeleton" checks the SHA-256 of these bytes against the fixture
+   case "cpu_program" checks the SHA-256 of these bytes against the fixture
    manifest value below, so the array cannot drift from the committed fixture.
    Runs only under profile none: it ends at the bit-op slot $07. */
 #define SUM_TRAP_SHA256 "6ae9bada8fb004f5756821c0e756267d2a2e44e6f68928fe27984906acc00f33"
@@ -1547,7 +1547,7 @@ static void check_ram(const lynx_machine *m, int line)
     }
 }
 
-static void case_skeleton(void)
+static void case_cpu_program(void)
 {
     lynx_config cfg;
     lynx_config_default(&cfg);
@@ -1662,22 +1662,300 @@ static void case_skeleton(void)
     lynx_machine_deinit(m);
 }
 
+
+/* ---- profile selection and divergence (CPU-02, CPU-05) ---- */
+
+/* The Rockwell R65C02 meaning of the 32 profile-dependent opcodes, written from
+   the opcode bits alone (a second statement of the rule, not a read of the
+   core's tables): low nibble 7 is the zero-page bit operation, F the bit
+   branch; bits 4-6 give the bit number; bit 7 chooses RMB or BBR (0) against
+   SMB or BBS (1). */
+static int slot_defined(uint8_t op)
+{
+    return (op & 0x0Fu) == 0x07u || (op & 0x0Fu) == 0x0Fu;
+}
+static int slot_is_branch(uint8_t op)
+{
+    return (op & 0x0Fu) == 0x0Fu;
+}
+static uint8_t slot_mask(uint8_t op)
+{
+    return (uint8_t)(1u << ((op >> 4) & 7u));
+}
+static uint8_t slot_result(uint8_t op, uint8_t v)
+{
+    return (op & 0x80u) != 0u ? (uint8_t)(v | slot_mask(op)) : (uint8_t)(v & (uint8_t)~slot_mask(op));
+}
+/* BBR branches when the bit is clear, BBS when it is set. */
+static int slot_taken(uint8_t op, uint8_t v)
+{
+    int bit_set = (v & slot_mask(op)) != 0u;
+    return (op & 0x80u) != 0u ? bit_set : !bit_set;
+}
+
+/* LDA #v; STA $10; then the slot with zero-page operand $10, followed by marker
+   code that shows which way execution went:
+     bit operation (2 bytes): LDA #$5A; STA $11; JMP self
+     bit branch (3 bytes, relative offset 7):
+       fall-through at $0207: LDA #$BB; STA $12; JMP self
+       branch target $020E:   LDA #$AA; STA $12; JMP self
+   Under profile none the slot is never fetched. Under lynx1 the slot is a NOP
+   of 2 bytes (bit operations) or 3 bytes (bit branches), so the marker for the
+   fall-through path appears and $10 is unchanged. */
+static size_t slot_image(uint8_t *img, uint8_t op, uint8_t v)
+{
+    size_t n = 0u;
+    img[n++] = 0xA9u; img[n++] = v;
+    img[n++] = 0x85u; img[n++] = 0x10u;
+    img[n++] = op;    img[n++] = 0x10u;
+    if (slot_is_branch(op)) {
+        static const uint8_t tail[] = {0x07u, 0xA9u, 0xBBu, 0x85u, 0x12u, 0x4Cu, 0x0Bu, 0x02u,
+                                       0xA9u, 0xAAu, 0x85u, 0x12u, 0x4Cu, 0x12u, 0x02u};
+        memcpy(img + n, tail, sizeof tail);
+        n += sizeof tail;
+    } else {
+        static const uint8_t tail[] = {0xA9u, 0x5Au, 0x85u, 0x11u, 0x4Cu, 0x0Au, 0x02u};
+        memcpy(img + n, tail, sizeof tail);
+        n += sizeof tail;
+    }
+    return n;
+}
+
+static uint8_t ram_byte(const lynx_machine *m, uint32_t addr)
+{
+    uint8_t b = 0xA5u;
+    CHECK_EQ_U64(lynx_read_memory(m, addr, &b, 1u), LYNX_OK);
+    return b;
+}
+
+static lynx_machine *profile_instance(void *mem, uint32_t profile, const uint8_t *image,
+                                      size_t len)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.profile = profile;
+    lynx_machine *m = init_in(mem, &cfg);
+    if (m == NULL) {
+        return NULL;
+    }
+    CHECK_EQ_U64(lynx_load_ram_image(m, image, len, 0x0200u), LYNX_OK);
+    return m;
+}
+
+/* One slot under one profile with the zero-page cell starting at v. */
+static void slot_run(uint32_t profile, uint8_t op, uint8_t v)
+{
+    uint8_t img[32];
+    const size_t len = slot_image(img, op, v);
+    const int branch = slot_is_branch(op);
+    const uint32_t before = (uint32_t)check_failures;
+    lynx_machine *m = profile_instance(machine_buf, profile, img, len);
+    if (m == NULL) {
+        return;
+    }
+    if (profile == LYNX_PROFILE_NONE) {
+        /* LDA #v and STA $10 are 5 cycles = 25 ticks; the slot is not fetched. */
+        ADVANCE_EXPECT(m, 1000u, 25u, LYNX_STOP_UNDEFINED);
+        CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0x0204u);
+        CHECK_EQ_HEX(ram_byte(m, 0x10u), v);
+        CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE), 0u);
+        memcpy(snap_a, machine_buf, MSIZE);
+        ADVANCE_EXPECT(m, 1000u, 0u, LYNX_STOP_UNDEFINED);
+        CHECK_UNCHANGED(machine_buf, snap_a);
+    } else {
+        /* Long enough for the slot and the marker code, which then loops. */
+        ADVANCE_EXPECT(m, 1000u, 1000u, LYNX_STOP_BUDGET);
+        const int lynx2 = profile == LYNX_PROFILE_LYNX2;
+        const uint8_t want10 = lynx2 && !branch ? slot_result(op, v) : v;
+        CHECK_EQ_HEX(ram_byte(m, 0x10u), want10);
+        if (branch) {
+            const uint8_t want12 = (lynx2 && slot_taken(op, v)) ? 0xAAu : 0xBBu;
+            CHECK_EQ_HEX(ram_byte(m, 0x12u), want12);
+            CHECK_EQ_HEX(ram_byte(m, 0x11u), 0u);
+            CHECK_EQ_HEX(reg_of(m, LYNX_REG_A), want12);
+        } else {
+            CHECK_EQ_HEX(ram_byte(m, 0x11u), 0x5Au);
+            CHECK_EQ_HEX(ram_byte(m, 0x12u), 0u);
+            CHECK_EQ_HEX(reg_of(m, LYNX_REG_A), 0x5Au);
+        }
+        if (lynx2) {
+            /* Rockwell datasheet counts at flat5 (5 ticks per cycle): RMB and SMB
+               take 5 cycles, BBR and BBS 5 cycles plus 1 when taken (same
+               page here). Stop exactly after the slot: PC is the next byte. */
+            uint64_t slot_cycles = branch ? (slot_taken(op, v) ? 6u : 5u) : 5u;
+            uint32_t want_pc = !branch ? 0x0206u : (slot_taken(op, v) ? 0x020Eu : 0x0207u);
+            m = profile_instance(machine_buf, profile, img, len);
+            if (m != NULL) {
+                ADVANCE_EXPECT(m, 25u + 5u * slot_cycles, 25u + 5u * slot_cycles,
+                               LYNX_STOP_BUDGET);
+                CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), want_pc);
+                CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE), 0u);
+                CHECK_EQ_HEX(ram_byte(m, 0x10u), branch ? v : slot_result(op, v));
+            }
+        }
+    }
+    if ((uint32_t)check_failures != before) {
+        fprintf(stderr, "  (profile %u, opcode $%02X, zero-page cell $%02X)\n", (unsigned)profile,
+                (unsigned)op, (unsigned)v);
+    }
+}
+
+static void case_profile_select(void)
+{
+    /* A host selects the profile at init; the instance reports it and keeps it
+       across reset. */
+    for (uint32_t profile = LYNX_PROFILE_NONE; profile <= LYNX_PROFILE_LYNX2; profile++) {
+        lynx_config cfg;
+        lynx_identity id;
+        lynx_config_default(&cfg);
+        cfg.profile = profile;
+        lynx_machine *m = init_in(machine_buf, &cfg);
+        if (m == NULL) {
+            return;
+        }
+        CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+        CHECK_EQ_U64(id.profile, profile);
+        CHECK(lynx_profile_name(id.profile) != NULL);
+        CHECK(strcmp(lynx_profile_name(id.profile),
+                     profile == 0u ? "none" : (profile == 1u ? "lynx1" : "lynx2")) == 0);
+        CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
+        CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+        CHECK_EQ_U64(id.profile, profile);
+        lynx_machine_deinit(m);
+    }
+
+    /* The named case of the plan: RMB0 $10 on a cell holding $FF. */
+    {
+        static const uint8_t rmb0[] = {0xA9u, 0xFFu, 0x85u, 0x10u, 0x07u, 0x10u,
+                                       0xA9u, 0x5Au, 0x85u, 0x11u, 0x4Cu, 0x0Au, 0x02u};
+        lynx_machine *m = profile_instance(machine_buf, LYNX_PROFILE_LYNX2, rmb0, sizeof rmb0);
+        if (m == NULL) {
+            return;
+        }
+        ADVANCE_EXPECT(m, 1000u, 1000u, LYNX_STOP_BUDGET);
+        CHECK_EQ_HEX(ram_byte(m, 0x10u), 0xFEu); /* lynx2: RMB0 cleared bit 0 */
+        /* Reset keeps the profile; a reload runs the same program the same way. */
+        CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
+        CHECK_EQ_U64(lynx_load_ram_image(m, rmb0, sizeof rmb0, 0x0200u), LYNX_OK);
+        ADVANCE_EXPECT(m, 1000u, 1000u, LYNX_STOP_BUDGET);
+        CHECK_EQ_HEX(ram_byte(m, 0x10u), 0xFEu);
+        lynx_machine_deinit(m);
+        m = profile_instance(machine_buf, LYNX_PROFILE_LYNX1, rmb0, sizeof rmb0);
+        if (m == NULL) {
+            return;
+        }
+        ADVANCE_EXPECT(m, 1000u, 1000u, LYNX_STOP_BUDGET);
+        CHECK_EQ_HEX(ram_byte(m, 0x10u), 0xFFu); /* lynx1: a NOP of 2 bytes */
+        CHECK_EQ_HEX(ram_byte(m, 0x11u), 0x5Au);
+        lynx_machine_deinit(m);
+    }
+
+    /* All 32 slots, every profile, cell values that tell the bit numbers apart
+       (all set, all clear, only bit n set, only bit n clear). */
+    for (uint32_t op = 0u; op < 256u; op++) {
+        if (!slot_defined((uint8_t)op)) {
+            continue;
+        }
+        const uint8_t cells[4] = {0xFFu, 0x00u, slot_mask((uint8_t)op),
+                                  (uint8_t)~slot_mask((uint8_t)op)};
+        for (uint32_t profile = LYNX_PROFILE_NONE; profile <= LYNX_PROFILE_LYNX2; profile++) {
+            for (size_t c = 0u; c < 4u; c++) {
+                slot_run(profile, (uint8_t)op, cells[c]);
+            }
+        }
+    }
+}
+
+/* The retained 32-byte tracer image (RESEARCH 7.3): one image, three outcomes.
+   As code at $0200: 03 is a 1-cycle NOP, 0A is ASL A (2 cycles), 11 18 is ORA
+   ($18),Y (5 cycles; RAM is zero, so the pointer is $0000, Y is 0 and the
+   operand is 0): 8 cycles = 40 ticks at flat5. Then $1F, a bit-op slot, at $0204. */
+static void case_profile_divergence(void)
+{
+    /* Zero RAM, A = X = Y = 0 and Z set by the ORA: P = $34 | Z = $36. */
+    lynx_machine *m = profile_instance(machine_buf, LYNX_PROFILE_NONE, tracer_image,
+                                       sizeof tracer_image);
+    if (m == NULL) {
+        return;
+    }
+    ADVANCE_EXPECT(m, 1000u, 40u, LYNX_STOP_UNDEFINED);
+    CHECK_REGS(m, 0x0204u, 0u, 0u, 0u, 0xFDu, 0x36u);
+    ADVANCE_EXPECT(m, 1000u, 0u, LYNX_STOP_UNDEFINED);
+    lynx_machine_deinit(m);
+
+    /* lynx1: $1F $26 $2D is a 3-byte NOP of 4 cycles (20 ticks): PC = $0207. */
+    m = profile_instance(machine_buf, LYNX_PROFILE_LYNX1, tracer_image, sizeof tracer_image);
+    if (m == NULL) {
+        return;
+    }
+    ADVANCE_EXPECT(m, 60u, 60u, LYNX_STOP_BUDGET);
+    CHECK_REGS(m, 0x0204u + 3u, 0u, 0u, 0u, 0xFDu, 0x36u);
+    lynx_machine_deinit(m);
+
+    /* lynx2: $1F is BBR1 $26,+$2D. RAM[$26] is 0, so bit 1 is clear and the
+       branch is taken: 6 cycles (30 ticks), PC = $0207 + $2D = $0234. */
+    m = profile_instance(machine_buf, LYNX_PROFILE_LYNX2, tracer_image, sizeof tracer_image);
+    if (m == NULL) {
+        return;
+    }
+    ADVANCE_EXPECT(m, 70u, 70u, LYNX_STOP_BUDGET);
+    CHECK_REGS(m, 0x0204u + 3u + tracer_image[6], 0u, 0u, 0u, 0xFDu, 0x36u);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), 0x0234u);
+    lynx_machine_deinit(m);
+
+    /* Under none every one of the 32 bit-op opcodes placed first in an image
+       stops with nothing consumed and the buffer unchanged; the other 224 run
+       the whole budget, which also exercises every defined opcode under the
+       sanitizers. The operand byte $80 points zero-page and absolute operands at
+       $0080, so no instruction writes the zero bytes at $0000 (BRK, defined
+       everywhere) that a BRK or a wild jump would execute; DEC $00 would turn
+       one into $FF, a bit-op slot. */
+    uint32_t stopped = 0u;
+    uint32_t ran = 0u;
+    m = profile_instance(machine_buf, LYNX_PROFILE_NONE, trap_image, sizeof trap_image);
+    if (m == NULL) {
+        return;
+    }
+    for (uint32_t op = 0u; op < 256u; op++) {
+        const uint8_t img[3] = {(uint8_t)op, 0x80u, 0u};
+        CHECK_EQ_U64(lynx_load_ram_image(m, img, sizeof img, 0x0200u), LYNX_OK);
+        memcpy(snap_a, machine_buf, MSIZE);
+        if (slot_defined((uint8_t)op)) {
+            ADVANCE_EXPECT(m, 100u, 0u, LYNX_STOP_UNDEFINED);
+            CHECK_UNCHANGED(machine_buf, snap_a);
+            stopped++;
+        } else {
+            const uint32_t before = (uint32_t)check_failures;
+            ADVANCE_EXPECT(m, 100u, 100u, LYNX_STOP_BUDGET);
+            if ((uint32_t)check_failures != before) {
+                fprintf(stderr, "  (opcode $%02X first in the image)\n", (unsigned)op);
+            }
+            ran++;
+        }
+    }
+    CHECK_EQ_U64(stopped, 32u);
+    CHECK_EQ_U64(ran, 224u);
+    lynx_machine_deinit(m);
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
 } cases[] = {
     {"advance_budget", case_advance_budget},
     {"build_id", case_build_id},
+    {"cpu_program", case_cpu_program},
     {"identity", case_identity},
     {"init_refusal", case_init_refusal},
     {"inspect_pure", case_inspect_pure},
     {"instances_independent", case_instances_independent},
     {"load_refusal_unchanged", case_load_refusal_unchanged},
+    {"profile_divergence", case_profile_divergence},
+    {"profile_select", case_profile_select},
     {"reset_power_on", case_reset_power_on},
     {"sha256", case_sha256},
     {"snapshot_refusal", case_snapshot_refusal},
     {"snapshot_roundtrip", case_snapshot_roundtrip},
-    {"skeleton", case_skeleton},
 };
 
 int main(int argc, char **argv)
