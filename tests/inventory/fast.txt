@@ -29,6 +29,8 @@ core.sha256	core
 cpu.cycles	cpu
 cpu.scenarios.lynx1	cpu
 cpu.scenarios.lynx2	cpu
+cpu.scenarios.test8.self_test	cpu
+cpu.scenarios.wrong_profile.self_test	cpu
 cpu.tables	cpu
 cpu.tables.self_test	cpu
 cpu.vectors.complete_mode	cpu

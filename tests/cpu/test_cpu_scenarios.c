@@ -104,10 +104,11 @@ enum { P_LYNX1 = 1, P_LYNX2 = 2, P_BOTH = 3 };
    profiles         which profiles the scenario applies to
    bitop            a Lynx II bit-operation scenario (the wrong-profile control)
    reset            begin with the reset seam instead of an opcode fetch
-   s 0 and p 0 mean the power-on values 0xFD and 0x34. */
+   sz               start with S = 0x00 (s 0 otherwise means the power-on 0xFD)
+   p 0 means the power-on 0x34. */
 typedef struct scen {
     const char *name, *tag;
-    uint8_t unv, profiles, bitop, mode, reset;
+    uint8_t unv, profiles, bitop, mode, reset, sz;
     uint16_t pc;
     uint8_t prog[12];
     uint8_t a, x, y, s, p;
@@ -277,9 +278,324 @@ static const scen k_scen[] = {
      .exp = {RD(0x200, 0xDC, OPCODE), RD(0x201, 0xE8, OPERAND), RD(0x202, 0xE8, OPERAND),
              RD(0x202, 0xE8, DUMMY), END},
      .f = {F_PC | F_X, 0x0203, 0, 0, 0, 0, 0, 0}},
+    /* ---- the Lynx II bit operations that need a fixed shape: page-crossing BBR/BBS
+       (RKW matrix 3 5**: +2 when the branch crosses a page) and the BBR/BBS 5, 6, 7
+       cycle counts, which are LT-HW-informed (page-mode guide: 23/28/33 ticks), run
+       as counts only because the dummy-cycle addresses are model choices ---- */
+    {.name = "bitop.bbr0.taken_cross_page", .tag = "RKW", .unv = 1, .profiles = P_LYNX2, .bitop = 1,
+     .pc = 0x02FC, .prog = {0x0F, 0x34, 0x05}, .mem = {M(0x34, 0x00)}, .ncyc = 7,
+     .exp = {RD(0x2FC, 0x0F, OPCODE), RD(0x2FD, 0x34, OPERAND), RD(0x34, 0x00, READ),
+             RD(0x34, 0x00, DUMMY), RD(0x2FE, 0x05, OPERAND), RD(0x2FF, 0x00, DUMMY_STREAM),
+             RD(0x2FF, 0x00, DUMMY), END},
+     .f = {F_PC, 0x0304, 0, 0, 0, 0, 0, 0}},
+    {.name = "bitop.bbs0.taken_cross_page", .tag = "RKW", .unv = 1, .profiles = P_LYNX2, .bitop = 1,
+     .pc = 0x02FC, .prog = {0x8F, 0x34, 0x05}, .mem = {M(0x34, 0x01)}, .ncyc = 7,
+     .exp = {RD(0x2FC, 0x8F, OPCODE), RD(0x2FD, 0x34, OPERAND), RD(0x34, 0x01, READ),
+             RD(0x34, 0x01, DUMMY), RD(0x2FE, 0x05, OPERAND), RD(0x2FF, 0x00, DUMMY_STREAM),
+             RD(0x2FF, 0x00, DUMMY), END},
+     .f = {F_PC, 0x0304, 0, 0, 0, 0, 0, 0}},
+    {.name = "bitop.bbr0.cycles_not_taken_5", .tag = "LT-HW", .unv = 0, .profiles = P_LYNX2, .bitop = 1,
+     .mode = SC_COUNT, .prog = {0x0F, 0x34, 0x05}, .mem = {M(0x34, 0x01)}, .ncyc = 5,
+     .f = {F_PC, 0x0203, 0, 0, 0, 0, 0, 0}},
+    {.name = "bitop.bbr0.cycles_taken_6", .tag = "LT-HW", .unv = 0, .profiles = P_LYNX2, .bitop = 1,
+     .mode = SC_COUNT, .prog = {0x0F, 0x34, 0x05}, .mem = {M(0x34, 0x00)}, .ncyc = 6,
+     .f = {F_PC, 0x0208, 0, 0, 0, 0, 0, 0}},
+    {.name = "bitop.bbr0.cycles_taken_cross_7", .tag = "LT-HW", .unv = 0, .profiles = P_LYNX2, .bitop = 1,
+     .mode = SC_COUNT, .pc = 0x02FC, .prog = {0x0F, 0x34, 0x05}, .mem = {M(0x34, 0x00)}, .ncyc = 7,
+     .f = {F_PC, 0x0304, 0, 0, 0, 0, 0, 0}},
+    /* ---- directed edges the sample cannot reach (both profiles). Each edge has a
+       per-cycle row (SST-MODEL: the dummy addresses are generator choices) and a
+       final-state row that carries the architectural rule (WDC), so the stronger
+       tag never covers a model choice ---- */
+    {.name = "edge.jmp_ind_xxff.page_fixed", .tag = "LT-HW", .unv = 0, .profiles = P_BOTH,
+     .mode = SC_FINAL, .pc = 0x0400, .prog = {0x6C, 0xFF, 0x02},
+     .mem = {M(0x02FF, 0x78), M(0x0300, 0x56), M(0x0200, 0x99)},
+     .f = {F_PC, 0x5678, 0, 0, 0, 0, 0, 0}},
+    {.name = "edge.jmp_ind_xxff.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .pc = 0x0400, .prog = {0x6C, 0xFF, 0x02},
+     .mem = {M(0x02FF, 0x78), M(0x0300, 0x56), M(0x0200, 0x99)}, .ncyc = 6,
+     .exp = {RD(0x400, 0x6C, OPCODE), RD(0x401, 0xFF, OPERAND), RD(0x402, 0x02, OPERAND),
+             RD(0x2FF, 0x78, POINTER), RD(0x300, 0x56, POINTER), RD(0x300, 0x56, DUMMY), END},
+     .f = {F_PC, 0x5678, 0, 0, 0, 0, 0, 0}},
+    {.name = "edge.izx_zp_wrap.final", .tag = "WDC", .unv = 1, .profiles = P_BOTH, .mode = SC_FINAL,
+     .prog = {0xA1, 0xF0}, .x = 0x0F,
+     .mem = {M(0x00FF, 0x78), M(0x0000, 0x56), M(0x0100, 0x11), M(0x5678, 0xAB)},
+     .f = {F_PC | F_A, 0x0202, 0xAB, 0, 0, 0, 0, 0}},
+    {.name = "edge.izx_zp_wrap.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .prog = {0xA1, 0xF0}, .x = 0x0F,
+     .mem = {M(0x00FF, 0x78), M(0x0000, 0x56), M(0x0100, 0x11), M(0x5678, 0xAB)}, .ncyc = 6,
+     .exp = {RD(0x200, 0xA1, OPCODE), RD(0x201, 0xF0, OPERAND), RD(0x00F0, 0x00, DUMMY),
+             RD(0x00FF, 0x78, POINTER), RD(0x0000, 0x56, POINTER), RD(0x5678, 0xAB, READ), END},
+     .f = {F_PC | F_A, 0x0202, 0xAB, 0, 0, 0, 0, 0}},
+    {.name = "edge.zpx_wrap.final", .tag = "WDC", .unv = 1, .profiles = P_BOTH, .mode = SC_FINAL,
+     .prog = {0xB5, 0xF0}, .x = 0x20, .mem = {M(0x0010, 0x5A), M(0x0110, 0xEE)},
+     .f = {F_PC | F_A, 0x0202, 0x5A, 0, 0, 0, 0, 0}},
+    {.name = "edge.zpx_wrap.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .prog = {0xB5, 0xF0}, .x = 0x20, .mem = {M(0x0010, 0x5A), M(0x0110, 0xEE)}, .ncyc = 4,
+     .exp = {RD(0x200, 0xB5, OPCODE), RD(0x201, 0xF0, OPERAND), RD(0x00F0, 0x00, DUMMY),
+             RD(0x0010, 0x5A, READ), END},
+     .f = {F_PC | F_A, 0x0202, 0x5A, 0, 0, 0, 0, 0}},
+    {.name = "edge.izp_ptr_ff.final", .tag = "WDC", .unv = 1, .profiles = P_BOTH, .mode = SC_FINAL,
+     .prog = {0xB2, 0xFF},
+     .mem = {M(0x00FF, 0x78), M(0x0000, 0x56), M(0x0100, 0x11), M(0x5678, 0x3C)},
+     .f = {F_PC | F_A, 0x0202, 0x3C, 0, 0, 0, 0, 0}},
+    {.name = "edge.izp_ptr_ff.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .prog = {0xB2, 0xFF},
+     .mem = {M(0x00FF, 0x78), M(0x0000, 0x56), M(0x0100, 0x11), M(0x5678, 0x3C)}, .ncyc = 5,
+     .exp = {RD(0x200, 0xB2, OPCODE), RD(0x201, 0xFF, OPERAND), RD(0x00FF, 0x78, POINTER),
+             RD(0x0000, 0x56, POINTER), RD(0x5678, 0x3C, READ), END},
+     .f = {F_PC | F_A, 0x0202, 0x3C, 0, 0, 0, 0, 0}},
+    {.name = "edge.stack_push_wraps_0100_to_01ff", .tag = "WDC", .unv = 1, .profiles = P_BOTH,
+     .mode = SC_FINAL, .prog = {0x48}, .a = 0x5A, .sz = 1, .chk = {M(0x0100, 0x5A)},
+     .f = {F_PC | F_S, 0x0201, 0, 0, 0, 0xFF, 0, 0}},
+    {.name = "edge.stack_push.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .prog = {0x48}, .a = 0x5A, .sz = 1, .ncyc = 3,
+     .exp = {RD(0x200, 0x48, OPCODE), RD(0x201, 0x00, DUMMY_STREAM), WR(0x0100, 0x5A, STACK_WRITE), END},
+     .f = {F_PC | F_S, 0x0201, 0, 0, 0, 0xFF, 0, 0}, .chk = {M(0x0100, 0x5A)}},
+    {.name = "edge.stack_pull_wraps_01ff_to_0100", .tag = "WDC", .unv = 1, .profiles = P_BOTH,
+     .mode = SC_FINAL, .prog = {0x68}, .s = 0xFF, .mem = {M(0x0100, 0x7B)},
+     .f = {F_PC | F_A | F_S, 0x0201, 0x7B, 0, 0, 0x00, 0, 0}},
+    {.name = "edge.stack_pull.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .prog = {0x68}, .s = 0xFF, .mem = {M(0x0100, 0x7B)}, .ncyc = 4,
+     .exp = {RD(0x200, 0x68, OPCODE), RD(0x201, 0x00, DUMMY), RD(0x01FF, 0x00, DUMMY),
+             RD(0x0100, 0x7B, STACK_READ), END},
+     .f = {F_PC | F_A | F_S, 0x0201, 0x7B, 0, 0, 0x00, 0, 0}},
+    {.name = "edge.jsr_push_wraps_at_s00", .tag = "WDC", .unv = 1, .profiles = P_BOTH,
+     .mode = SC_FINAL, .prog = {0x20, 0x34, 0x12}, .sz = 1,
+     .chk = {M(0x0100, 0x02), M(0x01FF, 0x02)},
+     .f = {F_PC | F_S, 0x1234, 0, 0, 0, 0xFE, 0, 0}},
+    {.name = "edge.jsr_wrap.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .prog = {0x20, 0x34, 0x12}, .sz = 1, .ncyc = 6,
+     .exp = {RD(0x200, 0x20, OPCODE), RD(0x201, 0x34, OPERAND), RD(0x0100, 0x00, DUMMY),
+             WR(0x0100, 0x02, STACK_WRITE), WR(0x01FF, 0x02, STACK_WRITE), RD(0x202, 0x12, OPERAND),
+             END},
+     .f = {F_PC | F_S, 0x1234, 0, 0, 0, 0xFE, 0, 0}, .chk = {M(0x0100, 0x02), M(0x01FF, 0x02)}},
+    {.name = "edge.branch_cross_page.count", .tag = "WDC", .unv = 1, .profiles = P_BOTH,
+     .mode = SC_COUNT, .pc = 0x02FD, .prog = {0xD0, 0x05}, .ncyc = 4,
+     .f = {F_PC, 0x0304, 0, 0, 0, 0, 0, 0}},
+    {.name = "edge.branch_cross_page.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .pc = 0x02FD, .prog = {0xD0, 0x05}, .ncyc = 4,
+     .exp = {RD(0x2FD, 0xD0, OPCODE), RD(0x2FE, 0x05, OPERAND), RD(0x2FF, 0x00, DUMMY_STREAM),
+             RD(0x0204, 0x00, DUMMY), END},
+     .f = {F_PC, 0x0304, 0, 0, 0, 0, 0, 0}},
+    {.name = "edge.abx_cross_page.count", .tag = "WDC", .unv = 1, .profiles = P_BOTH,
+     .mode = SC_COUNT, .prog = {0xBD, 0xFF, 0x12}, .x = 0x01, .mem = {M(0x1300, 0x42)}, .ncyc = 5,
+     .f = {F_PC | F_A, 0x0203, 0x42, 0, 0, 0, 0, 0}},
+    {.name = "edge.abx_cross_page.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .prog = {0xBD, 0xFF, 0x12}, .x = 0x01, .mem = {M(0x1300, 0x42)}, .ncyc = 5,
+     .exp = {RD(0x200, 0xBD, OPCODE), RD(0x201, 0xFF, OPERAND), RD(0x202, 0x12, OPERAND),
+             RD(0x202, 0x12, DUMMY_STREAM), RD(0x1300, 0x42, READ), END},
+     .f = {F_PC | F_A, 0x0203, 0x42, 0, 0, 0, 0, 0}},
+    {.name = "edge.abx_carry_into_page_ff.count", .tag = "WDC", .unv = 1, .profiles = P_BOTH,
+     .mode = SC_COUNT, .prog = {0xBD, 0xFF, 0xFE}, .x = 0x01, .mem = {M(0xFF00, 0x42)}, .ncyc = 5,
+     .f = {F_PC | F_A, 0x0203, 0x42, 0, 0, 0, 0, 0}},
+    {.name = "edge.abx_carry_into_page_ff.cycles", .tag = "SST-MODEL", .unv = 1, .profiles = P_BOTH,
+     .prog = {0xBD, 0xFF, 0xFE}, .x = 0x01, .mem = {M(0xFF00, 0x42)}, .ncyc = 5,
+     .exp = {RD(0x200, 0xBD, OPCODE), RD(0x201, 0xFF, OPERAND), RD(0x202, 0xFE, OPERAND),
+             RD(0x202, 0xFE, DUMMY_STREAM), RD(0xFF00, 0x42, READ), END},
+     .f = {F_PC | F_A, 0x0203, 0x42, 0, 0, 0, 0, 0}},
+    /* decimal results at $99: ADC 55+44, ADC 99+01 (to 00 with carry), SBC 00-01 (to 99
+       with borrow). N, Z and C are compared (V in decimal mode is unverified). */
+    {.name = "edge.decimal_adc_to_99", .tag = "WDC", .unv = 1, .profiles = P_BOTH, .mode = SC_FINAL,
+     .prog = {0x69, 0x44}, .a = 0x55, .p = 0x38,
+     .f = {F_PC | F_A | F_P, 0x0202, 0x99, 0, 0, 0, 0x80, 0x83}},
+    {.name = "edge.decimal_adc_99_plus_01", .tag = "WDC", .unv = 1, .profiles = P_BOTH,
+     .mode = SC_FINAL, .prog = {0x69, 0x01}, .a = 0x99, .p = 0x38,
+     .f = {F_PC | F_A | F_P, 0x0202, 0x00, 0, 0, 0, 0x03, 0x83}},
+    {.name = "edge.decimal_sbc_from_00", .tag = "WDC", .unv = 1, .profiles = P_BOTH,
+     .mode = SC_FINAL, .prog = {0xE9, 0x01}, .a = 0x00, .p = 0x39,
+     .f = {F_PC | F_A | F_P, 0x0202, 0x99, 0, 0, 0, 0x80, 0x83}},
+    {.name = "edge.decimal_adc_extra_cycle", .tag = "INFERRED", .unv = 1, .profiles = P_BOTH,
+     .prog = {0x69, 0x44}, .a = 0x55, .p = 0x38, .ncyc = 3,
+     .exp = {RD(0x200, 0x69, OPCODE), RD(0x201, 0x44, OPERAND), RD(0x201, 0x44, DUMMY), END},
+     .f = {F_PC | F_A, 0x0202, 0x99, 0, 0, 0, 0, 0}},
 };
 
 #define K_SCEN_COUNT ((unsigned)(sizeof k_scen / sizeof k_scen[0]))
+
+/* ---- generated scenarios ------------------------------------------------------
+   The Lynx II bit operations for bits 0 to 7 and the Lynx I shapes of the 32
+   bit-operation opcodes. The expected values are derived here from the rule, not
+   read from the CPU:
+     RMBn / SMBn   clear / set bit n of the zero page byte, flags unchanged; cycles
+                   opcode, operand, read, second read, write (RKW matrix 2 5)
+     BBRn / BBSn   branch when bit n is clear / set, flags unchanged; cycles opcode,
+                   operand zp, read, dummy read, operand offset, then a taken branch
+                   adds one dummy stream cycle (RKW matrix 3 5**)
+     Lynx I        the SingleStepTests synertek shapes: $x7 with an even high nibble
+                   is a 2-byte NOP with a zero page read, with an odd high nibble a
+                   2-byte NOP with a zero page,X read; $xF with an even high nibble a
+                   3-byte NOP with no data read, with an odd high nibble the same
+                   plus a re-read of the last operand byte. The operand byte is $E8,
+                   an instruction that would change X if it ran as an instruction;
+                   CMD table V says 1 byte and 1 cycle, so these are SST-MODEL and
+                   unverified, and X must stay unchanged. */
+
+#define GEN_MAX 96
+static scen g_gen[GEN_MAX];
+static char g_gen_names[GEN_MAX][40];
+static unsigned g_gen_count;
+
+static scen *gen_add(const char *name)
+{
+    scen *s;
+    if (g_gen_count >= GEN_MAX) {
+        fprintf(stderr, "scenarios: generated scenario table full\n");
+        return NULL;
+    }
+    s = &g_gen[g_gen_count];
+    (void)snprintf(g_gen_names[g_gen_count], sizeof g_gen_names[0], "%s", name);
+    s->name = g_gen_names[g_gen_count];
+    g_gen_count++;
+    return s;
+}
+
+static void gen_cyc(scen *s, unsigned *n, uint16_t addr, uint8_t data, uint8_t w, uint8_t kind)
+{
+    s->exp[*n].addr = addr;
+    s->exp[*n].data = data;
+    s->exp[*n].w = w;
+    s->exp[*n].kind = kind;
+    (*n)++;
+    s->exp[*n].kind = 0xFFu;
+    s->ncyc = *n;
+}
+
+static void gen_mem(scen *s, unsigned i, uint16_t addr, uint8_t val)
+{
+    s->mem[i].addr = addr;
+    s->mem[i].val = val;
+    s->mem[i].used = 1u;
+}
+
+static void gen_bitops(void)
+{
+    unsigned n;
+    for (n = 0; n < 8u; n++) {
+        uint8_t bit = (uint8_t)(1u << n);
+        uint8_t nbit = (uint8_t)(~bit);
+        unsigned pass;
+        scen *s;
+        unsigned c;
+        char nm[40];
+        for (pass = 0; pass < 2u; pass++) { /* 0 RMB, 1 SMB */
+            uint8_t before = pass == 0u ? 0xFFu : 0x00u;
+            uint8_t after = pass == 0u ? nbit : bit;
+            (void)snprintf(nm, sizeof nm, "bitop.%s%u", pass == 0u ? "rmb" : "smb", n);
+            s = gen_add(nm);
+            if (s == NULL) {
+                return;
+            }
+            c = 0;
+            s->tag = "RKW";
+            s->unv = 1u;
+            s->profiles = P_LYNX2;
+            s->bitop = 1u;
+            s->prog[0] = (uint8_t)((pass == 0u ? 0x07u : 0x87u) + 0x10u * n);
+            s->prog[1] = 0x34u;
+            s->p = 0xF3u;
+            gen_mem(s, 0, 0x0034u, before);
+            gen_cyc(s, &c, 0x0200u, s->prog[0], 0u, LYNX__CK_OPCODE);
+            gen_cyc(s, &c, 0x0201u, 0x34u, 0u, LYNX__CK_OPERAND);
+            gen_cyc(s, &c, 0x0034u, before, 0u, LYNX__CK_READ);
+            gen_cyc(s, &c, 0x0034u, before, 0u, LYNX__CK_RMW_READ);
+            gen_cyc(s, &c, 0x0034u, after, 1u, LYNX__CK_WRITE);
+            s->f.mask = (uint8_t)(F_PC | F_P);
+            s->f.pc = 0x0202u;
+            s->f.p = 0xF3u;
+            s->chk[0].addr = 0x0034u;
+            s->chk[0].val = after;
+            s->chk[0].used = 1u;
+        }
+        for (pass = 0; pass < 2u; pass++) { /* 0 BBR, 1 BBS */
+            unsigned taken;
+            for (taken = 0; taken < 2u; taken++) {
+                /* BBR is taken on a clear bit, BBS on a set bit. The other seven bits
+                   hold the opposite value so only bit n decides. */
+                bool is_taken = taken != 0u;
+                uint8_t b;
+                (void)snprintf(nm, sizeof nm, "bitop.%s%u.%s", pass == 0u ? "bbr" : "bbs", n,
+                               is_taken ? "taken" : "not_taken");
+                s = gen_add(nm);
+                if (s == NULL) {
+                    return;
+                }
+                if (pass == 0u) {
+                    b = is_taken ? nbit : bit; /* BBR is taken on a clear bit */
+                } else {
+                    b = is_taken ? bit : nbit; /* BBS is taken on a set bit */
+                }
+                c = 0;
+                s->tag = "RKW";
+                s->unv = 1u;
+                s->profiles = P_LYNX2;
+                s->bitop = 1u;
+                s->prog[0] = (uint8_t)((pass == 0u ? 0x0Fu : 0x8Fu) + 0x10u * n);
+                s->prog[1] = 0x34u;
+                s->prog[2] = 0x05u;
+                s->p = 0xF3u;
+                gen_mem(s, 0, 0x0034u, b);
+                gen_cyc(s, &c, 0x0200u, s->prog[0], 0u, LYNX__CK_OPCODE);
+                gen_cyc(s, &c, 0x0201u, 0x34u, 0u, LYNX__CK_OPERAND);
+                gen_cyc(s, &c, 0x0034u, b, 0u, LYNX__CK_READ);
+                gen_cyc(s, &c, 0x0034u, b, 0u, LYNX__CK_DUMMY);
+                gen_cyc(s, &c, 0x0202u, 0x05u, 0u, LYNX__CK_OPERAND);
+                if (is_taken) {
+                    gen_cyc(s, &c, 0x0203u, 0x00u, 0u, LYNX__CK_DUMMY_STREAM);
+                }
+                s->f.mask = (uint8_t)(F_PC | F_P);
+                s->f.pc = is_taken ? 0x0208u : 0x0203u;
+                s->f.p = 0xF3u;
+            }
+        }
+    }
+}
+
+static void gen_lynx1_shapes(void)
+{
+    unsigned hi;
+    unsigned low;
+    for (low = 7u; low <= 15u; low += 8u) {
+        for (hi = 0; hi < 16u; hi++) {
+            bool odd = (hi & 1u) != 0u;
+            uint8_t op = (uint8_t)((hi << 4) | low);
+            char nm[40];
+            scen *s;
+            unsigned c = 0;
+            (void)snprintf(nm, sizeof nm, "lynx1.nop_%02x", (unsigned)op);
+            s = gen_add(nm);
+            if (s == NULL) {
+                return;
+            }
+            s->tag = "SST-MODEL";
+            s->unv = 1u;
+            s->profiles = P_LYNX1;
+            s->prog[0] = op;
+            s->prog[1] = 0xE8u;
+            s->x = 0x10u;
+            gen_cyc(s, &c, 0x0200u, op, 0u, LYNX__CK_OPCODE);
+            gen_cyc(s, &c, 0x0201u, 0xE8u, 0u, LYNX__CK_OPERAND);
+            s->f.mask = (uint8_t)(F_PC | F_X);
+            s->f.x = 0x10u;
+            if (low == 7u) {
+                if (odd) {
+                    gen_cyc(s, &c, 0x00E8u, 0x00u, 0u, LYNX__CK_DUMMY);
+                    gen_cyc(s, &c, 0x00F8u, 0x00u, 0u, LYNX__CK_READ);
+                } else {
+                    gen_cyc(s, &c, 0x00E8u, 0x00u, 0u, LYNX__CK_READ);
+                }
+                s->f.pc = 0x0202u;
+            } else {
+                s->prog[2] = 0xE8u;
+                gen_cyc(s, &c, 0x0202u, 0xE8u, 0u, LYNX__CK_OPERAND);
+                if (odd) {
+                    gen_cyc(s, &c, 0x0202u, 0xE8u, 0u, LYNX__CK_DUMMY);
+                }
+                s->f.pc = 0x0203u;
+            }
+        }
+    }
+}
 
 /* ---- the runner ------------------------------------------------------------- */
 
@@ -363,7 +679,7 @@ static int run_scen(const scen *s, uint8_t run_profile, const lynx__cpu_decode *
     c.a = s->a;
     c.x = s->x;
     c.y = s->y;
-    c.s = s->s != 0u ? s->s : 0xFDu;
+    c.s = s->sz != 0u ? 0u : (s->s != 0u ? s->s : 0xFDu);
     c.p = s->p != 0u ? s->p : 0x34u;
     lynx__cpu_start_at(&c, t, pc);
     if (s->reset != 0u) {
@@ -542,6 +858,11 @@ static int parse_profile(const char *name)
     return 0;
 }
 
+static const scen *scen_at(unsigned k)
+{
+    return k < K_SCEN_COUNT ? &k_scen[k] : &g_gen[k - K_SCEN_COUNT];
+}
+
 static int usage(void)
 {
     fprintf(stderr,
@@ -561,6 +882,7 @@ int main(int argc, char **argv)
     unsigned ran = 0;
     int total_fails = 0;
     int bad = 0;
+    unsigned wrong_passed = 0;
     const lynx__cpu_decode *t;
 
     for (i = 1; i < argc; i++) {
@@ -601,8 +923,10 @@ int main(int argc, char **argv)
         return usage();
     }
 
-    for (k = 0; k < K_SCEN_COUNT; k++) {
-        bad += validate_scen(&k_scen[k]);
+    gen_bitops();
+    gen_lynx1_shapes();
+    for (k = 0; k < K_SCEN_COUNT + g_gen_count; k++) {
+        bad += validate_scen(scen_at(k));
     }
     if (bad != 0) {
         fprintf(stderr, "scenarios: %d data errors, nothing run\n", bad);
@@ -616,8 +940,8 @@ int main(int argc, char **argv)
         t = g_fault_table;
     }
 
-    for (k = 0; k < K_SCEN_COUNT; k++) {
-        const scen *s = &k_scen[k];
+    for (k = 0; k < K_SCEN_COUNT + g_gen_count; k++) {
+        const scen *s = scen_at(k);
         int fails;
         if ((s->profiles & (unsigned)(1 << (sprof - 1))) == 0u) {
             continue;
@@ -629,6 +953,11 @@ int main(int argc, char **argv)
         account(s, fails);
         ran++;
         total_fails += fails;
+        if (sprof != rprof && fails == 0) {
+            /* the wrong-profile control is only meaningful if every scenario fails */
+            fprintf(stderr, "scenario %s: wrong-profile run passed\n", s->name);
+            wrong_passed++;
+        }
     }
     if (sprof == rprof) {
         total_fails += run_block32((uint8_t)rprof, t);
@@ -640,5 +969,11 @@ int main(int argc, char **argv)
     printf("tags: LT-HW %u WDC %u RKW %u CMD %u SST-MODEL %u INFERRED %u unverified %u\n",
            g_tag_count[TAG_LTHW], g_tag_count[TAG_WDC], g_tag_count[TAG_RKW], g_tag_count[TAG_CMD],
            g_tag_count[TAG_SST], g_tag_count[TAG_INF], g_unverified);
+    if (sprof != rprof && (wrong_passed != 0u || ran == 0u)) {
+        /* exit 4: the control itself is broken, not the CPU under test */
+        fprintf(stderr, "scenarios: wrong-profile control invalid: %u of %u scenarios passed\n",
+                wrong_passed, ran);
+        return 4;
+    }
     return total_fails != 0 ? 1 : 0;
 }

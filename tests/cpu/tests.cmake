@@ -73,6 +73,26 @@ foreach(lynx_scen_profile IN ITEMS lynx1 lynx2)
     COMMAND lynx-test-cpu-scenarios ${lynx_scen_profile} LABELS cpu TIMEOUT 30)
 endforeach()
 
+# Controls for the scenario runner. Turning $CB into a 2-cycle instruction that
+# polls (the $EA row copied over it, test-local) must fail the Test 8 replica and
+# the whole 32-NOP block, and nothing else needs to; running the Lynx II
+# bit-operation scenarios under lynx1 must fail every one of them (the runner exits
+# 4 instead of 1 if any of them passes, so a vacuous control cannot pass here).
+set(lynx_scen_cmd $<TARGET_FILE:lynx-test-cpu-scenarios> lynx2 --fault cb-poll)
+string(REPLACE ";" "$<SEMICOLON>" lynx_scen_cmd "${lynx_scen_cmd}")
+lynx_add_test(NAME cpu.scenarios.test8.self_test
+  COMMAND ${CMAKE_COMMAND} "-DCMD=${lynx_scen_cmd}" -DCODE=1
+    "-DREGEX=scenario irq.test8.replica: mismatch.*scenario irq.test8.block32: mismatch"
+    -P ${PROJECT_SOURCE_DIR}/tests/cmake/expect_fail.cmake
+  LABELS cpu TIMEOUT 30)
+set(lynx_scen_cmd $<TARGET_FILE:lynx-test-cpu-scenarios> --scenario-profile lynx2 --run-profile lynx1)
+string(REPLACE ";" "$<SEMICOLON>" lynx_scen_cmd "${lynx_scen_cmd}")
+lynx_add_test(NAME cpu.scenarios.wrong_profile.self_test
+  COMMAND ${CMAKE_COMMAND} "-DCMD=${lynx_scen_cmd}" -DCODE=1
+    "-DREGEX=scenario bitop.rmb0: mismatch.*scenario bitop.bbs7.not_taken: mismatch"
+    -P ${PROJECT_SOURCE_DIR}/tests/cmake/expect_fail.cmake
+  LABELS cpu TIMEOUT 30)
+
 lynx_add_test(NAME cpu.cycles COMMAND lynx-test-cpu cycles LABELS cpu TIMEOUT 30)
 lynx_add_test(NAME cpu.tables COMMAND lynx-test-cpu tables LABELS cpu TIMEOUT 30)
 
