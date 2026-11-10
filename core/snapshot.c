@@ -1,13 +1,13 @@
-/* Snapshot save and restore, format version 2.
+/* Snapshot save and restore, format version 3.
 
    A snapshot is a header followed by a payload. Every integer is
    little-endian and is written and read one field at a time, never by copying
    a struct, so padding bytes and host byte order never reach the blob.
 
-   Header (236 bytes), in order:
+   Header (252 bytes), in order:
      0    magic          8 bytes  "LYNXSNAP"
-     8    format_version u32      2
-     12   header_len     u32      236
+     8    format_version u32      3
+     12   header_len     u32      252
      16   build_id       128      lynx__build_id, NUL-padded to 128
      144  profile        u32
      148  ram_policy     u32
@@ -15,13 +15,17 @@
      160  content_sha256 32
      192  content_addr   u32
      196  content_len    u32
-     200  payload_len    u32      65568
-     204  payload_sha256 32       SHA-256 of the payload
+     200  content_format u32
+     204  startup_tier   u32
+     208  entry_addr     u32
+     212  object_len     u32
+     216  payload_len    u32      65568
+     220  payload_sha256 32       SHA-256 of the payload
    Payload (65568 bytes), offsets relative to its start:
      0  pc u16        2  a      3  x      4  y      5  s
      6  p (bits 4 and 5 set)    7  cpu latches (lynx__cpu.flags)
      8  opcode        9  step (cycle index inside the instruction)
-     10 ea u16        12 tmp    13 cost_model     14 reserved u16, zero
+     10 ea u16        12 tmp    13 cost_model     14 mapctl u8  15 reserved u8, zero
      16 guest_ticks u64         24 cpu_ready_at u64
      32 ram 65536 bytes
    The profile is not in the payload: it is part of the header identity. The
@@ -32,9 +36,8 @@
    profile, RAM policy, seed and loaded content: the identity comes from the
    instance, so a blob cannot assert its own compatibility. It validates in a
    fixed order, all before the first write, and then applies in one step that
-   cannot fail. A refused restore leaves the instance byte-identical. Format 1
-   (the Phase 1 skeleton) and every other version are refused as a version
-   error.
+   cannot fail. A refused restore leaves the instance byte-identical. Formats
+   1 and 2 are refused as version errors.
 
    Reversibility: restore needs the same build, so no old snapshot is ever
    accepted and the format may change in any later build without migration. */
@@ -58,7 +61,11 @@ enum {
     OFF_CONTENT_SHA = OFF_SEED + 8,
     OFF_CONTENT_ADDR = OFF_CONTENT_SHA + 32,
     OFF_CONTENT_LEN = OFF_CONTENT_ADDR + 4,
-    OFF_PAYLOAD_LEN = OFF_CONTENT_LEN + 4,
+    OFF_CONTENT_FORMAT = OFF_CONTENT_LEN + 4,
+    OFF_STARTUP_TIER = OFF_CONTENT_FORMAT + 4,
+    OFF_ENTRY_ADDR = OFF_STARTUP_TIER + 4,
+    OFF_OBJECT_LEN = OFF_ENTRY_ADDR + 4,
+    OFF_PAYLOAD_LEN = OFF_OBJECT_LEN + 4,
     OFF_PAYLOAD_SHA = OFF_PAYLOAD_LEN + 4,
     OFF_END = OFF_PAYLOAD_SHA + 32
 };
@@ -77,7 +84,8 @@ enum {
     P_EA = 10,
     P_TMP = 12,
     P_COST_MODEL = 13,
-    P_RESERVED = 14,
+    P_MAPCTL = 14,
+    P_RESERVED = 15,
     P_TICKS = 16,
     P_READY_AT = 24,
     P_RAM = 32,
@@ -86,6 +94,7 @@ enum {
 
 _Static_assert(OFF_END == (int)LYNX__SNAPSHOT_HEADER_LEN, "snapshot header length");
 _Static_assert(P_END == (int)LYNX__SNAPSHOT_PAYLOAD_LEN, "snapshot payload length");
+_Static_assert(P_RESERVED + 1 == P_TICKS, "snapshot byte fields meet the clock fields");
 
 #define SNAPSHOT_TOTAL ((size_t)LYNX__SNAPSHOT_HEADER_LEN + (size_t)LYNX__SNAPSHOT_PAYLOAD_LEN)
 
@@ -192,7 +201,8 @@ lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, 
     put_u16(payload + P_EA, m->cpu.ea);
     payload[P_TMP] = m->cpu.tmp;
     payload[P_COST_MODEL] = m->cost_model;
-    put_u16(payload + P_RESERVED, 0u);
+    payload[P_MAPCTL] = m->mapctl;
+    payload[P_RESERVED] = 0u;
     put_u64(payload + P_TICKS, m->guest_ticks);
     put_u64(payload + P_READY_AT, m->cpu_ready_at);
     memcpy(payload + P_RAM, m->ram, LYNX_ADDRESS_SPACE);
@@ -207,6 +217,10 @@ lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, 
     memcpy(buf + OFF_CONTENT_SHA, m->content_sha256, sizeof m->content_sha256);
     put_u32(buf + OFF_CONTENT_ADDR, m->content_addr);
     put_u32(buf + OFF_CONTENT_LEN, m->content_len);
+    put_u32(buf + OFF_CONTENT_FORMAT, m->content_format);
+    put_u32(buf + OFF_STARTUP_TIER, m->startup_tier);
+    put_u32(buf + OFF_ENTRY_ADDR, m->entry_addr);
+    put_u32(buf + OFF_OBJECT_LEN, m->object_len);
     put_u32(buf + OFF_PAYLOAD_LEN, LYNX__SNAPSHOT_PAYLOAD_LEN);
 
     lynx__sha256 hash;
@@ -258,7 +272,11 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
         get_u64(buf + OFF_SEED) != m->cfg.ram_seed ||
         memcmp(buf + OFF_CONTENT_SHA, m->content_sha256, sizeof m->content_sha256) != 0 ||
         get_u32(buf + OFF_CONTENT_ADDR) != m->content_addr ||
-        get_u32(buf + OFF_CONTENT_LEN) != m->content_len) {
+        get_u32(buf + OFF_CONTENT_LEN) != m->content_len ||
+        get_u32(buf + OFF_CONTENT_FORMAT) != m->content_format ||
+        get_u32(buf + OFF_STARTUP_TIER) != m->startup_tier ||
+        get_u32(buf + OFF_ENTRY_ADDR) != m->entry_addr ||
+        get_u32(buf + OFF_OBJECT_LEN) != m->object_len) {
         return LYNX_ERR_SNAPSHOT_MISMATCH;
     }
     /* 8. Payload length. */
@@ -297,9 +315,11 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     if (!lynx__cpu_state_valid(&cand, table)) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
-    if (get_u16(payload + P_RESERVED) != 0u) {
+    if (payload[P_RESERVED] != 0u) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
+    /* Every MAPCTL bit is stored as the deterministic provisional byte latch;
+       reserved-bit electrical behavior remains unqualified. */
     /* The cost model is identity: it must be one this build defines and the
        one this instance uses. */
     if (!lynx__bus_cost_model_valid(payload[P_COST_MODEL]) ||
@@ -338,6 +358,7 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     lynx__cpu_repost(&m->cpu, table);
     m->guest_ticks = ticks;
     m->cpu_ready_at = ready;
+    m->mapctl = payload[P_MAPCTL];
     memcpy(m->ram, payload + P_RAM, LYNX_ADDRESS_SPACE);
     return LYNX_OK;
 }

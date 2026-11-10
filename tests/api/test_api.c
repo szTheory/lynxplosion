@@ -1097,13 +1097,13 @@ static void case_reset_power_on(void)
 /* ---- snapshots (API-07) ---- */
 
 #define SNAP_TOTAL ((size_t)LYNX__SNAPSHOT_HEADER_LEN + (size_t)LYNX__SNAPSHOT_PAYLOAD_LEN)
-#define SNAP_OFF_PAYLOAD_SHA 204u
+#define SNAP_OFF_PAYLOAD_SHA 220u
 #define SNAP_SEED 0x0123456789abcdefu
 
-/* Payload offsets of format 2 (white-box, from core/snapshot.c). */
+/* Payload offsets of format 3 (white-box, from core/snapshot.c). */
 enum {
     PAY_PC = 0, PAY_P = 6, PAY_FLAGS = 7, PAY_OPCODE = 8, PAY_STEP = 9, PAY_EA = 10, PAY_TMP = 12,
-    PAY_COST_MODEL = 13, PAY_RESERVED = 14, PAY_TICKS = 16, PAY_READY_AT = 24
+    PAY_COST_MODEL = 13, PAY_MAPCTL = 14, PAY_RESERVED = 15, PAY_TICKS = 16, PAY_READY_AT = 24
 };
 
 /* Blobs carry one extra byte of room for the trailing-byte case. */
@@ -1263,8 +1263,13 @@ static void case_snapshot_roundtrip(void)
     CHECK_UNCHANGED(machine_buf, snap_a);
     CHECK_EQ_U64(blob_v[SNAP_TOTAL], 0xA5u); /* nothing written past the end */
     CHECK(memcmp(blob_v, "LYNXSNAP", 8u) == 0);
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 2u); /* format 2 */
-    CHECK_EQ_U64(get_le(blob_v + 200u, 4u), 65568u);
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 3u); /* format 3 */
+    CHECK_EQ_U64(get_le(blob_v + 12u, 4u), LYNX__SNAPSHOT_HEADER_LEN);
+    CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_RAW_RAM_IMAGE);
+    CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
+    CHECK_EQ_U64(get_le(blob_v + 208u, 4u), 0x0200u);
+    CHECK_EQ_U64(get_le(blob_v + 212u, 4u), sizeof churn_loop);
+    CHECK_EQ_U64(get_le(blob_v + 216u, 4u), LYNX__SNAPSHOT_PAYLOAD_LEN);
 
     /* Saving twice, over different garbage, gives the same bytes. */
     memset(blob_bad, 0x5A, sizeof blob_bad);
@@ -1422,6 +1427,19 @@ static void case_bll_identity(void)
     CHECK_EQ_U64(lynx_snapshot_restore(m, blob_v, SNAP_TOTAL), LYNX_OK);
     CHECK_EQ_U64(m->mapctl, 0x0Cu);
 
+    /* The provisional latch retains all eight guest-written bits. */
+    uint8_t all_bits_bll[sizeof bll_tracer];
+    memcpy(all_bits_bll, bll_tracer, sizeof all_bits_bll);
+    all_bits_bll[11] = 0xFFu; /* LDA #$FF */
+    CHECK_EQ_U64(lynx_load_bll(m, all_bits_bll, sizeof all_bits_bll), LYNX_OK);
+    ADVANCE_EXPECT(m, 300u, 300u, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(m->mapctl, 0xFFu);
+    CHECK_EQ_U64(save_into(m, blob_c), 0u);
+    CHECK_EQ_U64(blob_c[LYNX__SNAPSHOT_HEADER_LEN + PAY_MAPCTL], 0xFFu);
+    m->mapctl = 0u;
+    CHECK_EQ_U64(lynx_snapshot_restore(m, blob_c, SNAP_TOTAL), LYNX_OK);
+    CHECK_EQ_U64(m->mapctl, 0xFFu);
+
 done:
     printf("TAP version 13\n1..1\n%s 1 - api.bll_identity\n",
            check_failures == failures_before ? "ok" : "not ok");
@@ -1449,8 +1467,8 @@ static lynx_status header_flip_status(size_t i)
     if (i < 16u) {
         return LYNX_ERR_SNAPSHOT_INVALID; /* header_len */
     }
-    if (i < 200u) {
-        return LYNX_ERR_SNAPSHOT_MISMATCH; /* build id, profile, policy, seed, content */
+    if (i < 216u) {
+        return LYNX_ERR_SNAPSHOT_MISMATCH; /* build, profile, policy, seed, full content identity */
     }
     return LYNX_ERR_SNAPSHOT_INVALID; /* payload_len, payload_sha256 */
 }
@@ -1604,14 +1622,14 @@ static void case_snapshot_refusal(void)
     RESTORE_EXPECT(m, blob_v, 0u, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
     RESTORE_EXPECT(m, blob_v, LYNX__SNAPSHOT_HEADER_LEN, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
 
-    /* Format 1 (the Phase 1 skeleton) and format 3: version errors. */
-    CHECK_EQ_U64(blob_bad[8], 2u);
+    /* Formats 1 and 2 are unsupported; format 3 is the current positive case. */
+    CHECK_EQ_U64(blob_bad[8], 3u);
     CHECK_EQ_U64(blob_bad[9] | blob_bad[10] | blob_bad[11], 0u);
     blob_bad[8] = 1u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
-    blob_bad[8] = 3u;
-    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
     blob_bad[8] = 2u;
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
+    blob_bad[8] = 3u;
 
     /* Another identity: each refused as a MISMATCH, whatever the blob holds. */
     unsigned char other_image[sizeof churn_loop];
@@ -1687,8 +1705,8 @@ static void case_snapshot_refusal(void)
     VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x01u, 1u, snap_a);             /* IRQ_TAKE: never left set */
     VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x02u, 1u, snap_a);             /* NMI_TAKE: never left set */
     VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x03u, 1u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_RESERVED, 0x0001u, 2u, snap_a);        /* reserved bytes */
-    VALUE_REFUSED(m, blob_v, PAY_RESERVED, 0x8000u, 2u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_RESERVED, 0x01u, 1u, snap_a);          /* reserved byte */
+    VALUE_REFUSED(m, blob_v, PAY_RESERVED, 0x80u, 1u, snap_a);
     VALUE_REFUSED(m, blob_v, PAY_STEP, 0xFFu, 1u, snap_a);              /* step past the script */
     VALUE_REFUSED(m, blob_v, PAY_STEP, 0x20u, 1u, snap_a);
     VALUE_REFUSED(m, blob_v, PAY_OPCODE, 0x07u, 1u, snap_a);            /* undefined under none */

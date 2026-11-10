@@ -10,18 +10,18 @@
 #include "cpu.h"
 #include "lynxplosion.h"
 
-/* Snapshot format version 2 (core/snapshot.c documents the layout). */
+/* Snapshot format version 3 (core/snapshot.c documents the layout). */
 #define LYNX__SNAPSHOT_MAGIC "LYNXSNAP" /* 8 bytes, no terminating NUL in the blob */
 #define LYNX__SNAPSHOT_MAGIC_LEN 8u
-#define LYNX__SNAPSHOT_FORMAT 2u
+#define LYNX__SNAPSHOT_FORMAT 3u
 #define LYNX__BUILD_ID_FIELD 128u
-#define LYNX__SNAPSHOT_HEADER_LEN 236u  /* 8+4+4+128+4+4+8+32+4+4+4+32 */
+#define LYNX__SNAPSHOT_HEADER_LEN 252u  /* prior header + format/startup/entry/object identity */
 #define LYNX__SNAPSHOT_PAYLOAD_LEN 65568u /* 32 bytes of CPU and clock state + 65536 RAM */
 
 /* The payload layout belongs to the format number: a layout change without a
    format bump stops the build. */
-_Static_assert(LYNX__SNAPSHOT_FORMAT != 2u || LYNX__SNAPSHOT_PAYLOAD_LEN == 65568u,
-               "snapshot format 2 has a 65568-byte payload; bump the format to change it");
+_Static_assert(LYNX__SNAPSHOT_FORMAT != 3u || LYNX__SNAPSHOT_PAYLOAD_LEN == 65568u,
+               "snapshot format 3 has a 65568-byte payload; bump the format to change it");
 
 /* Build identity string baked at configure time (core/build_id.c.in). */
 extern const char lynx__build_id[];

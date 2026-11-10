@@ -9,6 +9,8 @@ _Static_assert(sizeof(lynx_status) == 4, "status is 32 bits");
 _Static_assert(sizeof(lynx_stop_reason) == 4, "stop reason is 32 bits");
 _Static_assert(sizeof(lynx_config) == 24, "config layout");
 _Static_assert(sizeof(lynx_identity) == 80, "identity layout");
+_Static_assert(LYNX_CONTENT_BS93 == 2, "BS93 content format id");
+_Static_assert(LYNX_STARTUP_A == 1, "tier A startup id");
 _Static_assert(LYNX_STOP_HALT == 3, "stop reason HALT value");
 _Static_assert(LYNX_STOP_UNDEFINED == 4, "stop reason UNDEFINED value");
 _Static_assert(LYNX_PROFILE_NONE == 0, "profile id none");
