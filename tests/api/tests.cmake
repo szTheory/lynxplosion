@@ -8,6 +8,10 @@ set_target_properties(lynx-test-api PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJEC
 
 lynx_add_test(NAME api.advance_budget COMMAND lynx-test-api advance_budget LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.advance_slicing COMMAND lynx-test-api advance_slicing LABELS api TIMEOUT 60)
+lynx_add_test(NAME api.bll_alias COMMAND lynx-test-api bll_alias LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.bll_identity COMMAND lynx-test-api bll_identity LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.bll_load COMMAND lynx-test-api bll_load LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.bll_tracer COMMAND lynx-test-api bll_tracer LABELS api TIMEOUT 30)
 # Success criterion 3: a non-default per-access cost (the internal test_skew model,
 # set through lynx__machine_set_cost_model) changes consumed ticks by exactly the
 # sum over the seam bus log of (price - 5) and changes no register or RAM byte.

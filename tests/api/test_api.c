@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "check.h"
@@ -221,6 +222,9 @@ static lynx_machine *init_in(void *mem, const lynx_config *cfg);
 static _Alignas(max_align_t) unsigned char buf_b[sizeof(struct lynx_machine)];
 static unsigned char snap_a[sizeof(struct lynx_machine)];
 static unsigned char snap_b[sizeof(struct lynx_machine)];
+/* Exact-touch API input starts immediately after this instance. */
+static _Alignas(max_align_t) unsigned char bll_adjacent_arena[sizeof(struct lynx_machine) +
+                                                              sizeof bll_tracer];
 /* Room for a deliberately misaligned start. */
 static _Alignas(max_align_t) unsigned char over_buf[sizeof(struct lynx_machine) + 16];
 /* One byte more than the address space, for the over-long load refusal. */
@@ -304,6 +308,125 @@ static void expect_bll_refusal(lynx_machine *m, const uint8_t *bytes, size_t len
     CHECK_UNCHANGED(m, snap_a);
 }
 
+static void make_bll_header(uint8_t *object, size_t len, uint16_t load_addr)
+{
+    object[0] = 0x80u;
+    object[1] = 0x08u;
+    object[2] = (uint8_t)(load_addr >> 8);
+    object[3] = (uint8_t)load_addr;
+    object[4] = (uint8_t)(len >> 8);
+    object[5] = (uint8_t)len;
+    object[6] = 'B';
+    object[7] = 'S';
+    object[8] = '9';
+    object[9] = '3';
+}
+
+static void case_bll_load(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    ADVANCE_EXPECT(m, 300u, 300u, LYNX_STOP_BUDGET);
+
+    uint8_t short_object[10];
+    make_bll_header(short_object, sizeof short_object, 0x0200u);
+    expect_bll_refusal(m, short_object, sizeof short_object, LYNX_ERR_SIZE);
+
+    /* The shortest accepted object has exactly one payload byte. Its load
+       ends at address-space boundary 0x10000, and its source is freed after
+       loading to prove the core copied the byte. */
+    uint8_t min_object[11];
+    make_bll_header(min_object, sizeof min_object, 0xFFFFu);
+    min_object[10] = 0xA5u;
+    uint8_t *source = malloc(sizeof min_object);
+    CHECK(source != NULL);
+    if (source == NULL) {
+        goto done;
+    }
+    memcpy(source, min_object, sizeof min_object);
+    CHECK_EQ_U64(lynx_load_bll(m, source, sizeof min_object), LYNX_OK);
+    memset(source, 0, sizeof min_object);
+    free(source);
+    uint8_t end_byte = 0u;
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFFFFu, &end_byte, 1u), LYNX_OK);
+    CHECK_EQ_U64(end_byte, 0xA5u);
+    lynx_identity id;
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.content_addr, 0xFFFFu);
+    CHECK_EQ_U64(id.entry_addr, 0xFFFFu);
+    CHECK_EQ_U64(id.content_len, 1u);
+    CHECK_EQ_U64(id.object_len, sizeof min_object);
+
+    /* Largest representable total length fits exactly when the payload starts
+       at 11: 65535 - 10 payload bytes end at 65536 without wrapping. */
+    uint8_t *max_object = malloc(UINT16_MAX);
+    CHECK(max_object != NULL);
+    if (max_object == NULL) {
+        goto done;
+    }
+    make_bll_header(max_object, UINT16_MAX, 11u);
+    memset(max_object + 10u, 0x5Cu, UINT16_MAX - 10u);
+    CHECK_EQ_U64(lynx_load_bll(m, max_object, UINT16_MAX), LYNX_OK);
+    CHECK_EQ_U64(lynx_get_identity(m, &id), LYNX_OK);
+    CHECK_EQ_U64(id.content_addr, 11u);
+    CHECK_EQ_U64(id.content_len, UINT16_MAX - 10u);
+    CHECK_EQ_U64(id.object_len, UINT16_MAX);
+    CHECK_EQ_U64(lynx_read_memory(m, 11u, mem_out, UINT16_MAX - 10u), LYNX_OK);
+    CHECK(memcmp(mem_out, max_object + 10u, UINT16_MAX - 10u) == 0);
+    free(max_object);
+
+    uint8_t past_end[12];
+    make_bll_header(past_end, sizeof past_end, 0xFFFFu);
+    past_end[10] = 0xAAu;
+    past_end[11] = 0xBBu;
+    expect_bll_refusal(m, past_end, sizeof past_end, LYNX_ERR_RANGE);
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.bll_load\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_bll_alias(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    memset(bll_adjacent_arena, 0xA5, sizeof bll_adjacent_arena);
+    lynx_machine *m = init_in(bll_adjacent_arena, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    uint8_t *const adjacent = bll_adjacent_arena + MSIZE;
+    memcpy(adjacent, bll_tracer, sizeof bll_tracer);
+    memcpy(snap_a, bll_adjacent_arena, MSIZE);
+    CHECK_EQ_U64(lynx_load_bll(m, adjacent, sizeof bll_tracer), LYNX_OK);
+    CHECK(memcmp(snap_a, bll_adjacent_arena, MSIZE) != 0); /* accepted control */
+    ADVANCE_EXPECT(m, 300u, 300u, LYNX_STOP_BUDGET);
+
+    /* Every overlap with the complete instance, including header, RAM, the
+       last byte and a one-byte partial overlap, is refused unchanged. */
+    expect_bll_refusal(m, (const uint8_t *)m, sizeof bll_tracer, LYNX_ERR_ARGUMENT);
+    expect_bll_refusal(m, m->ram + 0x0200u, sizeof bll_tracer, LYNX_ERR_ARGUMENT);
+    expect_bll_refusal(m, (const uint8_t *)m + MSIZE - 1u, sizeof bll_tracer,
+                       LYNX_ERR_ARGUMENT);
+    /* Exact touch after the instance is disjoint. A huge size is rejected by
+       the length bound without reading the claimed bytes or changing state. */
+    expect_bll_refusal(m, adjacent, SIZE_MAX, LYNX_ERR_RANGE);
+
+done:
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.bll_alias\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void case_bll_tracer(void)
 {
     const int failures_before = check_failures;
@@ -368,6 +491,9 @@ static void case_bll_tracer(void)
     uint8_t malformed[sizeof bll_tracer + 1u];
     memcpy(malformed, bll_tracer, sizeof bll_tracer);
     malformed[0] = 0x81u;
+    expect_bll_refusal(m, malformed, sizeof bll_tracer, LYNX_ERR_ARGUMENT);
+    memcpy(malformed, bll_tracer, sizeof bll_tracer);
+    malformed[1] = 0x00u; /* unsupported/cart-shaped type, not a BS93 load */
     expect_bll_refusal(m, malformed, sizeof bll_tracer, LYNX_ERR_ARGUMENT);
     memcpy(malformed, bll_tracer, sizeof bll_tracer);
     malformed[6] = 'X';
@@ -1408,6 +1534,22 @@ static void case_bll_identity(void)
         goto done;
     }
     CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    lynx_machine *m2 = init_in(buf_b, &cfg);
+    if (m2 != NULL) {
+        uint8_t relocated[sizeof bll_tracer];
+        lynx_identity original_id;
+        lynx_identity relocated_id;
+        memcpy(relocated, bll_tracer, sizeof relocated);
+        relocated[3] = 0x01u; /* header-only change: same payload at $0201 */
+        CHECK_EQ_U64(lynx_get_identity(m, &original_id), LYNX_OK);
+        CHECK_EQ_U64(lynx_load_bll(m2, relocated, sizeof relocated), LYNX_OK);
+        CHECK_EQ_U64(lynx_get_identity(m2, &relocated_id), LYNX_OK);
+        CHECK_EQ_U64(relocated_id.content_addr, 0x0201u);
+        CHECK_EQ_U64(relocated_id.content_len, original_id.content_len);
+        CHECK(memcmp(relocated_id.content_sha256, original_id.content_sha256, 32u) != 0);
+        CHECK(memcmp(m->ram + 0x0200u, m2->ram + 0x0201u, 13u) == 0);
+        lynx_machine_deinit(m2);
+    }
     ADVANCE_EXPECT(m, 300u, 300u, LYNX_STOP_BUDGET);
     CHECK_EQ_U64(m->mapctl, 0x0Cu);
     CHECK_EQ_U64(save_into(m, blob_v), 0u);
@@ -2471,7 +2613,9 @@ static const struct {
 } cases[] = {
     {"advance_budget", case_advance_budget},
     {"advance_slicing", case_advance_slicing},
+    {"bll_alias", case_bll_alias},
     {"bll_identity", case_bll_identity},
+    {"bll_load", case_bll_load},
     {"bll_tracer", case_bll_tracer},
     {"build_id", case_build_id},
     {"cost_model", case_cost_model},
