@@ -172,8 +172,9 @@ message(STATUS "runner_cli: --profile selects the manifest profile, none by defa
 
 # An UNDEFINED stop writes the bundle, exits 0 and tells the user which opcode
 # and PC stopped it and how to choose a profile. The content is the one-byte
-# bit-operation image (0x07 at 0x0200). Under a Lynx profile the same content
-# is defined and no note is printed.
+# bit-operation image (0x07 at 0x0200). Under lynx2 it is defined, then the
+# one-byte image falls through to zero-filled RAM and reaches the absent vector
+# window; the separate unavailable stop must still be reported.
 expect("undefined note" 0 "undefined opcode .*07.* at PC .*0200.*--profile"
   --content "${WORK}/halt.bll" --ticks 100 --out "${WORK}/undef")
 file(STRINGS "${WORK}/undef/run.manifest" undef_lines REGEX "^(profile|stop_reason|ticks_consumed) = ")
@@ -185,10 +186,23 @@ if(NOT EXISTS "${WORK}/undef/digests.txt")
 endif()
 execute_process(COMMAND "${RUNNER}" --content "${WORK}/halt.bll" --ticks 100
   --profile lynx2 --out "${WORK}/undef2" RESULT_VARIABLE rc2 ERROR_VARIABLE err2 OUTPUT_QUIET)
-if(NOT rc2 EQUAL 0 OR err2 MATCHES "undefined opcode")
+if(NOT rc2 EQUAL 0 OR NOT err2 MATCHES "unavailable memory route")
   message(FATAL_ERROR "runner_cli: the bit-op image under lynx2: exit ${rc2}, stderr '${err2}'")
 endif()
-message(STATUS "runner_cli: the UNDEFINED stop writes a bundle, exits 0 and prints the note: ok")
+if(NOT EXISTS "${WORK}/undef2/digests.txt")
+  message(FATAL_ERROR "runner_cli: unavailable route: the bundle was not written")
+endif()
+file(READ "${WORK}/undef2/run.manifest" unavailable_manifest)
+foreach(line "profile = lynx2" "tick_budget = 100" "stop_reason = unavailable")
+  string(FIND "${unavailable_manifest}" "${line}\n" at)
+  if(at EQUAL -1)
+    message(FATAL_ERROR "runner_cli: unavailable route: manifest lacks '${line}'")
+  endif()
+endforeach()
+if(NOT unavailable_manifest MATCHES "\nticks_consumed = [1-9][0-9]?\n")
+  message(FATAL_ERROR "runner_cli: unavailable route: manifest lacks positive bounded progress")
+endif()
+message(STATUS "runner.cli: unavailable stop writes a bundle and names the stop reason: ok")
 
 # A complete current-API consumer compiles and links against the same plain
 # core library used by the public-header ABI check.

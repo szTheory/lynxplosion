@@ -3336,9 +3336,16 @@ static void case_profile_divergence(void)
     if (m == NULL) {
         return;
     }
+    /* This exhaustive dispatch pass is a white-box CPU-table probe, not a
+       tier-A startup test. Select vector-window RAM so a BRK reached after an
+       opcode cannot turn the CPU proof into an unavailable-route stop. The
+       zero vector then loops in ordinary RAM for the bounded run. */
+    m->mapctl = 0x08u;
     for (uint32_t op = 0u; op < 256u; op++) {
         const uint8_t img[3] = {(uint8_t)op, 0x80u, 0u};
         CHECK_EQ_U64(load_bll_at(m, img, sizeof img, 0x0200u), LYNX_OK);
+        /* Loading a fresh BLL reapplies the declared MAPCTL-zero state. */
+        m->mapctl = 0x08u;
         memcpy(snap_a, machine_buf, MSIZE);
         if (slot_defined((uint8_t)op)) {
             ADVANCE_EXPECT(m, 100u, 0u, LYNX_STOP_UNDEFINED);

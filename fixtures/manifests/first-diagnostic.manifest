@@ -1,0 +1,11 @@
+source = fixtures/diagnostic/first.s (project-authored)
+revision = in-repo
+recipe = pinned ca65 --cpu 65SC02 -D DIAG_FAULT=0 and ld65 -C fixtures/diagnostic/bll.cfg -Ln; scripts/check.sh diagnostic-fixtures step
+sha256 = 16ecb83e09554082f1d51212bbe7c31fd67d33ba68873bca3441308eec284ba0
+licence = project source all rights reserved (O5 open)
+notices = none
+allowed_use = original diagnostic fixture test content
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/diagnostic/first.s fixtures/diagnostic/bll.cfg fixtures/diagnostic/first.hex

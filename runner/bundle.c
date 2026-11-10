@@ -185,6 +185,8 @@ static const char *stop_text(lynx_stop_reason v)
         return "halt";
     case LYNX_STOP_UNDEFINED:
         return "undefined";
+    case LYNX_STOP_UNAVAILABLE:
+        return "unavailable";
     default:
         return NULL;
     }

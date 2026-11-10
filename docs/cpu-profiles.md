@@ -56,6 +56,11 @@ shared. Bit numbers for RMB, SMB, BBR and BBS come from opcode bits 4 to 6.
 The runner prints a note on stderr when a run stops at an undefined opcode under
 `none`, naming the opcode, the PC and the `--profile` flag.
 
+A run that reaches an unavailable mapped memory route also writes its partial
+observations. Its manifest records `stop_reason = unavailable`, and stderr says
+that the requested route has no implemented target; it is not reported as an
+undefined CPU opcode.
+
 ## `$CB` and `$DB`
 
 On both profiles `$CB` and `$DB` are 1-byte, 1-cycle NOPs that do not poll for

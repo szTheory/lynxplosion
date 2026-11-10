@@ -17,6 +17,11 @@ total_start=$(date +%s)
 current_step=
 on_exit() {
   exit_rc=$?
+  # Only these temporary diagnostic variants are generated for this check;
+  # first.bll and first.lbl remain as the manifest-owned test inputs.
+  rm -f build/toolchain/first-broken.bll build/toolchain/first-broken.lbl \
+    build/toolchain/first-broken.o build/toolchain/first-timeout.bll \
+    build/toolchain/first-timeout.lbl build/toolchain/first-timeout.o
   if [ "$exit_rc" -ne 0 ] && [ -n "$current_step" ]; then
     printf 'check: step %s failed\n' "$current_step" >&2
   fi
@@ -339,6 +344,78 @@ run_cpu_fixtures() {
   rm -f "$cpu_fx_cfg"
 }
 
+# Builds the original diagnostic and its two completion fault variants with
+# the pinned assembler/linker in a clean environment. Only the normal BLL is
+# retained; its bytes are covered by the fixture manifest. Fault binaries are
+# kept through CTest, then removed by the exit trap above.
+run_diagnostic_fixtures() {
+  if [ ! -x "$CC65_DIR/bin/ca65" ] || [ ! -x "$CC65_DIR/bin/ld65" ]; then
+    printf 'check: diagnostic-fixtures: %s/bin/ca65 or ld65 is missing\n' "$CC65_DIR" >&2
+    return 1
+  fi
+  CC65_HOME=$PWD/$CC65_DIR
+  export CC65_HOME
+  mkdir -p build/toolchain
+  cp fixtures/diagnostic/first.s build/toolchain/first.s
+  cp fixtures/diagnostic/bll.cfg build/toolchain/bll.cfg
+  for diag_name in first first-broken first-timeout; do
+    case $diag_name in
+      first) diag_fault=0 ;;
+      first-broken) diag_fault=1 ;;
+      first-timeout) diag_fault=2 ;;
+    esac
+    rm -f "build/toolchain/$diag_name.bll" "build/toolchain/$diag_name.lbl" \
+      "build/toolchain/$diag_name.o"
+    (
+      cd build/toolchain &&
+        env -i PATH="$CC65_HOME/bin:/usr/bin:/bin" CC65_HOME="$CC65_HOME" \
+          ca65 --cpu 65SC02 -D "DIAG_FAULT=$diag_fault" -o "$diag_name.o" first.s &&
+        env -i PATH="$CC65_HOME/bin:/usr/bin:/bin" CC65_HOME="$CC65_HOME" \
+          ld65 -C bll.cfg -Ln "$diag_name.lbl" -o "$diag_name.bll" "$diag_name.o"
+    ) || return 1
+    rm -f "build/toolchain/$diag_name.o"
+    if [ ! -s "build/toolchain/$diag_name.bll" ] || [ ! -s "build/toolchain/$diag_name.lbl" ]; then
+      printf 'check: diagnostic-fixtures: %s did not produce a BLL and -Ln symbols\n' "$diag_name" >&2
+      return 1
+    fi
+    for diag_symbol in diag_result diag_pixels diag_pixels_end; do
+      if ! grep -Eq "^al[[:space:]]+[0-9A-Fa-f]{6}[[:space:]]+\\.?$diag_symbol$" \
+        "build/toolchain/$diag_name.lbl"; then
+        printf 'check: diagnostic-fixtures: %s.lbl lacks linked symbol %s\n' "$diag_name" "$diag_symbol" >&2
+        return 1
+      fi
+    done
+    printf 'diagnostic fixture sha256 %s %s\n' "$diag_name" "$(sha_of "build/toolchain/$diag_name.bll")"
+  done
+
+  diag_size=$(wc -c <build/toolchain/first.bll | tr -d ' ')
+  if [ "$diag_size" -gt 65535 ]; then
+    printf 'check: diagnostic-fixtures: first.bll length exceeds BS93 field\n' >&2
+    return 1
+  fi
+  diag_size_hex=$(printf '%04x' "$diag_size")
+  diag_header=$(dd if=build/toolchain/first.bll bs=1 count=10 2>/dev/null | od -An -tx1 | tr -d ' \n')
+  diag_want_header="80080200${diag_size_hex}42533933"
+  if [ "$diag_header" != "$diag_want_header" ]; then
+    printf 'check: diagnostic-fixtures: first.bll header is %s, expected %s\n' \
+      "$diag_header" "$diag_want_header" >&2
+    return 1
+  fi
+
+  diag_actual_hex=$(od -An -tx1 build/toolchain/first.bll | tr -d ' \n')
+  diag_expected_hex=$(awk '/^#/ { next } { gsub(/[ \t\r]/, ""); printf "%s", $0 }' fixtures/diagnostic/first.hex)
+  case $diag_expected_hex in
+    ''|*[!0123456789abcdef]*)
+      printf 'check: diagnostic-fixtures: first.hex is not lowercase whole-byte hex\n' >&2
+      return 1
+      ;;
+  esac
+  if [ "$diag_actual_hex" != "$diag_expected_hex" ]; then
+    printf 'check: diagnostic-fixtures: first.bll differs from fixtures/diagnostic/first.hex\n' >&2
+    return 1
+  fi
+}
+
 # Scans the build tree for rights-bearing or unlisted binaries (scripts/scan-binaries.sh).
 # Runs only after the workflow and JUnit steps, never while tests may be writing
 # files. Finder metadata files are removed first, visibly: they are the one
@@ -348,6 +425,11 @@ run_artifacts() {
     printf 'check: artifacts: build/ is missing\n' >&2
     return 1
   fi
+  # The two named fault BLLs are temporary inputs to CTest, not distributable
+  # fixtures. Remove these exact generated paths before the strict artifact scan.
+  rm -f build/toolchain/first-broken.bll build/toolchain/first-broken.lbl \
+    build/toolchain/first-broken.o build/toolchain/first-timeout.bll \
+    build/toolchain/first-timeout.lbl build/toolchain/first-timeout.o
   find build -type f -name .DS_Store -print | while IFS= read -r finder_file; do
     rm -f "$finder_file"
     printf 'artifacts: removed Finder metadata %s\n' "$finder_file"
@@ -378,6 +460,7 @@ step pins run_pins
 step cc65 run_cc65
 step probe run_probe
 step cpu-fixtures run_cpu_fixtures
+step diagnostic-fixtures run_diagnostic_fixtures
 
 step shellcheck run_shellcheck
 step workflow run_workflow

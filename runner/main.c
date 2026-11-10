@@ -14,8 +14,10 @@
    Without --ram-policy and --ram-seed the RAM power-on policy is fixed 0x00
    and the seed is 0. Without --profile the profile is none (neither Lynx
    profile is ever a default). A run that stops at an opcode profile none does
-   not define still writes its bundle and exits 0; a note on standard error
-   names the opcode and the program counter. Exit status: 0 success, 1 runtime refusal (message
+   not define, or at an unavailable memory route, still writes its bundle and
+   exits 0; the stop reason is recorded in the manifest and a note is printed
+   on standard error. Undefined-opcode notes name the opcode and program
+   counter. Exit status: 0 success, 1 runtime refusal (message
    "lynx-run: <reason>" on standard error), 2 usage error. */
 #define _POSIX_C_SOURCE 200809L
 
@@ -134,6 +136,13 @@ static void undefined_note(const lynx_machine *m)
             (unsigned)opcode, (unsigned)pc, name);
 }
 
+static void unavailable_note(void)
+{
+    fprintf(stderr,
+            "lynx-run: stopped at an unavailable memory route; "
+            "no target is implemented for this request\n");
+}
+
 int main(int argc, char **argv)
 {
     static const char *const flags[] = {"--content", "--ticks", "--out", "--ram-policy",
@@ -237,6 +246,8 @@ int main(int argc, char **argv)
     }
     if (run.stop == LYNX_STOP_UNDEFINED) {
         undefined_note(m);
+    } else if (run.stop == LYNX_STOP_UNAVAILABLE) {
+        unavailable_note();
     }
     if (make_dir(value[F_OUT]) != 0) {
         runtime_error("cannot create the output directory");
