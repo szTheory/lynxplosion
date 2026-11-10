@@ -113,7 +113,7 @@ Plans:
   4. Tests cover IRQ entry, CLI/SEI latency, WAI/STP and reserved-opcode NOP lengths, and each follows the selected profile's documented behaviour. Each expected value cites its source or is marked unverified.
 **Owner gates**: O1 (baseline model). Both profiles are built and neither is named baseline. No CPU-profile compatibility claim is made until O1 is decided.
 **Research flag**: Deeper research needed before planning: which SingleStepTests directory applies to each profile and which opcodes to exclude; decimal-mode and reserved-opcode cycle counts (unsourced); the shape of the bus-cycle interface (AD-01 spike).
-**Plans:** 9/11 plans executed
+**Plans:** 10/11 plans executed
 
 Plans:
 **Wave 1**
@@ -144,7 +144,7 @@ Plans:
 - [x] 02-09-PLAN.md — Machine switch: S2 budget loop, UNDEFINED, profiles per instance, new registers, snapshot format 2, golden and claim re-baseline (CPU-02, CPU-03, CPU-04)
 
 **Wave 10** *(blocked on Wave 9 completion)*
-- [ ] 02-10-PLAN.md — Public-path tests: runner --profile, profile select/divergence, cost model, slicing, seam agreement, profile agreement (CPU-02, CPU-03, CPU-05)
+- [x] 02-10-PLAN.md — Public-path tests: runner --profile, profile select/divergence, cost model, slicing, seam agreement, profile agreement (CPU-02, CPU-03, CPU-05)
 
 **Wave 11** *(blocked on Wave 10 completion)*
 - [ ] 02-11-PLAN.md — Profile document, README, full vector lane, push, CI by head SHA, CI efficiency review (CPU-01..05)
@@ -232,7 +232,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Evidence Harness and Walking Skeleton | 13/13 | Complete    | 2026-11-09 |
-| 2. CPU Profiles and Per-Opcode Vectors | 9/11 | In Progress | - |
+| 2. CPU Profiles and Per-Opcode Vectors | 10/11 | In Progress | - |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 0/TBD | Not started | - |
 | 4. Timers, Interrupts and First Public Suites | 0/TBD | Not started | - |
 | 5. Display, Raw Video and Input | 0/TBD | Not started | - |

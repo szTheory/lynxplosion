@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: CPU Profiles and Per-Opcode Vectors
 status: executing
-stopped_at: Completed 02-09-PLAN.md
-last_updated: "2026-11-10T06:00:54.353Z"
+stopped_at: Completed 02-10-PLAN.md
+last_updated: "2026-11-10T06:18:58.951Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 2 execution started
-state_head: b5f42b84a617743b1b555ddaca0a861c7f6258e7
+state_head: 77e6ed09fedc213a8a429b53603d94e1ca1df7b6
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 24
-  completed_plans: 22
+  completed_plans: 23
   percent: 17
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 ## Current Position
 
 Phase: 2 (CPU Profiles and Per-Opcode Vectors) — EXECUTING
-Plan: 10 of 11
+Plan: 11 of 11
 Status: Ready to execute
 Last activity: 2026-11-09 — Phase 2 execution started
 
@@ -78,6 +78,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 2 P07 | 15 min | 2 tasks | 12 files |
 | Phase 2 P08 | 20min | 2 tasks | 9 files |
 | Phase 2 P09 | 19 min | 3 tasks | 14 files |
+| Phase 02 P10 | 75 min | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -129,6 +130,8 @@ Recent decisions affecting current work:
 - [Phase 2]: 02-09: the budget loop's in-cycle branch stops at the target (same semantics) so a <= fault fails api.advance_budget instead of hanging
 - [Phase 2]: 02-09: cross-profile snapshots are refused by the header identity (MISMATCH); cost model, reserved bytes, cpu_ready_at range and CPU state are value checks (INVALID) after the hash
 - [Phase 2]: 02-09: golden re-baselined on churn-loop under none (506f7995...2bad3c), equal on Apple clang and Linux gcc 13.3; file name tests/golden/skeleton.digest kept
+- [Phase 02]: 02-10: lynx-run --profile is a closed set (none default); the UNDEFINED note is built from public reads in the runner, not the core
+- [Phase 02]: 02-10: api.seam_agreement runs all three profiles through tests/cpu/seam_agreement.cmake; about 10 s serial, dominated by 1,024 undefined-row restores under none
 
 ### Pending Todos
 
@@ -156,6 +159,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T06:00:54.253Z
-Stopped at: Completed 02-09-PLAN.md
+Last session: 2026-11-10T06:18:58.807Z
+Stopped at: Completed 02-10-PLAN.md
 Resume file: None
