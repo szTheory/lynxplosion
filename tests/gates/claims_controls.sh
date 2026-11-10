@@ -114,6 +114,14 @@ sed 's/^profile = none$/profile = lynx2/' "$t/docs/claims/good.claim" >"$t/docs/
 reject lynx_profile "$t" 'check-claims: good.claim: profile lynx2 not allowed while O1 is open'
 
 make_tree "$t"
+sed 's/^startup_tier = A$/startup_tier = none/' "$t/docs/claims/good.claim" >"$t/docs/claims/x" && mv "$t/docs/claims/x" "$t/docs/claims/good.claim"
+accept startup_tier_none "$t"
+
+make_tree "$t"
+sed 's/^startup_tier = A$/startup_tier = Z/' "$t/docs/claims/good.claim" >"$t/docs/claims/x" && mv "$t/docs/claims/x" "$t/docs/claims/good.claim"
+reject startup_tier_unknown "$t" 'good.claim: line 4: startup_tier: bad startup_tier'
+
+make_tree "$t"
 printf 'profile = none\n' >>"$t/docs/claims/good.claim"
 reject duplicate_key "$t" 'duplicate key'
 

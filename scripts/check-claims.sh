@@ -13,7 +13,7 @@
 #     digest is repeatability (R), not accuracy;
 #   - each claim passes scripts/validate-kv.sh with those keys (no repeated key,
 #     no empty value, content_sha256 and inventory_sha256 are 64 hex digits,
-#     startup_tier A, evidence_tier T1..T7 or R);
+#     startup_tier A or none, evidence_tier T1..T7 or R);
 #   - profile is one of ALLOWED_PROFILES (environment, default "none");
 #   - inventory_sha256 equals the SHA-256 of ROOT/tests/inventory/fast.txt, computed
 #     over its exact bytes, so a change to the inventory (a test added or removed,
@@ -131,7 +131,7 @@ fi
 for claim in "$claims_dir"/*.claim; do
   [ -e "$claim" ] || continue
   name=$(basename "$claim")
-  if ! sh "$here/validate-kv.sh" --required "$KEYS" "$claim"; then
+  if ! sh "$here/validate-kv.sh" --startup-tiers "A none" --required "$KEYS" "$claim"; then
     status=1
     continue
   fi

@@ -6,7 +6,8 @@
 # DIR defaults to the repository root. Every DIR/fixtures/manifests/*.manifest
 # is a strict "key = value" file (scripts/validate-kv.sh) with the keys
 #   source revision recipe sha256 licence notices allowed_use startup_tier
-#   profile evidence_tier          (required)
+#   profile evidence_tier          (required; startup_tier is A or none, because a
+#                                   software-model vector injects state and is not tier A)
 #   files independence             (optional)
 # and the checks below hold across the whole set:
 #   - no two manifests carry the same sha256 (an ambiguous identity);
@@ -65,7 +66,7 @@ fi
 : >"$work/covered"
 while IFS= read -r manifest; do
   # Key validation: findings arrive on standard error, one per line.
-  sh "$validator" \
+  sh "$validator" --startup-tiers "A none" \
     --required "source revision recipe sha256 licence notices allowed_use startup_tier profile evidence_tier" \
     --optional "files independence" "$root/$manifest" 2>&1 |
     sed "s|$root/||" |

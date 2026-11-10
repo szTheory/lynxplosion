@@ -3,7 +3,7 @@
 # and claims.
 #
 #   sh scripts/validate-kv.sh --required "k1 k2 ..." [--optional "k3 ..."]
-#                             [--no-host-data] FILE...
+#                             [--startup-tiers "T1 T2 ..."] [--no-host-data] FILE...
 #
 # Rules, applied to every line (no comments, no blank lines, no merging):
 #   - the line is "key = value": one " = " separator, split at the first one;
@@ -13,7 +13,9 @@
 #   - every required key is present;
 #   - "sha256", any key ending "_sha256" and "input_digest" hold 64 lowercase
 #     hex digits (length and character class; no regex interval counts);
-#   - startup_tier is A; evidence_tier is one of T1 T2 T3 T4 T5 T6 T7 R;
+#   - startup_tier is one of the --startup-tiers list (default "A"; fixture
+#     manifests and claims pass "A none", run manifests keep the default);
+#     evidence_tier is one of T1 T2 T3 T4 T5 T6 T7 R;
 #   - with --no-host-data, a value must not start with "/" or "~", contain a
 #     home-directory path, or contain a YYYY-MM-DD date.
 # Every finding is printed as "validate-kv: <file>: ..." on standard error.
@@ -25,12 +27,13 @@ LC_ALL=C
 export LC_ALL
 
 usage() {
-  printf 'usage: validate-kv.sh --required "k1 k2 ..." [--optional "k3 ..."] [--no-host-data] FILE...\n' >&2
+  printf 'usage: validate-kv.sh --required "k1 k2 ..." [--optional "k3 ..."] [--startup-tiers "T1 T2 ..."] [--no-host-data] FILE...\n' >&2
   exit 2
 }
 
 required=""
 optional=""
+tiers="A"
 nohost=0
 have_required=0
 while [ $# -gt 0 ]; do
@@ -44,6 +47,11 @@ while [ $# -gt 0 ]; do
     --optional)
       [ $# -ge 2 ] || usage
       optional=$2
+      shift 2
+      ;;
+    --startup-tiers)
+      [ $# -ge 2 ] || usage
+      tiers=$2
       shift 2
       ;;
     --no-host-data)
@@ -65,6 +73,21 @@ done
 [ "$have_required" -eq 1 ] || usage
 [ $# -ge 1 ] || usage
 
+# Every tier name is a letter, then letters, digits and underscores; the list is
+# not empty. A malformed list is a usage error, never a silently empty vocabulary.
+tier_count=0
+for tier in $tiers; do
+  case $tier in
+    [A-Za-z]*) ;;
+    *) usage ;;
+  esac
+  case $tier in
+    *[!A-Za-z0-9_]*) usage ;;
+  esac
+  tier_count=$((tier_count + 1))
+done
+[ "$tier_count" -ge 1 ] || usage
+
 status=0
 for file in "$@"; do
   if [ ! -f "$file" ] || [ ! -r "$file" ]; then
@@ -73,7 +96,7 @@ for file in "$@"; do
     continue
   fi
   # The values travel through the environment so awk never interprets escapes.
-  KV_FILE=$file KV_REQUIRED=$required KV_OPTIONAL=$optional KV_NOHOST=$nohost \
+  KV_FILE=$file KV_REQUIRED=$required KV_OPTIONAL=$optional KV_NOHOST=$nohost KV_TIERS=$tiers \
     awk '
     function bad(n, key, msg) {
       if (n > 0 && key != "") {
@@ -93,6 +116,8 @@ for file in "$@"; do
       nohost = ENVIRON["KV_NOHOST"] == "1"
       nreq = split(ENVIRON["KV_REQUIRED"], reqlist, " ")
       nopt = split(ENVIRON["KV_OPTIONAL"], optlist, " ")
+      ntier = split(ENVIRON["KV_TIERS"], tierlist, " ")
+      for (i = 1; i <= ntier; i++) { tier_ok[tierlist[i]] = 1 }
       for (i = 1; i <= nreq; i++) { known[reqlist[i]] = 1 }
       for (i = 1; i <= nopt; i++) { known[optlist[i]] = 1 }
       failed = 0
@@ -127,7 +152,7 @@ for file in "$@"; do
       if (is_hash_key(key) && (length(value) != 64 || value ~ /[^0-9a-f]/)) {
         bad(NR, key, "bad sha256")
       }
-      if (key == "startup_tier" && value != "A") {
+      if (key == "startup_tier" && !(value in tier_ok)) {
         bad(NR, key, "bad startup_tier")
       }
       if (key == "evidence_tier" && value !~ /^(T[1-7]|R)$/) {

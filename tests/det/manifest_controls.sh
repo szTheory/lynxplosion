@@ -107,6 +107,31 @@ reject upper_sha 'content_sha256: bad sha256'
 base | sed 's/^startup_tier = A$/startup_tier = B/' >"$work/startup_tier.kv"
 reject startup_tier 'startup_tier: bad startup_tier'
 
+# startup_tier vocabulary: a run manifest keeps the default (A only), so "none"
+# is refused there; a caller that passes --startup-tiers "A none" (fixture
+# manifests and claims) accepts it but still refuses anything outside the list.
+base | sed 's/^startup_tier = A$/startup_tier = none/' >"$work/tier_none_run.kv"
+reject tier_none_run 'startup_tier: bad startup_tier'
+cp "$work/tier_none_run.kv" "$work/tier_none_listed.kv"
+accept tier_none_listed --startup-tiers "A none"
+cp "$work/tier_none_run.kv" "$work/tier_none_a_only.kv"
+reject tier_none_a_only 'startup_tier: bad startup_tier' --startup-tiers "A"
+cp "$work/startup_tier.kv" "$work/tier_b_listed.kv"
+reject tier_b_listed 'startup_tier: bad startup_tier' --startup-tiers "A none"
+base >"$work/tier_a_listed.kv"
+accept tier_a_listed --startup-tiers "A none"
+
+# A malformed tier list is a usage error (exit 2), never an empty vocabulary.
+for bad_list in "" "1x" "a-b"; do
+  status=0
+  sh "$validator" --required "$required" --startup-tiers "$bad_list" "$work/valid.kv" >"$work/tier_list.out" 2>&1 || status=$?
+  if [ "$status" -ne 2 ]; then
+    printf 'manifest_controls: tier_list_usage: list "%s": expected exit 2, got %s\n' "$bad_list" "$status" >&2
+    exit 1
+  fi
+done
+printf 'manifest_controls: tier_list_usage: ok\n'
+
 base | sed 's/^evidence_tier = R$/evidence_tier = T9/' >"$work/evidence_tier.kv"
 reject evidence_tier 'evidence_tier: bad evidence_tier'
 

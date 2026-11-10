@@ -131,6 +131,19 @@ sed 's/^evidence_tier = R$/evidence_tier = T9/' "$t/fixtures/manifests/a.manifes
 cp "$work/m" "$t/fixtures/manifests/a.manifest"
 expect_reject bad_evidence_tier "$t" "bad evidence_tier"
 
+# 8b. startup_tier: a fixture manifest may record "none" (a software-model
+# vector injects CPU state and is not tier A); any other value is refused.
+make_tree "$t"
+sed 's/^startup_tier = A$/startup_tier = none/' "$t/fixtures/manifests/a.manifest" >"$work/m"
+cp "$work/m" "$t/fixtures/manifests/a.manifest"
+run_check "$t"
+[ "$rc" -eq 0 ] || fail startup_tier_none "a fixture manifest with startup_tier none was rejected: $out"
+ok startup_tier_none
+make_tree "$t"
+sed 's/^startup_tier = A$/startup_tier = Z/' "$t/fixtures/manifests/a.manifest" >"$work/m"
+cp "$work/m" "$t/fixtures/manifests/a.manifest"
+expect_reject startup_tier_unknown "$t" "fixtures/manifests/a.manifest: line 8: startup_tier: bad startup_tier"
+
 # 9. Two manifests with one identity (adjacency edge).
 make_tree "$t"
 printf 'text fixture b\n' >"$t/fixtures/b.txt"
