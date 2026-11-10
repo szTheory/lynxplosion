@@ -2,17 +2,17 @@
 gsd_state_version: "1.0"
 current_phase: 2
 current_phase_name: CPU Profiles and Per-Opcode Vectors
-status: executing
-stopped_at: Completed 02-10-PLAN.md
-last_updated: "2026-11-10T06:18:58.951Z"
+status: verifying
+stopped_at: Completed 02-11-PLAN.md
+last_updated: "2026-11-10T06:40:36.762Z"
 last_activity: 2026-11-09
 last_activity_desc: Phase 2 execution started
-state_head: 77e6ed09fedc213a8a429b53603d94e1ca1df7b6
+state_head: e8523539ed236eba1ae0a41f39f044db12c43d4a
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 24
-  completed_plans: 23
+  completed_plans: 24
   percent: 17
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 
 Phase: 2 (CPU Profiles and Per-Opcode Vectors) — EXECUTING
 Plan: 11 of 11
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-11-09 — Phase 2 execution started
 
 Progress: [██░░░░░░░░] 17%
@@ -79,6 +79,7 @@ Progress: [██░░░░░░░░] 17%
 | Phase 2 P08 | 20min | 2 tasks | 9 files |
 | Phase 2 P09 | 19 min | 3 tasks | 14 files |
 | Phase 02 P10 | 75 min | 3 tasks | 12 files |
+| Phase 2 P11 | 90min | 3 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -132,6 +133,8 @@ Recent decisions affecting current work:
 - [Phase 2]: 02-09: golden re-baselined on churn-loop under none (506f7995...2bad3c), equal on Apple clang and Linux gcc 13.3; file name tests/golden/skeleton.digest kept
 - [Phase 02]: 02-10: lynx-run --profile is a closed set (none default); the UNDEFINED note is built from public reads in the runner, not the core
 - [Phase 02]: 02-10: api.seam_agreement runs all three profiles through tests/cpu/seam_agreement.cmake; about 10 s serial, dominated by 1,024 undefined-row restores under none
+- [Phase 2]: Full vector lane has no CI trigger (5 min 47 s, 2 GB download); run at phase verification, pin bumps and before claims
+- [Phase 2]: api.seam_agreement split per profile with ctest COST so the longest starts first; ci.yml unchanged
 
 ### Pending Todos
 
@@ -159,6 +162,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-10T06:18:58.807Z
-Stopped at: Completed 02-10-PLAN.md
+Last session: 2026-11-10T06:40:36.679Z
+Stopped at: Completed 02-11-PLAN.md
 Resume file: None
