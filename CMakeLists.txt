@@ -23,38 +23,12 @@ function(lynx_sanitize target)
   target_link_options(${target} PRIVATE -fsanitize=address,undefined)
 endfunction()
 
-# Build identity, baked into the core as read-only data at configure time:
-#   git=<rev>[+dirty] cc=<id>-<version> sys=<name>-<processor>
-# "nogit" replaces <rev> when there is no git checkout (a tarball build). A
-# tracked-file change appends +dirty. No path, date or clock time may enter:
-# the identity is recorded in public evidence and compared by snapshots.
-set(lynx_git_rev nogit)
-find_package(Git QUIET)
-if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
-  execute_process(
-    COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_SOURCE_DIR}" rev-parse HEAD
-    OUTPUT_VARIABLE lynx_rev_out RESULT_VARIABLE lynx_rev_rc
-    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-  if(lynx_rev_rc EQUAL 0 AND NOT lynx_rev_out STREQUAL "")
-    set(lynx_git_rev "${lynx_rev_out}")
-    execute_process(
-      COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_SOURCE_DIR}" status --porcelain --untracked-files=no
-      OUTPUT_VARIABLE lynx_dirty_out RESULT_VARIABLE lynx_dirty_rc
-      OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    if(NOT lynx_dirty_rc EQUAL 0 OR NOT lynx_dirty_out STREQUAL "")
-      string(APPEND lynx_git_rev "+dirty")
-    endif()
-  endif()
-endif()
-set(LYNX_BUILD_ID
-  "git=${lynx_git_rev} cc=${CMAKE_C_COMPILER_ID}-${CMAKE_C_COMPILER_VERSION} sys=${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
-string(LENGTH "${LYNX_BUILD_ID}" lynx_build_id_length)
-# The snapshot header reserves 128 bytes for this string (with its NUL).
-if(lynx_build_id_length GREATER 127)
-  message(FATAL_ERROR "build identity is ${lynx_build_id_length} characters, limit is 127: ${LYNX_BUILD_ID}")
-endif()
-configure_file(core/build_id.c.in "${PROJECT_BINARY_DIR}/generated/build_id.c" @ONLY)
-message(STATUS "build identity: ${LYNX_BUILD_ID}")
+# Build identity (cmake/BuildId.cmake): git=<rev>[+dirty] cc=<id>-<version>
+# sys=<name>-<processor>, baked into the core as read-only data. It is recomputed
+# whenever the checkout's HEAD, branch ref or index changes, not only at the first
+# configure.
+set(LYNX_BUILD_ID_TEMPLATE "${PROJECT_SOURCE_DIR}/core/build_id.c.in")
+include(cmake/BuildId.cmake)
 
 # Every source of the core. Later plans append to this list.
 set(LYNX_CORE_SOURCES core/machine.c core/sha256.c core/snapshot.c "${PROJECT_BINARY_DIR}/generated/build_id.c")
