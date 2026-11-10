@@ -54,6 +54,10 @@ created: "2026-11-09"
 
 ---
 
+> Plan-check W-4 accepted (iteration 2): the last task of each plan runs the full `sh scripts/check.sh` by design (VALIDATION sampling: per plan); per-task verification elsewhere uses the quick slice.
+
+---
+
 ## Wave 0 Requirements
 
 - [ ] `tests/cpu/` (reader, runner, scenarios, helper sh), `tests/inventory/vectors/*.txt`
