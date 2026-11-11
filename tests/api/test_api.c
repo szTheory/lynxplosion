@@ -18,6 +18,14 @@
 #include "bundle.h"
 #include "sha256.h"
 
+#define CHECK_NAMED(cond, name)                                                                     \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            fprintf(stderr, "ASSERT %s failed\n", (name));                                     \
+            check_failures++;                                                                      \
+        }                                                                                          \
+    } while (0)
+
 /* The retained Phase 1 tracer image: byte i = (7*i + 3) mod 256 for i =
    0..31. As 65C02 code it reaches the profile-dependent opcode $1F, so it is
    used only by the identity and loader cases. */
@@ -6076,6 +6084,67 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void case_timer_done_gate(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 0u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x88u));
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 17u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 17u);
+    CHECK_EQ_U64(m->timer_bank.timers[0].control_b & 0x08u, 0x08u);
+    CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 3u));
+    CHECK_EQ_U64(lynx_advance(m, 16u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 16u);
+    CHECK_NAMED(m->timer_bank.timers[0].count == 3u, "timer.done-gates-counting");
+
+done:
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_done_gate\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_timer_reset_done_held(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 0u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0xC8u));
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 33u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 33u);
+    CHECK_NAMED((m->timer_bank.timers[0].control_b & 0x08u) == 0u,
+                "timer.reset-done-held-clear");
+
+done:
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_reset_done_held\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -6121,6 +6190,8 @@ static const struct {
     {"timer_unavailable", case_timer_unavailable},
     {"timer_standalone", case_timer_standalone},
     {"timer_phase", case_timer_phase},
+    {"timer_done_gate", case_timer_done_gate},
+    {"timer_reset_done_held", case_timer_reset_done_held},
     {"watch_controls", case_watch_controls},
     {"watch_independent", case_watch_independent},
     {"watch_post_write", case_watch_post_write},

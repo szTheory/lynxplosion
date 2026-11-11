@@ -149,3 +149,17 @@ lynx_add_test(NAME api.watch_controls.self_test
   COMMAND ${CMAKE_COMMAND} "-DTEST_BINARY=$<TARGET_FILE:lynx-test-api>" -DFAULT_GROUP=watch
     -P "${API_FAULT_BATCH}"
   LABELS api TIMEOUT 30)
+
+# Plan 04-11 builds isolated timer-core variants and requires each mutant to
+# fail the independently named API assertion after a successful compile/link.
+foreach(timer_fault IN ITEMS done reset_done)
+  lynx_add_test(NAME timer.fault.${timer_fault}
+    COMMAND ${CMAKE_COMMAND}
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DBUILD_DIR=${PROJECT_BINARY_DIR}"
+      "-DAPI_TEST_BINARY=$<TARGET_FILE:lynx-test-api>"
+      "-DC_COMPILER=${CMAKE_C_COMPILER}"
+      "-DFAULT_ID=${timer_fault}"
+      -P ${PROJECT_SOURCE_DIR}/tests/timers/fault_controls.cmake
+    LABELS timer TIMEOUT 120)
+endforeach()

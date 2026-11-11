@@ -248,3 +248,46 @@ The golden workload's observation digest excludes snapshot bytes. The format
 change left `tests/golden/skeleton.digest` untouched; its golden and
 sensitivity checks remain controls. No firmware, game image, physical
 hardware, or named Lynx profile qualification is used by these checks.
+
+## Plan 04-11 Task 1: DONE fault sensitivity
+
+Each test builds a copied core and API test executable under its own
+`build/check/scratch/timer-fault-<id>` directory. The driver verifies that the
+copied clean source hash matches the checkout, applies one unique source
+transformation, requires configure/compile/link success, hashes the mutated
+source and executable, then accepts only exit 1 plus the named API assertion.
+The clean API case runs before and after the mutant. Scratch ownership is
+checked and the directory is removed after each invocation. No live core
+source or default library is changed by the fault driver.
+
+| CTest ID | Isolated semantic fault | API case and required failure | Result |
+| --- | --- | --- | --- |
+| `timer.fault.done` | Remove the DONE latch from `timer_can_advance` | `timer_done_gate` → `timer.done-gates-counting` | Built and linked; exit 1 at the named assertion; clean case passed before and after. |
+| `timer.fault.reset_done` | Treat RESET-DONE as no longer held during timer events | `timer_reset_done_held` → `timer.reset-done-held-clear` | Built and linked; exit 1 at the named assertion; clean case passed before and after. |
+
+| Fault | Clean source SHA-256 | Mutated source SHA-256 | Mutant API executable SHA-256 | Configure + build |
+| --- | --- | --- | --- | --- |
+| `done` | `3d37a5504e1635967422a1c5be212159858b2fa81e7d16f0b0cb77a0bd3b37b1` | `992c370ab8af3857a7e35c49b081600aff1d49c90305e5c6c04fff6a4f9efd3a` | `4e4043a2114c6aa7b623db5810f76038103c034a261fc96bbf275256a4098b48` | 1 s |
+| `reset_done` | `3d37a5504e1635967422a1c5be212159858b2fa81e7d16f0b0cb77a0bd3b37b1` | `14b067afc68173556444ab018e5461cb842451a45f575be65cd13d176e865dcf` | `5b58e4568376bfb966aab37cbfcfe9ea3a575ebf1fed0e55db7dc9c88af321b6` | 1 s |
+
+Before the two-fault batch, the clean CPU/timer gate set passed; that initial
+selection also included `suite.timers.pending_controls` (6/6 in 49.96 s). Its
+55-fault matrix took 44.16 s and is fault-detection evidence rather than a
+positive observation, so it was not repeated around each isolated mutant.
+After the batch, the clean CPU full-source controls for Lynx I/II, timer
+observation controls for both profiles, and the exact strict-mismatch control
+passed 5/5 in 4.88 s. The timer observation remains 15/16 source agreements
+on each profile; index 14 is still expected `0D`, observed `0C`, and pending
+under the approved D-10 boundary. Neither fault result uses that mismatch.
+Global EVD-02 remains open for Phase 5, and this records only the Phase 4
+portion of recurring EVD-05; the Phase 5/6 device-fault obligations remain
+open.
+
+At the end of the isolated run, the checked-in timer and scheduler source
+identities were `core/timer.c` `3d37a5504e1635967422a1c5be212159858b2fa81e7d16f0b0cb77a0bd3b37b1`
+and `core/machine.c` `6cc229e0f976aad738d2196f009431a41df6d8812f5c1b491d58854c57866799`.
+The default clean outputs were `build/check/liblynx_core.a`
+`6d408b47d39fcbc825c937503d07e9f1534fb67c6b586aeedf198bb495344394` and
+`build/check/tests/lynx-test-api`
+`2a76492c57052352e346b18d0c5aee23cdae8b6ae400bcfb05e9972ccf1fa32c`.
+These are build identities, not hardware-accuracy evidence.
