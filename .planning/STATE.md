@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 3
+current_plan: 4
 status: executing
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-11-11T04:53:59.798Z"
+stopped_at: Completed 04-03-PLAN.md
+last_updated: "2026-11-11T05:39:03.300Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 3 complete, transitioned to Phase 4
-state_head: a6c06e542f0803d0c4170e3279f134de55703c89
+state_head: 5e713424ea1f2c5a760cd08a10116be6e93f1dbc
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 35
+  completed_plans: 36
   percent: 50
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 ## Current Position
 
 Phase: 4 (Timers, Interrupts and First Public Suites) — READY TO EXECUTE
-Current Plan: 3
+Current Plan: 4
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-10 — Phase 3 complete, transitioned to Phase 4
@@ -94,6 +94,7 @@ Progress: [█████░░░░░] 50%
 | Phase 03 P08 | 34 min | 2 tasks | 9 files |
 | Phase 04 P01 | 137 min | 3 tasks | 15 files |
 | Phase 04 P02 | 25min | 2 tasks | 12 files |
+| Phase 04 P03 | 38min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -175,6 +176,9 @@ Recent decisions affecting current work:
 - [Phase 04]: Timer init/reset/load use deterministic timer-phase-fixed-zero-1; this is software policy, not calibration.
 - [Phase 04]: Timer-bank events precede same-tick CPU bus actions and their poll/completion under timer-cpu-poll-order-1.
 - [Phase 04]: Keep timer linking, CTLB lower observation bits, and timer snapshot continuation explicitly incomplete.
+- [Phase 04]: CTLB bit 1 is a one-event borrow-in strobe and bit 3 sets or clears DONE; pinned guest behavior is comparison evidence, not hardware qualification.
+- [Phase 04]: Only source-declared timer links 0→2→4 and 1→3→5→7 are enabled; unsupported timer 0, timer 1/audio 3, and timer 6 inputs refuse before mutation.
+- [Phase 04]: CTLB low status-bit lifetime is explicit model policy until the next timer event because reviewed primary notes do not define stable read lifetime.
 
 ### Pending Todos
 
@@ -201,6 +205,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T04:53:59.390Z
-Stopped at: Completed 04-02-PLAN.md
+Last session: 2026-11-11T05:39:03.024Z
+Stopped at: Completed 04-03-PLAN.md
 Resume file: None
