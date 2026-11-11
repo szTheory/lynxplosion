@@ -90,6 +90,26 @@ static const uint8_t watch_count_program[] = {
     0x4Cu, 0x00u, 0x02u              /* JMP $0200 */
 };
 
+/* Project-authored BLL guest: program timer 0, poll its DONE bit, then store
+   the current count and pending timer-0 IRQ bit in ordinary RAM. At flat5 the
+   timer enable write is granted at tick 75, the shared-phase edges occur at
+   80 and 96, and the two result stores complete at ticks 200 and 240. */
+static const uint8_t timer_tracer_program[] = {
+    0xA9u, 0x01u,                         /* LDA #1 */
+    0x8Du, 0x00u, 0xFDu,                 /* STA $FD00: backup */
+    0x8Du, 0x02u, 0xFDu,                 /* STA $FD02: count */
+    0xA9u, 0x88u,                         /* LDA #$88: count + IRQ enable */
+    0x8Du, 0x01u, 0xFDu,                 /* STA $FD01: start */
+    0xADu, 0x03u, 0xFDu,                 /* loop: LDA $FD03 */
+    0x29u, 0x08u,                         /* AND #$08: timer done */
+    0xF0u, 0xF9u,                         /* BEQ loop */
+    0xADu, 0x02u, 0xFDu,                 /* LDA $FD02: current count */
+    0x8Du, 0x00u, 0x04u,                 /* STA $0400 */
+    0xADu, 0x81u, 0xFDu,                 /* LDA $FD81: pending interrupts */
+    0x8Du, 0x01u, 0x04u,                 /* STA $0401 */
+    0x4Cu, 0x0Du, 0x02u                  /* JMP loop */
+};
+
 /* MAPCTL is set by guest code before a watch on the last address. */
 static const uint8_t watch_last_address_program[] = {
     0xA9u, 0x08u, 0x8Du, 0xF9u, 0xFFu, /* LDA #$08; STA $FFF9 */
@@ -3626,6 +3646,53 @@ static void case_advance_slicing(void)
     slice_one_model(LYNX__COST_TEST_SKEW);
 }
 
+static void case_timer_tracer(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(load_bll_at(m, timer_tracer_program, sizeof timer_tracer_program,
+                             0x0200u), LYNX_OK);
+    /* The raw RAM byte must remain independent from the Mikey register view. */
+    m->ram[0xFD02u] = 0xE7u;
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0401u, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop != LYNX_STOP_WATCH) {
+        goto done;
+    }
+    CHECK_EQ_U64(consumed, 241u);
+    CHECK_EQ_U64(ticks_of(m), 241u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0u);
+    CHECK_EQ_U64(m->ram[0x0401u], 1u);
+    CHECK_EQ_U64(m->ram[0xFD02u], 0xE7u);
+
+    uint8_t timer[4] = {0xA5u, 0xA5u, 0xA5u, 0xA5u};
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD00u, timer, sizeof timer), LYNX_OK);
+    CHECK_EQ_U64(timer[0], 1u);
+    CHECK_EQ_U64(timer[1], 0x88u);
+    CHECK_EQ_U64(timer[2], 0u);
+    CHECK_EQ_U64(timer[3] & 0x08u, 0x08u);
+    uint8_t irq[2] = {0xA5u, 0xA5u};
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD80u, irq, sizeof irq), LYNX_OK);
+    CHECK_EQ_U64(irq[0], 1u);
+    CHECK_EQ_U64(irq[1], 1u);
+
+done:
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_tracer\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -3654,6 +3721,7 @@ static const struct {
     {"snapshot_refusal", case_snapshot_refusal},
     {"snapshot_roundtrip", case_snapshot_roundtrip},
     {"snapshot_continue", case_snapshot_continue},
+    {"timer_tracer", case_timer_tracer},
     {"watch_controls", case_watch_controls},
     {"watch_independent", case_watch_independent},
     {"watch_post_write", case_watch_post_write},

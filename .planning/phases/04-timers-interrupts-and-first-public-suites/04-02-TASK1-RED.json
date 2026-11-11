@@ -1,0 +1,11 @@
+{
+  "command": "build/check/tests/lynx-test-api timer_tracer",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.timer_tracer\n",
+  "consoleOutput": "tests/api/test_api.c:3667: stop == LYNX_STOP_WATCH failed: 5 != 2\n",
+  "targetTest": "api.timer_tracer",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "The guest programs timer 0, reads DONE and pending IRQ, stores the results, and reaches the watched RAM store: LYNX_STOP_WATCH (2).",
+  "actual": "The first mapped write to FD00 is unavailable and the guest stops before the result store: LYNX_STOP_UNAVAILABLE (5).",
+  "semanticAssessment": "The named TAP case executed and failed on the planned observable timer-path assertion; the failure is the missing Mikey mapped behavior, not a build, discovery, parser, fixture, or unrelated assertion failure."
+}
