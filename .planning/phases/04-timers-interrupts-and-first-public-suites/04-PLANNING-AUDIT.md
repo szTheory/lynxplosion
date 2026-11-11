@@ -1,0 +1,11 @@
+# Phase 4 — Planning Audit
+
+The configured planner produced 12 sequential plans and 25 tasks. Independent plan checking passed after one warning was corrected: the suite harness now explicitly emits into the directory used by its verification command. A final shared-schema check also removed invalid verification labels from unresolved prohibitions; the independent checker confirms all 24 projected items remain descriptor-less, flagged and unverified. No implementation build or Phase4 runtime result is claimed here.
+
+Central decision coverage is 9/9; post-planning gap analysis covers all eight requirements and nine decisions. Both deterministic verification-command probes report 25 commands, zero blockers/warnings and no read errors; all runnable commands also pass Bash syntax checks. Frontmatter/task structure validators pass. The UI gate reports no frontend indicators and no block; there is no AI/ORM schema work.
+
+All 18 resolved edge predicates are represented in plan truths. TIM-02 and EVD-04 classifier gaps remain flagged with concrete planned predicates. Two descriptor-less value prohibitions remain unresolved/unverified; no wired check or owner acceptance is fabricated. Formal responsibility-map/research-question checker dimensions skip because those exact optional sections are absent; ownership and explicit technical uncertainties are in CONTEXT/RESEARCH and the source audit in Plan12.
+
+The plan sequence covers source-build/load proof; scheduler/standalone timers; DONE/borrow/links; IRQ/POLL order; request hold/readiness; snapshot equivalence; source-generated oracle and per-profile CPU/timer capture; no-run/model/count/symbol controls; named timer/ordering faults; and final review/local/Linux/exact-head CI qualification. Registration/inventory/claim updates accompany behavior tasks. Same-build snapshot format changes are costly/reversible under the existing refusal policy, with no new migration or approval boundary.
+
+Standing owner stops remain unchanged. O1 blocks named-profile suite-pass claims while raw selected-profile source-oracle observations proceed. The first wrapper/link and guest-time measurements remain executable proof work. No new dependencies, firmware, physical tests, licence decision, public artifact channel or release is authorized.
