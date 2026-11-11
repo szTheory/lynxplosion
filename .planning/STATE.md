@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 4
+current_plan: 5
 status: executing
-stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-11-11T05:39:03.300Z"
+stopped_at: Completed 04-04-PLAN.md
+last_updated: "2026-11-11T06:28:02.220Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 3 complete, transitioned to Phase 4
-state_head: 5e713424ea1f2c5a760cd08a10116be6e93f1dbc
+state_head: "0bdc78559ba3df9151ca6ceb53c0eeefe03ab126"
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 36
+  completed_plans: 37
   percent: 50
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 ## Current Position
 
 Phase: 4 (Timers, Interrupts and First Public Suites) — READY TO EXECUTE
-Current Plan: 4
+Current Plan: 5
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-10 — Phase 3 complete, transitioned to Phase 4
@@ -95,6 +95,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P01 | 137 min | 3 tasks | 15 files |
 | Phase 04 P02 | 25min | 2 tasks | 12 files |
 | Phase 04 P03 | 38min | 2 tasks | 8 files |
+| Phase 04 P04 | 46 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -179,6 +180,9 @@ Recent decisions affecting current work:
 - [Phase 04]: CTLB bit 1 is a one-event borrow-in strobe and bit 3 sets or clears DONE; pinned guest behavior is comparison evidence, not hardware qualification.
 - [Phase 04]: Only source-declared timer links 0→2→4 and 1→3→5→7 are enabled; unsupported timer 0, timer 1/audio 3, and timer 6 inputs refuse before mutation.
 - [Phase 04]: CTLB low status-bit lifetime is explicit model policy until the next timer event because reviewed primary notes do not define stable read lifetime.
+- [Phase 04]: Existing IRQ and scheduler behavior was already green, so Plan 4 adds permanent observations without fabricating RED evidence.
+- [Phase 04]: Timer ordinals are fixed 0–7 and production coalesces the bank into one candidate; no dynamic sequence counter or exhaustion state exists.
+- [Phase 04]: Timer-before-CPU ordering and fixed-zero timing remain software policy, not hardware timing or profile qualification.
 
 ### Pending Todos
 
@@ -186,7 +190,7 @@ None yet.
 
 ### Blockers/Concerns
 
-No blockers. Open owner decisions that shape claims but do not stop work:
+A phase-level verification blocker remains; Plan 5 can proceed. Other open owner decisions shape claims but do not stop work:
 
 - O1 (baseline Lynx model/CPU profile): no baseline adopted; profiles are data (`none`, `lynx1`, `lynx2`); claims name profile `none` only.
 - O6 (clean-room protocol): policy and exposure record stay DRAFT; no emulator source opened in Phases 1-2.
@@ -194,6 +198,7 @@ No blockers. Open owner decisions that shape claims but do not stop work:
 - O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
 - Phase 3 goal verification and software qualification pass. CON-01 remains globally open for the actual-frame and actual-audio consumer obligations already scheduled in Phases 5 and 6; the Phase 3 snapshot/silence slice is complete. Research flags remain for Phases 4-6.
 - Carried follow-ups: bus tick stamp is plumbed but unobserved until a device consumes it (Phase 4); `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
+- Phase 4 final verification is blocked until Plan 06 serializes timer_bank.last_event_valid and last_event_tick in snapshots; api.snapshot_refusal and api.snapshot_roundtrip currently fail their whole-machine equality controls for these fields. Preserve the exact failure evidence in .planning/phases/04-timers-interrupts-and-first-public-suites/deferred-items.md.
 
 ## Deferred Items
 
@@ -205,6 +210,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T05:39:03.024Z
-Stopped at: Completed 04-03-PLAN.md
+Last session: 2026-11-11T06:28:01.847Z
+Stopped at: Completed 04-04-PLAN.md
 Resume file: None
