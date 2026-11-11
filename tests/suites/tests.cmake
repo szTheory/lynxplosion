@@ -5,7 +5,8 @@ target_include_directories(lynx-test-suites PRIVATE ${PROJECT_SOURCE_DIR}/core)
 target_link_libraries(lynx-test-suites PRIVATE lynx_core)
 target_compile_definitions(lynx-test-suites PRIVATE
   _POSIX_C_SOURCE=200809L
-  LYNX_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
+  LYNX_PROJECT_ROOT="${PROJECT_SOURCE_DIR}"
+  LYNX_SCRATCH_ROOT="${LYNX_SCRATCH_DIR}/suites")
 lynx_warnings(lynx-test-suites)
 lynx_sanitize(lynx-test-suites)
 set_target_properties(lynx-test-suites PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)

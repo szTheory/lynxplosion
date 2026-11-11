@@ -171,6 +171,8 @@ TIMERS_MAIN_AFTER=$(verify_pinned_file timers/main.c)
   printf 'timers_source_sha256=%s\n' "$TIMERS_AFTER"
   printf 'license_sha256=%s\n' "$LICENSE_SHA"
   printf 'cpu_object_sha256=%s\n' "$(sha256 "$OUT/cpu.bll")"
+  printf 'cpu_labels_sha256=%s\n' "$(sha256 "$OUT/cpu.lbl")"
   printf 'timers_object_sha256=%s\n' "$(sha256 "$OUT/timers.bll")"
+  printf 'timers_labels_sha256=%s\n' "$(sha256 "$OUT/timers.lbl")"
 } > "$OUT/build-record.txt"
 cat "$OUT/build-record.txt"

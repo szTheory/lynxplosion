@@ -2,13 +2,17 @@
    This intentionally distinguishes raw guest observations from their
    comparison with the pinned software oracle. */
 #include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "internal.h"
 #include "lynxplosion.h"
@@ -94,6 +98,12 @@ typedef struct timer_paths {
     char labels[4096];
 } timer_paths;
 
+typedef struct atomic_output {
+    FILE *stream;
+    char temporary_path[4096];
+    char final_path[4096];
+} atomic_output;
+
 static const char *const symbol_names[14] = {
     "suite_entry", "suite_test_entry", "_g_results", "suite_result_end",
     "suite_progress", "suite_model", "suite_done", "suite_end",
@@ -120,6 +130,171 @@ static int valid_hex(const char *text, size_t length)
     if (strlen(text) != length) return 0;
     for (i = 0u; i < length; i++) if (hex_digit((unsigned char)text[i]) < 0) return 0;
     return 1;
+}
+
+static int validate_owned_output_directory(const char *directory)
+{
+#ifndef LYNX_SCRATCH_ROOT
+#error LYNX_SCRATCH_ROOT must be defined for suite output ownership
+#endif
+    char canonical_root[4096];
+    char canonical_directory[4096];
+    char marker_path[4096];
+    char expected_prefix[8192];
+    char marker[8192];
+    struct stat info;
+    struct stat marker_info;
+    size_t prefix_length;
+    size_t length = 0u;
+    size_t i;
+    ssize_t count;
+    int marker_fd;
+    int n;
+    if (realpath(LYNX_SCRATCH_ROOT, canonical_root) == NULL ||
+        strcmp(canonical_root, LYNX_SCRATCH_ROOT) != 0 ||
+        lstat(directory, &info) != 0 || !S_ISDIR(info.st_mode) || S_ISLNK(info.st_mode) ||
+        realpath(directory, canonical_directory) == NULL ||
+        strcmp(canonical_directory, directory) != 0) {
+        return fail("build directory is not a canonical invocation-owned directory");
+    }
+    prefix_length = strlen(canonical_root);
+    if (strncmp(canonical_directory, canonical_root, prefix_length) != 0 ||
+        canonical_directory[prefix_length] != '/' ||
+        canonical_directory[prefix_length + 1u] == '\0') {
+        return fail("build directory is outside invocation-owned scratch");
+    }
+    n = snprintf(marker_path, sizeof marker_path, "%s/.lynx-suite-owner", directory);
+    if (n < 0 || (size_t)n >= sizeof marker_path) return fail("build directory owner marker path too long");
+    if (lstat(marker_path, &marker_info) != 0 || !S_ISREG(marker_info.st_mode) || S_ISLNK(marker_info.st_mode)) {
+        return fail("build directory owner marker is missing or invalid");
+    }
+    marker_fd = open(marker_path, O_RDONLY);
+    if (marker_fd < 0 || fstat(marker_fd, &info) != 0 || !S_ISREG(info.st_mode) ||
+        info.st_dev != marker_info.st_dev || info.st_ino != marker_info.st_ino) {
+        if (marker_fd >= 0) (void)close(marker_fd);
+        return fail("build directory owner marker is missing or invalid");
+    }
+    while (length < sizeof marker - 1u) {
+        count = read(marker_fd, marker + length, sizeof marker - 1u - length);
+        if (count < 0) {
+            (void)close(marker_fd);
+            return fail("build directory owner marker is unreadable");
+        }
+        if (count == 0) break;
+        length += (size_t)count;
+    }
+    if (length == sizeof marker - 1u) {
+        char extra;
+        count = read(marker_fd, &extra, 1u);
+        if (count != 0) {
+            (void)close(marker_fd);
+            return fail("build directory owner marker is malformed");
+        }
+    }
+    if (close(marker_fd) != 0) return fail("build directory owner marker is unreadable");
+    n = snprintf(expected_prefix, sizeof expected_prefix,
+                 "lynx-suite-output-v1\n%s\n", canonical_directory);
+    if (n < 0 || (size_t)n >= sizeof expected_prefix) return fail("build directory owner marker path too long");
+    prefix_length = (size_t)n;
+    if (length != prefix_length + 49u || memcmp(marker, expected_prefix, prefix_length) != 0 ||
+        marker[length - 1u] != '\n') return fail("build directory owner marker is malformed");
+    for (i = prefix_length; i < length - 1u; i++) {
+        if (hex_digit((unsigned char)marker[i]) < 0) return fail("build directory owner marker is malformed");
+    }
+    return 0;
+}
+
+static int atomic_output_begin(const char *path, atomic_output *output)
+{
+    char directory[4096];
+    char temporary_template[4096];
+    const char *slash = strrchr(path, '/');
+    int descriptor;
+    int n;
+    size_t directory_length;
+    if (slash == NULL || slash == path || slash[1] == '\0') return fail("output path must be a file in an owned directory");
+    directory_length = (size_t)(slash - path);
+    if (directory_length >= sizeof directory) return fail("output directory path too long");
+    memcpy(directory, path, directory_length);
+    directory[directory_length] = '\0';
+    if (validate_owned_output_directory(directory) != 0) return 1;
+    n = snprintf(temporary_template, sizeof temporary_template,
+                 "%s/.lynx-suite-write-XXXXXX", directory);
+    if (n < 0 || (size_t)n >= sizeof temporary_template ||
+        strlen(path) >= sizeof output->final_path) return fail("output path too long");
+    descriptor = mkstemp(temporary_template);
+    if (descriptor < 0) return fail("cannot exclusively create suite output temporary");
+    if (fchmod(descriptor, S_IRUSR | S_IWUSR) != 0) {
+        (void)close(descriptor);
+        (void)remove(temporary_template);
+        return fail("cannot restrict suite output temporary permissions");
+    }
+    output->stream = fdopen(descriptor, "wb");
+    if (output->stream == NULL) {
+        (void)close(descriptor);
+        (void)remove(temporary_template);
+        return fail("cannot open suite output temporary stream");
+    }
+    (void)snprintf(output->temporary_path, sizeof output->temporary_path, "%s", temporary_template);
+    (void)snprintf(output->final_path, sizeof output->final_path, "%s", path);
+    return 0;
+}
+
+static void atomic_output_abort(atomic_output *output)
+{
+    if (output->stream != NULL) {
+        (void)fclose(output->stream);
+        output->stream = NULL;
+    }
+    if (output->temporary_path[0] != '\0') (void)remove(output->temporary_path);
+}
+
+static int atomic_output_commit(atomic_output *output)
+{
+    struct stat info;
+    int stream_error = ferror(output->stream) != 0 || fflush(output->stream) != 0;
+    int close_error = fclose(output->stream) != 0;
+    output->stream = NULL;
+    if (stream_error != 0 || close_error != 0 ||
+        rename(output->temporary_path, output->final_path) != 0 ||
+        lstat(output->final_path, &info) != 0 || !S_ISREG(info.st_mode) || S_ISLNK(info.st_mode)) {
+        (void)remove(output->temporary_path);
+        return fail("cannot atomically publish suite output");
+    }
+    output->temporary_path[0] = '\0';
+    return 0;
+}
+
+static int create_owned_temp_slot(const char *directory, const char *prefix, char path[4096])
+{
+    char template[4096];
+    int descriptor;
+    int n;
+    if (validate_owned_output_directory(directory) != 0) return 1;
+    n = snprintf(template, sizeof template, "%s/.%s-XXXXXX", directory, prefix);
+    if (n < 0 || (size_t)n >= sizeof template) return fail("temporary proof path too long");
+    descriptor = mkstemp(template);
+    if (descriptor < 0) return fail("cannot exclusively create temporary proof slot");
+    if (close(descriptor) != 0 || strlen(template) >= 4096u) {
+        (void)remove(template);
+        return fail("cannot reserve temporary proof slot");
+    }
+    (void)snprintf(path, 4096u, "%s", template);
+    return 0;
+}
+
+static int remove_owned_temp_slot(const char *directory, const char *path)
+{
+    struct stat info;
+    const char *slash = strrchr(path, '/');
+    size_t directory_length = strlen(directory);
+    if (validate_owned_output_directory(directory) != 0 || slash == NULL ||
+        (size_t)(slash - path) != directory_length || strncmp(path, directory, directory_length) != 0 ||
+        slash[1] == '\0') return fail("temporary proof path is outside its owned directory");
+    if (lstat(path, &info) != 0) return errno == ENOENT ? 0 : fail("cannot inspect temporary proof output");
+    if (!S_ISREG(info.st_mode) || S_ISLNK(info.st_mode)) return fail("temporary proof output is not a regular file");
+    if (remove(path) != 0) return fail("cannot remove temporary proof output");
+    return 0;
 }
 
 static int parse_decimal(const char *text, uint32_t *out)
@@ -873,6 +1048,139 @@ static int json_array_is(const json_object *object, const char *key,
     return 1;
 }
 
+static int checked_join(char *out, size_t capacity, const char *directory, const char *file);
+
+static int pinned_manifest_hash(const char *relative_path, char expected[65])
+{
+    char path[4096];
+    char *manifest = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    int result = 1;
+    if (snprintf(path, sizeof path, "%s/build/pins/lynx-tests/.lynx-pin-files",
+                 LYNX_PROJECT_ROOT) >= (int)sizeof path ||
+        read_text(path, &manifest, &length, 262144u) != 0) return 1;
+    while (offset < length) {
+        size_t end = offset;
+        char *separator;
+        while (end < length && manifest[end] != '\n') end++;
+        if (end > offset && manifest[offset] != '#') {
+            if (end < length) manifest[end] = '\0';
+            separator = strchr(manifest + offset, ' ');
+            if (separator != NULL) {
+                *separator++ = '\0';
+                while (*separator == ' ') separator++;
+                if (strcmp(separator, relative_path) == 0 &&
+                    valid_hex(manifest + offset, 64u)) {
+                    memcpy(expected, manifest + offset, 65u);
+                    result = 0;
+                    break;
+                }
+            }
+        }
+        offset = end + 1u;
+    }
+    free(manifest);
+    return result;
+}
+
+static int verify_pinned_source(const char *relative_path, const char *expected_sha)
+{
+    char path[4096];
+    char manifest_sha[65];
+    char actual_sha[65];
+    if (snprintf(path, sizeof path, "%s/build/pins/lynx-tests/%s",
+                 LYNX_PROJECT_ROOT, relative_path) >= (int)sizeof path ||
+        pinned_manifest_hash(relative_path, manifest_sha) != 0 ||
+        strcmp(manifest_sha, expected_sha) != 0 ||
+        file_sha256(path, actual_sha) != 0 || strcmp(actual_sha, expected_sha) != 0) {
+        return fail("oracle: source identity mismatch");
+    }
+    return 0;
+}
+
+static int verify_pinned_revision(const suite_oracle *oracle)
+{
+    char pins_path[4096];
+    char stamp_path[4096];
+    char *pins = NULL;
+    char *stamp = NULL;
+    size_t pins_length = 0u;
+    size_t stamp_length = 0u;
+    size_t offset = 0u;
+    int found = 0;
+    if (snprintf(pins_path, sizeof pins_path, "%s/pins.txt", LYNX_PROJECT_ROOT) >= (int)sizeof pins_path ||
+        snprintf(stamp_path, sizeof stamp_path, "%s/build/pins/lynx-tests/.lynx-pin", LYNX_PROJECT_ROOT) >= (int)sizeof stamp_path ||
+        read_text(pins_path, &pins, &pins_length, 65536u) != 0 ||
+        read_text(stamp_path, &stamp, &stamp_length, 1024u) != 0) goto bad;
+    while (offset < pins_length) {
+        size_t end = offset;
+        char *line = pins + offset;
+        char *save = NULL;
+        char *name;
+        char *version;
+        char *url;
+        char *archive_sha;
+        while (end < pins_length && pins[end] != '\n') end++;
+        if (end < pins_length) pins[end] = '\0';
+        name = strtok_r(line, " \t", &save);
+        if (name != NULL && strcmp(name, "lynx-tests") == 0) {
+            char *revision;
+            version = strtok_r(NULL, " \t", &save);
+            url = strtok_r(NULL, " \t", &save);
+            archive_sha = strtok_r(NULL, " \t", &save);
+            if (version == NULL || url == NULL || archive_sha == NULL ||
+                strtok_r(NULL, " \t", &save) != NULL ||
+                strcmp(archive_sha, oracle->archive) != 0 ||
+                (revision = strstr(url, "/archive/")) == NULL) goto bad;
+            revision += 9;
+            if (strlen(revision) != 47u || strcmp(revision + 40u, ".tar.gz") != 0 ||
+                memcmp(revision, oracle->revision, 40u) != 0) goto bad;
+            found = 1;
+            break;
+        }
+        offset = end + 1u;
+    }
+    if (found == 0 || stamp_length < 64u ||
+        memcmp(stamp, oracle->archive, 64u) != 0 ||
+        (stamp[64] != '\n' && stamp[64] != '\0')) goto bad;
+    free(pins);
+    free(stamp);
+    return 0;
+bad:
+    free(pins);
+    free(stamp);
+    return fail("oracle: source identity mismatch");
+}
+
+static int verify_suite_build_artifacts(const char *directory, const char *suite)
+{
+    char record_path[4096];
+    char object_path[4096];
+    char labels_path[4096];
+    char object_key[64];
+    char labels_key[64];
+    char expected[128];
+    char actual[65];
+    if ((strcmp(suite, "cpu") != 0 && strcmp(suite, "timers") != 0) ||
+        checked_join(record_path, sizeof record_path, directory, "build-record.txt") != 0 ||
+        snprintf(object_path, sizeof object_path, "%s/%s.bll", directory, suite) >= (int)sizeof object_path ||
+        snprintf(labels_path, sizeof labels_path, "%s/%s.lbl", directory, suite) >= (int)sizeof labels_path ||
+        snprintf(object_key, sizeof object_key, "%s_object_sha256", suite) >= (int)sizeof object_key ||
+        snprintf(labels_key, sizeof labels_key, "%s_labels_sha256", suite) >= (int)sizeof labels_key) {
+        return fail("build record path too long");
+    }
+    if (file_sha256(object_path, actual) != 0 ||
+        record_value(record_path, object_key, expected, sizeof expected) != 0 || strcmp(actual, expected) != 0) {
+        return fail("build record object identity mismatch");
+    }
+    if (file_sha256(labels_path, actual) != 0 ||
+        record_value(record_path, labels_key, expected, sizeof expected) != 0 || strcmp(actual, expected) != 0) {
+        return fail("build record labels identity mismatch");
+    }
+    return 0;
+}
+
 static int read_build_identity(const char *directory, const suite_oracle *oracle)
 {
     char path[4096];
@@ -893,6 +1201,14 @@ static int read_build_identity(const char *directory, const suite_oracle *oracle
     CHECK_RECORD("timers_source_sha256", oracle->timers_asm);
     CHECK_RECORD("license_sha256", oracle->license);
 #undef CHECK_RECORD
+    if (verify_pinned_revision(oracle) != 0 ||
+        verify_pinned_source("cpu/main.c", oracle->cpu_main) != 0 ||
+        verify_pinned_source("cpu/tests.s", oracle->cpu_asm) != 0 ||
+        verify_pinned_source("timers/main.c", oracle->timers_main) != 0 ||
+        verify_pinned_source("timers/tests.s", oracle->timers_asm) != 0 ||
+        verify_pinned_source("LICENSE", oracle->license) != 0) {
+        return fail("oracle: source identity mismatch");
+    }
     return 0;
 }
 
@@ -934,6 +1250,7 @@ static int pending_descriptor_validate(const char *descriptor_path, const char *
     if (!json_string_is(&descriptor, "schema", "lynxplosion.timer-source-pending") ||
         !json_number_is(&descriptor, "version", 1u)) return fail("pending descriptor unsupported schema/version");
     if (parse_oracle(oracle_path, &oracle) != 0 || read_build_identity(directory, &oracle) != 0 ||
+        verify_suite_build_artifacts(directory, "timers") != 0 ||
         file_sha256(oracle_path, oracle_sha) != 0) return 1;
 #ifndef LYNX_PROJECT_ROOT
 #error LYNX_PROJECT_ROOT must be defined for suite evidence
@@ -1621,6 +1938,7 @@ static int cascade_proof_write(const char *profile, const char *directory,
     uint32_t enable_to_first_poll_cycles = 4u;
     uint32_t first_poll, no_irq_cycles, irq_cycles;
     uint32_t no_irq_ticks, irq_ticks, poll_period = 17u * 64u;
+    atomic_output proof_output = {0};
     FILE *out = NULL;
     if (pending_descriptor_validate(descriptor_path, directory, oracle_path) != 0 ||
         parse_oracle(oracle_path, &oracle) != 0 || read_build_identity(directory, &oracle) != 0 ||
@@ -1679,8 +1997,8 @@ static int cascade_proof_write(const char *profile, const char *directory,
         no_irq_ticks != 70u || irq_ticks != 120u || poll_period != 1088u) {
         return fail("cascade proof: instruction cycle derivation mismatch");
     }
-    out = fopen(proof_path, "wb");
-    if (out == NULL) return fail("cascade proof: cannot create proof output");
+    if (atomic_output_begin(proof_path, &proof_output) != 0) return 1;
+    out = proof_output.stream;
     (void)fprintf(out,
         "{\n  \"schema\":\"lynxplosion.timer-cascade-proof\",\n  \"version\":1,\n"
         "  \"profile\":\"%s\",\n  \"policy\":\"timer-phase-fixed-zero-1\",\n"
@@ -1706,8 +2024,7 @@ static int cascade_proof_write(const char *profile, const char *directory,
             if (i != 191u) poll += irq != 0 ? irq_ticks : no_irq_ticks;
         }
         if (acknowledgements != 12u || poll != 13990u || expiry != phase + 16u * 64u + 12u * poll_period) {
-            fclose(out);
-            (void)remove(proof_path);
+            atomic_output_abort(&proof_output);
             return fail("cascade proof: phase enumeration did not derive the pinned 12-count path");
         }
         (void)fprintf(out,
@@ -1727,7 +2044,7 @@ static int cascade_proof_write(const char *profile, const char *directory,
         tests_sha, main_sha, bll_sha, labels_sha, oracle_sha, descriptor_sha,
         raw_sha, record_sha, comparison_sha, wrapper_sha, (unsigned)test6_address,
         (unsigned)test6_address + 36u);
-    if (fclose(out) != 0) return fail("cascade proof: cannot finish proof output");
+    if (atomic_output_commit(&proof_output) != 0) return fail("cascade proof: cannot finish proof output");
     return 0;
 }
 
@@ -1752,6 +2069,7 @@ static int timer_companion_write(const char *profile, const timer_paths *paths,
     char raw_sha[65], record_sha[65], comparison_sha[65], bll_sha[65];
     char labels_sha[65], oracle_sha[65], descriptor_sha[65], proof_sha[65];
     char detected[32], probe_bytes[32];
+    atomic_output companion_output = {0};
     FILE *out;
     if (file_sha256(paths->raw, raw_sha) != 0 || file_sha256(paths->record, record_sha) != 0 ||
         file_sha256(paths->comparison, comparison_sha) != 0 || file_sha256(paths->bll, bll_sha) != 0 ||
@@ -1762,8 +2080,8 @@ static int timer_companion_write(const char *profile, const timer_paths *paths,
         timer_record_field(paths->record, "model_probe_bytes", probe_bytes, sizeof probe_bytes) != 0) {
         return fail("timer companion: source artifact hash or run metadata missing");
     }
-    out = fopen(paths->companion, "wb");
-    if (out == NULL) return fail("timer companion: cannot create pending record");
+    if (atomic_output_begin(paths->companion, &companion_output) != 0) return 1;
+    out = companion_output.stream;
     (void)fprintf(out,
         "{\n  \"schema\":\"lynxplosion.timer-source-pending-record\",\n  \"version\":1,\n"
         "  \"profile\":\"%s\",\n  \"decision\":\"D-10\",\n  \"requirement\":\"EVD-02\",\n"
@@ -1778,7 +2096,7 @@ static int timer_companion_write(const char *profile, const timer_paths *paths,
         "  \"profile_qualification\":\"unresolved\"\n}\n",
         profile, agreements, detected, probe_bytes, ticks, raw_sha, record_sha,
         comparison_sha, bll_sha, labels_sha, oracle_sha, descriptor_sha, proof_sha);
-    if (fclose(out) != 0) return fail("timer companion: cannot finish pending record");
+    if (atomic_output_commit(&companion_output) != 0) return fail("timer companion: cannot finish pending record");
     return 0;
 }
 
@@ -1796,7 +2114,6 @@ static int timer_companion_validate(const char *profile, const char *directory,
     char raw_sha[65], record_sha[65], comparison_sha[65], descriptor_sha[65], proof_sha[65];
     char actual[65], detected[32], probe_bytes[32], temp_proof[4096];
     json_object companion;
-    int n;
     if (timer_paths_make(&paths, directory, profile) != 0 ||
         strcmp(paths.raw, raw_path) != 0 || strcmp(paths.record, record_path) != 0) return 1;
     if (validate_timer_observation(profile, directory, oracle_path, descriptor_path, &paths,
@@ -1810,16 +2127,14 @@ static int timer_companion_validate(const char *profile, const char *directory,
         timer_record_field(paths.record, "model_probe_bytes", probe_bytes, sizeof probe_bytes) != 0) {
         return fail("timer companion: complete raw, run, comparison or proof inputs missing");
     }
-    n = snprintf(temp_proof, sizeof temp_proof, "%s/.cascade-proof-%s.verify.json", directory, profile);
-    if (n < 0 || (size_t)n >= sizeof temp_proof) return fail("timer companion: temporary proof path too long");
-    (void)remove(temp_proof);
+    if (create_owned_temp_slot(directory, "cascade-proof-verify", temp_proof) != 0) return 1;
     if (cascade_proof_write(profile, directory, oracle_path, descriptor_path,
                             source_root, temp_proof) != 0 ||
         file_sha256(temp_proof, actual) != 0 || strcmp(actual, proof_sha) != 0) {
-        (void)remove(temp_proof);
+        (void)remove_owned_temp_slot(directory, temp_proof);
         return fail("timer companion: cascade proof is stale or does not match linked source evidence");
     }
-    (void)remove(temp_proof);
+    if (remove_owned_temp_slot(directory, temp_proof) != 0) return 1;
     if (json_parse_file(paths.companion, timer_companion_specs,
                         sizeof timer_companion_specs / sizeof timer_companion_specs[0],
                         &companion, "timer companion") != 0 ||
@@ -1913,12 +2228,9 @@ static int checked_join(char *out, size_t capacity, const char *directory, const
 static int clear_old_outputs(const char *directory, const char *case_name)
 {
     static const char *const kinds[] = {"run-record", "raw-results", "comparison", "cascade-proof", "pending-record"};
-    struct stat info;
     char path[4096];
     size_t i;
-    if (lstat(directory, &info) != 0 || !S_ISDIR(info.st_mode) || S_ISLNK(info.st_mode)) {
-        return fail("build directory must be a real invocation-owned directory");
-    }
+    if (validate_owned_output_directory(directory) != 0) return 1;
     for (i = 0u; i < sizeof kinds / sizeof kinds[0]; i++) {
         char name[64];
         const char *extension = i == 0u ? "txt" : (i < 3u ? "tsv" : "json");
@@ -1937,23 +2249,27 @@ static int write_raw(const char *path, const char *suite, const char *machine_pr
                      const char *selected_profile, const char *case_name,
                      const uint8_t *results, uint32_t count)
 {
-    FILE *file = fopen(path, "wb");
+    atomic_output output = {0};
+    FILE *file;
     uint32_t i;
-    if (file == NULL) return fail("cannot create raw result record");
+    if (atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
     (void)fprintf(file, "suite\t%s\nmachine_profile\t%s\nprofile_input\t%s\nram_seed\t%s\nresult_count\t%u\n",
                   suite, machine_profile, selected_profile, case_name, count);
     for (i = 0u; i < count; i++) (void)fprintf(file, "result\t%" PRIu32 "\t%02x\n", i, results[i]);
-    if (fclose(file) != 0) return fail("cannot close raw result record");
+    if (atomic_output_commit(&output) != 0) return fail("cannot close raw result record");
     return 0;
 }
 
 static int write_comparison(const char *path, const suite_oracle *oracle,
                             const uint8_t *results, uint32_t count)
 {
-    FILE *file = fopen(path, "wb");
+    atomic_output output = {0};
+    FILE *file;
     uint32_t i;
     int match = 1;
-    if (file == NULL) return fail("cannot create comparison record");
+    if (atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
     for (i = 0u; i < count; i++) {
         size_t j;
         int accepted = 0;
@@ -1965,17 +2281,19 @@ static int write_comparison(const char *path, const suite_oracle *oracle,
         if (accepted == 0) match = 0;
     }
     (void)fprintf(file, "comparison\t%s\n", match != 0 ? "match" : "mismatch");
-    if (fclose(file) != 0) return fail("cannot close comparison record");
+    if (atomic_output_commit(&output) != 0) return fail("cannot close comparison record");
     return match != 0 ? 0 : fail("source oracle comparison mismatch");
 }
 
 static int write_timer_comparison(const char *path, const suite_oracle *oracle,
                                   const uint8_t *results, int *matches)
 {
-    FILE *file = fopen(path, "wb");
+    atomic_output output = {0};
+    FILE *file;
     uint32_t i;
     int match = 1;
-    if (file == NULL) return fail("cannot create timer comparison record");
+    if (atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
     for (i = 0u; i < TIMER_MEANINGFUL; i++) {
         size_t j;
         int accepted = 0;
@@ -1989,7 +2307,7 @@ static int write_timer_comparison(const char *path, const suite_oracle *oracle,
         if (accepted == 0) match = 0;
     }
     (void)fprintf(file, "comparison\t%s\n", match != 0 ? "match" : "mismatch");
-    if (fclose(file) != 0) return fail("cannot close timer comparison record");
+    if (atomic_output_commit(&output) != 0) return fail("cannot close timer comparison record");
     *matches = match;
     return 0;
 }
@@ -2170,8 +2488,10 @@ static int write_run_record(const char *path, const char *machine_profile,
                             uint8_t probe, uint8_t model, uint8_t progress,
                             int observed_model, int source_tuple_model)
 {
-    FILE *file = fopen(path, "wb");
-    if (file == NULL) return fail("cannot create suite run record");
+    atomic_output output = {0};
+    FILE *file;
+    if (atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
     (void)fprintf(file,
         "evidence=raw-observation-plus-source-comparison\n"
         "suite=cpu\nmachine_profile=%s\nprofile_input=%s\nram_seed=%s\n"
@@ -2194,7 +2514,7 @@ static int write_run_record(const char *path, const char *machine_profile,
         ticks - CPU_MIN_TICKS, CPU_MAX_TICKS - ticks,
         ticks, CPU_MIN_TICKS, CPU_MAX_TICKS,
         probe, model, progress);
-    if (fclose(file) != 0) return fail("cannot close suite run record");
+    if (atomic_output_commit(&output) != 0) return fail("cannot close suite run record");
     return 0;
 }
 
@@ -2255,7 +2575,6 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
     if (strcmp(case_name, "zero") != 0 && strcmp(case_name, "seeded") != 0) {
         return fail("CPU RAM case must be zero or seeded");
     }
-    if (clear_old_outputs(directory, case_name) != 0) return 1;
     if (parse_oracle(oracle_path, &oracle) != 0 || read_build_identity(directory, &oracle) != 0) goto done;
     if (snprintf(record_name, sizeof record_name, "run-record-%s.txt", case_name) >= (int)sizeof record_name ||
         snprintf(raw_name, sizeof raw_name, "raw-results-%s.tsv", case_name) >= (int)sizeof raw_name ||
@@ -2275,6 +2594,8 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
     if (file_sha256(bll_path, bll_sha) != 0 ||
         file_sha256(labels_path, labels_sha) != 0 ||
         file_sha256(oracle_path, oracle_sha) != 0) goto done;
+    if (verify_suite_build_artifacts(directory, "cpu") != 0 ||
+        clear_old_outputs(directory, case_name) != 0) goto done;
     if (machine_create(&instance, bll, bll_length, machine_profile) != 0 ||
         lynx_get_identity(instance.machine, &identity) != LYNX_OK ||
         identity.has_content != 1u || identity.content_format != LYNX_CONTENT_BS93 ||
@@ -2463,8 +2784,10 @@ static int write_timer_run_record(const char *path, const char *machine_profile,
                                   uint32_t after_tests_address, uint8_t pending,
                                   int detected_model)
 {
-    FILE *file = fopen(path, "wb");
-    if (file == NULL) return fail("cannot create timer run record");
+    atomic_output output = {0};
+    FILE *file;
+    if (atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
     (void)fprintf(file,
         "evidence=raw-observation-plus-source-comparison\n"
         "suite=timers\nmachine_profile=%s\nprofile_input=%s\nram_seed=zero\n"
@@ -2492,7 +2815,7 @@ static int write_timer_run_record(const char *path, const char *machine_profile,
         probe, model, TIMER_MIN_TICKS, TIMER_MAX_TICKS, ticks,
         ticks - TIMER_MIN_TICKS, TIMER_MAX_TICKS - ticks,
         ticks, TIMER_MIN_TICKS, TIMER_MAX_TICKS, probe, model, progress);
-    if (fclose(file) != 0) return fail("cannot close timer run record");
+    if (atomic_output_commit(&output) != 0) return fail("cannot close timer run record");
     return 0;
 }
 
@@ -2548,7 +2871,6 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         return fail("time: guest ticks outside bounded completion window");
     }
     machine_profile = machine_profile == 0u ? LYNX_PROFILE_LYNX1 : LYNX_PROFILE_LYNX2;
-    if (clear_old_outputs(directory, machine_profile_name) != 0) return 1;
     if (parse_oracle(oracle_path, &oracle) != 0 || read_build_identity(directory, &oracle) != 0) goto done;
     if (pending_descriptor_path != NULL &&
         pending_descriptor_validate(pending_descriptor_path, directory, oracle_path) != 0) goto done;
@@ -2591,6 +2913,8 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         (void)fail("timer wrapper source identity missing from build record");
         goto done;
     }
+    if (verify_suite_build_artifacts(directory, "timers") != 0 ||
+        clear_old_outputs(directory, machine_profile_name) != 0) goto done;
     if (machine_create(&instance, bll, bll_length, machine_profile) != 0 ||
         lynx_get_identity(instance.machine, &identity) != LYNX_OK ||
         identity.has_content != 1u || identity.content_format != LYNX_CONTENT_BS93 ||
@@ -3094,7 +3418,9 @@ static int validate_cpu_record_mode(const char *selected_profile,
     if (profile_index(selected_profile, &selected_index) != 0) {
         return fail("cpu record: explicit lynx1 or lynx2 profile input required");
     }
-    if (parse_oracle(oracle_path, &oracle) != 0 || file_sha256(oracle_path, actual_oracle_sha) != 0 ||
+    if (parse_oracle(oracle_path, &oracle) != 0 || read_build_identity(artifact_directory, &oracle) != 0 ||
+        verify_suite_build_artifacts(artifact_directory, "cpu") != 0 ||
+        file_sha256(oracle_path, actual_oracle_sha) != 0 ||
         checked_join(bll_path, sizeof bll_path, artifact_directory, "cpu.bll") != 0 ||
         checked_join(labels_path, sizeof labels_path, artifact_directory, "cpu.lbl") != 0 ||
         file_sha256(bll_path, actual_bll_sha) != 0 || file_sha256(labels_path, actual_labels_sha) != 0) {
@@ -3253,6 +3579,19 @@ int main(int argc, char **argv)
         puts("pending descriptor: exact D-10 source, policy and environment identity valid");
         return 0;
     }
-    fprintf(stderr, "usage: lynx-test-suites run cpu PROFILE BUILDDIR ORACLE [zero|seeded]\n");
+    fprintf(stderr,
+        "usage: lynx-test-suites COMMAND ...\n"
+        "  run cpu PROFILE BUILDDIR ORACLE [zero|seeded]\n"
+        "  run cpu-selected MACHINE_PROFILE SELECTED_PROFILE BUILDDIR ORACLE CASE\n"
+        "  run timers PROFILE BUILDDIR ORACLE\n"
+        "  run timers-selected MACHINE_PROFILE SELECTED_PROFILE BUILDDIR ORACLE\n"
+        "  observe timers PROFILE BUILDDIR ORACLE PENDING_DESCRIPTOR\n"
+        "  no-run cpu PROFILE BUILDDIR ORACLE\n"
+        "  no-run timers PROFILE BUILDDIR ORACLE PENDING_DESCRIPTOR\n"
+        "  run-bounded cpu PROFILE BUILDDIR ORACLE MAX_GUEST_TICKS\n"
+        "  run-bounded timers PROFILE BUILDDIR ORACLE MAX_GUEST_TICKS\n"
+        "PROFILE and MACHINE_PROFILE must be lynx1 or lynx2. SELECTED_PROFILE\n"
+        "must be lynx1 or lynx2; it is compared with the executed machine.\n"
+        "Use separate arguments; PROFILE syntax does not include a shell pipe.\n");
     return 2;
 }
