@@ -1,0 +1,11 @@
+{
+  "command": "build/check/tests/lynx-test-api timer_standalone",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.timer_standalone\n",
+  "consoleOutput": "tests/api/test_api.c:3799: stop == LYNX_STOP_WATCH failed: 5 != 2\n",
+  "targetTest": "api.timer_standalone",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "The strict BLL guest writes all eight standalone timer register blocks through the CPU bus and reaches its result watch: LYNX_STOP_WATCH (2).",
+  "actual": "The guest reaches timer 1 at FD04, whose mapped register path is unavailable, and stops with LYNX_STOP_UNAVAILABLE (5).",
+  "semanticAssessment": "The named TAP case executed and failed on the planned all-counter mapped timer behavior; this is the missing timer 1–7 implementation, not a build, discovery, parser, fixture, or unrelated assertion failure."
+}

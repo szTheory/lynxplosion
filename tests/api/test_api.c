@@ -3744,6 +3744,91 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static size_t make_timer_bank_guest(uint8_t *program)
+{
+    size_t length = 0u;
+    for (size_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        const uint8_t base = (uint8_t)(0x00u + 4u * (uint8_t)i);
+        const uint8_t backup = (uint8_t)(0xF0u + (uint8_t)i);
+        const uint8_t count = (uint8_t)(0xE0u + (uint8_t)i);
+        const uint8_t source = i < 7u ? (uint8_t)i : 0u;
+        program[length++] = 0xA9u;
+        program[length++] = backup;
+        program[length++] = 0x8Du;
+        program[length++] = base;
+        program[length++] = 0xFDu;
+        program[length++] = 0xA9u;
+        program[length++] = count;
+        program[length++] = 0x8Du;
+        program[length++] = (uint8_t)(base + 2u);
+        program[length++] = 0xFDu;
+        program[length++] = 0xA9u;
+        program[length++] = source;
+        program[length++] = 0x8Du;
+        program[length++] = (uint8_t)(base + 1u);
+        program[length++] = 0xFDu;
+    }
+    program[length++] = 0xA9u;
+    program[length++] = 0x5Au;
+    program[length++] = 0x8Du;
+    program[length++] = 0x00u;
+    program[length++] = 0x04u;
+    return length;
+}
+
+static void case_timer_standalone(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    uint8_t program[160];
+    const size_t program_len = make_timer_bank_guest(program);
+    CHECK_EQ_U64(load_bll_at(m, program, program_len, 0x0200u), LYNX_OK);
+    for (size_t i = 0u; i < LYNX__TIMER_COUNT * 4u; i++) {
+        m->ram[0xFD00u + i] = (uint8_t)(0x50u + (uint8_t)i);
+    }
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 2000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop != LYNX_STOP_WATCH) {
+        goto done;
+    }
+    CHECK_EQ_U64(m->ram[0x0400u], 0x5Au);
+    CHECK(consumed != 0u);
+    uint8_t mapped[LYNX__TIMER_COUNT * 4u];
+    memset(mapped, 0xA5, sizeof mapped);
+    const uint64_t before_peek = ticks_of(m);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD00u, mapped, sizeof mapped), LYNX_OK);
+    CHECK_EQ_U64(ticks_of(m), before_peek);
+    for (size_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        const uint8_t source = i < 7u ? (uint8_t)i : 0u;
+        CHECK_EQ_U64(mapped[i * 4u], 0xF0u + (uint8_t)i);
+        CHECK_EQ_U64(mapped[i * 4u + 1u], source);
+        CHECK_EQ_U64(mapped[i * 4u + 2u], 0xE0u + (uint8_t)i);
+        CHECK_EQ_U64(mapped[i * 4u + 3u], 0u);
+        CHECK_EQ_U64(m->ram[0xFD00u + i * 4u], 0x50u + (uint8_t)(i * 4u));
+    }
+    uint8_t crossing[2] = {0xA5u, 0x5Au};
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD1Fu, crossing, sizeof crossing),
+                 LYNX_ERR_UNAVAILABLE);
+    CHECK_EQ_U64(crossing[0], 0xA5u);
+    CHECK_EQ_U64(crossing[1], 0x5Au);
+
+done:
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_standalone\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -3773,6 +3858,7 @@ static const struct {
     {"snapshot_roundtrip", case_snapshot_roundtrip},
     {"snapshot_continue", case_snapshot_continue},
     {"timer_tracer", case_timer_tracer},
+    {"timer_standalone", case_timer_standalone},
     {"watch_controls", case_watch_controls},
     {"watch_independent", case_watch_independent},
     {"watch_post_write", case_watch_post_write},
