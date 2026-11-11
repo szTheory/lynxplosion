@@ -139,6 +139,8 @@ runner.cli	runner
 suite.build	suite
 suite.build_controls	suite
 suite.cpu.lynx1	suite
+suite.oracle_controls	suite
 suite.oracle_tracer	suite
+suite.symbol_controls	suite
 toolchain.probe	toolchain
 toolchain.probe.self_test	toolchain

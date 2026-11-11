@@ -933,6 +933,17 @@ static int validate_symbols_mode(const char *path)
     return 0;
 }
 
+static int validate_time_mode(const char *text)
+{
+    uint32_t ticks;
+    if (parse_decimal(text, &ticks) != 0) return fail("time: invalid guest tick integer");
+    if (ticks < CPU_MIN_TICKS || ticks > CPU_MAX_TICKS) {
+        return fail("time: guest ticks outside bounded completion window");
+    }
+    printf("suite time: accepted guest ticks=%" PRIu32 "\n", ticks);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 6 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu") == 0) {
@@ -940,6 +951,7 @@ int main(int argc, char **argv)
     }
     if (argc == 3 && strcmp(argv[1], "validate-oracle") == 0) return validate_oracle_mode(argv[2]);
     if (argc == 3 && strcmp(argv[1], "validate-symbols") == 0) return validate_symbols_mode(argv[2]);
+    if (argc == 3 && strcmp(argv[1], "validate-time") == 0) return validate_time_mode(argv[2]);
     fprintf(stderr, "usage: lynx-test-suites run cpu PROFILE BUILDDIR ORACLE\n");
     return 2;
 }

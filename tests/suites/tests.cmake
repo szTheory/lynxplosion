@@ -24,3 +24,5 @@ endfunction()
 
 lynx_suite_test(suite.cpu.lynx1 cpu 60)
 lynx_suite_test(suite.oracle_tracer tracer 60)
+lynx_suite_test(suite.oracle_controls oracle_controls 60)
+lynx_suite_test(suite.symbol_controls symbol_controls 60)
