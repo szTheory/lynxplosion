@@ -1,0 +1,11 @@
+source = build/pins/lynx-tests/timers/tests.s (upstream MIT test source; not committed)
+revision = b583dc43d532d3c41563a6fa35420614fbcead89 (archive SHA-256 a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e)
+recipe = sh scripts/build-suites.sh --out DIR; pinned cc65 ca65 --cpu 65C02 with lynx.inc, then ld65 -C fixtures/suites/bll.cfg -Ln; no TGI or CRT
+sha256 = dde10583ae050aba1dcd72f3e0b92cdf2d38d5037c4380c5e8864f2c81702e1f
+licence = MIT, Copyright (c) 2025 Ignacio Sanchez Gines (upstream input; generated output remains temporary)
+notices = fixtures/suites/NOTICE includes the complete pinned lynx-tests LICENSE text
+allowed_use = local diagnostic test assembly input only; no suite pass or hardware accuracy claim
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/suites/timers-wrapper.s fixtures/suites/bll.cfg fixtures/suites/NOTICE

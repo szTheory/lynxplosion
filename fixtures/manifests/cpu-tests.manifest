@@ -1,0 +1,11 @@
+source = build/pins/lynx-tests/cpu/tests.s (upstream MIT test source; not committed)
+revision = b583dc43d532d3c41563a6fa35420614fbcead89 (archive SHA-256 a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e)
+recipe = sh scripts/build-suites.sh --out DIR; pinned cc65 ca65 --cpu 65C02 with lynx.inc, then ld65 -C fixtures/suites/bll.cfg -Ln; no TGI or CRT
+sha256 = e08187a9e3f3420515b0131c0ca62962a4290c3bb51aaaa79f37695b935daf30
+licence = MIT, Copyright (c) 2025 Ignacio Sanchez Gines (upstream input; generated output remains temporary)
+notices = fixtures/suites/NOTICE includes the complete pinned lynx-tests LICENSE text
+allowed_use = local diagnostic test assembly input only; no suite pass or hardware accuracy claim
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/suites/cpu-wrapper.s fixtures/suites/bll.cfg fixtures/suites/NOTICE

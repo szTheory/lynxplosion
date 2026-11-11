@@ -87,10 +87,31 @@ Until then this list is the notice. It is an open question, not a decision.
 ## Pinned external sources (fetched at check time, never committed)
 
 - **cc65** (zlib licence): the guest toolchain, pinned in `pins.txt` by commit and
-  SHA-256 of the source archive. Its runtime is linked into guest test programs, so
-  the zlib notice travels with any distributed guest binary.
-- **lynx-tests** (MIT, test source by the Gearlynx author): pinned in `pins.txt` by
-  tag and SHA-256. Used as test source only; no built binary or source is committed.
+  SHA-256 of the source archive: commit `eebf54af545f4ae52f8489a2f6d4d5f93e7942d2`,
+  archive SHA-256 `d3e4bfa57c5a40dd386d1a38b27fffad3bbc296950303f3c9017211465f5c8a1`.
+  Its runtime is linked into guest test programs, so the zlib notice travels with
+  any distributed guest binary.
+- **lynx-tests** (MIT, Copyright (c) 2025 Ignacio Sanchez Gines): pinned in
+  `pins.txt` at commit `b583dc43d532d3c41563a6fa35420614fbcead89`, archive SHA-256
+  `a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e`; version
+  1.4.9 is the upstream release it follows. Only `cpu/tests.s` and `timers/tests.s`
+  are used as local test assembly inputs. Their hashes and the original wrapper
+  recipe are recorded in the manifests under `fixtures/manifests/`. The complete
+  MIT notice is included in `fixtures/suites/NOTICE` and copied verbatim beside
+  generated outputs; BLL/object/symbol files stay
+  in invocation-owned scratch, and no upstream source or generated BLL is
+  committed.
+
+## Phase 4 suite-source boundary
+
+The CPU and timer wrappers, BLL layout and build recipe under `fixtures/suites/`
+are original Lynxplosion test material. They remain all rights reserved while
+project licence decision O5 is open. Phase 4's approved normal commits to this
+public repository cover original repository material only. That authority does
+not choose a project licence, authorize a release, permit importing upstream
+source or binaries, or authorize a new artifact/publication channel. The
+upstream MIT test sources are fetched only at the exact pin above and are
+assembled into temporary outputs accompanied by their notice.
 
 No emulator source (Gearlynx, MAME, Holani, Beetle) is copied, linked or vendored;
 see `docs/policy/clean-room.md` and `docs/policy/exposure-record.md`.
