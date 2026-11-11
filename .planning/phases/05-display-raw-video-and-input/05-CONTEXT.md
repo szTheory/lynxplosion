@@ -1,0 +1,73 @@
+# Phase 5: Display, Raw Video and Input — Context
+
+**Gathered:** 2026-11-11
+**Status:** Ready for planning
+
+<domain>
+## Phase Boundary
+
+Deliver timer-driven raw frames, explicit display DMA bus ownership/cost and page-stream interruption, per-line palette observations, logical input and a recorded-input original tier-A homebrew rendered by an independent public-API consumer. Revisit the unchanged timer oracle using new startup/bus/video evidence. No Suzy sprite engine, firmware route, cartridge boot, hardware qualification, audio implementation or shared LibFuturo change is included. Phase 6 owns real audio and final consumer closure.
+</domain>
+
+<decisions>
+## Implementation Decisions
+
+The owner invoked the remaining autonomous milestone workflow. These are recommendations selected under `.planning/AUTONOMY.md` after three independent decision-cluster research passes, not new owner decisions or hardware findings. The daemon restart interrupted delivery of two final research responses; their durable reports were reconciled before synthesis. No product work was repeated. Automated apps/tests remain headless and backgrounded. Research stops at diminishing returns.
+
+### Frame timing and bounded bus work
+- **D-01:** Reuse the instance-owned next-event scheduler and half-open budgets. Timer 0 drives line progress and Timer 2 linked underflow defines the project frame-complete event. Document first-frame, visible/blank row, partial-frame, event tie and DISPADDR transfer rules before implementing them. Support guest-programmed cadence, not a fixed host Hz. The documented 50/60/75 Hz presets are source configurations; fixed reset phase and the exact host boundary remain software policy where physical evidence is absent. An event exactly at the target remains unprocessed until a later positive budget. Process earlier-priority same-tick work consistently before exposing a frame/watch stop; prove no replay or starvation at zero-consumed event returns.
+- **D-02:** Prefer bounded grant-based video/refresh request events over a line-wide lumped CPU delay. Implement exclusive bus ownership with documented video > refresh > CPU priority, retaining a posted CPU request through holds and keeping priced readiness separate. DMA reads full RAM independently of CPU MAPCTL overlays. A non-CPU grant closes the CPU page stream under an explicitly versioned conservative policy. Use source-backed eligible opcode fetches and full-cycle data accesses; do not equate every same-page access with eligibility. Do not open emulator implementation source or import its constants. Research must identify independently justified cadence/cost/burst data; any remaining numeric schedule is a named, versioned, unverified software policy with its own controls and evidence identity. Do not tune it against timer/page-mode expected bytes. Hardware-source gaps do not authorize a hardware timing claim.
+
+### Canonical native raw video and host boundary
+- **D-03:** Use packed 4-bpp pen rows plus 32 raw palette register bytes per visible row (`GREEN0..15`, then `BLUERED0..15`) and guest-tick metadata. Maximum 160×102 pens = 8160 pen bytes, 3264 palette bytes and 102 uint64 line ticks (816 bytes), plus a sized descriptor carrying actual row count, sequence, frame start/end and any required partial/valid indication. Keep row order as display scan order; no core RGB conversion, scaling or host rotation. Document pen-nibble order and guest display flip/address behavior separately. A per-line palette snapshot is project observation policy and does not claim faithful mid-line color changes; test writes on both sides of the chosen boundary and label its hardware uncertainty.
+- **D-04:** Add a bounded frame-stop public entry point (recommended `lynx_advance_frame`) while preserving ordinary `lynx_advance` budget behavior. Share the production scheduler between both. Caller supplies all output buffers; preflight maximum capacity, spans, overflow, alignment and pairwise/machine overlap before guest progress. Retain no caller pointer. Publish/copy payload only on a completed frame; budget/device stops leave payload sentinel bytes unchanged, with documented result metadata. A refusal leaves machine and all outputs unchanged. Keep one instance-owned in-progress accumulator; no unbounded queue. Ordinary advancement can discard completed delivery while continuing guest behavior; specify how capture rolls over and what the next frame request observes. Serialize every ongoing capture/DMA/line/palette/input field needed for identical next-frame continuation in snapshot format 5, validate before apply, and clear partial output/input on successful reset/load. Old formats refuse under the existing policy. Do not serialize host pointers or replay scripts.
+- **D-05:** Freeze this form only for Lynxplosion's native API. The read-only LibFuturo contract checked during research has no Lynx profile and no per-line palette/timing sidecar; its existing RGB24 output can be produced later by an adapter without changing that shared contract. No LibFuturo files, formats or time-unit enums are changed in Phase 5. O9 remains open for a real shared-contract extension or a consumer that needs lossless raw sidecars through LibFuturo. This is the conditional gate's applicability finding, not an owner waiver. Keep HOST-02 deferred.
+
+### Logical input, guest orientation and replay
+- **D-06:** Core stores only a copied nine-bit current logical pressed mask, changed at current guest time by a validated setter without advancing time. Host owns and validates a bounded strictly increasing `(tick, mask)` recording and hashes its canonical bytes; reject duplicate/nonmonotone/overflow/unknown-bit records before output creation. Start all released; an explicit tick-0 event applies after load. Advance exactly to each edge T, then set before processing guest work at T. The frame API may return earlier completed frames: copy them and continue the remaining interval to T. Undefined/unavailable/errors abort, and watches require explicit handling. Never move an input edge to a convenient frame tick. Current mask belongs in snapshot/state observations; the recording/cursor stays host-owned, with an explicit restored-boundary/cursor convention so an event exactly at a snapshot tick is neither lost nor duplicated.
+- **D-07:** Read JOYSTICK/SWITCHES at the actual CPU bus sample tick, currently grant tick, independently of instruction/frame boundaries. Use cc65 A/B aliases and primary Epyx register masks with evidence labels. The primary JOYSTICK table maps directions through SPRSYS Lefthand bit 3: Lefthand=1 gives Up/Down/Left/Right in bits 7/6/5/4; Lefthand=0 reverses each pair. Model the input-owned guest orientation bit explicitly and keep other Suzy engine/math behavior unsupported; document accepted writes/readback/refusals rather than pretending a complete SPRSYS. Fixtures deliberately establish orientation and test both mappings. Do not auto-rotate or change handedness on Option2+Pause: expose both logical levels, and let guest behavior control orientation. Cartridge input bits are not buttons; choose a declared tier-A disconnected-line policy and label it unverified. All combinations, including opposite directions, remain valid logical levels. Device fixtures must use MAPCTL 0C to retain Suzy/Mikey overlays; 0F selects underlying RAM and is a negative setup control, not a device fixture.
+
+### Fixture and evidence contract
+- **D-08:** Lead with one production end-to-end tracer: original source-built BS93 homebrew explicitly initializes device state, produces timer-driven raw frames and responds visibly to a recorded logical input through only public API calls in an independent consumer. Extend the Phase 3 consumer with a distinct frame/replay mode; keep its snapshot path and placeholder silence regression. Use pinned ca65/ld65, original project source/config/recipe/manifests and linked result symbols. Independently assert semantic progress, known pen/palette values, sampled inputs and frame ticks; same-core digests establish repeatability only. Use PPM and existing output-publication/cleanup controls; no image dependency or GUI needed.
+- **D-09:** Require named DMA-cost, palette-boundary, input-bit/orientation/edge and no-response faults that fail their intended semantic/timing assertion, with clean positives before/after. Refusal, exact-target/no-frame outputs, sliced/uninterrupted/watched/restored equality, reset/load and multi-instance isolation need meaningful permanent checks. Extend exact inventories and no-skip/JUnit gates without duplicate broad runs. Include parser/path/identity hostility for new host inputs. Add dependencies or CI breadth only for a distinct measured benefit.
+- **D-10:** Build the pinned unchanged page-mode assembly in a source-audited tier-A wrapper and inventory raw selected-profile observations if its preconditions can be represented. Source oracle/count/model/completion/identity controls remain required. If execution or trustworthy comparison cannot proceed, record a precise source/build/precondition blocker and a visible documented skip as the roadmap permits; O1 alone is not an execution blocker. No compatibility/suite-pass claim while O1 is open. Preserve existing CPU/timer qualification lanes and their exact environment identities; do not silently reinterpret the Phase 4 flat5/no-DMA evidence after adding a new model.
+- **D-11:** Revisit timer offset14 under independently justified counter/startup, page-mode, refresh and video-DMA preconditions. Keep the pinned test/oracle/layout unchanged; never seed the counter to 1 or tune phase/costs/relocation to obtain 0D. Record raw values and strict agreement separately. Owner-approved Phase 4 D-10 remains exactly bounded to its known environment/0C-versus-0D row; a new Phase 5 environment does not inherit a blanket exception. Preserve disagreement if evidence still cannot justify agreement, as the Phase 5 roadmap directs. Keep global EVD-02 open unless its remaining obligation is actually satisfied; global EVD-05 and CON-01 remain partial until Phase 6 audio/device closure.
+- **D-12:** Planning includes required automated reviews, fixes, macOS/self-contained Linux qualification and exact-head hosted CI. Reuse unchanged baseline evidence, run focused checks during implementation and one final canonical gate per qualification environment, then inspect CI critical-path/duplication measurements. No full-data CPU vector rerun absent a relevant new CPU concern. O1/O5/O6/O9, firmware/commercial content, physical testing, releases and new publication channels remain their recorded boundaries.
+
+### Agent discretion
+
+Concrete module names, bounded event fields, policy values not presented as hardware facts, output struct spelling, private test seams and plan slicing are technical choices. Resolve new material scope/rights/shared-contract/cost consequences before acting; routine native API/snapshot implementation and its verification already have authority.
+</decisions>
+
+<canonical_refs>
+## Canonical References
+
+- `AGENTS.md`, `.planning/AUTONOMY.md`, `.planning/PROJECT.md`, `.planning/REQUIREMENTS.md`, `.planning/ROADMAP.md`, `.planning/LESSONS.md` — authority, numbered obligations, phase boundaries and carried lessons.
+- `.planning/phases/05-display-raw-video-and-input/05-DISPLAY-RESEARCH.md` — primary Epyx facts and unsourced DMA/refresh/palette edges.
+- `.planning/phases/05-display-raw-video-and-input/05-VIDEO-CONTRACT-RESEARCH.md` — native packed frame options, ownership and checked LibFuturo applicability.
+- `.planning/phases/05-display-raw-video-and-input/05-INPUT-EVIDENCE-RESEARCH.md` — replay/fixture options; primary follow-up supersedes the earlier direction-remap gap and corrects MAPCTL setup.
+- `.planning/phases/04-timers-interrupts-and-first-public-suites/04-CONTEXT.md`, `.planning/phases/04-timers-interrupts-and-first-public-suites/04-09-DISPOSITION.md`, `.planning/phases/04-timers-interrupts-and-first-public-suites/04-VERIFICATION.md`, `.planning/phases/04-timers-interrupts-and-first-public-suites/04-QUALIFICATION.md` — scheduler, snapshot4, exact pending comparison and final source qualification.
+- `.planning/phases/03-memory-map-direct-load-startup-and-first-diagnostic/03-CONTEXT.md`, `docs/memory-startup.md` — BS93, decoder, public watch/refusal and source fixture contracts.
+- `pins.txt`, `docs/provenance.md`, `docs/public-suites.md`, `docs/policy/clean-room.md`, `docs/policy/exposure-record.md` — exact sources, recipe/rights/claim boundaries; no emulator implementation exposure.
+- `include/lynxplosion.h`, `core/internal.h`, `core/machine.c`, `core/timer.c`, `core/bus.c`, `core/snapshot.c`, `consumer/main.c`, `fixtures/diagnostic/first.s`, `scripts/build-suites.sh` — production integration contracts and fixture patterns.
+
+External primary URLs and precise sections are recorded in the research reports. The pinned suite timing guide is hardware-informed reported evidence, partly informed by another emulator; do not present its cycle constants as independently calibrated facts or open linked emulator source.
+</canonical_refs>
+
+<code_context>
+## Existing Code Insights
+
+The CPU posts requests as data; machine.c owns grants and guest time. Timer-bank events precede same-tick CPU grants under explicit policy. Reuse private bus-hold/ready normalization, pure mapped observation, transactional snapshots and caller-owned public API. New display/refresh events must not replay timer work at watch/frame boundaries. Source suites already bind source/build/object/labels, enforce completion/model/count/time checks, and isolate owned output with nonce/containment controls. The consumer is public-header-only and publishes an exclusive output directory. Reuse these patterns; do not expose private debug seams merely for a fixture.
+</code_context>
+
+<specifics>
+## Specific Evidence and Limits
+
+Epyx documents palette nibble placement, timer presets and bus priority; exact DMA/refresh schedule and palette edge remain unresolved. The native row snapshot is deliberately bounded software observation. Raw output, guest progress, logical input and host presentation remain separate streams on the same guest clock. No firmware or physical test is required for this phase's software evidence.
+</specifics>
+
+<deferred>
+## Deferred Ideas
+
+Actual audio/PCM and final real-audio consumer proof are Phase 6. LibFuturo adapter/shared sidecars, Suzy sprites, cartridge routes, physical calibration, baseline/profile qualification, licence, clean-room final decision and release remain their recorded scope/owner boundaries. No todos matched this phase.
+</deferred>

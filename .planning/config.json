@@ -52,7 +52,7 @@
     "security_block_on": "high",
     "tdd_mode": false,
     "ui_review": true,
-    "_auto_chain_active": false,
+    "_auto_chain_active": true,
     "use_worktrees": false,
     "test_command": "sh scripts/check.sh"
   },
