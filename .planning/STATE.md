@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 9
-status: Ready to resume Plan 09 under approved D-10 gate
-stopped_at: 04-09 revised plans independently checked; executor continuation next
-last_updated: "2026-11-11T14:31:41.776Z"
+current_plan: 10
+status: Ready to execute Plan 10; Plan 09 complete under approved D-10 gate
+stopped_at: Completed 04-09-PLAN.md; next Plan 10
+last_updated: "2026-11-11T15:49:27.263Z"
 last_activity: 2026-11-11
-last_activity_desc: Approved timer deferral planned and independently checked
-state_head: 63f44937d08cdb0faebf71b7cf03b88a70fac78f
+last_activity_desc: Completed Plan 09 timer observations and controls; exact index14 agreement remains pending Phase 5
+state_head: 42bf6e5639478a766380302abb2af85163eda03e
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 41
+  completed_plans: 42
   percent: 50
 ---
 
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 ## Current Position
 
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
-Current Plan: 9
+Current Plan: 10
 Total Plans in Phase: 12
-Status: Ready to resume Plan 09 under approved D-10 gate
-Last activity: 2026-11-11 - Approved timer deferral planned and independently checked
+Status: Ready to execute Plan 10; Plan 09 is complete under the approved D-10 gate
+Last activity: 2026-11-11 - Completed Plan 09 timer observations and controls; exact index14 agreement remains pending Phase 5
 
 Progress: [█████░░░░░] 50%
 
@@ -100,6 +100,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P06 | 52m | 2 tasks | 14 files |
 | Phase 04 P07 | 20 min | 2 tasks | 13 files |
 | Phase 04 P08 | 30min | 2 tasks | 6 files |
+| Phase 04 P09 | 74 min | 2 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -200,6 +201,7 @@ Recent decisions affecting current work:
 - [Phase 04]: Detected CPU model requires agreement among the guest RMB0 probe and marker, pinned source tuple, and independently selected profile.
 - [Phase 04]: CPU suite matches remain raw software-oracle evidence; O1 and hardware qualification stay open, and the overall default remains none.
 - [Phase 04]: Use independent zeroed and deterministic seeded guest instances; add no public debug API or production fault flag.
+- [Phase 04]: Plan 04-09 uses immutable two-profile observation baselines for captured-data timer faults, with fresh guest observations at batch boundaries and per-case positive/hash checks.
 
 ### Pending Todos
 
@@ -207,9 +209,10 @@ None yet.
 
 ### Blockers/Concerns
 
-The owner approved the recommended one-comparison deferral on 2026-11-11 ("follow ur recs"). Root is revising/checking Plans 09-12, then resumes execution under D-10. Plans 01-08 are complete; Plan 09 Task 2 has not started. The prior snapshot failures are resolved. Approved details are in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-09-DISPOSITION.md`.
+The owner approved the recommended one-comparison deferral on 2026-11-11 ("follow ur recs"). Plan 09 is complete under D-10; Plans 01-09 are complete and Plan 10 is next. The prior snapshot failures are resolved. Approved details are in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-09-DISPOSITION.md` and the execution record is in `04-09-SUMMARY.md`.
 
-- Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict comparison failure and unchanged oracle while completing Phase 4's observation/control slice; exact agreement remains pending Phase 5. No source/profile/hardware qualification is accepted. No owner action is needed for this approved continuation.
+- Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict comparison failure and unchanged oracle while completing Phase 4; exact agreement remains pending Phase 5. No source/profile/hardware qualification is accepted. No owner action is needed for this approved continuation.
+- Plan 09's data-only control matrices use per-invocation fresh observations on both profiles and immutable hash-checked baselines for private fault copies; every mutation retains positive baseline validation before/after and its named diagnostic.
 
 Other open owner decisions remain in force:
 
@@ -231,6 +234,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T09:27:33.107Z
-Stopped at: 04-09 revised plans independently checked; executor continuation next
+Last session: 2026-11-11T15:49:26.975Z
+Stopped at: Completed 04-09-PLAN.md; next Plan 10
 Resume file: None
