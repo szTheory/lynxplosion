@@ -26,13 +26,44 @@ settle a software event order or reset phase:
   poll and completion follow it. This project tie rule is named
   `timer-cpu-poll-order-1`. Timer indices 0 through 7 are the stable source
   ordinals within a bank event.
-- The source enable bit gates a newly created pending timer latch, following
-  Phase 4 decision D-04. Existing pending bits stay asserted after an enable
-  is cleared; any nonzero pending byte drives the CPU IRQ line. This latch
-  choice is project policy and is not presented as hardware qualification.
+- Epyx says timer interrupts can be masked and their pending status can be
+  polled independently of the mask. Under Phase 4 decision D-04, the enable
+  gates new timer latch events and any nonzero pending byte drives the CPU IRQ
+  line; clearing an enable does not clear a previously latched bit. The
+  pending-versus-enable distinction is source-backed; the project's exact
+  CPU-line sampling point follows the declared scheduler policy.
 - Reset-DONE is treated as a held control level. While it is set, the DONE
   latch remains clear across timer edges. This is an explicit model choice for
   the documented non-pulse behavior.
+
+## CTLA/CTLB transition table
+
+The table separates what the primary register notes and pinned test source
+state from the deterministic behavior chosen for this software model. The
+register names and masks come from the [Epyx address appendix](https://www.monlynx.de/lynx/hardware.html#timers); timer links, borrow timing and first-use cadence come from the [Epyx timer chapter](https://www.monlynx.de/lynx/lynx8.html). The pinned `lynx-tests/timers/tests.s` is a software comparison source, not hardware qualification.
+
+| Input/condition | Source observation | Model transition and evidence label |
+| --- | --- | --- |
+| CTLA source 0–6, COUNT clear | CTLA has a source selector and separate COUNT enable. | No source event is scheduled. A backup, count, source, COUNT, RELOAD, IRQ or RESET-DONE write does not restart the shared divider phase. **Model rule** consistent with the separate control bits and D-02. |
+| CTLA source 0–6, COUNT set, count above zero | A timer is an 8-bit down counter clocked by its selected source. | On an aligned shared-divider event, decrement once; do not set DONE or request a timer interrupt. **Source-backed transition** with fixed-zero shared phase as separately named project policy. |
+| CTLA source 0–6, COUNT set, count zero | Epyx says an interrupt signal is generated at zero while a borrow is attempted; CTLB DONE sets on timeout. | On the edge, set DONE unless RESET-DONE is held, latch the timer IRQ when enabled (except timer 4's UART source), reload BACKUP when RELOAD is set, otherwise leave the one-shot at zero and stop later counting while DONE remains set. **Source-backed effect; exact tie/write order is project policy.** |
+| DONE set, then count/source/enable written | Epyx's known-variance note says the Timer Done bit must be cleared in order to count. | Keep DONE set across count and source writes; a one-shot remains stopped. **Source-backed.** |
+| RESET-DONE asserted, held, then released | Epyx records that Reset Timer Done is not a pulse and CTLA B6 resets DONE. | The CTLA write clears DONE immediately; while the bit remains high, each event leaves DONE clear. Releasing it does not set DONE; a later zero-count borrow can set it. **Held-level behavior follows the variance note; write/edge ordering is explicit model inference.** |
+| CTLB written with DONE bit 3 | Pinned Test 5 pre-sets DONE and expects counting to remain stopped until CTLB is cleared; Test 1 expects CTLB `$0A` to read back `$08`. | Bit 3 sets DONE when written as 1 and clears it when written as 0. **Pinned-source observation**, not independent hardware evidence. |
+| CTLB written with borrow-in bit 1 | Pinned Test 1 labels `$0A` as DONE plus borrow-in, expects a guest count `$80→$7F`, then reads CTLB `$08`. | Treat B1 as one borrow-input strobe; it changes the count once even with CTLA COUNT clear and does not leave B1 latched in a stable read. **Pinned-source comparison and explicit model choice.** |
+| A timer reloads with a supported downstream timer in link mode | Epyx says reloading one timer clocks the next and specifies groups 0→2→4 and 1→3→5→7. | Deliver one borrow-in to the next enabled link timer on the same guest tick; drain the increasing-index graph in stable order. **Source-backed edges; bounded iterative drain and same-tick order are project policy.** |
+| Link mode selected for timer 0, 1 or 6 while COUNT is enabled | Epyx does not define timer 6's incoming link and lists audio 3 as timer 1's predecessor; audio is absent. | Refuse the enabling CTLA write before mutation. A disabled selection may be stored, but a later enabling write is refused. **Unsupported input policy**, preserving the unavailable-device contract. |
+| CTLB bits 2–0 after a scheduled input event | The appendix names LAST CLOCK, BORROW IN and BORROW OUT; the reviewed primary notes do not define their stable read lifetime. | Expose the most recent scheduled input observation until the next timer-bank event. CTLB writes do not latch these status bits; a direct B1 strobe leaves them clear after its event. **Unresolved lifetime represented by explicit software policy**, not a hardware claim. |
+
+### Borrow and write-edge summary
+
+The input event consumes a nonzero count by subtracting one. At zero it
+attempts a borrow, sets the borrow-out observation, latches DONE/IRQ under
+their controls, and reloads only when RELOAD is enabled. A reload is the
+source-defined output clock for a linked successor. A linked counter must have
+COUNT enabled and must not be stopped by DONE; held RESET-DONE permits later
+input events by keeping DONE clear. These transitions are drained at most once
+per timer per guest tick through the finite, acyclic owned graph.
 
 ## Implemented mapped behavior
 

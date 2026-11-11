@@ -1,0 +1,11 @@
+{
+  "command": "build/check/tests/lynx-test-api timer_done_borrow > /private/tmp/lynx-04-03-red.tap 2> /private/tmp/lynx-04-03-red.stderr",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.timer_done_borrow\n",
+  "stderr": "tests/api/test_api.c:3782: m->ram[0x0400u] == 0x7Fu failed: 128 != 127\ntests/api/test_api.c:3783: m->ram[0x0401u] == 0x08u failed: 0 != 8\n",
+  "targetTest": "api.timer_done_borrow",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "Mapped guest result RAM contains count 127 and CTLB DONE $08 after writing CTLB $0A to count $80.",
+  "actual": "The guest count remains 128 and CTLB reads 0 after the write.",
+  "semanticAssessment": "Valid RED: the named guest test ran to its watch point and failed on the two intended mapped-result assertions; build/setup and fixture execution succeeded."
+}

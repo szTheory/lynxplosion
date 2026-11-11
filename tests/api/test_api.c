@@ -110,6 +110,20 @@ static const uint8_t timer_tracer_program[] = {
     0x4Cu, 0x0Du, 0x02u                  /* JMP loop */
 };
 
+/* Project-authored guest reproducing pinned lynx-tests/timers Test 1's
+   CTLB borrow input: count $80, write DONE+borrow-in ($0A), then record the
+   mapped count and CTLB value. */
+static const uint8_t timer_done_borrow_program[] = {
+    0xA9u, 0x80u,                         /* LDA #$80 */
+    0x8Du, 0x0Eu, 0xFDu,                 /* STA timer 3 count */
+    0xA9u, 0x0Au,                         /* LDA #$0A: DONE + borrow-in */
+    0x8Du, 0x0Fu, 0xFDu,                 /* STA timer 3 CTLB */
+    0xADu, 0x0Eu, 0xFDu,                 /* LDA timer 3 count */
+    0x8Du, 0x00u, 0x04u,                 /* STA $0400 */
+    0xADu, 0x0Fu, 0xFDu,                 /* LDA timer 3 CTLB */
+    0x8Du, 0x01u, 0x04u                  /* STA $0401 */
+};
+
 /* MAPCTL is set by guest code before a watch on the last address. */
 static const uint8_t watch_last_address_program[] = {
     0xA9u, 0x08u, 0x8Du, 0xF9u, 0xFFu, /* LDA #$08; STA $FFF9 */
@@ -3744,6 +3758,38 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void case_timer_done_borrow(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(load_bll_at(m, timer_done_borrow_program,
+                             sizeof timer_done_borrow_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0401u, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop != LYNX_STOP_WATCH) {
+        goto done;
+    }
+    CHECK(consumed != 0u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0x7Fu);
+    CHECK_EQ_U64(m->ram[0x0401u], 0x08u);
+
+done:
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_done_borrow\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static size_t make_timer_bank_guest(uint8_t *program)
 {
     size_t length = 0u;
@@ -4096,6 +4142,7 @@ static const struct {
     {"snapshot_roundtrip", case_snapshot_roundtrip},
     {"snapshot_continue", case_snapshot_continue},
     {"timer_tracer", case_timer_tracer},
+    {"timer_done_borrow", case_timer_done_borrow},
     {"timer_standalone", case_timer_standalone},
     {"timer_phase", case_timer_phase},
     {"watch_controls", case_watch_controls},
