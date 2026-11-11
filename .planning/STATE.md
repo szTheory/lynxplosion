@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 8
+current_plan: 9
 status: executing
-stopped_at: Completed 04-07-PLAN.md
-last_updated: "2026-11-11T08:52:07.207Z"
+stopped_at: Completed 04-08-PLAN.md
+last_updated: "2026-11-11T09:27:33.361Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 3 complete, transitioned to Phase 4
-state_head: 03a7c621bea224eec0a98b970a47cd7374969956
+state_head: a8d2ca3ca70fd760b7b72cd912b610f369e1516b
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 40
+  completed_plans: 41
   percent: 50
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 ## Current Position
 
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
-Current Plan: 8
+Current Plan: 9
 Total Plans in Phase: 12
 Status: Ready for Plan 8
 Last activity: 2026-11-11 — Plan 7 complete, Phase 4 remains in progress
@@ -99,6 +99,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P05 | 25min | 2 tasks | 9 files |
 | Phase 04 P06 | 52m | 2 tasks | 14 files |
 | Phase 04 P07 | 20 min | 2 tasks | 13 files |
+| Phase 04 P08 | 30min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -196,6 +197,9 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-07: Source-oracle agreement is raw software evidence; O1 and named-profile qualification remain open.
 - [Phase 04]: 04-07: The source-level RMB0 probe writes the guest model observation; profile selection remains an independent comparison input.
 - [Phase 04]: 04-07: EVD-02 and EVD-04 remain globally open because the timer suite and guest-model taxonomy are unfinished.
+- [Phase 04]: Detected CPU model requires agreement among the guest RMB0 probe and marker, pinned source tuple, and independently selected profile.
+- [Phase 04]: CPU suite matches remain raw software-oracle evidence; O1 and hardware qualification stay open, and the overall default remains none.
+- [Phase 04]: Use independent zeroed and deterministic seeded guest instances; add no public debug API or production fault flag.
 
 ### Pending Todos
 
@@ -223,6 +227,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T08:52:06.732Z
-Stopped at: Completed 04-07-PLAN.md
+Last session: 2026-11-11T09:27:33.107Z
+Stopped at: Completed 04-08-PLAN.md
 Resume file: None
