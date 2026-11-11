@@ -1,0 +1,139 @@
+{
+  "stage1": [
+    {
+      "requirement_id": "TIM-01",
+      "candidates": [
+        "A hardware-accuracy or named-profile pass claim inferred from software agreement",
+        "Unverified phase/device behavior silently presented as sourced hardware",
+        "Firmware/cartridge boot implied by tier-A source startup",
+        "A result array accepted without execution",
+        "A source result expectation changed merely to clear a mismatch",
+        "Missing bounds on guest work",
+        "Cross-instance state or stale output reused",
+        "Untrusted bytes bypassing bounds or deserialization checks",
+        "Private paths or secrets copied to public logs",
+        "A new asset publication or rights decision inferred from a source hash"
+      ]
+    },
+    {
+      "requirement_id": "TIM-02",
+      "candidates": [
+        "A hardware-accuracy or named-profile pass claim inferred from software agreement",
+        "Unverified phase/device behavior silently presented as sourced hardware",
+        "Firmware/cartridge boot implied by tier-A source startup",
+        "A result array accepted without execution",
+        "A source result expectation changed merely to clear a mismatch",
+        "Missing bounds on guest work",
+        "Cross-instance state or stale output reused",
+        "Untrusted bytes bypassing bounds or deserialization checks",
+        "Private paths or secrets copied to public logs",
+        "A new asset publication or rights decision inferred from a source hash"
+      ]
+    },
+    {
+      "requirement_id": "TIM-03",
+      "candidates": [
+        "A hardware-accuracy or named-profile pass claim inferred from software agreement",
+        "Unverified phase/device behavior silently presented as sourced hardware",
+        "Firmware/cartridge boot implied by tier-A source startup",
+        "A result array accepted without execution",
+        "A source result expectation changed merely to clear a mismatch",
+        "Missing bounds on guest work",
+        "Cross-instance state or stale output reused",
+        "Untrusted bytes bypassing bounds or deserialization checks",
+        "Private paths or secrets copied to public logs",
+        "A new asset publication or rights decision inferred from a source hash"
+      ]
+    },
+    {
+      "requirement_id": "TIM-04",
+      "candidates": [
+        "A hardware-accuracy or named-profile pass claim inferred from software agreement",
+        "Unverified phase/device behavior silently presented as sourced hardware",
+        "Firmware/cartridge boot implied by tier-A source startup",
+        "A result array accepted without execution",
+        "A source result expectation changed merely to clear a mismatch",
+        "Missing bounds on guest work",
+        "Cross-instance state or stale output reused",
+        "Untrusted bytes bypassing bounds or deserialization checks",
+        "Private paths or secrets copied to public logs",
+        "A new asset publication or rights decision inferred from a source hash"
+      ]
+    },
+    {
+      "requirement_id": "EVD-02",
+      "candidates": [
+        "A hardware-accuracy or named-profile pass claim inferred from software agreement",
+        "Unverified phase/device behavior silently presented as sourced hardware",
+        "Firmware/cartridge boot implied by tier-A source startup",
+        "A result array accepted without execution",
+        "A source result expectation changed merely to clear a mismatch",
+        "Missing bounds on guest work",
+        "Cross-instance state or stale output reused",
+        "Untrusted bytes bypassing bounds or deserialization checks",
+        "Private paths or secrets copied to public logs",
+        "A new asset publication or rights decision inferred from a source hash"
+      ]
+    },
+    {
+      "requirement_id": "EVD-03",
+      "candidates": [
+        "A hardware-accuracy or named-profile pass claim inferred from software agreement",
+        "Unverified phase/device behavior silently presented as sourced hardware",
+        "Firmware/cartridge boot implied by tier-A source startup",
+        "A result array accepted without execution",
+        "A source result expectation changed merely to clear a mismatch",
+        "Missing bounds on guest work",
+        "Cross-instance state or stale output reused",
+        "Untrusted bytes bypassing bounds or deserialization checks",
+        "Private paths or secrets copied to public logs",
+        "A new asset publication or rights decision inferred from a source hash"
+      ]
+    },
+    {
+      "requirement_id": "EVD-04",
+      "candidates": [
+        "A hardware-accuracy or named-profile pass claim inferred from software agreement",
+        "Unverified phase/device behavior silently presented as sourced hardware",
+        "Firmware/cartridge boot implied by tier-A source startup",
+        "A result array accepted without execution",
+        "A source result expectation changed merely to clear a mismatch",
+        "Missing bounds on guest work",
+        "Cross-instance state or stale output reused",
+        "Untrusted bytes bypassing bounds or deserialization checks",
+        "Private paths or secrets copied to public logs",
+        "A new asset publication or rights decision inferred from a source hash"
+      ]
+    },
+    {
+      "requirement_id": "EVD-05",
+      "candidates": [
+        "A hardware-accuracy or named-profile pass claim inferred from software agreement",
+        "Unverified phase/device behavior silently presented as sourced hardware",
+        "Firmware/cartridge boot implied by tier-A source startup",
+        "A result array accepted without execution",
+        "A source result expectation changed merely to clear a mismatch",
+        "Missing bounds on guest work",
+        "Cross-instance state or stale output reused",
+        "Untrusted bytes bypassing bounds or deserialization checks",
+        "Private paths or secrets copied to public logs",
+        "A new asset publication or rights decision inferred from a source hash"
+      ]
+    }
+  ],
+  "stage2": {
+    "kept": [
+      {
+        "statement": "Raw source-oracle agreement must not become a named-profile suite-pass or hardware-accuracy claim while baseline decision O1 remains open.",
+        "status": "unresolved"
+      },
+      {
+        "statement": "The deterministic timer phase, tie policy and minimal request/sleep seam must not be represented as calibrated hardware, working Suzy or firmware/cartridge boot evidence.",
+        "status": "unresolved"
+      }
+    ],
+    "descriptor_status": "flagged-unverified; no wired-check descriptor authored",
+    "dropped_routine": "Execution/completion, bounds, stale state and mismatch controls belong to edge coverage and code review.",
+    "canon_referral": "Bounds/deserialization/privacy/rights handling is covered by secure-phase and existing hygiene/provenance checks, not minted as a new generic prohibition."
+  }
+}

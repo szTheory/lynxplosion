@@ -1,0 +1,208 @@
+{
+  "items": [
+    {
+      "requirement_id": "TIM-01",
+      "category": "adjacency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "An event stamped exactly at the exclusive target remains pending; target-minus-one/target/target-plus-one and same-tick watch cases preserve the documented event prefix and consumed ticks never exceed budget.",
+      "reason": null,
+      "probe": "When two things are exactly equal or just touch, do they merge, collide, or separate?"
+    },
+    {
+      "requirement_id": "TIM-01",
+      "category": "empty",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "A zero budget consumes zero with unchanged machine state; with CPU held and no eligible device event the bounded call advances to target without inventing work or looping indefinitely.",
+      "reason": null,
+      "probe": "What is the result for empty, single-element, or null input?"
+    },
+    {
+      "requirement_id": "TIM-01",
+      "category": "ordering",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Equal-tick candidates follow documented priority and stable sequence, and independent event observations agree across coarse, one-tick, irregular, watched and restored runs at a common tick.",
+      "reason": null,
+      "probe": "When elements compare equal, is output order specified and stable?"
+    },
+    {
+      "requirement_id": "TIM-02",
+      "category": "unclassified",
+      "status": "unresolved",
+      "verification": null,
+      "resolution": null,
+      "reason": null,
+      "probe": "unclassified — review manually"
+    },
+    {
+      "requirement_id": "TIM-03",
+      "category": "adjacency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "IRQ changes before, exactly at and after a CPU POLL are observed according to the declared tie policy, including same-tick acknowledgement and an in-flight CPU cycle.",
+      "reason": null,
+      "probe": "When two things are exactly equal or just touch, do they merge, collide, or separate?"
+    },
+    {
+      "requirement_id": "TIM-03",
+      "category": "empty",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Zero pending gives no IRQ; zero acknowledgement changes no pending bits; INTSET can force a source and clearing its timer enable does not clear an already-latched bit.",
+      "reason": null,
+      "probe": "What is the result for empty, single-element, or null input?"
+    },
+    {
+      "requirement_id": "TIM-03",
+      "category": "ordering",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Multiple simultaneous pending bits are retained; acknowledgements clear only selected bits, and CPU sampling occurs after only the source events preceding that poll in the total order.",
+      "reason": null,
+      "probe": "When elements compare equal, is output order specified and stable?"
+    },
+    {
+      "requirement_id": "TIM-04",
+      "category": "concurrency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Independent instances share no mutable timer/request state; withheld CPU requests remain unchanged and wake/grant collisions cannot duplicate a CPU completion or bus effect while timers keep progressing.",
+      "reason": null,
+      "probe": "If interrupted or run in parallel, what is guaranteed?"
+    },
+    {
+      "requirement_id": "EVD-02",
+      "category": "boundary",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Symbol extents and overlap checks precede RAM reads; CPU18 and timer16 meaningful results versus18 reserved bytes are distinct, alternatives/count drift are checked, and minimum/maximum time and integer limits have boundary controls.",
+      "reason": null,
+      "probe": "What happens exactly at each min/max/threshold — and one step either side?"
+    },
+    {
+      "requirement_id": "EVD-02",
+      "category": "empty",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Missing/empty input, symbol or generated oracle is rejected; zero-filled result arrays, absent progress or absent sentinel never count as completed tests.",
+      "reason": null,
+      "probe": "What is the result for empty, single-element, or null input?"
+    },
+    {
+      "requirement_id": "EVD-02",
+      "category": "encoding",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Strict BS93 and actual linked-label grammar, byte values and source-oracle tokens are validated without guessed addresses or a stale fallback when source shape changes.",
+      "reason": null,
+      "probe": "Whose definition of length/equality applies — bytes, code points, grapheme clusters, or normalized form?"
+    },
+    {
+      "requirement_id": "EVD-02",
+      "category": "precision",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Guest bounds use checked integer ticks and byte/count arithmetic; no float or host-clock measurement substitutes for guest completion, and the minimum has an independent source-work rationale.",
+      "reason": null,
+      "probe": "Where can precision loss, overflow, or rounding/tie-breaking occur — and what is the exact contract (e.g. half-up vs half-to-even, ceil/floor/truncate)?"
+    },
+    {
+      "requirement_id": "EVD-02",
+      "category": "concurrency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Fresh instances and invocation-owned output/build scratch prevent profile/result leakage; shared pinned inputs are read-only, source/oracle identities match, and stale completion metadata cannot satisfy a new run.",
+      "reason": null,
+      "probe": "If interrupted or run in parallel, what is guaranteed?"
+    },
+    {
+      "requirement_id": "EVD-03",
+      "category": "adjacency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "The no-run seam prevents the first test instruction while time can reach the minimum; unchanged CPU/test state and absent guest completion still make both suite validators fail.",
+      "reason": null,
+      "probe": "When two things are exactly equal or just touch, do they merge, collide, or separate?"
+    },
+    {
+      "requirement_id": "EVD-03",
+      "category": "empty",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "An empty required-suite/control selection is an error, and both required suites have a non-vacuous no-run case rather than a missing or silently skipped test.",
+      "reason": null,
+      "probe": "What is the result for empty, single-element, or null input?"
+    },
+    {
+      "requirement_id": "EVD-03",
+      "category": "ordering",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "No-run hold precedes test execution; completion sentinel is a guest write after run_tests returns and is observed only after the bus write and earlier same-tick work complete.",
+      "reason": null,
+      "probe": "When elements compare equal, is output order specified and stable?"
+    },
+    {
+      "requirement_id": "EVD-04",
+      "category": "unclassified",
+      "status": "unresolved",
+      "verification": null,
+      "resolution": null,
+      "reason": null,
+      "probe": "unclassified — review manually"
+    },
+    {
+      "requirement_id": "EVD-05",
+      "category": "adjacency",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Each boundary fault triggers its named expected assertion with the intended failure status; a compile error, unrelated exception or generic timeout cannot masquerade as the required mutant proof.",
+      "reason": null,
+      "probe": "When two things are exactly equal or just touch, do they merge, collide, or separate?"
+    },
+    {
+      "requirement_id": "EVD-05",
+      "category": "empty",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "No matching case, zero exercised assertions or an empty fault inventory cannot count as successful negative evidence; registrations and exact inventory catch missing controls.",
+      "reason": null,
+      "probe": "What is the result for empty, single-element, or null input?"
+    },
+    {
+      "requirement_id": "EVD-05",
+      "category": "ordering",
+      "status": "resolved",
+      "verification": "explicit",
+      "resolution": "Fresh positive controls precede isolated single-fault controls; reset/rebuild removes the mutant, and the clean case passes again without relying on stale state or another fault.",
+      "reason": null,
+      "probe": "When elements compare equal, is output order specified and stable?"
+    }
+  ],
+  "coverage": {
+    "applicable": 20,
+    "resolved": 18,
+    "unresolved": 2,
+    "unclassified": 2,
+    "byVerification": {
+      "explicit": 18,
+      "backstop": 0
+    }
+  },
+  "assumptions": [
+    {
+      "requirement_id": "TIM-02",
+      "status": "unresolved",
+      "flagged": true,
+      "note": "Classifier has no timer-bank taxonomy. D-02/D-03 specify explicit shared-phase, DONE/borrow/link and unavailable-mode predicates; planning must cover them without claiming hardware calibration."
+    },
+    {
+      "requirement_id": "EVD-04",
+      "status": "unresolved",
+      "flagged": true,
+      "note": "Classifier has no guest-model-detection taxonomy. D-08 requires actual guest probe evidence and a model-mismatch control; a host label is insufficient."
+    }
+  ]
+}
