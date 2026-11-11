@@ -9,7 +9,7 @@ cmake_path(IS_PREFIX SCRATCH_ROOT "${WORK}" NORMALIZE work_is_owned)
 if(NOT work_is_owned OR "${WORK}" STREQUAL "${SCRATCH_ROOT}")
   message(FATAL_ERROR "suite_driver: refusing output outside invocation-owned scratch")
 endif()
-if(NOT MODE MATCHES "^(cpu|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls)$")
+if(NOT MODE MATCHES "^(cpu|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls|timer_observation|timer_strict_controls|timer_cascade_model)$")
   message(FATAL_ERROR "suite_driver: unknown mode")
 endif()
 if(MODE STREQUAL "cpu" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
@@ -38,6 +38,80 @@ function(expect_success expected)
   if(NOT "${rc}" STREQUAL "0" OR found EQUAL -1)
     message(FATAL_ERROR "suite_driver: control expected success and '${expected}', got ${rc}: ${combined}")
   endif()
+endfunction()
+
+function(assert_timer_artifacts profile)
+  set(raw "${SUITE_BUILD}/raw-results-${profile}.tsv")
+  set(record "${SUITE_BUILD}/run-record-${profile}.txt")
+  set(comparison "${SUITE_BUILD}/comparison-${profile}.tsv")
+  set(proof "${SUITE_BUILD}/cascade-proof-${profile}.json")
+  set(companion "${SUITE_BUILD}/pending-record-${profile}.json")
+  if(NOT EXISTS "${raw}" OR NOT EXISTS "${record}" OR NOT EXISTS "${comparison}" OR
+     NOT EXISTS "${proof}" OR NOT EXISTS "${companion}")
+    message(FATAL_ERROR "suite_driver: missing timer evidence output for ${profile}")
+  endif()
+  file(STRINGS "${raw}" raw_rows REGEX "^result\t[0-9]+\t[0-9a-f][0-9a-f]$")
+  file(STRINGS "${comparison}" comparison_rows REGEX "^result\t[0-9]+\t")
+  list(LENGTH raw_rows raw_count)
+  list(LENGTH comparison_rows comparison_count)
+  set(accepted 0)
+  set(mismatch 0)
+  foreach(row IN LISTS comparison_rows)
+    if(row MATCHES "source-accepted$")
+      math(EXPR accepted "${accepted} + 1")
+    elseif(row MATCHES "source-mismatch$")
+      math(EXPR mismatch "${mismatch} + 1")
+      if(NOT row STREQUAL "result\t14\t0c\tEXPECT(0d)\tsource-mismatch")
+        message(FATAL_ERROR "suite_driver: unexpected timer source mismatch row: ${row}")
+      endif()
+    else()
+      message(FATAL_ERROR "suite_driver: malformed timer comparison status: ${row}")
+    endif()
+  endforeach()
+  if(NOT raw_count EQUAL 16 OR NOT comparison_count EQUAL 16 OR
+     NOT accepted EQUAL 15 OR NOT mismatch EQUAL 1)
+    message(FATAL_ERROR "suite_driver: timer evidence counts drifted for ${profile}: raw=${raw_count} comparison=${comparison_count} accepted=${accepted} mismatch=${mismatch}")
+  endif()
+  file(STRINGS "${proof}" phase_rows REGEX "first_edge_delay_ticks")
+  list(LENGTH phase_rows phase_count)
+  if(NOT phase_count EQUAL 64)
+    message(FATAL_ERROR "suite_driver: cascade proof must enumerate64 phases, got ${phase_count}")
+  endif()
+  foreach(phase_row IN LISTS phase_rows)
+    if(NOT phase_row MATCHES "\\\"acknowledgements\\\":12" OR
+       NOT phase_row MATCHES "\\\"final_poll_ticks\\\":13990")
+      message(FATAL_ERROR "suite_driver: phase enumeration output drifted: ${phase_row}")
+    endif()
+  endforeach()
+  file(READ "${record}" record_text)
+  if(NOT record_text MATCHES "meaningful_count=16" OR
+     NOT record_text MATCHES "reserved_count=2" OR
+     NOT record_text MATCHES "result_extent=18" OR
+     NOT record_text MATCHES "source_comparison=separate-record" OR
+     NOT record_text MATCHES "hardware_accuracy=unverified" OR
+     NOT record_text MATCHES "profile_qualification=unresolved" OR
+     NOT record_text MATCHES "cost_model=flat5" OR
+     NOT record_text MATCHES "sample_offset_ticks=0")
+    message(FATAL_ERROR "suite_driver: timer run record does not retain the bounded policy/evidence fields")
+  endif()
+  expect_success("timer record: complete observation, executable phase proof and pending row valid for ${profile}"
+    "${TEST_BINARY}" validate-timer-record "${profile}" "${raw}" "${record}" "${ORACLE}"
+    "${ROOT}/docs/timer-source-index14-pending.json")
+endfunction()
+
+function(run_timer_observation profile)
+  execute_process(
+    COMMAND "${TEST_BINARY}" observe timers "${profile}" "${SUITE_BUILD}" "${ORACLE}"
+            "${ROOT}/docs/timer-source-index14-pending.json"
+    TIMEOUT 45 RESULT_VARIABLE observe_rc OUTPUT_VARIABLE observe_out ERROR_VARIABLE observe_err)
+  if(NOT observe_rc STREQUAL "0" OR
+     NOT observe_out MATCHES "timer raw source comparison: mismatch; suite=timers machine_profile=${profile}" OR
+     NOT observe_out MATCHES "results=16/18" OR
+     NOT observe_out MATCHES "hardware_accuracy=unverified profile_qualification=unresolved" OR
+     NOT observe_out MATCHES "timer observation complete: profile=${profile} meaningful=16 reserved=2 source_agreements=15 pending_index=14 actual=0c expected=0d")
+    message(FATAL_ERROR "suite_driver: bounded timer observation failed for ${profile}: ${observe_rc} ${observe_out} ${observe_err}")
+  endif()
+  assert_timer_artifacts("${profile}")
 endfunction()
 
 function(run_clean_cpu)
@@ -319,6 +393,55 @@ if(MODE STREQUAL "cpu_bound_controls" AND FAILURE STREQUAL "")
   write_ticks_record("${WORK}/cpu-time-overflow.record" 4294967296)
   expect_cpu_record_failure("cpu record: invalid ticks_observed" "${bound_raw}" "${WORK}/cpu-time-overflow.record")
   string(APPEND all_run_out "bound controls: exact 256/50000000 captured-record boundaries pass; 255/50000001 and uint32 overflow fail the named time validator\n")
+endif()
+
+if(MODE STREQUAL "timer_observation" AND FAILURE STREQUAL "")
+  run_timer_observation("${PROFILE}")
+  string(APPEND all_run_out "timer observation: profile=${PROFILE}, 16 source rows retained with 15 agreements and the exact pending index14 row; independent proof and acyclic companion validated\n")
+endif()
+
+if(MODE STREQUAL "timer_strict_controls" AND FAILURE STREQUAL "")
+  foreach(profile lynx1 lynx2)
+    run_timer_observation("${profile}")
+    expect_failure("suite: timer source oracle comparison mismatch"
+      "${TEST_BINARY}" run timers "${profile}" "${SUITE_BUILD}" "${ORACLE}")
+    set(comparison "${SUITE_BUILD}/comparison-${profile}.tsv")
+    file(STRINGS "${comparison}" comparison_rows REGEX "^result\t[0-9]+\t")
+    list(LENGTH comparison_rows comparison_count)
+    set(accepted 0)
+    set(mismatch 0)
+    foreach(row IN LISTS comparison_rows)
+      if(row MATCHES "source-accepted$")
+        math(EXPR accepted "${accepted} + 1")
+      elseif(row MATCHES "source-mismatch$")
+        math(EXPR mismatch "${mismatch} + 1")
+        if(NOT row STREQUAL "result\t14\t0c\tEXPECT(0d)\tsource-mismatch")
+          message(FATAL_ERROR "suite_driver: strict source mismatch is not the exact D-10 row: ${row}")
+        endif()
+      endif()
+    endforeach()
+    if(NOT comparison_count EQUAL 16 OR NOT accepted EQUAL 15 OR NOT mismatch EQUAL 1)
+      message(FATAL_ERROR "suite_driver: strict timer rejection lost comparison evidence for ${profile}")
+    endif()
+    file(READ "${SUITE_BUILD}/run-record-${profile}.txt" strict_record)
+    if(NOT strict_record MATCHES "source_comparison=separate-record" OR
+       NOT strict_record MATCHES "hardware_accuracy=unverified" OR
+       NOT strict_record MATCHES "profile_qualification=unresolved")
+      message(FATAL_ERROR "suite_driver: strict timer record obscured the unresolved software mismatch")
+    endif()
+    string(APPEND all_run_out "strict comparison: profile=${profile} exit1 on exact source mismatch; 16 rows, 15 accepted, one index14 actual0c/EXPECT(0d)\n")
+  endforeach()
+endif()
+
+if(MODE STREQUAL "timer_cascade_model" AND FAILURE STREQUAL "")
+  foreach(profile lynx1 lynx2)
+    run_timer_observation("${profile}")
+    expect_success("timer cascade model: 64 phase offsets derive 12 acknowledgments for ${profile}"
+      "${TEST_BINARY}" timer-cascade-model "${profile}" "${SUITE_BUILD}" "${ORACLE}"
+      "${ROOT}/docs/timer-source-index14-pending.json" "${ROOT}/build/pins/lynx-tests")
+    assert_timer_artifacts("${profile}")
+    string(APPEND all_run_out "cascade model: profile=${profile}; linked bytes, 192-poll arithmetic and all64 phases reproduce12; proof/companion bindings valid\n")
+  endforeach()
 endif()
 
 if(MODE STREQUAL "tracer" AND FAILURE STREQUAL "")

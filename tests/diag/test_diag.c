@@ -1991,6 +1991,7 @@ static int suite_build_mode(const char *directory, const char *suite,
         expected_model = strcmp(profile_name, "lynx1") == 0 ? 0xA1u : 0xA2u;
     } else if (strcmp(suite, "timers") == 0) {
         expected_request = 0xFD0Du; /* unchanged timers/tests.s begins with ResetTimers */
+        expected_model = strcmp(profile_name, "lynx1") == 0 ? 0xA1u : 0xA2u;
     } else {
         return fail("suite build: unknown source suite");
     }

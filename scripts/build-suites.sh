@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
 CC65_DIR="$ROOT/build/pins/cc65"
 SUITES_DIR="$ROOT/build/pins/lynx-tests"
 OUT_ARG=
@@ -36,13 +36,13 @@ OUT_PARENT=$(dirname -- "$OUT_PATH")
 OUT_BASE=$(basename -- "$OUT_PATH")
 [ -d "$OUT_PARENT" ] || { printf 'build-suites: output parent must already exist\n' >&2; exit 1; }
 [ ! -L "$OUT_PARENT" ] || { printf 'build-suites: refusing symlink output parent\n' >&2; exit 1; }
-PARENT_REAL=$(CDPATH= cd -P -- "$OUT_PARENT" && pwd -P)
+PARENT_REAL=$(CDPATH='' cd -P -- "$OUT_PARENT" && pwd -P)
 SCRATCH_ROOT="$ROOT/build/check/scratch"
 TMP_ROOT=${TMPDIR:-/tmp}
 [ -d "$SCRATCH_ROOT" ] || { printf 'build-suites: owned scratch root is missing\n' >&2; exit 1; }
 [ -d "$TMP_ROOT" ] || { printf 'build-suites: invocation temporary root is missing\n' >&2; exit 1; }
-SCRATCH_REAL=$(CDPATH= cd -P -- "$SCRATCH_ROOT" && pwd -P)
-TMP_REAL=$(CDPATH= cd -P -- "$TMP_ROOT" && pwd -P)
+SCRATCH_REAL=$(CDPATH='' cd -P -- "$SCRATCH_ROOT" && pwd -P)
+TMP_REAL=$(CDPATH='' cd -P -- "$TMP_ROOT" && pwd -P)
 case "$PARENT_REAL" in
   "$SCRATCH_REAL"|"$SCRATCH_REAL"/*|"$TMP_REAL"|"$TMP_REAL"/*) ;;
   *) printf 'build-suites: output parent is outside owned scratch and invocation temporary roots\n' >&2; exit 1 ;;
@@ -54,7 +54,7 @@ if [ -e "$OUT" ] && [ ! -d "$OUT" ]; then
   exit 1
 fi
 mkdir -p -- "$OUT"
-OUT_REAL=$(CDPATH= cd -P -- "$OUT" && pwd -P)
+OUT_REAL=$(CDPATH='' cd -P -- "$OUT" && pwd -P)
 [ "$OUT_REAL" = "$OUT" ] || { printf 'build-suites: output directory resolved through a symlink\n' >&2; exit 1; }
 
 sha256() {
@@ -111,6 +111,9 @@ LYNX_REVISION=$(printf '%s\n' "$LYNX_SOURCE_URL" | sed 's#.*/archive/##; s/\.tar
 verify_tool bin/ca65
 verify_tool bin/ld65
 
+CPU_WRAPPER_SHA=$(sha256 "$ROOT/fixtures/suites/cpu-wrapper.s")
+TIMERS_WRAPPER_SHA=$(sha256 "$ROOT/fixtures/suites/timers-wrapper.s")
+
 CPU_BEFORE=$(verify_pinned_file cpu/tests.s)
 TIMERS_BEFORE=$(verify_pinned_file timers/tests.s)
 CPU_MAIN_BEFORE=$(verify_pinned_file cpu/main.c)
@@ -162,6 +165,8 @@ TIMERS_MAIN_AFTER=$(verify_pinned_file timers/main.c)
   printf 'cc65_pin=%s\n' "$CC65_PIN"
   printf 'cpu_main_sha256=%s\n' "$CPU_MAIN_AFTER"
   printf 'timers_main_sha256=%s\n' "$TIMERS_MAIN_AFTER"
+  printf 'cpu_wrapper_sha256=%s\n' "$CPU_WRAPPER_SHA"
+  printf 'timers_wrapper_sha256=%s\n' "$TIMERS_WRAPPER_SHA"
   printf 'cpu_source_sha256=%s\n' "$CPU_AFTER"
   printf 'timers_source_sha256=%s\n' "$TIMERS_AFTER"
   printf 'license_sha256=%s\n' "$LICENSE_SHA"

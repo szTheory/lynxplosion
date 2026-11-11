@@ -10,6 +10,18 @@ The oracle uses a strict versioned TSV grammar. CPU expectations contain 18 mean
 
 The private `--test-source-shape-only` option is used only by negative controls against temporary source copies. It tests grammar failures without changing production pin verification or the source identity chain used by normal runs.
 
+## Timer observations and the pending source row
+
+`observe timers lynx1|lynx2 BUILDDIR ORACLE PENDING_DESCRIPTOR` executes a fresh guest for the requested profile, retains all 16 meaningful raw bytes and source comparisons, and writes a hash-bound pending record. Its successful observation is deliberately limited to 15 source agreements plus the exact D-10 pending row: result index 14 is `0c` while the unchanged pinned source expects `0d`. The strict `run timers PROFILE BUILDDIR ORACLE` command keeps that disagreement visible and exits 1 with `suite: timer source oracle comparison mismatch`; no accepted-value set or upstream source expectation is changed.
+
+The timer wrapper executes its own A1/A2 model probe. The observed records preserve profile, probe and marker bytes, 16 meaningful results in the 18-byte extent, guest progress and sentinel, tick bounds, fixed phase, flat five-tick CPU cost, grant-time sampling, disabled page-mode/video and refresh DMA, and zero-initialized timer counter. A matching software observation does not establish hardware accuracy or profile qualification; the default profile remains `none` and O1 remains open.
+
+`timer-cascade-model` verifies the linked Test6 setup and poll opcodes, operands, addressing modes and branch targets against the unchanged pinned assembly. It derives 14-cycle no-IRQ and 24-cycle IRQ paths, yielding 70/120 tick poll intervals, then independently enumerates all64 first-edge delays over the source-declared 192 polls. The executable proof reports12 acknowledgments and final poll offset13990 for every phase, and binds those results to the actual BLL, labels, raw bytes, run record, comparison, oracle and pending descriptor. This matches the current bounded guest result without modifying its timing or the oracle. The pending row is scheduled for Phase5 review; global EVD-02 remains open.
+
+The timer test IDs `suite.timers.observation.lynx1`, `suite.timers.observation.lynx2`, `suite.timers.strict_comparison_controls`, and `suite.timers.cascade_model` each use invocation-owned scratch. The strict controls require exit1 and the exact source mismatch diagnostic only after valid observations and proof; they also require exactly16 comparison rows,15 accepted rows and the sole index14 mismatch `0c`/`EXPECT(0d)`.
+
+The Timer2 suite is source-only at this stage. Page-mode timing, audio, and the later audio2 suite remain deferred for scoped future work; none of these source or software observations resolves physical, firmware, rights, publication or release stops.
+
 ## Linked symbols and bounded completion
 
 The harness parses the actual ld65 label file. Each nonempty line must have exactly three fields in `al HEX NAME` form; a single leading dot on a name is accepted. Every name must be syntactically valid, every required label must occur once, and code, result, model, progress, probe and completion ranges are checked for address-space overflow and overlap before result RAM is read. There are no guessed addresses.

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
 SOURCE_ARG=
 OUT_ARG=
 SHAPE_ONLY=0
@@ -24,7 +24,7 @@ done
 
 case "$SOURCE_ARG" in /*) SOURCE=$SOURCE_ARG ;; *) SOURCE=$ROOT/$SOURCE_ARG ;; esac
 [ -d "$SOURCE" ] || { printf 'suite oracle: source directory missing\n' >&2; exit 1; }
-SOURCE=$(CDPATH= cd -P -- "$SOURCE" && pwd -P)
+SOURCE=$(CDPATH='' cd -P -- "$SOURCE" && pwd -P)
 
 # This parser is also exercised against private mutated copies by the CTest
 # source-shape controls. Production generation always verifies every input
@@ -246,10 +246,10 @@ done
 case "$OUT_ARG" in /*) OUT=$OUT_ARG ;; *) OUT=$ROOT/$OUT_ARG ;; esac
 OUT_PARENT=$(dirname -- "$OUT")
 [ -d "$OUT_PARENT" ] && [ ! -L "$OUT_PARENT" ] || { printf 'suite oracle: output parent missing or symlinked\n' >&2; exit 1; }
-PARENT_REAL=$(CDPATH= cd -P -- "$OUT_PARENT" && pwd -P)
+PARENT_REAL=$(CDPATH='' cd -P -- "$OUT_PARENT" && pwd -P)
 SCRATCH_ROOT=$ROOT/build/check/scratch
 [ -d "$SCRATCH_ROOT" ] || { printf 'suite oracle: owned output root missing\n' >&2; exit 1; }
-SCRATCH_REAL=$(CDPATH= cd -P -- "$SCRATCH_ROOT" && pwd -P)
+SCRATCH_REAL=$(CDPATH='' cd -P -- "$SCRATCH_ROOT" && pwd -P)
 case "$PARENT_REAL" in "$SCRATCH_REAL"|"$SCRATCH_REAL"/*) ;; *) printf 'suite oracle: output outside owned scratch root\n' >&2; exit 1 ;; esac
 OUT=$PARENT_REAL/$(basename -- "$OUT")
 [ ! -L "$OUT" ] || { printf 'suite oracle: refusing symlink output\n' >&2; exit 1; }
