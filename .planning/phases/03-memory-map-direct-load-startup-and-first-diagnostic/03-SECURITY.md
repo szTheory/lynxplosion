@@ -10,7 +10,7 @@ created: "2026-11-10"
 
 # Phase 3 — Security
 
-The initial and bounded delta audits verify 19 of 20 unique threats from source and control presence (ASVS L1). No blocking threats remain. Final local/Linux requalification and exact-head CI remain pending under the medium-severity delivery-evidence row. No owner risk acceptance is inferred.
+The initial and bounded delta audits verified 19 of 20 unique threats from source and control presence (ASVS L1). After the full macOS and Ubuntu 24.04 checks and successful exact source-head CI run 42930686204 on `77218faf00be702c47f13b546763edd7c7d05510`, all 20 threats are closed. The summary/bookkeeping successor receives a separate CI run; the source-control evidence remains unchanged. No owner risk acceptance is inferred.
 
 ## Trust Boundaries
 
@@ -43,7 +43,7 @@ The initial and bounded delta audits verify 19 of 20 unique threats from source 
 | T-3-15 | medium | mitigate | runner result agreement: `tests/diag/test_diag.c:1655; tests/diag/tests.cmake:189` | closed |
 | T-3-16 | high | mitigate | independent consumer input and encoding: `CMakeLists.txt:89; consumer/main.c:166,367,407,500` | closed |
 | T-3-17 | high | mitigate | consumer filesystem publication: `consumer/main.c:523,572,584,634; tests/consumer/check_artifacts.c:819` | closed |
-| T-3-18 | medium | mitigate | Delivery qualification: local/Linux evidence in 03-09-CHECKPOINT.md; exact final-head CI pending. | open — below high threshold (non-blocking) |
+| T-3-18 | medium | mitigate | Delivery qualification: post-review macOS/Linux full checks and exact source-head [CI run 42930686204](https://github.com/szTheory/lynxplosion/actions/runs/42930686204) on `77218faf00be702c47f13b546763edd7c7d05510`; full results in 03-09-SUMMARY.md. | closed |
 | T-3-SC | high | mitigate | Corrected current-delivery disposition: no new project dependency/install path; pins.txt, scripts/fetch-pin.sh:148 and scripts/check.sh:136,353. Verified by delta auditor. | closed |
 | T-3-19 | high | mitigate | Newly registered scanner change: scripts/scan-binaries.sh:128 and tests/hygiene/scan_control.sh:187. Verified by delta auditor. | closed |
 
@@ -62,12 +62,13 @@ The delta audit verifies test-only barriers before manifest staging and before p
 | Initial source audit | 17/19 | T-3-SC blocking; T-3-18 non-blocking | Typed security auditor, all nine plans and eight summaries plus plan 09 checkpoint. |
 | Root disposition correction | pending delta audit | T-3-SC and newly registered T-3-19 blocking pending verification | No new risk accepted; scanner warning mapped explicitly. |
 | Delta source audit | 19/20 | T-3-18 non-blocking | T-3-SC verified against all nine corrected rows and pinned-toolchain controls; T-3-19 verified against fail-closed iconv/byte comparison and invalid/long-valid UTF-8 controls; T-3-17 interruption gap resolved. No unmapped flag remains. |
+| Final delivery qualification | 20/20 | none | macOS and isolated Ubuntu 24.04 full gates passed on `77218faf`; exact source-head CI run 42930686204 passed with all required jobs. The docs/bookkeeping successor is separately CI-checked after push. |
 
 ## Sign-Off
 
 - [x] Every threat has a supported disposition; no accepted risk inferred.
 - [x] No high or critical threat remains open (`threats_open: 0`).
 - [x] Scanner and test-only interruption surfaces are explicitly mapped.
-- [ ] Final delivery evidence closes T-3-18 after required platform checks and exact-head CI.
+- [x] Final delivery evidence closes T-3-18 after required platform checks and exact source-head CI.
 
-Security implementation audit verified; overall phase completion remains pending delivery qualification.
+Security audit and source delivery qualification verified; docs-only successor CI and parent phase-goal verification remain pending.

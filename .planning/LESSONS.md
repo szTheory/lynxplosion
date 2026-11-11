@@ -106,3 +106,21 @@ from text payloads to binary BLL objects exposed leftover temporary inputs and
 a manually compiled API probe to the artifact gate. Clean up only test-owned
 files after successful checks; do not add an artifact exemption to make the
 gate green.
+
+**A plan's threat disposition is not owner acceptance.** The initial Phase 3
+plans marked the pinned-toolchain threat as `accept`, but there was no owner
+risk-acceptance record. The current delivery was corrected to `mitigate` and
+verified against the existing hash-pinned download/build controls. That closes
+the current-delivery threat only; it does not define a future dependency or
+package-allowlist policy. Reassess if dependency installation scope changes.
+
+**Keep inherited snapshot edge cases as explicit follow-ups.** The 03 review
+noted that a forged snapshot with a 255-tick `cpu_ready_at` span is accepted;
+this predates the reviewed delta and was not changed in Plan 03-09. Track it in
+STATE before making broader snapshot-validation claims.
+
+**Bind the regression command explicitly for CMake.** The generic GSD language sniff did not recognize this project and would resolve to a successful no-op. Set workflow.test_command to the documented fast gate. Run that gate once for both regression and final local qualification; do not duplicate it under two labels.
+
+**Use self-contained Git objects in containers.** A shared local clone points outside the container. Use a self-contained clone before requiring history hygiene. Keep raw logs temporary and generated report links relative to the repository before committing.
+
+**Keep closeout handoffs bounded.** Reuse reviewed evidence and return concrete edits; repeated report reconstruction can dominate the critical path after tests finish. Parent-owned metadata closeout can avoid another broad executor context reload.

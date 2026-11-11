@@ -2,17 +2,17 @@
 gsd_state_version: "1.0"
 current_phase: 03
 current_phase_name: Memory Map, Direct-Load Startup and First Diagnostic
-status: executing
-stopped_at: Completed 03-08-PLAN.md
+status: verifying
+stopped_at: Completed 03-09-PLAN.md; goal verification pending
 last_updated: "2026-11-10T21:58:28.498Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 03 execution started
-state_head: bdcc0cb74bc729cc0039b8e929cabf15db2c0dc2
+state_head: 77218faf00be702c47f13b546763edd7c7d05510
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 33
-  completed_plans: 32
+  completed_plans: 33
   percent: 33
 ---
 
@@ -27,9 +27,9 @@ See: .planning/PROJECT.md (updated 2026-11-09)
 
 ## Current Position
 
-Phase: 03 (Memory Map, Direct-Load Startup and First Diagnostic) — EXECUTING
+Phase: 03 (Memory Map, Direct-Load Startup and First Diagnostic) — VERIFYING
 Plan: 9 of 9
-Status: Ready to execute
+Status: All 9 plans executed; goal verification pending
 Last activity: 2026-11-10 — Phase 03 execution started
 
 Progress: [███░░░░░░░] 33%
@@ -177,7 +177,7 @@ No blockers. Open owner decisions that shape claims but do not stop work:
 - O6 (clean-room protocol): policy and exposure record stay DRAFT; no emulator source opened in Phases 1-2.
 - O5 (licence): no licence file; all rights reserved until decided.
 - O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
-- Phase 3 starts at the memory map (MAPCTL), direct-load startup tier A and the first original diagnostic; research flags remain for Phases 3-6.
+- Phase 3 implementation, reviews, local/Linux qualification and source-head CI pass; final metadata CI and parent goal verification precede phase completion. Research flags remain for Phases 4-6.
 - Carried follow-ups: bus tick stamp is plumbed but unobserved until a device consumes it (Phase 4); `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
 
 ## Deferred Items
@@ -186,7 +186,7 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 | Category | Item | Status | Deferred At | Milestone |
 |----------|------|--------|-------------|-----------|
-| *(none)* | | | | |
+| Technical follow-up | Investigate restore accepting a forged `cpu_ready_at` span of 255 ticks; inherited from `origin/main`, documented in Phase 3 code review, and outside Plan 03-09's change scope. | Open; schedule before relying on broader snapshot-validation claims; no owner risk acceptance inferred. | Phase 03 Plan 09 | v1 |
 
 ## Session Continuity
 

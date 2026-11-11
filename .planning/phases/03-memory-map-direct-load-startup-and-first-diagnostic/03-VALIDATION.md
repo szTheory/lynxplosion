@@ -10,7 +10,7 @@ audited: "2026-11-10"
 
 # Phase 3 — Validation Strategy
 
-> **Coverage verdict: COVERED for Phase 3 scope.** All in-scope behavior and negative controls are automated and registered, including deterministic interruption at both publication boundaries. CON-01 coverage here is the planned diagnostic snapshot and placeholder-silence output. This is separate from phase qualification: full-platform requalification and exact-head CI after the source fix remain pending.
+> **Coverage verdict: COVERED for Phase 3 scope.** All in-scope behavior and negative controls are automated and registered, including deterministic interruption at both publication boundaries. CON-01 coverage here is the planned diagnostic snapshot and placeholder-silence output. The full macOS/Linux checks and exact source-head CI passed on `77218faf00be702c47f13b546763edd7c7d05510`. The summary/bookkeeping commit receives its own exact-head CI; Phase 3 goal verification remains with the parent.
 
 ## Test Infrastructure
 
@@ -22,7 +22,7 @@ audited: "2026-11-10"
 | **Focused CTest command** | `ctest --preset check --no-tests=error --output-on-failure -R '^(api\.(bll_|snapshot_|watch_|memory_peek_pure|inspect_pure|seam_agreement\.)|memory\.|runner\.cli|fixture\.bll_header|diag\.|consumer\.|det\.(diagnostic_restore|manifest_fields|two_instances|two_runs|golden|sensitivity))'` |
 | **Focused retest** | 41/41 passed on macOS arm64 after rebuilding the current API, diagnostic and consumer targets; 11.61 s CTest wall time. The large full-data CPU-vector lane was not run. |
 | **Full suite / exact inventory** | `sh scripts/check.sh`; current CTest registers 120 tests, matching the 120 non-comment rows in `tests/inventory/fast.txt`. Inventory SHA-256 and claim `inventory_sha256`: `1e5eee703b7d5a8009c1cb05fd20625b228418d1eedbd92f18c53f6dc1625654`. |
-| **Recorded local/Linux qualification** | Plan 03-09 checkpoint: 120/120, zero declared skips; macOS arm64 82 s total / 33.11 s CTest, Ubuntu 24.04 arm64 74 s total / 22.40 s CTest. These are checkpoint results; no exact-head CI result is recorded. |
+| **Post-review qualification** | Source head `77218faf00be702c47f13b546763edd7c7d05510`: 120/120, zero declared skips on both platforms; macOS 89 s total / 32.29 s CTest; Ubuntu 24.04 arm64 53 s total / 17.48 s CTest; exact-head CI run 42930686204 passed. |
 
 ## Requirement-Level Verification Map
 
@@ -61,7 +61,7 @@ The map contains both tasks from each of the nine plans. “Covered” means the
 | 03-08 T1 — runner agreement/provenance | EVD-01, MEM-03, DET-03 | `diag.result_controls`, `fixture.bll_header(.self_test)`, `runner.cli`, `docs.provenance`, `policy.*` | COVERED |
 | 03-08 T2 — public consumer output | HB-01, CON-01, MEM-03 | `consumer.public_api`, `consumer.snapshot_ppm`, `consumer.silence_wav`, `consumer.refusal_controls` | COVERED |
 | 03-09 T1 — atomic consumer publication | HB-01, CON-01 | `consumer.refusal_controls` synchronizes at before-manifest and before-publish barriers, validates expected staged files, SIGKILLs and reaps the exact child, checks final-path absence and sibling preservation, then cleans only its owned stage. An early-publish mutant fails at the intended assertion. | COVERED |
-| 03-09 T2 — docs and delivery qualification | All Phase 3 requirements | Local and Ubuntu `sh scripts/check.sh` results in `03-09-CHECKPOINT.md`; exact-head CI is not recorded. | COVERED for test coverage; CI qualification pending |
+| 03-09 T2 — docs and delivery qualification | All Phase 3 requirements | Local and Ubuntu full gates plus source-head CI run 42930686204 on `77218faf`; summary/bookkeeping successor receives a separate exact-head run. | COVERED for test coverage and qualified source head |
 
 ### WR-01 closure evidence
 
@@ -98,12 +98,12 @@ Two descriptor-less prohibitions in Plan 03-09 remain flagged-unverified: do not
 
 | Gate | Status |
 |---|---|
-| macOS focused post-fix check | Current focused build passed; `ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.'` passed 4/4. |
-| macOS/Linux full checks | Prior to source fix, checkpoint recorded 120/120 and zero declared skips on both platforms. Full-platform requalification after this source fix remains pending. |
+| macOS regression/full check | Configured `workflow.test_command` resolved to `sh scripts/check.sh`; canonical `run-with-timeout 600` wrapper exited 0 on source head `77218faf`. CTest 120/120, zero skips; total 89 s. |
+| macOS/Linux full checks | Post-review source head `77218faf` passed on macOS and an isolated Ubuntu 24.04 arm64 clone. Both reported 120/120 and zero declared skips; artifact/history/claim checks passed. |
 | Code review of fix delta | Clean; `03-REVIEW.md` records zero findings for commit `61d79af`. |
-| Parent security review | Pending. |
-| Exact-head CI | Pending after source fix; no CI result is recorded. |
-| Plan 03-09 summary | Pending root executor's full-platform requalification and exact-head CI; this audit does not claim phase completion. |
+| Security review | 20/20 threats verified; T-3-18 is closed using the source-head local/Linux and CI evidence in `03-SECURITY.md`. |
+| Exact-head CI | Source head `77218faf` passed CI run [42930686204](https://github.com/szTheory/lynxplosion/actions/runs/42930686204), one required `check` job. The summary/bookkeeping successor must pass its own run. |
+| Plan 03-09 summary | Written in this delivery; Phase 3 goal verification and phase completion remain pending the parent verifier. |
 
 **Hardware and rights boundary:** no physical hardware, BIOS, commercial game content, release or publication qualification is included. MAPCTL/device policy, timing and snapshot/pixel repeatability are not hardware-accuracy evidence.
 
