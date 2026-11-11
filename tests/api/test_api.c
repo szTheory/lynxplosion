@@ -3776,6 +3776,8 @@ static size_t make_timer_bank_guest(uint8_t *program)
     return length;
 }
 
+static bool timer_write_required(lynx__timer_bank *bank, uint16_t addr, uint8_t value);
+
 static void case_timer_standalone(void)
 {
     const int failures_before = check_failures;
@@ -3821,6 +3823,36 @@ static void case_timer_standalone(void)
     CHECK_EQ_U64(crossing[0], 0xA5u);
     CHECK_EQ_U64(crossing[1], 0x5Au);
 
+    /* Register state belongs to the instance and reset/load return it to the
+       declared fixed-zero phase policy. */
+    lynx_machine *other = init_in(buf_b, &cfg);
+    if (other != NULL) {
+        uint8_t other_timers[LYNX__TIMER_COUNT * 4u];
+        CHECK_EQ_U64(lynx_read_cpu_memory(other, 0xFD00u, other_timers,
+                                         sizeof other_timers), LYNX_OK);
+        for (size_t i = 0u; i < sizeof other_timers; i++) {
+            CHECK_EQ_U64(other_timers[i], 0u);
+        }
+        lynx_machine_deinit(other);
+    }
+    CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
+    memset(mapped, 0xA5, sizeof mapped);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD00u, mapped, sizeof mapped), LYNX_OK);
+    for (size_t i = 0u; i < sizeof mapped; i++) {
+        CHECK_EQ_U64(mapped[i], 0u);
+    }
+    CHECK_EQ_U64(m->timer_bank.phase_policy, LYNX__TIMER_PHASE_FIXED_ZERO_1);
+    CHECK(timer_write_required(&m->timer_bank, 0xFD1Cu, 0xA5u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD81u, 0x80u));
+    CHECK_EQ_U64(load_bll_at(m, timer_tracer_program, sizeof timer_tracer_program,
+                             0x0200u), LYNX_OK);
+    memset(mapped, 0xA5, sizeof mapped);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD00u, mapped, sizeof mapped), LYNX_OK);
+    for (size_t i = 0u; i < sizeof mapped; i++) {
+        CHECK_EQ_U64(mapped[i], 0u);
+    }
+    CHECK_EQ_U64(lynx__timer_peek(&m->timer_bank, 0xFD80u), 0u);
+
 done:
     if (m != NULL) {
         lynx_machine_deinit(m);
@@ -3848,6 +3880,7 @@ static void case_timer_phase(void)
 {
     const int failures_before = check_failures;
     lynx__timer_bank bank;
+    uint64_t next = 0u;
     for (size_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
         for (uint8_t source = 0u; source <= 6u; source++) {
             lynx__timer_init(&bank);
@@ -3868,7 +3901,6 @@ static void case_timer_phase(void)
                 goto done;
             }
             const uint64_t period = UINT64_C(16) << source;
-            uint64_t next = 0u;
             CHECK(lynx__timer_next(&bank, period - 1u, &next));
             CHECK_EQ_U64(next, period);
             lynx__timer_apply(&bank, period);
@@ -3885,13 +3917,48 @@ static void case_timer_phase(void)
         }
     }
 
+    for (size_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        lynx__timer_init(&bank);
+        const uint8_t source = (uint8_t)(i % 7u);
+        const uint64_t period = UINT64_C(16) << source;
+        CHECK(timer_write_required(&bank, timer_register_addr(i, 0u), UINT8_MAX));
+        CHECK(timer_write_required(&bank, timer_register_addr(i, 2u), UINT8_MAX));
+        CHECK(timer_write_required(&bank, timer_register_addr(i, 1u),
+                                   (uint8_t)(0x08u | source)));
+        CHECK(lynx__timer_next(&bank, 0u, &next));
+        CHECK_EQ_U64(next, period);
+        lynx__timer_apply(&bank, period);
+        CHECK_EQ_U64(bank.timers[i].count, UINT8_MAX - 1u);
+        CHECK_EQ_U64(bank.timers[i].control_b & 0x08u, 0u);
+    }
+
+    /* DONE blocks a one-shot even if software writes a new count; CTLB zero
+       clears it. A held reset-DONE level keeps the latch clear on later edges. */
+    lynx__timer_init(&bank);
+    CHECK(timer_write_required(&bank, 0xFD02u, 0u));
+    CHECK(timer_write_required(&bank, 0xFD01u, 0x88u));
+    lynx__timer_apply(&bank, 16u);
+    CHECK_EQ_U64(bank.timers[0].control_b & 0x08u, 0x08u);
+    CHECK(timer_write_required(&bank, 0xFD02u, 3u));
+    CHECK(!lynx__timer_next(&bank, 16u, &next));
+    CHECK(timer_write_required(&bank, 0xFD03u, 0u));
+    CHECK(lynx__timer_next(&bank, 16u, &next));
+    CHECK_EQ_U64(next, 32u);
+
+    lynx__timer_init(&bank);
+    CHECK(timer_write_required(&bank, 0xFD02u, 0u));
+    CHECK(timer_write_required(&bank, 0xFD01u, 0xC8u));
+    lynx__timer_apply(&bank, 16u);
+    CHECK_EQ_U64(bank.timers[0].control_b & 0x08u, 0u);
+    lynx__timer_apply(&bank, 32u);
+    CHECK_EQ_U64(bank.timers[0].control_b & 0x08u, 0u);
+
     /* A reload interval uses backup + 1 source edges, and the shared divider
        remains aligned after count/source/enable writes at a nonzero phase. */
     lynx__timer_init(&bank);
     CHECK(timer_write_required(&bank, 0xFD00u, 2u));
     CHECK(timer_write_required(&bank, 0xFD02u, 0u));
     CHECK(timer_write_required(&bank, 0xFD01u, 0x98u));
-    uint64_t next = 0u;
     CHECK(lynx__timer_next(&bank, 0u, &next));
     CHECK_EQ_U64(next, 16u);
     lynx__timer_apply(&bank, 16u);
@@ -3980,6 +4047,20 @@ static void case_timer_phase(void)
     CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
     CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) != 0);
     lynx_machine_deinit(m);
+
+    static const uint8_t refused_link[] = {
+        0xA9u, 0x0Fu, 0x8Du, 0x01u, 0xFDu
+    };
+    m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        CHECK_EQ_U64(load_bll_at(m, refused_link, sizeof refused_link, 0x0200u), LYNX_OK);
+        CHECK_EQ_U64(lynx_advance(m, 50u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+        CHECK_EQ_U64(consumed, 25u);
+        CHECK_EQ_U64(m->cpu.req_addr, 0xFD01u);
+        CHECK_EQ_U64(m->timer_bank.timers[0].control_a, 0u);
+        lynx_machine_deinit(m);
+    }
 
 done:
     printf("TAP version 13\n1..1\n%s 1 - api.timer_phase\n",

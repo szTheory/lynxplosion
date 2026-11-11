@@ -34,7 +34,7 @@ extern const char lynx__build_id[];
 #define LYNX__TICK_HEADROOM 0x10000u
 
 #define LYNX__TIMER_COUNT 8u
-#define LYNX__TIMER_IMPLEMENTED_COUNT 1u
+#define LYNX__TIMER_IMPLEMENTED_COUNT LYNX__TIMER_COUNT
 #define LYNX__TIMER_PHASE_FIXED_ZERO_1 1u
 
 typedef struct lynx__timer {
