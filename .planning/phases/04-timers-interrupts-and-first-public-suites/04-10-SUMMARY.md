@@ -35,7 +35,7 @@ key-decisions:
 patterns-established:
   - "Captured parser faults use per-invocation immutable profile baselines, private mutations, positive revalidation and baseline SHA checks."
   - "Actual guest faults remain separately bracketed by fresh positives and must emit their exact refusal before downstream evidence is accepted."
-requirements-completed: [EVD-03, EVD-04, EVD-05]
+requirements-completed: [EVD-03, EVD-04]
 coverage:
   - id: D1
     description: "Both suites are held before their first instruction, advance held guest time, and fail through the normal absent-execution validator."

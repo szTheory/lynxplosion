@@ -99,7 +99,10 @@ sequence, not a ceiling on the project goal.
     remains open; no other comparison or control is deferred.
 - [x] **EVD-03**: A no-run negative control (CPU halted before tests start) makes every suite fail in the harness
 - [x] **EVD-04**: The harness asserts which model a suite detected and fails when it does not match the selected profile
-- [x] **EVD-05**: Each device phase adds at least one named-fault control that is shown to fail the intended test
+- [ ] **EVD-05**: Each device phase adds at least one named-fault control that is shown to fail the intended test
+  - Recurring obligation: Phase 4 coverage is completed by its own named-fault
+    work; Phase 5 DMA and Phase 6 audio controls already required by the roadmap
+    remain outstanding. A completed Phase 4 slice does not close all phases.
 - [ ] **EVD-06**: The lynx-tests `timers`, `cpu`, `page-mode`, `audio` and `audio2` suites run headlessly from pinned, source-built, startup-tier-A images with results captured and inventoried; any suite that cannot run that way is a visible, documented skip with its blocker
 
 ### Playable scenario and consumer
@@ -226,7 +229,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EVD-02 | Phases 4 and 5 | Phase 4 harness slice; exact timer offset-14 agreement pending Phase 5 |
 | EVD-03 | Phase 4 | Complete |
 | EVD-04 | Phase 4 | Complete |
-| EVD-05 | Phase 4 | Complete |
+| EVD-05 | Phases 4, 5 and 6 | Phase 4 slice in progress; later device-fault obligations remain open |
 | EVD-06 | Phase 6 | Pending |
 | HB-01 | Phase 3 | Complete |
 | HB-02 | Phase 5 | Pending |

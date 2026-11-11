@@ -211,7 +211,7 @@ Plans:
 **Goal**: An original homebrew drives timer-generated frames that the host receives as raw video and that respond to a recorded logical input timeline.
 **Mode:** mvp
 **Depends on**: Phase 4
-**Requirements**: VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01 (real-frame consumer slice), EVD-02 (remaining timer agreement)
+**Requirements**: VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01 (real-frame consumer slice), EVD-02 (remaining timer agreement), EVD-05 (DMA fault slice)
 **Success Criteria** (what must be TRUE):
   1. Changing the Timer 0 and Timer 2 settings changes line and frame timing as measured in guest ticks (no fixed 60 Hz). The host can stop advancement on a frame-complete event whose definition is documented.
   2. Display DMA appears as a bus requestor that costs ticks and closes page-mode streams. The lynx-tests `page-mode` suite runs with results captured and inventoried, or appears as a visible, documented skip. A named-fault control on DMA cost fails its intended test.
@@ -230,7 +230,7 @@ Plans:
 **Goal**: The homebrew plays sound in response to input, and progress, input, video and audio line up on one guest-tick timeline. The v1 public-suite inventory and a throughput baseline are recorded.
 **Mode:** mvp
 **Depends on**: Phase 4 (timers), Phase 5 (homebrew and input)
-**Requirements**: AUD-01, AUD-02, HB-03, DET-05, EVD-06, PERF-01, CON-01 (final real-audio/video consumer closure)
+**Requirements**: AUD-01, AUD-02, HB-03, DET-05, EVD-06, PERF-01, CON-01 (final real-audio/video consumer closure), EVD-05 (final device-fault closure)
 **Success Criteria** (what must be TRUE):
   1. Four audio channels (LFSR, integrator, reload, volume, timer links) and stereo muting are emulated. Original tests cover channels 1 to 3 and the stereo bits. Results from the `audio` and `audio2` suites are captured, and a named-fault control fails its intended test.
   2. The host receives integer PCM at an exact rational rate derived from the 16 MHz clock, plus tick-stamped channel events. The forbidden-import check still shows no float, filter or resampler in the core.
