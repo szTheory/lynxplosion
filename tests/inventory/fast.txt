@@ -24,7 +24,9 @@ api.load_refusal_unchanged	api
 api.memory_peek_pure	api
 api.memory_peek_pure.self_test	api
 api.profile_select	api
+api.request_boundary	api
 api.request_hold	api
+api.request_wake	api
 api.reset_power_on	api
 api.scheduler_limits	api
 api.scheduler_order	api

@@ -5318,6 +5318,202 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void run_request_wake_case(bool mask_irq)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        CHECK(m != NULL);
+        return;
+    }
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK(timer_write_required(&m->timer_bank, 0xFD00u, 3u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 3u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x88u));
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    for (uint32_t i = 0u; i < 100u &&
+                           !(m->cpu.req_addr == 0x0400u &&
+                             (m->cpu.req_flags & LYNX__CF_WRITE) != 0u);
+         i++) {
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    }
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0400u);
+    CHECK_EQ_U64(m->cpu.req_flags & LYNX__CF_WRITE, LYNX__CF_WRITE);
+    CHECK_EQ_U64(m->cpu.req_flags & LYNX__CF_POLL, LYNX__CF_POLL);
+    CHECK(m->guest_ticks < 64u);
+    m->cpu.p = mask_irq ? (uint8_t)(m->cpu.p | 0x04u) :
+                          (uint8_t)(m->cpu.p & (uint8_t)~0x04u);
+    const lynx__cpu request_before = m->cpu;
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+
+    /* The half-open call stops at 64 before the timer edge. Releasing and
+       advancing one tick makes the timer event and CPU store contend at 64. */
+    if (m->guest_ticks < 64u) {
+        const uint64_t to_boundary = 64u - m->guest_ticks;
+        CHECK_EQ_U64(lynx_advance(m, to_boundary, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, to_boundary);
+    }
+    CHECK_EQ_U64(m->guest_ticks, 64u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u);
+    CHECK_EQ_U64(m->wake_pending, 0u);
+    CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) == 0);
+
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK_EQ_U64(m->wake_pending, 1u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0xA5u);
+    CHECK_EQ_U64(m->host_observation.watch_event.hit_tick, 64u);
+    CHECK_EQ_U64(m->host_observation.watch_event.return_tick, 65u);
+    CHECK_EQ_U64(m->cpu.p & 0x04u, mask_irq ? 0x04u : 0u);
+    CHECK_EQ_U64(m->cpu.flags & LYNX__CS_SEQ_MASK, mask_irq ? 0u : 0x10u);
+    CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) != 0);
+
+    lynx_machine_deinit(m);
+}
+
+static void case_request_wake(void)
+{
+    const int failures_before = check_failures;
+    run_request_wake_case(true);
+    run_request_wake_case(false);
+    CHECK_EQ_U64(check_failures, failures_before);
+    printf("TAP version 13\n1..1\n%s 1 - api.request_wake\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_request_boundary(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_cost_model(m, LYNX__COST_TEST_SKEW), LYNX_OK);
+    const lynx__cpu opcode_request = m->cpu;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 0u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK(memcmp(&opcode_request, &m->cpu, sizeof opcode_request) == 0);
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(m->guest_ticks, 1u);
+    CHECK_EQ_U64(m->cpu_ready_at, m->guest_ticks);
+    CHECK(memcmp(&opcode_request, &m->cpu, sizeof opcode_request) == 0);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE) >> 24, 0u);
+
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(m->guest_ticks, 2u);
+    CHECK_EQ_U64(m->cpu_ready_at, 5u); /* test_skew opcode cycle ends at tick 5 */
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE) >> 24, 3u);
+
+    const lynx__cpu operand_request = m->cpu;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_advance(m, 0u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK_EQ_U64(lynx_advance(m, 10u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 10u);
+    CHECK_EQ_U64(m->guest_ticks, 12u);
+    CHECK_EQ_U64(m->cpu_ready_at, m->guest_ticks);
+    CHECK(memcmp(&operand_request, &m->cpu, sizeof operand_request) == 0);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE) >> 24, 0u);
+
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(m->guest_ticks, 13u);
+    CHECK_EQ_U64(m->cpu_ready_at, 18u); /* test_skew operand cycle ends at tick 18 */
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE) >> 24, 5u);
+
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    CHECK(timer_write_required(&m->timer_bank, 0xFD00u, 0u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 0u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x88u));
+    const lynx__cpu held_request = m->cpu;
+    CHECK_EQ_U64(lynx_advance(m, 256u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 256u);
+    CHECK_EQ_U64(m->guest_ticks, 269u);
+    CHECK_EQ_U64(m->cpu_ready_at, m->guest_ticks);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK_EQ_U64(m->wake_pending, 1u);
+    CHECK(memcmp(&held_request, &m->cpu, sizeof held_request) == 0);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE) >> 24, 0u);
+
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 2u), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(NULL, 1u), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(m, snap_a);
+    _Alignas(max_align_t) uint8_t invalid_instance[sizeof(struct lynx_machine)] = {0};
+    CHECK_EQ_U64(lynx__machine_set_bus_hold((lynx_machine *)(void *)invalid_instance, 1u),
+                 LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(m, snap_a);
+
+    CHECK_EQ_U64(lynx_reset(m), LYNX_OK);
+    CHECK_EQ_U64(m->bus_hold, 0u);
+    CHECK_EQ_U64(m->wake_pending, 0u);
+    CHECK_EQ_U64(m->guest_ticks, 0u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u);
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    CHECK(timer_write_required(&m->timer_bank, 0xFD81u, 0x01u));
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    CHECK_EQ_U64(m->wake_pending, 1u);
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK_EQ_U64(m->bus_hold, 0u);
+    CHECK_EQ_U64(m->wake_pending, 0u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u);
+
+    /* FD91 is in the unimplemented Mikey window. The unavailable write stays
+       posted and does not mutate hidden backing RAM or the instance on retry. */
+    static const uint8_t fd91_payload[] = {
+        0xA9u, 0x0Cu, 0x8Du, 0xF9u, 0xFFu,
+        0xA9u, 0x5Au, 0x8Du, 0x91u, 0xFDu
+    };
+    uint8_t fd91_bll[10u + sizeof fd91_payload];
+    make_bll_header(fd91_bll, sizeof fd91_bll, 0x0200u);
+    memcpy(fd91_bll + 10u, fd91_payload, sizeof fd91_payload);
+    CHECK_EQ_U64(lynx_load_bll(m, fd91_bll, sizeof fd91_bll), LYNX_OK);
+    m->ram[0xFD91u] = 0xE7u;
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK(consumed != 0u);
+    CHECK_EQ_U64(m->cpu.req_addr, 0xFD91u);
+    CHECK_EQ_U64(m->cpu.req_data, 0x5Au);
+    CHECK_EQ_U64(m->cpu.req_flags & LYNX__CF_WRITE, LYNX__CF_WRITE);
+    CHECK_EQ_U64(m->ram[0xFD91u], 0xE7u);
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_UNCHANGED(m, snap_a);
+
+done:
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.request_boundary\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void case_timer_phase(void)
 {
     const int failures_before = check_failures;
@@ -5536,8 +5732,10 @@ static const struct {
     {"load_refusal_unchanged", case_load_refusal_unchanged},
     {"profile_divergence", case_profile_divergence},
     {"profile_select", case_profile_select},
+    {"request_boundary", case_request_boundary},
     {"rom_unavailable", case_rom_unavailable},
     {"request_hold", case_request_hold},
+    {"request_wake", case_request_wake},
     {"reset_power_on", case_reset_power_on},
     {"sha256", case_sha256},
     {"snapshot_refusal", case_snapshot_refusal},

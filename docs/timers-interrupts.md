@@ -105,7 +105,7 @@ The machine scans the fixed timer source set for its next edge and compares it
 with the pending CPU request by `(tick, priority, sequence)`. It advances
 directly between events instead of stepping every master tick. An event at the
 exclusive budget target remains pending for the next call. A zero budget makes
-no machine-state change. With the private CPU grant gate held, timer events
+no machine-state change. With the private bus ownership gate held, timer events
 continue and a no-event span jumps to the requested target without changing the
 posted CPU request. A watched CPU write returns at `grant + 1` after all timer
 work at the grant tick and the CPU completion have been applied.
@@ -114,6 +114,36 @@ All mutable timer state lives in `lynx_machine`; timer code uses no host clock,
 allocation, or mutable global state. Guest time is also the canonical shared
 divider phase. The event cursor prevents a current-tick event from being
 dispatched twice after a stop at that timestamp.
+
+## CPU ownership and guest sleep boundary
+
+The Plan 01 source and wrapper inventory reports that neither pinned public
+suite references FD91, and the bounded wrapper trace did not reach it. FD91
+remains unavailable: it maps to an unimplemented Mikey byte, and no active
+Suzy owns the bus. `api.request_boundary` verifies that a real guest write to
+FD91 stays pending, refuses with `LYNX_STOP_UNAVAILABLE`, and leaves hidden
+backing RAM unchanged on retry. The private `bus_hold` seam tests scheduler
+ownership only; it does not implement CPUSLEEP, active Suzy, WAI, or STP.
+
+`wake_pending` follows the nonzero timer interrupt-pending latch independently
+of the CPU I mask. I still controls whether the CPU accepts the interrupt at a
+poll. `api.request_hold` keeps a real BLL store request and CPU state unchanged
+while timer IRQs progress, then checks one watched store completion after
+release. `api.request_wake` aligns timer expiry and that store grant at tick 64
+under both masked and unmasked I states, checking timer-before-CPU ordering and
+IRQ acceptance separately.
+
+`cpu_ready_at` records the end of a priced bus cycle, not time spent waiting
+for ownership. When guest time passes it, the scheduler normalizes readiness
+to the current tick. `LYNX_REG_CPU_STATE` reports only remaining priced-cycle
+ticks, so a long hold reports zero while the independent hold gate still keeps
+the request posted. `api.request_boundary` exercises pre-cycle, in-cycle,
+expired, zero-budget, long-hold, and test-skew pricing cases, plus repeated
+hold transitions. `api.request_hold` also checks per-instance isolation.
+
+The current snapshot payload does not include `bus_hold` or `wake_pending`.
+Plan 06 must define and test held-request and wake continuation (or explicit
+refusal) before snapshot claims cover these states.
 
 ## Verification scope and deferred semantics
 
