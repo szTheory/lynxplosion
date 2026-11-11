@@ -9,7 +9,7 @@ cmake_path(IS_PREFIX SCRATCH_ROOT "${WORK}" NORMALIZE work_is_owned)
 if(NOT work_is_owned OR "${WORK}" STREQUAL "${SCRATCH_ROOT}")
   message(FATAL_ERROR "suite_driver: refusing output outside invocation-owned scratch")
 endif()
-if(NOT MODE MATCHES "^(cpu|tracer|oracle_controls|symbol_controls)$")
+if(NOT MODE MATCHES "^(cpu|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls)$")
   message(FATAL_ERROR "suite_driver: unknown mode")
 endif()
 if(MODE STREQUAL "cpu" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
@@ -38,6 +38,50 @@ function(expect_success expected)
   if(NOT "${rc}" STREQUAL "0" OR found EQUAL -1)
     message(FATAL_ERROR "suite_driver: control expected success and '${expected}', got ${rc}: ${combined}")
   endif()
+endfunction()
+
+function(run_clean_cpu)
+  expect_success("suite raw source comparison: match; suite=cpu machine_profile=lynx1 profile_input=lynx1 ram_seed=zero"
+    "${TEST_BINARY}" run cpu lynx1 "${SUITE_BUILD}" "${ORACLE}" zero)
+  expect_success("cpu record: 18 raw results, completion and model evidence valid for lynx1"
+    "${TEST_BINARY}" validate-cpu-record lynx1
+      "${SUITE_BUILD}/raw-results-zero.tsv"
+      "${SUITE_BUILD}/run-record-zero.txt" "${ORACLE}")
+endfunction()
+
+function(expect_cpu_record_failure expected raw_path record_path)
+  expect_failure("${expected}" "${TEST_BINARY}" validate-cpu-record lynx1
+    "${raw_path}" "${record_path}" "${ORACLE}")
+  run_clean_cpu()
+endfunction()
+
+function(replace_cpu_tuple source_text from_tuple to_tuple output_var)
+  string(REPLACE "," ";" from_bytes "${from_tuple}")
+  string(REPLACE "," ";" to_bytes "${to_tuple}")
+  set(changed "${source_text}")
+  foreach(offset RANGE 0 3)
+    list(GET from_bytes ${offset} from_byte)
+    list(GET to_bytes ${offset} to_byte)
+    math(EXPR result_index "12 + ${offset}")
+    string(REPLACE "result\t${result_index}\t${from_byte}"
+                   "result\t${result_index}\t${to_byte}" changed "${changed}")
+  endforeach()
+  set(${output_var} "${changed}" PARENT_SCOPE)
+endfunction()
+
+function(write_ticks_record destination ticks)
+  file(READ "${SUITE_BUILD}/run-record-zero.txt" record_text)
+  string(REGEX MATCH "ticks_observed=([0-9]+)" old_tick_row "${record_text}")
+  set(old_ticks "${CMAKE_MATCH_1}")
+  string(REPLACE "ticks_observed=${old_ticks}" "ticks_observed=${ticks}" changed "${record_text}")
+  string(REPLACE "guest_ticks=${old_ticks}" "guest_ticks=${ticks}" changed "${changed}")
+  if(ticks GREATER_EQUAL 256 AND ticks LESS_EQUAL 50000000)
+    math(EXPR margin "${ticks} - 256")
+    math(EXPR headroom "50000000 - ${ticks}")
+    string(REGEX REPLACE "completion_margin_ticks=[0-9]+" "completion_margin_ticks=${margin}" changed "${changed}")
+    string(REGEX REPLACE "maximum_headroom_ticks=[0-9]+" "maximum_headroom_ticks=${headroom}" changed "${changed}")
+  endif()
+  file(WRITE "${destination}" "${changed}")
 endfunction()
 
 function(reset_shape_source)
@@ -134,6 +178,147 @@ if(FAILURE STREQUAL "")
       endif()
     endforeach()
   endif()
+endif()
+
+if(MODE STREQUAL "cpu_model_controls" AND FAILURE STREQUAL "")
+  execute_process(COMMAND "${TEST_BINARY}" run cpu
+    RESULT_VARIABLE missing_profile_rc OUTPUT_VARIABLE missing_profile_out ERROR_VARIABLE missing_profile_err)
+  set(missing_profile_output "${missing_profile_out}${missing_profile_err}")
+  if(NOT missing_profile_rc STREQUAL "2" OR
+     NOT missing_profile_output MATCHES "usage: lynx-test-suites run cpu PROFILE")
+    set(FAILURE "missing CPU suite profile was not rejected with the explicit usage contract")
+  endif()
+  if(FAILURE STREQUAL "")
+    expect_failure("suite: explicit lynx1 or lynx2 profile input required"
+      "${TEST_BINARY}" run cpu none "${SUITE_BUILD}" "${ORACLE}" zero)
+  endif()
+
+  if(FAILURE STREQUAL "")
+    expect_success("suite raw source comparison: match; suite=cpu machine_profile=lynx2 profile_input=lynx2 ram_seed=zero"
+      "${TEST_BINARY}" run cpu lynx2 "${SUITE_BUILD}" "${ORACLE}" zero)
+    file(READ "${SUITE_BUILD}/run-record-zero.txt" lynx2_record)
+    if(NOT lynx2_record MATCHES "detected_model=lynx2" OR
+       NOT lynx2_record MATCHES "model_probe_bytes=00,a2" OR
+       NOT lynx2_record MATCHES "source_tuple_model=lynx2" OR
+       NOT lynx2_record MATCHES "meaningful_count=18")
+      set(FAILURE "real Lynx II execution record did not retain its independent model evidence")
+    else()
+      expect_success("cpu record: 18 raw results, completion and model evidence valid for lynx2"
+        "${TEST_BINARY}" validate-cpu-record lynx2
+          "${SUITE_BUILD}/raw-results-zero.tsv"
+          "${SUITE_BUILD}/run-record-zero.txt" "${ORACLE}")
+    endif()
+
+  endif()
+
+  if(FAILURE STREQUAL "")
+    run_clean_cpu()
+    expect_failure("suite: detected model does not match selected profile input"
+      "${TEST_BINARY}" run cpu-selected lynx1 lynx2 "${SUITE_BUILD}" "${ORACLE}" zero)
+    run_clean_cpu()
+    file(READ "${SUITE_BUILD}/run-record-zero.txt" base_record)
+    file(READ "${SUITE_BUILD}/raw-results-zero.tsv" base_raw)
+
+    set(mutated_record "${WORK}/cpu-missing-probe.record")
+    set(mutated_raw "${WORK}/cpu-missing-probe.raw")
+    string(REPLACE "model_probe_bytes=01,a1\n" "" changed_record "${base_record}")
+    file(WRITE "${mutated_record}" "${changed_record}")
+    file(WRITE "${mutated_raw}" "${base_raw}")
+    expect_cpu_record_failure("cpu record missing field: model_probe_bytes" "${mutated_raw}" "${mutated_record}")
+
+    set(mutated_record "${WORK}/cpu-corrupt-probe.record")
+    set(mutated_raw "${WORK}/cpu-corrupt-probe.raw")
+    string(REPLACE "model_probe_bytes=01,a1" "model_probe_bytes=ff,a1" changed_record "${base_record}")
+    file(WRITE "${mutated_record}" "${changed_record}")
+    file(WRITE "${mutated_raw}" "${base_raw}")
+    expect_cpu_record_failure("cpu record: invalid model probe bytes" "${mutated_raw}" "${mutated_record}")
+
+    file(STRINGS "${ORACLE}" tuple_rows REGEX "^tuple\t")
+    set(lynx1_tuple "")
+    set(lynx2_tuple "")
+    foreach(tuple_row IN LISTS tuple_rows)
+      if(tuple_row MATCHES "^tuple\tlynx1\t")
+        string(REPLACE "tuple\tlynx1\t" "" lynx1_tuple "${tuple_row}")
+      elseif(tuple_row MATCHES "^tuple\tlynx2\t")
+        string(REPLACE "tuple\tlynx2\t" "" lynx2_tuple "${tuple_row}")
+      endif()
+    endforeach()
+    if(lynx1_tuple STREQUAL "" OR lynx2_tuple STREQUAL "")
+      set(FAILURE "source model tuples were not available for the captured tuple disagreement control")
+    else()
+      set(mutated_record "${WORK}/cpu-tuple-probe-disagreement.record")
+      set(mutated_raw "${WORK}/cpu-tuple-probe-disagreement.raw")
+      replace_cpu_tuple("${base_raw}" "${lynx1_tuple}" "${lynx2_tuple}" changed_raw)
+      if(changed_raw STREQUAL base_raw)
+        set(FAILURE "captured tuple disagreement control did not change source-derived bytes")
+      else()
+        file(WRITE "${mutated_record}" "${base_record}")
+        file(WRITE "${mutated_raw}" "${changed_raw}")
+        expect_cpu_record_failure("cpu record: guest model probe and source-defined tuple disagree" "${mutated_raw}" "${mutated_record}")
+      endif()
+    endif()
+
+    if(FAILURE STREQUAL "")
+      set(mutated_record "${WORK}/cpu-count-drift.record")
+      set(mutated_raw "${WORK}/cpu-count-drift.raw")
+      string(REPLACE "meaningful_count=18" "meaningful_count=17" changed_record "${base_record}")
+      file(WRITE "${mutated_record}" "${changed_record}")
+      file(WRITE "${mutated_raw}" "${base_raw}")
+      expect_cpu_record_failure("cpu record: result count drift" "${mutated_raw}" "${mutated_record}")
+
+      set(mutated_record "${WORK}/cpu-raw-count-drift.record")
+      set(mutated_raw "${WORK}/cpu-raw-count-drift.raw")
+      string(REPLACE "result_count\t18\n" "result_count\t17\n" changed_raw "${base_raw}")
+      file(WRITE "${mutated_record}" "${base_record}")
+      file(WRITE "${mutated_raw}" "${changed_raw}")
+      expect_cpu_record_failure("cpu record: result count drift" "${mutated_raw}" "${mutated_record}")
+
+      set(mutated_record "${WORK}/cpu-zero-results.record")
+      set(mutated_raw "${WORK}/cpu-zero-results.raw")
+      file(STRINGS "${SUITE_BUILD}/raw-results-zero.tsv" raw_lines)
+      set(zero_raw "")
+      foreach(raw_line IN LISTS raw_lines)
+        if(raw_line MATCHES "^result\t([0-9]+)\t[0-9a-f][0-9a-f]$")
+          set(index "${CMAKE_MATCH_1}")
+          string(APPEND zero_raw "result\t${index}\t00\n")
+        else()
+          string(APPEND zero_raw "${raw_line}\n")
+        endif()
+      endforeach()
+      file(WRITE "${mutated_record}" "${base_record}")
+      file(WRITE "${mutated_raw}" "${zero_raw}")
+      expect_cpu_record_failure("cpu record: zero/unexecuted result block" "${mutated_raw}" "${mutated_record}")
+      string(APPEND all_run_out "model controls: omitted/none profile parser rejection; one opposite-selection actual guest execution; missing/corrupt probe, tuple disagreement, count drift and zero-block captured-record parser controls\n")
+    endif()
+  endif()
+endif()
+
+if(MODE STREQUAL "cpu_bound_controls" AND FAILURE STREQUAL "")
+  run_clean_cpu()
+  file(READ "${SUITE_BUILD}/run-record-zero.txt" base_record)
+  file(READ "${SUITE_BUILD}/raw-results-zero.tsv" base_raw)
+  file(COPY_FILE "${SUITE_BUILD}/raw-results-zero.tsv" "${WORK}/cpu-bound-positive.raw")
+  set(bound_raw "${WORK}/cpu-bound-positive.raw")
+
+  write_ticks_record("${WORK}/cpu-minimum.record" 256)
+  expect_success("cpu record: 18 raw results, completion and model evidence valid for lynx1"
+    "${TEST_BINARY}" validate-cpu-record lynx1 "${bound_raw}" "${WORK}/cpu-minimum.record" "${ORACLE}")
+  run_clean_cpu()
+
+  write_ticks_record("${WORK}/cpu-maximum.record" 50000000)
+  expect_success("cpu record: 18 raw results, completion and model evidence valid for lynx1"
+    "${TEST_BINARY}" validate-cpu-record lynx1 "${bound_raw}" "${WORK}/cpu-maximum.record" "${ORACLE}")
+  run_clean_cpu()
+
+  write_ticks_record("${WORK}/cpu-below-minimum.record" 255)
+  expect_cpu_record_failure("cpu record: ticks outside completion bounds" "${bound_raw}" "${WORK}/cpu-below-minimum.record")
+
+  write_ticks_record("${WORK}/cpu-above-maximum.record" 50000001)
+  expect_cpu_record_failure("cpu record: ticks outside completion bounds" "${bound_raw}" "${WORK}/cpu-above-maximum.record")
+
+  write_ticks_record("${WORK}/cpu-time-overflow.record" 4294967296)
+  expect_cpu_record_failure("cpu record: invalid ticks_observed" "${bound_raw}" "${WORK}/cpu-time-overflow.record")
+  string(APPEND all_run_out "bound controls: exact 256/50000000 captured-record boundaries pass; 255/50000001 and uint32 overflow fail the named time validator\n")
 endif()
 
 if(MODE STREQUAL "tracer" AND FAILURE STREQUAL "")

@@ -1065,6 +1065,222 @@ static int validate_time_mode(const char *text)
     return 0;
 }
 
+static int cpu_record_field(const char *path, const char *key,
+                           char *value, size_t capacity)
+{
+    char *text = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    unsigned found = 0u;
+    if (read_text(path, &text, &length, 16384u) != 0) return 1;
+    while (offset < length) {
+        size_t line_length = 0u;
+        char line[256];
+        char *equals;
+        while (offset + line_length < length && text[offset + line_length] != '\n') line_length++;
+        if (line_length == 0u || line_length >= sizeof line) {
+            free(text);
+            return fail("cpu record: malformed field line");
+        }
+        memcpy(line, text + offset, line_length);
+        line[line_length] = '\0';
+        offset += line_length + (offset + line_length < length ? 1u : 0u);
+        equals = strchr(line, '=');
+        if (equals == NULL || equals == line || equals[1] == '\0' || strchr(equals + 1, '=') != NULL) {
+            free(text);
+            return fail("cpu record: malformed field line");
+        }
+        *equals = '\0';
+        if (strcmp(line, key) == 0) {
+            if (found++ != 0u || copy_field(value, capacity, equals + 1) != 0) {
+                free(text);
+                return fail("cpu record: duplicate or oversized field");
+            }
+        }
+    }
+    free(text);
+    if (found != 1u) {
+        char message[128];
+        (void)snprintf(message, sizeof message, "cpu record missing field: %s", key);
+        return fail(message);
+    }
+    return 0;
+}
+
+static int read_cpu_raw(const char *path, const char *machine_profile,
+                        const char *selected_profile, const char *case_name,
+                        uint8_t results[CPU_MEANINGFUL])
+{
+    char *text = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    char line[256];
+    char *fields[4];
+    size_t field_count;
+    uint32_t value;
+    uint32_t i;
+    if (read_text(path, &text, &length, 4096u) != 0) return 1;
+#define EXPECT_RAW_ROW(expected_key, expected_value, diagnostic) \
+    do { \
+        if (next_line(text, length, &offset, line, sizeof line) != 0 || \
+            (field_count = split_fields(line, fields, 4u)) != 2u || \
+            strcmp(fields[0], (expected_key)) != 0 || \
+            strcmp(fields[1], (expected_value)) != 0) { \
+            free(text); \
+            return fail((diagnostic)); \
+        } \
+    } while (0)
+    EXPECT_RAW_ROW("suite", "cpu", "cpu record: raw suite identity mismatch");
+    EXPECT_RAW_ROW("machine_profile", machine_profile, "cpu record: raw machine profile mismatch");
+    EXPECT_RAW_ROW("profile_input", selected_profile, "cpu record: raw selected profile mismatch");
+    EXPECT_RAW_ROW("ram_seed", case_name, "cpu record: raw RAM case mismatch");
+    if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+        (field_count = split_fields(line, fields, 4u)) != 2u ||
+        strcmp(fields[0], "result_count") != 0 ||
+        parse_decimal(fields[1], &value) != 0 || value != CPU_MEANINGFUL) {
+        free(text);
+        return fail("cpu record: result count drift");
+    }
+    for (i = 0u; i < CPU_MEANINGFUL; i++) {
+        uint32_t index;
+        if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+            (field_count = split_fields(line, fields, 4u)) != 3u ||
+            strcmp(fields[0], "result") != 0 ||
+            parse_decimal(fields[1], &index) != 0 || index != i ||
+            parse_byte(fields[2], &results[i]) != 0) {
+            free(text);
+            return fail("cpu record: result count drift or malformed raw byte");
+        }
+    }
+    if (offset != length) {
+        free(text);
+        return fail("cpu record: result count drift or trailing raw data");
+    }
+#undef EXPECT_RAW_ROW
+    free(text);
+    return 0;
+}
+
+static int validate_cpu_record_mode(const char *selected_profile,
+                                    const char *raw_path, const char *record_path,
+                                    const char *oracle_path)
+{
+    char suite[32];
+    char machine_profile[32];
+    char record_selected_profile[32];
+    char case_name[32];
+    char detected_model[32];
+    char source_tuple[32];
+    char model_bytes[32];
+    char value[64];
+    char oracle_sha[65];
+    char actual_oracle_sha[65];
+    char *comma;
+    unsigned selected_index;
+    unsigned machine_index;
+    uint32_t meaningful_count;
+    uint32_t reserved_count;
+    uint32_t tick_min;
+    uint32_t tick_max;
+    uint32_t ticks;
+    uint32_t guest_ticks;
+    uint32_t completion_margin;
+    uint32_t maximum_headroom;
+    uint32_t progress;
+    uint8_t probe;
+    uint8_t marker;
+    uint8_t results[CPU_MEANINGFUL];
+    suite_oracle oracle;
+    int probe_index;
+    int tuple_index;
+    int i;
+
+    if (profile_index(selected_profile, &selected_index) != 0) {
+        return fail("cpu record: explicit lynx1 or lynx2 profile input required");
+    }
+    if (parse_oracle(oracle_path, &oracle) != 0 || file_sha256(oracle_path, actual_oracle_sha) != 0) return 1;
+#define READ_CPU_FIELD(key, target, target_size) \
+    do { if (cpu_record_field(record_path, (key), (target), (target_size)) != 0) return 1; } while (0)
+    READ_CPU_FIELD("suite", suite, sizeof suite);
+    READ_CPU_FIELD("machine_profile", machine_profile, sizeof machine_profile);
+    READ_CPU_FIELD("profile_input", record_selected_profile, sizeof record_selected_profile);
+    READ_CPU_FIELD("ram_seed", case_name, sizeof case_name);
+    READ_CPU_FIELD("detected_model", detected_model, sizeof detected_model);
+    READ_CPU_FIELD("source_tuple_model", source_tuple, sizeof source_tuple);
+    READ_CPU_FIELD("model_probe_bytes", model_bytes, sizeof model_bytes);
+    READ_CPU_FIELD("meaningful_count", value, sizeof value);
+    if (parse_decimal(value, &meaningful_count) != 0) return fail("cpu record: result count drift");
+    READ_CPU_FIELD("reserved_count", value, sizeof value);
+    if (parse_decimal(value, &reserved_count) != 0 || meaningful_count != CPU_MEANINGFUL || reserved_count != 0u) {
+        return fail("cpu record: result count drift");
+    }
+    READ_CPU_FIELD("tick_min", value, sizeof value);
+    if (parse_decimal(value, &tick_min) != 0) return fail("cpu record: invalid tick_min");
+    READ_CPU_FIELD("tick_max", value, sizeof value);
+    if (parse_decimal(value, &tick_max) != 0) return fail("cpu record: invalid tick_max");
+    READ_CPU_FIELD("ticks_observed", value, sizeof value);
+    if (parse_decimal(value, &ticks) != 0) return fail("cpu record: invalid ticks_observed");
+    READ_CPU_FIELD("guest_ticks", value, sizeof value);
+    if (parse_decimal(value, &guest_ticks) != 0 || guest_ticks != ticks) return fail("cpu record: guest tick records disagree");
+    READ_CPU_FIELD("completion_margin_ticks", value, sizeof value);
+    if (parse_decimal(value, &completion_margin) != 0) return fail("cpu record: invalid completion margin");
+    READ_CPU_FIELD("maximum_headroom_ticks", value, sizeof value);
+    if (parse_decimal(value, &maximum_headroom) != 0) return fail("cpu record: invalid maximum headroom");
+    READ_CPU_FIELD("guest_progress", value, sizeof value);
+    if (parse_decimal(value, &progress) != 0 || progress != 8u) return fail("cpu record: guest progress evidence mismatch");
+    READ_CPU_FIELD("completion_sentinel", value, sizeof value);
+    if (strcmp(value, "a5") != 0) return fail("cpu record: completion sentinel mismatch");
+    READ_CPU_FIELD("oracle_sha256", oracle_sha, sizeof oracle_sha);
+    if (strcmp(oracle_sha, actual_oracle_sha) != 0) return fail("cpu record: source identity mismatch");
+#undef READ_CPU_FIELD
+
+    if (strcmp(suite, "cpu") != 0 || profile_index(machine_profile, &machine_index) != 0 ||
+        strcmp(record_selected_profile, selected_profile) != 0 ||
+        (strcmp(case_name, "zero") != 0 && strcmp(case_name, "seeded") != 0)) {
+        return fail("cpu record: run identity mismatch");
+    }
+    if (tick_min != CPU_MIN_TICKS || tick_max != CPU_MAX_TICKS) return fail("cpu record: completion bound metadata mismatch");
+    if (ticks < tick_min || ticks > tick_max) return fail("cpu record: ticks outside completion bounds");
+    if (completion_margin != ticks - tick_min || maximum_headroom != tick_max - ticks) {
+        return fail("cpu record: completion margin mismatch");
+    }
+    comma = strchr(model_bytes, ',');
+    if (comma == NULL || (size_t)(comma - model_bytes) != 2u || strlen(comma + 1) != 2u) {
+        return fail("cpu record: invalid model probe bytes");
+    }
+    *comma = '\0';
+    if (parse_byte(model_bytes, &probe) != 0 || parse_byte(comma + 1, &marker) != 0) {
+        return fail("cpu record: invalid model probe bytes");
+    }
+    if (read_cpu_raw(raw_path, machine_profile, selected_profile, case_name, results) != 0) return 1;
+    {
+        int all_zero = 1;
+        for (i = 0; i < (int)CPU_MEANINGFUL; i++) if (results[i] != 0u) all_zero = 0;
+        if (all_zero != 0) return fail("cpu record: zero/unexecuted result block");
+    }
+    probe_index = probe_model(probe, marker);
+    tuple_index = tuple_model(&oracle, results);
+    if (probe_index < 0) return fail("cpu record: invalid model probe bytes");
+    if (tuple_index < 0) return fail("cpu record: raw results lack exactly one source model tuple");
+    if (probe_index != tuple_index) return fail("cpu record: guest model probe and source-defined tuple disagree");
+    if (probe_index != (int)machine_index) return fail("cpu record: observed model disagrees with executed machine profile");
+    if (strcmp(detected_model, profile_label((unsigned)probe_index)) != 0 ||
+        strcmp(source_tuple, profile_label((unsigned)tuple_index)) != 0) {
+        return fail("cpu record: detected model fields disagree with guest evidence");
+    }
+    for (i = 0; i < (int)CPU_MEANINGFUL; i++) {
+        size_t j;
+        int accepted = 0;
+        for (j = 0u; j < oracle.counts[0][i]; j++) {
+            if (oracle.values[0][i][j] == results[i]) accepted = 1;
+        }
+        if (accepted == 0) return fail("cpu record: source oracle mismatch");
+    }
+    if (probe_index != (int)selected_index) return fail("cpu record: detected model does not match selected profile");
+    printf("cpu record: 18 raw results, completion and model evidence valid for %s\n", selected_profile);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 6 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu") == 0) {
@@ -1079,6 +1295,9 @@ int main(int argc, char **argv)
     if (argc == 3 && strcmp(argv[1], "validate-oracle") == 0) return validate_oracle_mode(argv[2]);
     if (argc == 3 && strcmp(argv[1], "validate-symbols") == 0) return validate_symbols_mode(argv[2]);
     if (argc == 3 && strcmp(argv[1], "validate-time") == 0) return validate_time_mode(argv[2]);
+    if (argc == 6 && strcmp(argv[1], "validate-cpu-record") == 0) {
+        return validate_cpu_record_mode(argv[2], argv[3], argv[4], argv[5]);
+    }
     fprintf(stderr, "usage: lynx-test-suites run cpu PROFILE BUILDDIR ORACLE [zero|seeded]\n");
     return 2;
 }
