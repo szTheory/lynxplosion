@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 11
-status: Ready to execute Plan 11; Plan 10 complete under approved D-10 gate
-stopped_at: Completed 04-10-PLAN.md
-last_updated: "2026-11-11T16:37:57.139Z"
+current_plan: 12
+status: Ready to execute Plan 12; Plan 11 complete under D-10 with the Phase 4 EVD-05 slice recorded
+stopped_at: Completed 04-11-PLAN.md
+last_updated: "2026-11-11T17:20:35.708Z"
 last_activity: 2026-11-11
-last_activity_desc: Completed Plan 10 completion and no-run controls; exact index14 agreement remains pending Phase 5
-state_head: dfa78843d17370e73476927051d548cfa02fb6af
+last_activity_desc: Completed Plan 11 timer/IRQ fault controls; exact index14 agreement remains pending Phase 5 and EVD-05 remains open for Phases 5-6
+state_head: 86a8d038e9f45fa92b7fa2c3973030f0aea6c48d
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 43
+  completed_plans: 44
   percent: 50
 ---
 
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 ## Current Position
 
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
-Current Plan: 11
+Current Plan: 12
 Total Plans in Phase: 12
-Status: Ready to execute Plan 11; Plan 10 is complete under the approved D-10 gate
-Last activity: 2026-11-11 - Completed Plan 10 completion and no-run controls; exact index14 agreement remains pending Phase 5
+Status: Ready to execute Plan 12; Plan 11 is complete under D-10 with the Phase 4 EVD-05 slice recorded
+Last activity: 2026-11-11 - Completed Plan 11 timer/IRQ fault controls; exact index14 agreement remains pending Phase 5 and EVD-05 remains open for Phases 5-6
 
 Progress: [█████░░░░░] 50%
 
@@ -102,6 +102,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P08 | 30min | 2 tasks | 6 files |
 | Phase 04 P09 | 74 min | 2 tasks | 15 files |
 | Phase 04 P10 | 46min | 2 tasks | 6 files |
+| Phase 04 P11 | 30min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -205,6 +206,8 @@ Recent decisions affecting current work:
 - [Phase 04]: Plan 04-09 uses immutable two-profile observation baselines for captured-data timer faults, with fresh guest observations at batch boundaries and per-case positive/hash checks.
 - [Phase 04]: D-10 remains limited to timer offset 14 at observed 0C versus unchanged source 0D; global EVD-02 stays open.
 - [Phase 04]: Same-profile deterministic hashes cannot prove freshness; actual fresh-machine completion and watch checks must ignore prior output files.
+- [Phase 04]: 04-11: Use per-CTest copied-core mutants with unique anchors, source/build hashes, exact API assertions, and clean API brackets.
+- [Phase 04]: 04-11: Preserve D-10 index 14 at expected 0D versus observed 0C; global EVD-02 and recurring EVD-05 remain open for later phase evidence.
 
 ### Pending Todos
 
@@ -212,10 +215,11 @@ None yet.
 
 ### Blockers/Concerns
 
-The owner approved the recommended one-comparison deferral on 2026-11-11 ("follow ur recs"). Plan 09 is complete under D-10; Plans 01-09 are complete and Plan 10 is next. The prior snapshot failures are resolved. Approved details are in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-09-DISPOSITION.md` and the execution record is in `04-09-SUMMARY.md`.
+The owner approved the recommended one-comparison deferral on 2026-11-11 ("follow ur recs"). Plan 11 is complete under D-10; Plans 01-11 are complete and Plan 12 is next for final Phase 4 verification. The prior snapshot failures are resolved. Approved details are in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-09-DISPOSITION.md` and the execution record is in `04-09-SUMMARY.md`.
 
 - Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict comparison failure and unchanged oracle while completing Phase 4; exact agreement remains pending Phase 5. No source/profile/hardware qualification is accepted. No owner action is needed for this approved continuation.
 - Plan 09's data-only control matrices use per-invocation fresh observations on both profiles and immutable hash-checked baselines for private fault copies; every mutation retains positive baseline validation before/after and its named diagnostic.
+- Phase 4's five named timer/IRQ mutants now fail their exact independent API assertions; CPU source agreement and D-10 timer observation gates pass. Global EVD-02 remains open for the unchanged index-14 `0D` versus `0C` row in Phase 5. EVD-05 is a recurring Phase 4-6 requirement: its Phase 4 slice is complete, while Phase 5 and Phase 6 device-fault evidence remains open.
 
 Other open owner decisions remain in force:
 
@@ -237,6 +241,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T16:37:56.757Z
-Stopped at: Completed 04-10-PLAN.md
+Last session: 2026-11-11T17:20:35.384Z
+Stopped at: Completed 04-11-PLAN.md
 Resume file: None

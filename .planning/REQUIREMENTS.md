@@ -70,9 +70,9 @@ sequence, not a ceiling on the project goal.
 
 ### Timers, interrupts and scheduling
 
-- [ ] **TIM-01**: One master-tick clock and a scheduler with a total (tick, priority, sequence) order drive all devices
-- [ ] **TIM-02**: Mikey timers form one shared-prescaler bank with linking, DONE, reset-done and borrow semantics
-- [ ] **TIM-03**: Timer interrupts set pending bits separately from enables, and the CPU samples IRQs per the profile's rules
+- [x] **TIM-01**: One master-tick clock and a scheduler with a total (tick, priority, sequence) order drive all devices
+- [x] **TIM-02**: Mikey timers form one shared-prescaler bank with linking, DONE, reset-done and borrow semantics
+- [x] **TIM-03**: Timer interrupts set pending bits separately from enables, and the CPU samples IRQs per the profile's rules
 - [ ] **TIM-04**: A minimal CPU-sleep and bus-request model exists so later Suzy arbitration does not require rework of the CPU or timers
 
 ### Display and input
@@ -213,9 +213,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MEM-02 | Phase 3 | Complete |
 | MEM-03 | Phase 3 | Complete |
 | MEM-04 | Phase 3 | Complete |
-| TIM-01 | Phase 4 | Pending |
-| TIM-02 | Phase 4 | Pending |
-| TIM-03 | Phase 4 | Pending |
+| TIM-01 | Phase 4 | Complete |
+| TIM-02 | Phase 4 | Complete |
+| TIM-03 | Phase 4 | Complete |
 | TIM-04 | Phase 4 | Pending |
 | VID-01 | Phase 5 | Pending |
 | VID-02 | Phase 5 | Pending |
@@ -226,10 +226,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUD-01 | Phase 6 | Pending |
 | AUD-02 | Phase 6 | Pending |
 | EVD-01 | Phase 3 | Complete |
-| EVD-02 | Phases 4 and 5 | Phase 4 harness slice; exact timer offset-14 agreement pending Phase 5 |
+| EVD-02 | Phases 4 and 5 | Phase 4 observation/control slice complete; exact timer offset-14 agreement pending Phase 5 |
 | EVD-03 | Phase 4 | Complete |
 | EVD-04 | Phase 4 | Complete |
-| EVD-05 | Phases 4, 5 and 6 | Phase 4 slice in progress; later device-fault obligations remain open |
+| EVD-05 | Phases 4, 5 and 6 | Phase 4 slice complete; Phase 5 and 6 device-fault obligations remain open |
 | EVD-06 | Phase 6 | Pending |
 | HB-01 | Phase 3 | Complete |
 | HB-02 | Phase 5 | Pending |
