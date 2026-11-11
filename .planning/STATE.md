@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 5
+current_plan: 6
 status: executing
-stopped_at: Completed 04-04-PLAN.md
-last_updated: "2026-11-11T06:28:02.220Z"
+stopped_at: Completed 04-05-PLAN.md
+last_updated: "2026-11-11T06:57:21.769Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 3 complete, transitioned to Phase 4
-state_head: "0bdc78559ba3df9151ca6ceb53c0eeefe03ab126"
+state_head: a128dc7d5358f080458ed26637bceae540570b49
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 37
+  completed_plans: 38
   percent: 50
 ---
 
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 
 ## Current Position
 
-Phase: 4 (Timers, Interrupts and First Public Suites) — READY TO EXECUTE
-Current Plan: 5
+Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
+Current Plan: 6
 Total Plans in Phase: 12
-Status: Ready to execute
+Status: Executing Plan 6
 Last activity: 2026-11-10 — Phase 3 complete, transitioned to Phase 4
 
 Progress: [█████░░░░░] 50%
@@ -96,6 +96,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P02 | 25min | 2 tasks | 12 files |
 | Phase 04 P03 | 38min | 2 tasks | 8 files |
 | Phase 04 P04 | 46 min | 2 tasks | 7 files |
+| Phase 04 P05 | 25min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -183,6 +184,10 @@ Recent decisions affecting current work:
 - [Phase 04]: Existing IRQ and scheduler behavior was already green, so Plan 4 adds permanent observations without fabricating RED evidence.
 - [Phase 04]: Timer ordinals are fixed 0–7 and production coalesces the bank into one candidate; no dynamic sequence counter or exhaustion state exists.
 - [Phase 04]: Timer-before-CPU ordering and fixed-zero timing remain software policy, not hardware timing or profile qualification.
+- [Phase 04]: Keep bus ownership hold separate from priced-cycle readiness; normalize expired readiness to guest time and report zero remaining cost under hold.
+- [Phase 04]: Derive wake_pending from timer pending independently of CPU I; CPU I still controls IRQ acceptance at POLL.
+- [Phase 04]: Keep FD91 unavailable without active Suzy ownership; pinned public suite sources do not require CPUSLEEP.
+- [Phase 04]: Plan 06 must define snapshot continuation or refusal for bus_hold and wake_pending alongside timer event cursor serialization.
 
 ### Pending Todos
 
@@ -190,7 +195,7 @@ None yet.
 
 ### Blockers/Concerns
 
-A phase-level verification blocker remains; Plan 5 can proceed. Other open owner decisions shape claims but do not stop work:
+A phase-level verification blocker remains; Plan 6 can proceed. Other open owner decisions shape claims but do not stop work:
 
 - O1 (baseline Lynx model/CPU profile): no baseline adopted; profiles are data (`none`, `lynx1`, `lynx2`); claims name profile `none` only.
 - O6 (clean-room protocol): policy and exposure record stay DRAFT; no emulator source opened in Phases 1-2.
@@ -198,7 +203,7 @@ A phase-level verification blocker remains; Plan 5 can proceed. Other open owner
 - O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
 - Phase 3 goal verification and software qualification pass. CON-01 remains globally open for the actual-frame and actual-audio consumer obligations already scheduled in Phases 5 and 6; the Phase 3 snapshot/silence slice is complete. Research flags remain for Phases 4-6.
 - Carried follow-ups: bus tick stamp is plumbed but unobserved until a device consumes it (Phase 4); `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
-- Phase 4 final verification is blocked until Plan 06 serializes timer_bank.last_event_valid and last_event_tick in snapshots; api.snapshot_refusal and api.snapshot_roundtrip currently fail their whole-machine equality controls for these fields. Preserve the exact failure evidence in .planning/phases/04-timers-interrupts-and-first-public-suites/deferred-items.md.
+- Phase 4 final verification is blocked until Plan 06 serializes timer_bank.last_event_valid and last_event_tick in snapshots; api.snapshot_refusal and api.snapshot_roundtrip currently fail their whole-machine equality controls for these fields. Preserve the exact failure evidence in .planning/phases/04-timers-interrupts-and-first-public-suites/deferred-items.md. Plan 06 must also define snapshot continuation or refusal for bus_hold and wake_pending before snapshot claims cover those states.
 
 ## Deferred Items
 
@@ -210,6 +215,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T06:28:01.847Z
-Stopped at: Completed 04-04-PLAN.md
+Last session: 2026-11-11T06:57:21.535Z
+Stopped at: Completed 04-05-PLAN.md
 Resume file: None
