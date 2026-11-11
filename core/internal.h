@@ -3,6 +3,7 @@
 #ifndef LYNX_INTERNAL_H
 #define LYNX_INTERNAL_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -32,6 +33,27 @@ extern const char lynx__build_id[];
    64-bit guest-time limit. Larger than any cycle cost (costs are uint8_t). */
 #define LYNX__TICK_HEADROOM 0x10000u
 
+#define LYNX__TIMER_COUNT 8u
+#define LYNX__TIMER_IMPLEMENTED_COUNT 1u
+#define LYNX__TIMER_PHASE_FIXED_ZERO_1 1u
+
+typedef struct lynx__timer {
+    uint8_t backup;
+    uint8_t count;
+    uint8_t control_a;
+    uint8_t control_b;
+} lynx__timer;
+
+/* The last applied event timestamp distinguishes an edge pending exactly at
+   guest_ticks from an edge already dispatched before a same-tick CPU action. */
+typedef struct lynx__timer_bank {
+    lynx__timer timers[LYNX__TIMER_COUNT];
+    uint8_t pending;
+    uint8_t phase_policy;
+    uint8_t last_event_valid;
+    uint64_t last_event_tick;
+} lynx__timer_bank;
+
 /* Host-side debugger observations are deliberately separate from guest
    machine state. Snapshot serialization and guest digests omit this object. */
 typedef struct lynx__host_observation {
@@ -53,8 +75,10 @@ struct lynx_machine {
     uint32_t content_format, startup_tier, entry_addr, object_len;
     uint8_t content_sha256[32]; /* SHA-256 of the accepted image bytes; zero before a load */
     uint8_t mapctl; /* provisional byte latch; all written bits are retained */
+    uint8_t cpu_bus_held; /* private deterministic grant gate; no public sleep claim */
     uint64_t guest_ticks;       /* the only clock */
     uint64_t cpu_ready_at;      /* guest tick at which the CPU's next cycle may be granted */
+    lynx__timer_bank timer_bank;
     lynx__host_observation host_observation;
 };
 
@@ -68,5 +92,13 @@ void lynx__power_on(lynx_machine *m);
    with LYNX_ERR_ARGUMENT and nothing is written. Reset and load return the
    model to flat5. */
 lynx_status lynx__machine_set_cost_model(struct lynx_machine *m, uint32_t model);
+
+void lynx__timer_init(lynx__timer_bank *bank);
+bool lynx__timer_next(const lynx__timer_bank *bank, uint64_t now, uint64_t *tick);
+void lynx__timer_apply(lynx__timer_bank *bank, uint64_t tick);
+void lynx__timer_mark_tick(lynx__timer_bank *bank, uint64_t tick);
+bool lynx__timer_available(uint16_t addr);
+uint8_t lynx__timer_peek(const lynx__timer_bank *bank, uint16_t addr);
+bool lynx__timer_write(lynx__timer_bank *bank, uint16_t addr, uint8_t value);
 
 #endif /* LYNX_INTERNAL_H */

@@ -104,8 +104,10 @@ void lynx__power_on(lynx_machine *m)
     m->object_len = 0u;
     memset(m->content_sha256, 0, sizeof m->content_sha256);
     m->mapctl = 0u;
+    m->cpu_bus_held = 0u;
     m->guest_ticks = 0u;
     m->cpu_ready_at = m->guest_ticks;
+    lynx__timer_init(&m->timer_bank);
     memset(&m->host_observation, 0, sizeof m->host_observation);
 }
 
@@ -341,6 +343,9 @@ static bool bus_request_available(const struct lynx_machine *m, uint16_t addr, u
     if (route == LYNX__BUS_ROUTE_RAM) {
         return true;
     }
+    if (route == LYNX__BUS_ROUTE_MIKEY) {
+        return lynx__timer_available(addr);
+    }
     return route == LYNX__BUS_ROUTE_MAPCTL && (flags & LYNX__CF_WRITE) != 0u;
 }
 
@@ -378,13 +383,48 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
         m->mapctl = data;
         *result = data;
         return true;
-    case LYNX__BUS_ROUTE_SUZY:
     case LYNX__BUS_ROUTE_MIKEY:
+        if (!lynx__timer_available(addr)) {
+            return false;
+        }
+        if (write) {
+            if (!lynx__timer_write(&m->timer_bank, addr, data)) {
+                return false;
+            }
+            *result = data;
+        } else {
+            *result = lynx__timer_peek(&m->timer_bank, addr);
+        }
+        return true;
+    case LYNX__BUS_ROUTE_SUZY:
     case LYNX__BUS_ROUTE_ROM:
     case LYNX__BUS_ROUTE_VECTOR:
         return false;
     }
     return false;
+}
+
+typedef struct lynx__machine_event {
+    uint64_t tick;
+    uint8_t priority;
+    uint8_t sequence;
+} lynx__machine_event;
+
+enum {
+    MACHINE_EVENT_TIMER_PRIORITY = 0u,
+    MACHINE_EVENT_CPU_PRIORITY = 1u,
+    MACHINE_EVENT_SEQUENCE = 0u,
+};
+
+static bool machine_event_before(lynx__machine_event a, lynx__machine_event b)
+{
+    if (a.tick != b.tick) {
+        return a.tick < b.tick;
+    }
+    if (a.priority != b.priority) {
+        return a.priority < b.priority;
+    }
+    return a.sequence < b.sequence;
 }
 
 /* Half-open budget: every bus cycle that can be granted before target is
@@ -410,16 +450,43 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
     const uint64_t target = start + (budget < room ? budget : room);
 
     while (m->guest_ticks < target) {
-        if (m->cpu_ready_at > m->guest_ticks) {
-            /* Inside the previous cycle's duration: the next cycle can start
-               only when it ends, and not at all in this call if that is at
-               or after target. */
-            if (m->cpu_ready_at >= target) {
-                m->guest_ticks = target;
-                break;
-            }
-            m->guest_ticks = m->cpu_ready_at;
+        lynx__machine_event next = {target, UINT8_MAX, UINT8_MAX};
+        bool has_event = false;
+        uint64_t timer_tick = 0u;
+        if (lynx__timer_next(&m->timer_bank, m->guest_ticks, &timer_tick) &&
+            timer_tick < target) {
+            next.tick = timer_tick;
+            next.priority = (uint8_t)MACHINE_EVENT_TIMER_PRIORITY;
+            next.sequence = (uint8_t)MACHINE_EVENT_SEQUENCE;
+            has_event = true;
         }
+        const bool cpu_available = m->cpu_bus_held == 0u;
+        const uint64_t cpu_tick = m->cpu_ready_at > m->guest_ticks ?
+                                      m->cpu_ready_at : m->guest_ticks;
+        if (cpu_available && cpu_tick < target) {
+            const lynx__machine_event cpu_event = {
+                cpu_tick, (uint8_t)MACHINE_EVENT_CPU_PRIORITY,
+                (uint8_t)MACHINE_EVENT_SEQUENCE};
+            if (!has_event || machine_event_before(cpu_event, next)) {
+                next = cpu_event;
+                has_event = true;
+            }
+        }
+        if (!has_event) {
+            /* No eligible work before the exclusive target. This is also the
+               bounded idle path while the private CPU grant gate is held. */
+            m->guest_ticks = target;
+            break;
+        }
+        if (next.priority == (uint8_t)MACHINE_EVENT_TIMER_PRIORITY) {
+            m->guest_ticks = next.tick;
+            lynx__timer_apply(&m->timer_bank, next.tick);
+            continue;
+        }
+        if (next.tick > m->guest_ticks) {
+            m->guest_ticks = next.tick;
+        }
+        const uint64_t grant = m->guest_ticks;
         const uint16_t addr = m->cpu.req_addr;
         const uint8_t flags = m->cpu.req_flags;
         if (!bus_request_available(m, addr, flags)) {
@@ -431,7 +498,6 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
             *stop = LYNX_STOP_UNDEFINED;
             break;
         }
-        const uint64_t grant = m->guest_ticks; /* no stalls before Phase 4 */
         const lynx__bus_timing price =
             lynx__bus_timing_of(m->cost_model, lynx__bus_region_of(addr), m->cpu.req_kind);
         const uint8_t write_value = m->cpu.req_data;
@@ -440,7 +506,12 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
             *stop = LYNX_STOP_UNAVAILABLE;
             break;
         }
-        lynx__cpu_complete(&m->cpu, table, data, 0u); /* no interrupt lines before Phase 4 */
+        /* The scan has already established that timer work at this exact tick
+           is complete. Mark only after a successful bus action so refused
+           requests preserve the whole instance byte-for-byte. */
+        lynx__timer_mark_tick(&m->timer_bank, grant);
+        const uint8_t lines = m->timer_bank.pending != 0u ? (uint8_t)LYNX__LINE_IRQ : 0u;
+        lynx__cpu_complete(&m->cpu, table, data, lines);
         m->cpu_ready_at = grant + price.ticks;
         const uint32_t watched_addr = (uint32_t)addr;
         if ((flags & LYNX__CF_WRITE) != 0u && m->host_observation.watch_armed != 0u &&
@@ -556,18 +627,25 @@ lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *
     if (output_overlaps_machine(m, out, len)) {
         return LYNX_ERR_ARGUMENT;
     }
-    /* First pass: the whole request must resolve to RAM. MAPCTL readback and
-       every unimplemented mapped device/ROM/vector byte refuse atomically. */
+    /* First pass: every byte must have an implemented, side-effect-free mapped
+       view. Unsupported Mikey, Suzy, ROM, vector and MAPCTL routes refuse
+       atomically before any output byte is written. */
     for (size_t i = 0u; i < len; i++) {
         const uint16_t current = (uint16_t)(addr + (uint32_t)i);
-        if (lynx__bus_decode(m->mapctl, current) != LYNX__BUS_ROUTE_RAM) {
+        const lynx__bus_route route = lynx__bus_decode(m->mapctl, current);
+        if (route != LYNX__BUS_ROUTE_RAM &&
+            (route != LYNX__BUS_ROUTE_MIKEY || !lynx__timer_available(current))) {
             return LYNX_ERR_UNAVAILABLE;
         }
     }
-    /* Second pass: no mutating bus operation is used for inspection. */
+    /* Second pass: peek device state without catching it up or doing bus I/O. */
     for (size_t i = 0u; i < len; i++) {
         const uint16_t current = (uint16_t)(addr + (uint32_t)i);
-        out[i] = m->ram[current];
+        if (lynx__bus_decode(m->mapctl, current) == LYNX__BUS_ROUTE_RAM) {
+            out[i] = m->ram[current];
+        } else {
+            out[i] = lynx__timer_peek(&m->timer_bank, current);
+        }
     }
     return LYNX_OK;
 }

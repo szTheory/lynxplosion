@@ -30,6 +30,7 @@ api.snapshot_continue	api
 api.snapshot_continue.self_test	api
 api.snapshot_refusal	api
 api.snapshot_roundtrip	api
+api.timer_tracer	api
 api.watch_controls	api
 api.watch_controls.self_test	api
 api.watch_independent	api
