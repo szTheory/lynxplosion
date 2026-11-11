@@ -188,14 +188,14 @@ Plans:
   5. A minimal CPU-sleep and bus-request model exists and is exercised by a test, so that later Suzy arbitration can attach without reworking the CPU or timers.
 **Owner gates**: O1. Results are recorded against the selected profile, and no "passes" claim is made for any profile until O1 is decided.
 **Research flag**: Deeper research needed before planning: verbatim re-read of the Epyx timer and IRQ material; `timers2` phase and enable-order expectations; `cpu` tests 1 and 8 (interrupt-entry quirks); confirm on the pinned commit that `cpu` needs Timer IRQs, and per-suite `.sym`/`g_results` counts (Disagreements 8 and 15).
-**Plans**: 6/12 plans executed
+**Plans**: 7/12 plans executed
 - [x] 04-01-PLAN.md
 - [x] 04-02-PLAN.md
 - [x] 04-03-PLAN.md
 - [x] 04-04-PLAN.md
 - [x] 04-05-PLAN.md
 - [x] 04-06-PLAN.md
-- [ ] 04-07-PLAN.md
+- [x] 04-07-PLAN.md
 - [ ] 04-08-PLAN.md
 - [ ] 04-09-PLAN.md
 - [ ] 04-10-PLAN.md
@@ -257,6 +257,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. Evidence Harness and Walking Skeleton | 13/13 | Complete    | 2026-11-09 |
 | 2. CPU Profiles and Per-Opcode Vectors | 11/11 | Complete    | 2026-11-10 |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 9/9 | Complete    | 2026-11-10 |
-| 4. Timers, Interrupts and First Public Suites | 6/12 | In Progress | - |
+| 4. Timers, Interrupts and First Public Suites | 7/12 | In Progress | - |
 | 5. Display, Raw Video and Input | 0/TBD | Not started | - |
 | 6. Audio and Playable Checkpoint | 0/TBD | Not started | - |

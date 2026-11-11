@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 7
+current_plan: 8
 status: executing
-stopped_at: Completed 04-06-PLAN.md
-last_updated: "2026-11-11T07:55:40.394Z"
-last_activity: 2026-11-10
+stopped_at: Completed 04-07-PLAN.md
+last_updated: "2026-11-11T08:52:07.207Z"
+last_activity: 2026-11-11
 last_activity_desc: Phase 3 complete, transitioned to Phase 4
-state_head: 35fab3be1adec9de0e3bf200203bfdbf7c6f9544
+state_head: 03a7c621bea224eec0a98b970a47cd7374969956
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 39
+  completed_plans: 40
   percent: 50
 ---
 
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 ## Current Position
 
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
-Current Plan: 7
+Current Plan: 8
 Total Plans in Phase: 12
-Status: Ready for Plan 7
-Last activity: 2026-11-11 — Plan 6 complete, Phase 4 remains in progress
+Status: Ready for Plan 8
+Last activity: 2026-11-11 — Plan 7 complete, Phase 4 remains in progress
 
 Progress: [█████░░░░░] 50%
 
@@ -98,6 +98,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P04 | 46 min | 2 tasks | 7 files |
 | Phase 04 P05 | 25min | 2 tasks | 9 files |
 | Phase 04 P06 | 52m | 2 tasks | 14 files |
+| Phase 04 P07 | 20 min | 2 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -192,6 +193,9 @@ Recent decisions affecting current work:
 - [Phase 04]: Snapshot format 4 stores canonical timer/IRQ/hold fields and only the current-tick applied-event bit; wake, CPU request and future candidates are derived.
 - [Phase 04]: Historical event timestamps normalize away with guest time; timer ordinals are fixed 0–7 and need no dynamic sequence counter.
 - [Phase 04]: Keep the existing golden digest unchanged; golden and sensitivity controls pass, and snapshots are not digest input.
+- [Phase 04]: 04-07: Source-oracle agreement is raw software evidence; O1 and named-profile qualification remain open.
+- [Phase 04]: 04-07: The source-level RMB0 probe writes the guest model observation; profile selection remains an independent comparison input.
+- [Phase 04]: 04-07: EVD-02 and EVD-04 remain globally open because the timer suite and guest-model taxonomy are unfinished.
 
 ### Pending Todos
 
@@ -219,6 +223,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T07:55:40.144Z
-Stopped at: Completed 04-06-PLAN.md
+Last session: 2026-11-11T08:52:06.732Z
+Stopped at: Completed 04-07-PLAN.md
 Resume file: None
