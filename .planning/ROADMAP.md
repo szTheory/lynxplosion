@@ -150,7 +150,7 @@ Plans:
 - [x] 02-11-PLAN.md — Profile document, README, full vector lane, push, CI by head SHA, CI efficiency review (CPU-01..05)
 
 ### Phase 3: Memory Map, Direct-Load Startup and First Diagnostic
-**Goal**: An original diagnostic starts through rights-clean startup tier A on the real memory map, reports pass or fail through a RAM result block, and produces a first labelled, viewable snapshot.
+**Goal**: As a developer, I want to run an original diagnostic through rights-clean startup tier A on the real memory map and read its RAM pass or fail result and labelled viewable snapshot, so that I can inspect reproducible guest progress through the public API without firmware.
 **Mode:** mvp
 **Depends on**: Phase 2
 **Requirements**: MEM-01, MEM-02, MEM-03, MEM-04, EVD-01, HB-01, API-08, DET-03, CON-01

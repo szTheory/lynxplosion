@@ -124,3 +124,5 @@ STATE before making broader snapshot-validation claims.
 **Use self-contained Git objects in containers.** A shared local clone points outside the container. Use a self-contained clone before requiring history hygiene. Keep raw logs temporary and generated report links relative to the repository before committing.
 
 **Keep closeout handoffs bounded.** Reuse reviewed evidence and return concrete edits; repeated report reconstruction can dominate the critical path after tests finish. Parent-owned metadata closeout can avoid another broad executor context reload.
+
+**Validate MVP goal form before execution.** A roadmap `mode: mvp` requires the centralized user-story guard, including its literal `As a ...` prefix. Phase 3's inherited prose goal only failed at final verification. Reformat the same approved outcome and validate it before dispatch; changing grammar is routine planning repair, not a new scope decision.

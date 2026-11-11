@@ -40,6 +40,13 @@ requirements. The name is not trademark clearance.
   hardware testing. Seek a human decision where required by rights, authority,
   subjective judgment or external/physical evidence.
 
+- Launch automated apps and tests in the background by default so the user
+  can keep working on the shared computer. Use foreground only when the
+  specific check genuinely requires it, explain that need before activation,
+  and bound the foreground interval. Diagnose background failures within
+  existing limits; a timeout alone is not a reason to take focus. Apply this
+  preference across projects and future sessions.
+
 ## Engineering and evidence
 
 - Keep deterministic machine behavior separate from host clocks, filesystems,
