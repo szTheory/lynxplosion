@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 6
+current_plan: 7
 status: executing
-stopped_at: Completed 04-05-PLAN.md
-last_updated: "2026-11-11T06:57:21.769Z"
+stopped_at: Completed 04-06-PLAN.md
+last_updated: "2026-11-11T07:55:40.394Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 3 complete, transitioned to Phase 4
-state_head: a128dc7d5358f080458ed26637bceae540570b49
+state_head: 35fab3be1adec9de0e3bf200203bfdbf7c6f9544
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 38
+  completed_plans: 39
   percent: 50
 ---
 
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 ## Current Position
 
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
-Current Plan: 6
+Current Plan: 7
 Total Plans in Phase: 12
-Status: Executing Plan 6
-Last activity: 2026-11-10 — Phase 3 complete, transitioned to Phase 4
+Status: Ready for Plan 7
+Last activity: 2026-11-11 — Plan 6 complete, Phase 4 remains in progress
 
 Progress: [█████░░░░░] 50%
 
@@ -97,6 +97,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P03 | 38min | 2 tasks | 8 files |
 | Phase 04 P04 | 46 min | 2 tasks | 7 files |
 | Phase 04 P05 | 25min | 2 tasks | 9 files |
+| Phase 04 P06 | 52m | 2 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -177,7 +178,7 @@ Recent decisions affecting current work:
 - [Phase 04]: Task 1 is fixture-only and has no meaningful RED; correct the plan TDD marker and do not fabricate failure evidence.
 - [Phase 04]: Timer init/reset/load use deterministic timer-phase-fixed-zero-1; this is software policy, not calibration.
 - [Phase 04]: Timer-bank events precede same-tick CPU bus actions and their poll/completion under timer-cpu-poll-order-1.
-- [Phase 04]: Keep timer linking, CTLB lower observation bits, and timer snapshot continuation explicitly incomplete.
+- [Phase 04]: Keep profile and hardware qualification, CTLB lower-bit lifetime, and timer-source agreement claims bounded; Plan 06 covers snapshot continuation only.
 - [Phase 04]: CTLB bit 1 is a one-event borrow-in strobe and bit 3 sets or clears DONE; pinned guest behavior is comparison evidence, not hardware qualification.
 - [Phase 04]: Only source-declared timer links 0→2→4 and 1→3→5→7 are enabled; unsupported timer 0, timer 1/audio 3, and timer 6 inputs refuse before mutation.
 - [Phase 04]: CTLB low status-bit lifetime is explicit model policy until the next timer event because reviewed primary notes do not define stable read lifetime.
@@ -187,7 +188,10 @@ Recent decisions affecting current work:
 - [Phase 04]: Keep bus ownership hold separate from priced-cycle readiness; normalize expired readiness to guest time and report zero remaining cost under hold.
 - [Phase 04]: Derive wake_pending from timer pending independently of CPU I; CPU I still controls IRQ acceptance at POLL.
 - [Phase 04]: Keep FD91 unavailable without active Suzy ownership; pinned public suite sources do not require CPUSLEEP.
-- [Phase 04]: Plan 06 must define snapshot continuation or refusal for bus_hold and wake_pending alongside timer event cursor serialization.
+- [Phase 04]: Plan 06 format 4 serializes timer/IRQ/hold state and the current-tick event-applied bit; wake and future timer candidates are derived, and prior cursor timestamps normalize away.
+- [Phase 04]: Snapshot format 4 stores canonical timer/IRQ/hold fields and only the current-tick applied-event bit; wake, CPU request and future candidates are derived.
+- [Phase 04]: Historical event timestamps normalize away with guest time; timer ordinals are fixed 0–7 and need no dynamic sequence counter.
+- [Phase 04]: Keep the existing golden digest unchanged; golden and sensitivity controls pass, and snapshots are not digest input.
 
 ### Pending Todos
 
@@ -203,7 +207,7 @@ A phase-level verification blocker remains; Plan 6 can proceed. Other open owner
 - O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
 - Phase 3 goal verification and software qualification pass. CON-01 remains globally open for the actual-frame and actual-audio consumer obligations already scheduled in Phases 5 and 6; the Phase 3 snapshot/silence slice is complete. Research flags remain for Phases 4-6.
 - Carried follow-ups: bus tick stamp is plumbed but unobserved until a device consumes it (Phase 4); `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
-- Phase 4 final verification is blocked until Plan 06 serializes timer_bank.last_event_valid and last_event_tick in snapshots; api.snapshot_refusal and api.snapshot_roundtrip currently fail their whole-machine equality controls for these fields. Preserve the exact failure evidence in .planning/phases/04-timers-interrupts-and-first-public-suites/deferred-items.md. Plan 06 must also define snapshot continuation or refusal for bus_hold and wake_pending before snapshot claims cover those states.
+- Plan 06 snapshot continuation is implemented in format 4: the current-tick event-applied bit restores the required same-tick cursor, while historical timestamps normalize away as guest time advances; hold is serialized and wake is derived. The first 140-test CTest pass exposed four stale format-consumer assumptions, all four were updated and the exact failed IDs plus snapshot controls passed in a 9/9 targeted retest. The canonical `scripts/check.sh` currently stops before workflow/CTest because ShellCheck 0.11.0 reports five pre-existing SC1007 warnings in `scripts/build-suites.sh`; Phase 12 owns that narrow gate fix. Phase 4 qualification remains open until its later suite and final-gate plans complete. See `.planning/phases/04-timers-interrupts-and-first-public-suites/deferred-items.md`.
 
 ## Deferred Items
 
@@ -215,6 +219,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T06:57:21.535Z
-Stopped at: Completed 04-05-PLAN.md
+Last session: 2026-11-11T07:55:40.144Z
+Stopped at: Completed 04-06-PLAN.md
 Resume file: None
