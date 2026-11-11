@@ -276,3 +276,16 @@ review of the final ledger and the existing `origin/main` push/CI handoff are
 the next actions. EVD-02, EVD-05, O1, the strict timer mismatch, hardware/profile
 qualification, rights, physical-test, publication, and release gates remain
 open as described above.
+
+## External hosted CI blocker
+
+The reviewed `f920844` head is pushed through the existing origin/main channel.
+Its exact run43096967098 remains queued with zero jobs after a declared GitHub
+Actions outage and a public backlog-drained/resolved update. One cancellation
+attempt was refused as already completed; one standard same-run rerun was
+refused as already running. Fresh APIs still show queued/attempt1/no jobs.
+No CI result exists to qualify or inspect. Plan12Task2 and phase completion
+remain pending; full local results above remain valid for their exact source.
+See [04-CI-BLOCKER.md](04-CI-BLOCKER.md) for official incident evidence, bounded
+recovery and the resume procedure. No gate was waived and no replacement push
+was used to bypass the inconsistent run.

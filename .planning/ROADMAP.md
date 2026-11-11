@@ -194,6 +194,8 @@ Plans:
 **Owner gates**: O1. Results are recorded against the selected profile, and no "passes" claim is made for any profile until O1 is decided.
 **Research flag**: Deeper research needed before planning: verbatim re-read of the Epyx timer and IRQ material; `timers2` phase and enable-order expectations; `cpu` tests 1 and 8 (interrupt-entry quirks); confirm on the pinned commit that `cpu` needs Timer IRQs, and per-suite `.sym`/`g_results` counts (Disagreements 8 and 15).
 **Plans**: 11/12 plans executed
+
+Plan 12 local qualification passes on macOS and self-contained Ubuntu; exact-head hosted CI is blocked on inconsistent GitHub Actions service state. Phase completion remains pending. See [CI handoff](phases/04-timers-interrupts-and-first-public-suites/04-CI-BLOCKER.md).
 - [x] 04-01-PLAN.md
 - [x] 04-02-PLAN.md
 - [x] 04-03-PLAN.md

@@ -3,12 +3,12 @@ gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
 current_plan: 12
-status: Ready to execute Plan 12; Plan 11 complete under D-10 with the Phase 4 EVD-05 slice recorded
-stopped_at: Completed 04-11-PLAN.md
-last_updated: "2026-11-11T17:20:35.708Z"
+status: Blocked on inconsistent external GitHub Actions state; Plan 12 Task 2 exact-head CI pending
+stopped_at: Phase 4 Plan 12 Task 2 blocked on external GitHub Actions state; no source changes needed
+last_updated: "2026-11-11T21:30:15.540Z"
 last_activity: 2026-11-11
-last_activity_desc: Completed Plan 11 timer/IRQ fault controls; exact index14 agreement remains pending Phase 5 and EVD-05 remains open for Phases 5-6
-state_head: 86a8d038e9f45fa92b7fa2c3973030f0aea6c48d
+last_activity_desc: Full macOS and Ubuntu gates passed; reviewed source pushed; hosted CI queued with contradictory cancel/rerun refusals
+state_head: f92084423d16e4d4d3420545d1f5131b47c7e461
 progress:
   total_phases: 6
   completed_phases: 3
@@ -31,8 +31,8 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
 Current Plan: 12
 Total Plans in Phase: 12
-Status: Ready to execute Plan 12; Plan 11 is complete under D-10 with the Phase 4 EVD-05 slice recorded
-Last activity: 2026-11-11 - Completed Plan 11 timer/IRQ fault controls; exact index14 agreement remains pending Phase 5 and EVD-05 remains open for Phases 5-6
+Status: Blocked on inconsistent external GitHub Actions state; Plan 12 Task 2 exact-head CI pending
+Last activity: 2026-11-11 - Full macOS and Ubuntu gates passed; reviewed source pushed; hosted CI queued with contradictory cancel/rerun refusals
 
 Progress: [█████░░░░░] 50%
 
@@ -215,7 +215,7 @@ None yet.
 
 ### Blockers/Concerns
 
-The owner approved the recommended one-comparison deferral on 2026-11-11 ("follow ur recs"). Plan 11 is complete under D-10; Plans 01-11 are complete and Plan 12 is next for final Phase 4 verification. The prior snapshot failures are resolved. Approved details are in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-09-DISPOSITION.md` and the execution record is in `04-09-SUMMARY.md`.
+Plans 01-11 and Plan 12 implementation/reviews/local qualification are complete under the owner-approved D-10 disposition. Plan 12 Task 2 is blocked on inconsistent external GitHub Actions state: both full local gates pass, but the exact-head run has no jobs; cancellation says completed and rerun says already running. See `.planning/phases/04-timers-interrupts-and-first-public-suites/04-CI-BLOCKER.md` for exact evidence and resume procedure. No owner confirmation or source fix is indicated. Phase 4 formal goal verification/completion remains pending CI; Phases 5-6 have not started.
 
 - Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict comparison failure and unchanged oracle while completing Phase 4; exact agreement remains pending Phase 5. No source/profile/hardware qualification is accepted. No owner action is needed for this approved continuation.
 - Plan 09's data-only control matrices use per-invocation fresh observations on both profiles and immutable hash-checked baselines for private fault copies; every mutation retains positive baseline validation before/after and its named diagnostic.
@@ -228,8 +228,8 @@ Other open owner decisions remain in force:
 - O5 (licence): no licence file; all rights reserved until decided.
 - O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
 - Phase 3 goal verification and software qualification pass. CON-01 remains globally open for the actual-frame and actual-audio consumer obligations already scheduled in Phases 5 and 6; the Phase 3 snapshot/silence slice is complete. Research flags remain for Phases 4-6.
-- Carried follow-ups: bus tick stamp is plumbed but unobserved until a device consumes it (Phase 4); `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
-- Plan 06 format 4 resolves the snapshot cursor failures and restores hold while deriving wake. All four stale format-consumer failures passed their targeted retest. The later ShellCheck SC1007 finding is corrected in both suite scripts in the working tree; the exact canonical ShellCheck selection passes. Related build/oracle/symbol checks pass, including repaired isolated-input and timer-prefix expectations. Full Phase 4 qualification remains open until the scope disposition and remaining suite/final-gate work complete. See `.planning/phases/04-timers-interrupts-and-first-public-suites/deferred-items.md`.
+- Carried follow-ups: the timer bank now consumes bus tick stamps with ordering controls; `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
+- Format 4 snapshot controls, source-suite identity/path/parser fixes, safe invocation cleanup and portable shell refusals are committed and qualified locally. Both canonical gates pass all 163 registered tests with no skips, complete JUnit, artifact and history checks. The reviewed CI head is f920844; the qualified product/script source is 7616f6d. Hosted CI alone remains unavailable. Earlier deferred-item records are historical; current qualification and blocker records are authoritative.
 
 ## Deferred Items
 
@@ -237,10 +237,10 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 | Category | Item | Status | Deferred At | Milestone |
 |----------|------|--------|-------------|-----------|
-| Technical follow-up | Investigate restore accepting a forged `cpu_ready_at` span of 255 ticks; inherited from `origin/main`, documented in Phase 3 code review, and outside Plan 03-09's change scope. | Open; schedule before relying on broader snapshot-validation claims; no owner risk acceptance inferred. | Phase 03 Plan 09 | v1 |
+| Technical follow-up | Investigate restore accepting a forged `cpu_ready_at` span of 255 ticks; inherited from `origin/main`, documented in Phase 3 code review, and outside Plan 03-09's change scope. | Resolved in Phase 4 Plan 06 with reachable residual bounds and hostile snapshot controls; see 04-06-SUMMARY.md. | Phase 03 Plan 09 | v1 |
 
 ## Session Continuity
 
-Last session: 2026-11-11T17:20:35.384Z
-Stopped at: Completed 04-11-PLAN.md
-Resume file: None
+Last session: 2026-11-11T21:30:14.872Z
+Stopped at: Phase 4 Plan 12 Task 2 blocked on external GitHub Actions state; no source changes needed
+Resume file: .planning/phases/04-timers-interrupts-and-first-public-suites/04-CI-BLOCKER.md
