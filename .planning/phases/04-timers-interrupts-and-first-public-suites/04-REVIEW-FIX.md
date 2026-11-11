@@ -119,3 +119,15 @@ filesystem feature level for Linux, and adds permanent rejection controls. A
 sanitized isolated old-remove control proves the prior directory deletion.
 All original findings now reconcile as fixed in04-REVIEW-DISPOSITION.md; no
 human verification is required. Final platform/CI qualification remains pending.
+
+## Qualification repair: successful invocation cleanup
+
+The first broad gate showed retained generated outputs violate the existing
+artifact policy and add measured scan cost. The CMake driver now removes only
+its successfully completed nonce-named run after freshly checking canonical
+containment, no symlink ancestors and its exact owner marker. Missing/stale
+marker and symlink-ancestor controls preserve their inputs, while valid cleanup
+preserves child symlink targets. Root's four affected CTests pass and leave no
+suite files. This supersedes the earlier retention choice; it does not restore
+unchecked caller-path deletion or weaken the artifact scanner. Final gates
+must be renewed on the repaired source.

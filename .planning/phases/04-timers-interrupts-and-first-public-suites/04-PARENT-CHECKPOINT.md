@@ -28,3 +28,14 @@ T-04-32 remains open until qualification finishes. Global EVD-02 and EVD-05,
 the exact index14 source disagreement and all hardware/rights/release gates
 remain open. Do not begin Phase5 inside the executor; root owns the autonomous
 transition after formal Phase4 closeout.
+
+## Qualification-driven cleanup recheck
+
+The first broad gate exposed successful-test output retention, not a new
+D-10 comparison error. Root repaired invocation cleanup with fresh canonical
+containment and exact path/nonce-marker checks. Four affected CTests (oracle
+controls, both timer observations, strict comparison) pass and leave zero
+suite files. The unchanged strict artifact scanner then passes. See the
+qualification ledger and security record for the failed attempt and repair.
+Pending-gate admission logic and linked timing proof are unchanged. Resume
+Plan12Task2 on the committed repair; renew local/Linux/CI evidence.

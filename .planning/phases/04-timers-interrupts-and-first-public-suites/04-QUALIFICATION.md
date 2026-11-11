@@ -1,6 +1,6 @@
 # Phase 4 software qualification ledger — Plan 12 Task 1
 
-**Status:** Task 1 targeted timer integration evidence is recorded. Parent full-phase reviews, accepted fixes, independent pending-gate verification, final macOS/Linux qualification, and exact-reviewed-head CI are still pending. This is not Phase 4 completion.
+**Status:** Task 1 evidence and parent reviews/fixes/independent pending verification are recorded. The first final macOS attempt failed artifact policy after all tests passed; cleanup is repaired and renewed local/Linux/CI qualification is pending. This is not Phase 4 completion.
 
 ## Scope and decision boundary
 
@@ -204,3 +204,21 @@ the hashes in the Task 1 tables remain historical observations.
   accepted fixes and targeted retests, plus independent pending-gate
   acceptance. These are required before Task 2's final local/Linux/CI
   qualification and any phase-completion record.
+
+## First Task 2 attempt and bounded repair
+
+At `1764ad1` the canonical macOS command exited 1 at artifacts after 163/163 tests
+and exact JUnit accounting with no skips. The workflow took 79s (CTest 78.48s);
+the whole attempt took 349s, with about 266s spent in the artifact scan. There
+were 1857 findings among 10217 scratch files (59MB): 542 current-run generated
+outputs plus prior retained scratch. These include generated BLL/object files
+and intentional nonproduction text fixtures. History hygiene did not run, so
+this attempt does not qualify the source. Linux was not redundantly run on the
+known failing source.
+
+Root restored successful-run cleanup with a fresh canonical path/nonce-marker
+check and explicit missing/stale/ancestor refusal controls. The four affected
+CTest checks pass and leave no suite files; prior generated scratch was moved
+reversibly to private temporary evidence. The artifact policy remains intact.
+Renew final source qualification after this repair; do not reuse the failed
+attempt as successful local evidence.

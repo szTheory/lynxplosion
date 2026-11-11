@@ -136,3 +136,17 @@ was explained by independent cycle accounting, not resolved by phase tuning;
 a synthetic page crossing could force agreement and was correctly rejected as
 a remedy. Preserve raw disagreements and seek a scope decision when the next
 real prerequisite belongs to a later phase.
+
+
+## Generated test output and strict artifact scans (Phase 4)
+
+A filesystem hardening change retained successful suite scratch. The next full
+gate passed every test but rejected generated binaries and intentional text
+fixtures, and the accumulated files added minutes to scanning. Check cleanup
+contracts against the canonical gate before choosing retention as a remedy.
+Use unique invocation directories, then recheck canonical containment and the
+exact path/nonce owner marker before success cleanup. Preserve failed runs for
+diagnosis. Prove missing/stale marker and symlink boundaries with outside-target
+controls; keep the artifact policy unchanged. Existing leftovers can be moved
+reversibly to private temporary evidence. Run pure manifest self-controls
+directly while fixing their assertions before repeating an expensive batch.

@@ -33,7 +33,7 @@ when fixes land.
 | Threat ID | Category | Component | Severity | Disposition | Mitigation / audit evidence | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | T-04-01 | Tampering | Source build | high | mitigate | `scripts/build-suites.sh`: pin/tool checks and unchanged upstream inputs before/after assembly; object gap tracked separately below | closed |
-| T-04-02 | Elevation of privilege | Output paths | high | mitigate | Canonical strict scratch containment and path-bound owner markers precede C writes/cleanup; unique CMake run dirs avoid recursive deletion; exclusive temporary files/rename publish regular outputs. Root adds unlink-only cleanup, invalid-profile preflight and seeded old-remove proof; outside-target controls pass | closed |
+| T-04-02 | Elevation of privilege | Output paths | high | mitigate | Canonical strict scratch containment and path-bound owner markers precede C writes/cleanup; unique CMake run dirs are removed only after a second canonical path/nonce-marker check; exclusive temporary files/rename publish regular outputs. Root adds unlink-only cleanup, invalid-profile preflight and seeded old-remove proof; outside-target controls pass | closed |
 | T-04-03 | Information disclosure | Rights/provenance | medium | mitigate | Complete upstream NOTICE, copied generated notices, provenance publication boundaries, hygiene checks; refresh exposure list for newly read main.c files | closed |
 | T-04-04 | Denial of service | Scheduler | high | mitigate | `core/machine.c` subtraction-safe bounds, finite candidates, idle jump; `core/timer.c` bounded source scan and checked addition | closed |
 | T-04-05 | Tampering | Guest routes | high | mitigate | Complete route preflight before unsupported access; pure mapped inspection range preflight | closed |
@@ -138,3 +138,22 @@ scratch directory is not represented as an authenticated multiuser boundary.
 | Audit date | Threats total | Closed | Open | Run by |
 | --- | --- | --- | --- | --- |
 | 2026-11-11 |35|34|1 high, planned final qualification|Root independent delta review, source `27145c8`|
+
+## Qualification-driven cleanup repair
+
+The first canonical macOS attempt at `1764ad1` passed all 163 CTests with exact
+JUnit/no skips, then failed the strict artifact policy. Retained successful
+suite scratch contributed 542 current-run unmanifested outputs; earlier manual
+and targeted scratch contributed the rest. Root corrected the driver rather
+than exempting scratch from scanning: success cleanup rechecks canonical root
+and run path, strict descendant containment, the exact 48-hex nonce in the run
+basename and the exact path/nonce marker. Symlink ancestors and missing/stale
+markers refuse cleanup. Children that are symlinks are removed without
+following targets. A failed test keeps its own scratch for diagnosis.
+
+Permanent oracle controls prove valid cleanup, missing/stale marker refusal,
+ancestor refusal, outside-target preservation and removal of generated BLLs.
+The affected four-test selection passed in 4.12s and left zero suite files.
+Root moved the existing generated scratch tree reversibly to private temporary
+evidence before retesting; no scan exemption or broad cleanup was added to the
+canonical command. Final qualification remains open until renewed evidence.
