@@ -3003,7 +3003,7 @@ static void case_bll_identity(void)
 
     /* Format 4 carries the complete object identity in the LE header and the
        guest-written MAPCTL latch in the payload. */
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 3u);
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 4u);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
     CHECK_EQ_U64(get_le(blob_v + 208u, 4u), 0x0200u);
@@ -3397,6 +3397,131 @@ static void case_snapshot_refusal(void)
 
     snapshot_forged_cpu_states();
     snapshot_tick_limit();
+}
+
+static void timer_snapshot_control_refusal(lynx_machine *target, size_t offset,
+                                           uint64_t value, size_t width,
+                                           const unsigned char *source)
+{
+    CHECK_EQ_U64(lynx_watch_configure(target, 0x0400u, 1u), LYNX_OK);
+    memcpy(snap_b, target, MSIZE);
+    memcpy(blob_bad, source, SNAP_TOTAL);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + offset, value, width);
+    rehash_payload(blob_bad);
+    RESTORE_EXPECT(target, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_b);
+    CHECK_EQ_U64(target->host_observation.watch_armed, 1u);
+}
+
+static void case_timer_snapshot_controls(void)
+{
+    static const uint32_t profiles[] = {LYNX_PROFILE_LYNX1, LYNX_PROFILE_LYNX2};
+    const int failures_before = check_failures;
+
+    for (size_t profile_index = 0u;
+         profile_index < sizeof profiles / sizeof profiles[0]; profile_index++) {
+        const uint32_t profile = profiles[profile_index];
+        lynx_machine *source = snap_instance_p(machine_buf, profile, SNAP_SEED,
+                                               timer_snapshot_program,
+                                               sizeof timer_snapshot_program, 0x0200u);
+        lynx_machine *restored = snap_instance_p(buf_b, profile, SNAP_SEED,
+                                                 timer_snapshot_program,
+                                                 sizeof timer_snapshot_program, 0x0200u);
+        lynx_machine *target = snap_instance_p(buf_c, profile, SNAP_SEED,
+                                               timer_snapshot_program,
+                                               sizeof timer_snapshot_program, 0x0200u);
+        if (source == NULL || restored == NULL || target == NULL) {
+            return;
+        }
+
+        /* SEI (2 cycles), LDA #1 (2), two absolute stores (4 each), then
+           LDA #$98 (2) put the final CTLA write cycle at cycle index 17:
+           grant 85 at flat5, with the watch returning at grant + 1 == 86.
+           Holding the posted request immediately afterward captures a real
+           positive ready span. */
+        uint64_t consumed = 0u;
+        lynx_stop_reason stop = LYNX_STOP_BUDGET;
+        CHECK_EQ_U64(lynx_watch_configure(source, 0xFD01u, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_advance(source, 1000u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+        CHECK_EQ_U64(source->guest_ticks, 86u);
+        CHECK_EQ_U64(source->timer_bank.timers[0].control_a, 0x98u);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(source, 1u), LYNX_OK);
+        CHECK_EQ_HEX(reg_of(source, LYNX_REG_CPU_STATE) >> 24, 4u);
+        CHECK_EQ_U64(save_into(source, blob_v), 0u);
+
+        CHECK_EQ_U64(lynx_watch_configure(restored, 0x0400u, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_snapshot_restore(restored, blob_v, SNAP_TOTAL), LYNX_OK);
+        CHECK_EQ_U64(restored->host_observation.watch_armed, 0u);
+        CHECK_EQ_HEX(reg_of(restored, LYNX_REG_CPU_STATE) >> 24, 4u);
+        compare_snapshot_guest(source, restored);
+
+        /* Let both machines remain held across several divider/borrow/IRQ
+           edges. Expired readiness is canonicalized to the common guest tick. */
+        advance_ticks(source, 176u);
+        advance_ticks(restored, 176u);
+        CHECK(source->timer_bank.pending != 0u);
+        CHECK_EQ_U64(source->bus_hold, 1u);
+        CHECK_EQ_U64(source->cpu_ready_at, source->guest_ticks);
+        compare_snapshot_guest(source, restored);
+        CHECK_EQ_U64(save_into(source, blob_c), 0u);
+        CHECK_EQ_U64(lynx_watch_configure(restored, 0x0400u, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_snapshot_restore(restored, blob_c, SNAP_TOTAL), LYNX_OK);
+        CHECK_EQ_U64(restored->host_observation.watch_armed, 0u);
+        CHECK_EQ_U64(restored->cpu_ready_at, restored->guest_ticks);
+        CHECK_EQ_HEX(reg_of(restored, LYNX_REG_CPU_STATE) >> 24, 0u);
+        compare_snapshot_guest(source, restored);
+
+        /* Every hostile blob has a valid recomputed hash. Each refusal is
+           checked against the entire target instance with a live watch armed. */
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(target, 1u), LYNX_OK);
+        advance_ticks(target, 9u);
+        timer_snapshot_control_refusal(target, PAY_READY_AT,
+                                       get_le(blob_c + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, 8u) + 5u,
+                                       8u, blob_c); /* flat5 span exceeds reachable +4 */
+        timer_snapshot_control_refusal(target, PAY_READY_AT,
+                                       get_le(blob_c + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, 8u) - 1u,
+                                       8u, blob_c); /* stale behind-tick readiness */
+        timer_snapshot_control_refusal(target, PAY_TIMERS + 2u, 0x8Fu, 1u,
+                                       blob_c); /* enabled T0 incoming link is unsupported */
+        timer_snapshot_control_refusal(target, PAY_TIMERS + 4u + 2u, 0x8Fu, 1u,
+                                       blob_c); /* enabled T1 incoming audio link is absent */
+        timer_snapshot_control_refusal(target, PAY_TIMERS + 6u * 4u + 2u, 0x8Fu, 1u,
+                                       blob_c); /* T6 has no supported predecessor */
+        timer_snapshot_control_refusal(target, PAY_TIMERS + 3u, 0x02u, 1u,
+                                       blob_c); /* BORROW IN without LAST CLOCK */
+        timer_snapshot_control_refusal(target, PAY_TIMERS + 3u, 0x10u, 1u,
+                                       blob_c); /* reserved CTLB bits */
+        timer_snapshot_control_refusal(target, PAY_TIMER_PHASE, 0xFFu, 1u, blob_c);
+        timer_snapshot_control_refusal(target, PAY_TIMER_EVENT_APPLIED, 2u, 1u, blob_c);
+        timer_snapshot_control_refusal(target, PAY_TIMER_EVENT_APPLIED, 1u, 1u,
+                                       blob_c); /* current public tick has no unapplied edge */
+        timer_snapshot_control_refusal(target, PAY_BUS_HOLD, 2u, 1u, blob_c);
+        {
+            const uint64_t limit = UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM;
+            memcpy(blob_bad, blob_c, SNAP_TOTAL);
+            put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, limit + 1u, 8u);
+            put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, limit + 1u, 8u);
+            rehash_payload(blob_bad);
+            CHECK_EQ_U64(lynx_watch_configure(target, 0x0400u, 1u), LYNX_OK);
+            memcpy(snap_b, target, MSIZE);
+            RESTORE_EXPECT(target, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_b);
+            CHECK_EQ_U64(target->host_observation.watch_armed, 1u);
+        }
+
+        /* T2 has a defined T0 predecessor. This rehashed positive control
+           distinguishes supported link input from the three refusals above. */
+        memcpy(blob_bad, blob_c, SNAP_TOTAL);
+        put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_TIMERS + 2u * 4u + 2u,
+               0x8Fu, 1u);
+        rehash_payload(blob_bad);
+        CHECK_EQ_U64(lynx_watch_configure(target, 0x0400u, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_snapshot_restore(target, blob_bad, SNAP_TOTAL), LYNX_OK);
+        CHECK_EQ_U64(target->timer_bank.timers[2].control_a, 0x8Fu);
+        CHECK_EQ_U64(target->host_observation.watch_armed, 0u);
+    }
+
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_snapshot_controls\n",
+           check_failures == failures_before ? "ok" : "not ok");
 }
 
 /* ---- the CPU programs with hand-derived values (API-03, CPU-02, CPU-03) ---- */
@@ -5988,6 +6113,7 @@ static const struct {
     {"snapshot_roundtrip", case_snapshot_roundtrip},
     {"snapshot_continue", case_snapshot_continue},
     {"timer_snapshot", case_timer_snapshot},
+    {"timer_snapshot_controls", case_timer_snapshot_controls},
     {"timer_tracer", case_timer_tracer},
     {"timer_done_borrow", case_timer_done_borrow},
     {"timer_link_tracer", case_timer_link_tracer},

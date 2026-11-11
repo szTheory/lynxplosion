@@ -21,7 +21,7 @@ enum {
     DIAG_MAX_TICKS = 4000,
     FINAL_TICK = 5000,
     SNAP_HEADER_SIZE = 252,
-    SNAP_PAYLOAD_SIZE = 65568,
+    SNAP_PAYLOAD_SIZE = 65604,
     SNAP_PAYLOAD_HASH_OFFSET = 220,
     SNAP_RAM_OFFSET = 32,
     SNAP_RESERVED_OFFSET = 15
@@ -1183,7 +1183,7 @@ static int save_snapshot_for_machine(const lynx_machine *machine, uint8_t **snap
     if (snapshot_save(machine, snapshot, snapshot_size) != 0) {
         return 1;
     }
-    if (read_le32(*snapshot + 8u) != 3u ||
+    if (read_le32(*snapshot + 8u) != 4u ||
         read_le32(*snapshot + 12u) != SNAP_HEADER_SIZE ||
         read_le32(*snapshot + SNAP_HEADER_SIZE + 16u) != FINAL_TICK) {
         free(*snapshot);

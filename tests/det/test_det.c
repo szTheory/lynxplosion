@@ -928,6 +928,217 @@ static void case_profile_agreement(char **args)
     free(content);
 }
 
+/* A project-authored guest used by the public scheduler-watch checks. SEI
+   keeps the latched timer IRQ observable without fetching an absent vector. Its
+   RAM store grants at tick 80 after timer-bank and linked-borrow work there. */
+static const uint8_t timer_paths_program[] = {
+    0x78u, 0xE6u, 0x10u, 0xADu, 0x00u, 0x04u, 0xA9u, 0xA5u,
+    0x8Du, 0x00u, 0x04u, 0x4Cu, 0x0Bu, 0x02u
+};
+
+static void timer_paths_configure(lynx_machine *m)
+{
+    m->timer_bank.timers[0] = (lynx__timer){0u, 4u, 0x98u, 0u};
+    m->timer_bank.timers[1] = (lynx__timer){0u, 4u, 0x88u, 0u};
+    m->timer_bank.timers[2] = (lynx__timer){0u, 0u, 0x8Fu, 0u};
+}
+
+static void timer_paths_advance_to(lynx_machine *m, uint64_t target, uint8_t mode)
+{
+    static const uint64_t irregular[] = {3u, 1u, 7u, 2u, 5u, 11u};
+    size_t irregular_index = 0u;
+    uint64_t ticks = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(m, &ticks), LYNX_OK);
+    while (ticks < target) {
+        const uint64_t remaining = target - ticks;
+        uint64_t budget = mode == 0u ? remaining : (mode == 1u ? 1u :
+                             irregular[irregular_index++ %
+                                       (sizeof irregular / sizeof irregular[0])]);
+        if (budget > remaining) {
+            budget = remaining;
+        }
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_HALT;
+        CHECK_EQ_U64(lynx_advance(m, budget, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, budget);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        if (stop != LYNX_STOP_BUDGET || consumed != budget) {
+            break;
+        }
+        CHECK_EQ_U64(lynx_guest_ticks(m, &ticks), LYNX_OK);
+    }
+    CHECK_EQ_U64(ticks, target);
+}
+
+static void timer_paths_equal(const lynx_machine *reference, const lynx_machine *candidate,
+                              const char *path)
+{
+    static uint8_t reference_ram[LYNX_ADDRESS_SPACE];
+    static uint8_t candidate_ram[LYNX_ADDRESS_SPACE];
+    uint32_t reference_regs[LYNX_REG_COUNT];
+    uint32_t candidate_regs[LYNX_REG_COUNT];
+    uint8_t reference_timers[32];
+    uint8_t candidate_timers[32];
+    uint8_t reference_irq[2];
+    uint8_t candidate_irq[2];
+    uint64_t reference_ticks = 0u;
+    uint64_t candidate_ticks = 0u;
+    size_t snapshot_size = 0u;
+    size_t written_a = 0u;
+    size_t written_b = 0u;
+    uint8_t *snapshot_a = NULL;
+    uint8_t *snapshot_b = NULL;
+
+    CHECK_EQ_U64(lynx_guest_ticks(reference, &reference_ticks), LYNX_OK);
+    CHECK_EQ_U64(lynx_guest_ticks(candidate, &candidate_ticks), LYNX_OK);
+    CHECK_EQ_U64(reference_ticks, candidate_ticks);
+    CHECK_EQ_U64(lynx_read_memory(reference, 0u, reference_ram, sizeof reference_ram), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_memory(candidate, 0u, candidate_ram, sizeof candidate_ram), LYNX_OK);
+    if (memcmp(reference_ram, candidate_ram, sizeof reference_ram) != 0) {
+        fprintf(stderr, "timer_paths: %s raw RAM differs at common tick %llu\n", path,
+                (unsigned long long)reference_ticks);
+        check_failures++;
+    }
+    CHECK_EQ_U64(lynx_read_cpu_memory(reference, 0xFD00u, reference_timers,
+                                      sizeof reference_timers), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_cpu_memory(candidate, 0xFD00u, candidate_timers,
+                                      sizeof candidate_timers), LYNX_OK);
+    CHECK(memcmp(reference_timers, candidate_timers, sizeof reference_timers) == 0);
+    CHECK_EQ_U64(lynx_read_cpu_memory(reference, 0xFD80u, reference_irq,
+                                      sizeof reference_irq), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_cpu_memory(candidate, 0xFD80u, candidate_irq,
+                                      sizeof candidate_irq), LYNX_OK);
+    CHECK(memcmp(reference_irq, candidate_irq, sizeof reference_irq) == 0);
+    for (uint32_t reg = 0u; reg < LYNX_REG_COUNT; reg++) {
+        CHECK_EQ_U64(lynx_read_register(reference, reg, &reference_regs[reg]), LYNX_OK);
+        CHECK_EQ_U64(lynx_read_register(candidate, reg, &candidate_regs[reg]), LYNX_OK);
+    }
+    CHECK(memcmp(reference_regs, candidate_regs, sizeof reference_regs) == 0);
+    CHECK_EQ_U64(reference->cpu.req_addr, candidate->cpu.req_addr);
+    CHECK_EQ_U64(reference->cpu.req_kind, candidate->cpu.req_kind);
+    CHECK_EQ_U64(reference->cpu.req_flags, candidate->cpu.req_flags);
+    CHECK_EQ_U64(reference->cpu.req_data, candidate->cpu.req_data);
+    CHECK_EQ_U64(reference->timer_bank.pending, candidate->timer_bank.pending);
+    CHECK_EQ_U64(reference->wake_pending, candidate->wake_pending);
+    CHECK_EQ_U64(reference->bus_hold, candidate->bus_hold);
+
+    CHECK_EQ_U64(lynx_snapshot_size(reference, &snapshot_size), LYNX_OK);
+    snapshot_a = malloc(snapshot_size);
+    snapshot_b = malloc(snapshot_size);
+    CHECK(snapshot_a != NULL && snapshot_b != NULL);
+    if (snapshot_a != NULL && snapshot_b != NULL) {
+        CHECK_EQ_U64(lynx_snapshot_save(reference, snapshot_a, snapshot_size, &written_a), LYNX_OK);
+        CHECK_EQ_U64(lynx_snapshot_save(candidate, snapshot_b, snapshot_size, &written_b), LYNX_OK);
+        CHECK_EQ_U64(written_a, snapshot_size);
+        CHECK_EQ_U64(written_b, snapshot_size);
+        if (memcmp(snapshot_a, snapshot_b, snapshot_size) != 0) {
+            fprintf(stderr, "timer_paths: %s canonical snapshot differs at common tick %llu\n",
+                    path, (unsigned long long)reference_ticks);
+            check_failures++;
+        }
+    }
+    free(snapshot_a);
+    free(snapshot_b);
+}
+
+static void case_timer_paths(char **args)
+{
+    enum { COARSE = 0, ONE_TICK, IRREGULAR, WATCHED, RESTORE_SOURCE, RESTORED, PATH_COUNT };
+    static const uint32_t profiles[] = {LYNX_PROFILE_LYNX1, LYNX_PROFILE_LYNX2};
+    const uint64_t common_tick = 257u;
+
+    (void)args;
+    for (size_t p = 0u; p < sizeof profiles / sizeof profiles[0]; p++) {
+        instance paths[PATH_COUNT] = {{0}};
+        for (size_t i = 0u; i < PATH_COUNT; i++) {
+            CHECK_EQ_U64(instance_make_p(&paths[i], profiles[p], timer_paths_program,
+                                         sizeof timer_paths_program), 0u);
+            if (paths[i].m == NULL) {
+                goto profile_cleanup;
+            }
+            timer_paths_configure(paths[i].m);
+        }
+
+        timer_paths_advance_to(paths[COARSE].m, common_tick, 0u);
+        timer_paths_advance_to(paths[ONE_TICK].m, common_tick, 1u);
+        timer_paths_advance_to(paths[IRREGULAR].m, common_tick, 2u);
+
+        CHECK_EQ_U64(lynx_watch_configure(paths[WATCHED].m, 0x0400u, 1u), LYNX_OK);
+        {
+            static const uint64_t watch_chunks[] = {3u, 1u, 7u, 2u, 5u, 11u};
+            uint64_t consumed = UINT64_MAX;
+            lynx_stop_reason stop = LYNX_STOP_BUDGET;
+            lynx_watch_event event;
+            size_t i = 0u;
+            for (; i < 128u && stop != LYNX_STOP_WATCH; i++) {
+                CHECK_EQ_U64(lynx_advance(paths[WATCHED].m,
+                                          watch_chunks[i % (sizeof watch_chunks /
+                                                            sizeof watch_chunks[0])],
+                                          &consumed, &stop), LYNX_OK);
+                CHECK(consumed != 0u);
+                CHECK(stop == LYNX_STOP_BUDGET || stop == LYNX_STOP_WATCH);
+                if (stop != LYNX_STOP_BUDGET && stop != LYNX_STOP_WATCH) {
+                    break;
+                }
+            }
+            CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+            CHECK_EQ_U64(lynx_watch_get(paths[WATCHED].m, &event), LYNX_OK);
+            CHECK_EQ_U64(event.hit, 1u);
+            CHECK_EQ_U64(event.address, 0x0400u);
+            CHECK_EQ_U64(event.value, 0xA5u);
+            CHECK_EQ_U64(event.hit_tick, 80u);
+            CHECK_EQ_U64(event.return_tick, 81u);
+            CHECK_EQ_U64(paths[WATCHED].m->timer_bank.pending, 0x07u);
+            CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[0].count, 0u);
+            CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[1].count, 0u);
+            CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[2].count, 0u);
+            CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[0].control_b, 0x0Du);
+            CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[1].control_b, 0x0Du);
+            CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[2].control_b, 0x0Fu);
+        }
+        timer_paths_advance_to(paths[WATCHED].m, common_tick, 2u);
+
+        timer_paths_advance_to(paths[RESTORE_SOURCE].m, 73u, 2u);
+        {
+            size_t snapshot_size = 0u;
+            size_t written = 0u;
+            uint8_t *snapshot = NULL;
+            CHECK_EQ_U64(lynx_snapshot_size(paths[RESTORE_SOURCE].m, &snapshot_size), LYNX_OK);
+            snapshot = malloc(snapshot_size);
+            CHECK(snapshot != NULL);
+            if (snapshot != NULL) {
+                CHECK_EQ_U64(lynx_snapshot_save(paths[RESTORE_SOURCE].m, snapshot,
+                                                snapshot_size, &written), LYNX_OK);
+                CHECK_EQ_U64(written, snapshot_size);
+                CHECK_EQ_U64(lynx_snapshot_restore(paths[RESTORED].m, snapshot,
+                                                   snapshot_size), LYNX_OK);
+                timer_paths_equal(paths[RESTORE_SOURCE].m, paths[RESTORED].m,
+                                  "restore checkpoint");
+                free(snapshot);
+            }
+        }
+        timer_paths_advance_to(paths[RESTORED].m, common_tick, 2u);
+
+        timer_paths_equal(paths[COARSE].m, paths[ONE_TICK].m, "one-tick slicing");
+        timer_paths_equal(paths[COARSE].m, paths[IRREGULAR].m, "irregular slicing");
+        timer_paths_equal(paths[COARSE].m, paths[WATCHED].m, "watched grant with timer cascade");
+        timer_paths_equal(paths[COARSE].m, paths[RESTORED].m, "snapshot continuation");
+        CHECK_EQ_U64(paths[COARSE].m->guest_ticks, common_tick);
+        CHECK_EQ_U64(paths[COARSE].m->ram[0x0400u], 0xA5u);
+        printf("timer_paths: profile=%s common_tick=%llu paths=5 watch_grant=80 cascade_pending=%02x\n",
+               lynx_profile_name(profiles[p]), (unsigned long long)common_tick,
+               (unsigned)paths[WATCHED].m->timer_bank.pending);
+
+profile_cleanup:
+        for (size_t i = 0u; i < PATH_COUNT; i++) {
+            if (paths[i].m != NULL) {
+                lynx_machine_deinit(paths[i].m);
+            }
+            free(paths[i].mem);
+        }
+    }
+}
+
 static const struct {
     const char *name;
     int args; /* arguments after the case name */
@@ -935,6 +1146,7 @@ static const struct {
 } cases[] = {
     {"profile_agreement", 2, case_profile_agreement},
     {"state_sensitivity", 1, case_state_sensitivity},
+    {"timer_paths", 0, case_timer_paths},
     {"two_instances", 3, case_two_instances},
 };
 

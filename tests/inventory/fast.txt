@@ -43,6 +43,7 @@ api.timer_link_tracer	api
 api.timer_links	api
 api.timer_phase	api
 api.timer_snapshot	api
+api.timer_snapshot_controls	api
 api.timer_standalone	api
 api.timer_tracer	api
 api.timer_unavailable	api
@@ -96,6 +97,7 @@ det.manifest_fields.self_test	det
 det.profile_agreement	det
 det.sensitivity	det
 det.sensitivity_state	det
+det.timer_paths	det
 det.two_instances	det
 det.two_runs	det
 diag.result_controls	diag

@@ -112,8 +112,14 @@ work at the grant tick and the CPU completion have been applied.
 
 All mutable timer state lives in `lynx_machine`; timer code uses no host clock,
 allocation, or mutable global state. Guest time is also the canonical shared
-divider phase. The event cursor prevents a current-tick event from being
-dispatched twice after a stop at that timestamp.
+divider phase. Each event scan coalesces the fixed timer sources into one
+timer-bank candidate, with the CPU request as the other candidate. Timer source
+ordinals are the bounded indices 0–7; this scheduler has no dynamic sequence
+counter, so it has no sequence exhaustion state to serialize. If a public stop
+occurs after timer work at the current tick but before the CPU request
+completes, the snapshot stores one `event_applied` bit. Restore reconstructs
+that cursor at the saved guest tick. Once guest time advances, the historical
+cursor is normalized away; no old event timestamp or candidate queue is stored.
 
 ## CPU ownership and guest sleep boundary
 
@@ -137,13 +143,15 @@ IRQ acceptance separately.
 for ownership. When guest time passes it, the scheduler normalizes readiness
 to the current tick. `LYNX_REG_CPU_STATE` reports only remaining priced-cycle
 ticks, so a long hold reports zero while the independent hold gate still keeps
-the request posted. `api.request_boundary` exercises pre-cycle, in-cycle,
+the request posted. Format 4 preserves `bus_hold`; `wake_pending` is derived
+from the timer pending latch, and the CPU request is reposted from validated
+CPU state. The maximum positive public-return residual is four ticks for
+flat5 and thirteen ticks for test_skew: each public return follows at least
+one tick of a granted cycle, while the largest table prices are five and
+fourteen ticks. Waiting for ownership does not increase that priced-cycle
+bound. `api.request_boundary` exercises pre-cycle, in-cycle,
 expired, zero-budget, long-hold, and test-skew pricing cases, plus repeated
 hold transitions. `api.request_hold` also checks per-instance isolation.
-
-The current snapshot payload does not include `bus_hold` or `wake_pending`.
-Plan 06 must define and test held-request and wake continuation (or explicit
-refusal) before snapshot claims cover these states.
 
 ## Verification scope and deferred semantics
 
@@ -212,9 +220,31 @@ set; the required public-suite observations remain `cpu` and `timers`. Source
 agreement is software comparison evidence only while baseline decision O1
 remains open.
 
-The current snapshot format does not contain the timer bank or its event
-cursor. A snapshot taken while timers are active does not restore their state;
-timer snapshot continuation remains incomplete until the planned snapshot
-work. This plan makes no snapshot-continuation claim for timer state. No
-firmware, game image, physical hardware, or named Lynx profile qualification is
-used by these checks.
+Snapshot format 4 stores the eight canonical timer records (backup, count,
+CTLA, CTLB), pending IRQ byte, phase-policy identifier, current-tick
+`event_applied` bit, and `bus_hold`. It derives `wake_pending`, the CPU request,
+divider phase and future timer candidates from those fields and guest time.
+It does not store a separate deadline queue or historical event timestamp.
+Restore validates the complete candidate, including reserved bits, legal
+CTLB status combinations, enabled incoming-link support, cursor consistency,
+hold range, readiness residual and guest-time headroom, before changing the
+machine. A successful apply clears the destination's host watch; a refused
+restore leaves the whole instance and watch unchanged. Watch configuration
+and hit events never enter guest snapshots.
+
+Readiness controls accept flat5 residual `+4` and reject `+5` and `+255`;
+test_skew accepts `+13` and rejects `+14`. Separate controls preserve legal
+guest-time headroom and refuse a value beyond the scheduler limit. A bus hold
+can preserve an in-flight cycle or an expired request; elapsed hold time is
+not added to the priced-cycle residual. Formats 1–3 are refused as
+unsupported; no migration or cross-build compatibility is promised. Tests
+compare coarse, one-tick, irregular, watched and restored paths using
+independent RAM, mapped timer/status bytes, public CPU registers, pending
+request and guest time. The watched path observes the tick 80 timer/link
+cascade before the CPU store and produces the same guest snapshot as the
+unwatched path.
+
+The golden workload's observation digest excludes snapshot bytes. The format
+change left `tests/golden/skeleton.digest` untouched; its golden and
+sensitivity checks remain controls. No firmware, game image, physical
+hardware, or named Lynx profile qualification is used by these checks.
