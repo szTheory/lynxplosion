@@ -1,0 +1,11 @@
+{
+  "command": "build/check/tests/lynx-test-api timer_snapshot",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.timer_snapshot\n",
+  "targetTest": "api.timer_snapshot",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "A fresh same-identity restore retains the live timer's pending IRQ/count/event cursor and the held posted CPU request.",
+  "actual": "The target executed. Restore returned success but the destination had pending=0, timer count=0, event cursor=(0,0), wake_pending=0 and bus_hold=0 while the source had pending=1 and bus_hold=1.",
+  "semanticAssessment": "Valid RED: the new target case compiled and ran. Its first profile failed on the intended runtime state assertion after restoring an active timer snapshot; the timer bank and ownership state are absent from the current payload. This is not a compile, setup, discovery or unrelated assertion failure.",
+  "diagnostics": "tests/api/test_api.c:2697: restored->timer_bank.pending == source->timer_bank.pending failed: 0 != 1"
+}

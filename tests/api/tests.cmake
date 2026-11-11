@@ -53,6 +53,7 @@ lynx_add_test(NAME api.scheduler_watch COMMAND lynx-test-api scheduler_watch LAB
 lynx_add_test(NAME api.snapshot_refusal COMMAND lynx-test-api snapshot_refusal LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.snapshot_roundtrip COMMAND lynx-test-api snapshot_roundtrip LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.snapshot_continue COMMAND lynx-test-api snapshot_continue LABELS api TIMEOUT 60)
+lynx_add_test(NAME api.timer_snapshot COMMAND lynx-test-api timer_snapshot LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.timer_phase COMMAND lynx-test-api timer_phase LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.timer_standalone COMMAND lynx-test-api timer_standalone LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.timer_tracer COMMAND lynx-test-api timer_tracer LABELS api TIMEOUT 30)

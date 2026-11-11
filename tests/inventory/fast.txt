@@ -43,6 +43,7 @@ api.timer_link_tracer	api
 api.timer_links	api
 api.timer_phase	api
 api.timer_standalone	api
+api.timer_snapshot	api
 api.timer_tracer	api
 api.timer_unavailable	api
 api.watch_controls	api

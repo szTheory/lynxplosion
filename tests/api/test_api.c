@@ -110,6 +110,19 @@ static const uint8_t timer_tracer_program[] = {
     0x4Cu, 0x0Du, 0x02u                  /* JMP loop */
 };
 
+/* A repeating timer-0 source gives snapshot continuation another event after
+   the first IRQ latch. The host holds the real CPU request after CTLA starts
+   the timer, so the timer and guest clock continue independently. */
+static const uint8_t timer_snapshot_program[] = {
+    0x78u,                               /* SEI: keep IRQ pending observable */
+    0xA9u, 0x01u,                         /* LDA #1 */
+    0x8Du, 0x00u, 0xFDu,                 /* STA timer 0 backup */
+    0x8Du, 0x02u, 0xFDu,                 /* STA timer 0 count */
+    0xA9u, 0x98u,                         /* LDA #IRQ|RELOAD|COUNT */
+    0x8Du, 0x01u, 0xFDu,                 /* STA timer 0 CTLA */
+    0x4Cu, 0x0Eu, 0x02u                  /* JMP to itself */
+};
+
 /* Original guest for the mapped IRQ path. It maps the RAM vector window,
    installs an IRQ vector and handler, checks FD80/FD81 force/ack semantics,
    then waits for a timer-0 IRQ while I is set. It disables that source after
@@ -2590,6 +2603,136 @@ static void case_snapshot_continue(void)
     CHECK_EQ_U64(lynx_snapshot_restore(watched, blob_bad, SNAP_TOTAL),
                  LYNX_ERR_SNAPSHOT_INVALID);
     CHECK_UNCHANGED(machine_buf, snap_a);
+}
+
+static void compare_snapshot_guest(const lynx_machine *reference,
+                                   const lynx_machine *candidate)
+{
+    static uint8_t reference_ram[LYNX_ADDRESS_SPACE];
+    static uint8_t candidate_ram[LYNX_ADDRESS_SPACE];
+    uint32_t reference_regs[LYNX_REG_COUNT];
+    uint32_t candidate_regs[LYNX_REG_COUNT];
+    uint8_t reference_mapped[6];
+    uint8_t candidate_mapped[6];
+    uint64_t reference_ticks = 0u;
+    uint64_t candidate_ticks = 0u;
+
+    CHECK_EQ_U64(lynx_guest_ticks(reference, &reference_ticks), LYNX_OK);
+    CHECK_EQ_U64(lynx_guest_ticks(candidate, &candidate_ticks), LYNX_OK);
+    CHECK_EQ_U64(reference_ticks, candidate_ticks);
+    CHECK_EQ_U64(lynx_read_memory(reference, 0u, reference_ram, sizeof reference_ram), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_memory(candidate, 0u, candidate_ram, sizeof candidate_ram), LYNX_OK);
+    CHECK(memcmp(reference_ram, candidate_ram, sizeof reference_ram) == 0);
+    CHECK_EQ_U64(lynx_read_cpu_memory(reference, 0xFD00u, reference_mapped,
+                                      sizeof reference_mapped), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_cpu_memory(candidate, 0xFD00u, candidate_mapped,
+                                      sizeof candidate_mapped), LYNX_OK);
+    CHECK(memcmp(reference_mapped, candidate_mapped, sizeof reference_mapped) == 0);
+    for (uint32_t reg = 0u; reg < LYNX_REG_COUNT; reg++) {
+        CHECK_EQ_U64(lynx_read_register(reference, reg, &reference_regs[reg]), LYNX_OK);
+        CHECK_EQ_U64(lynx_read_register(candidate, reg, &candidate_regs[reg]), LYNX_OK);
+    }
+    CHECK(memcmp(reference_regs, candidate_regs, sizeof reference_regs) == 0);
+    CHECK_EQ_U64(reference->cpu.req_addr, candidate->cpu.req_addr);
+    CHECK_EQ_U64(reference->cpu.req_kind, candidate->cpu.req_kind);
+    CHECK_EQ_U64(reference->cpu.req_flags, candidate->cpu.req_flags);
+    CHECK_EQ_U64(reference->cpu.req_data, candidate->cpu.req_data);
+}
+
+static void case_timer_snapshot(void)
+{
+    static const uint32_t profiles[] = {LYNX_PROFILE_LYNX1, LYNX_PROFILE_LYNX2};
+    const int failures_before = check_failures;
+
+    for (size_t profile_index = 0u;
+         profile_index < sizeof profiles / sizeof profiles[0]; profile_index++) {
+        const uint32_t profile = profiles[profile_index];
+        lynx_machine *source = snap_instance_p(machine_buf, profile, SNAP_SEED,
+                                               timer_snapshot_program,
+                                               sizeof timer_snapshot_program, 0x0200u);
+        lynx_machine *restored = snap_instance_p(buf_b, profile, SNAP_SEED,
+                                                 timer_snapshot_program,
+                                                 sizeof timer_snapshot_program, 0x0200u);
+        if (source == NULL || restored == NULL) {
+            return;
+        }
+
+        /* Raw RAM at a timer address remains independent of the mapped bank. */
+        source->ram[0xFD00u] = 0xA5u;
+        restored->ram[0xFD00u] = 0xA5u;
+        CHECK_EQ_U64(lynx_watch_configure(source, 0xFD01u, 1u), LYNX_OK);
+        uint64_t consumed = 0u;
+        lynx_stop_reason stop = LYNX_STOP_BUDGET;
+        CHECK_EQ_U64(lynx_advance(source, 1000u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+        CHECK(consumed != 0u && consumed < 1000u);
+        CHECK_EQ_U64(source->timer_bank.timers[0].control_a, 0x98u);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(source, 1u), LYNX_OK);
+
+        /* Keep the posted request held until a real timer edge latches IRQ.
+           Stop one tick after the edge, before the next divider edge. */
+        for (uint32_t i = 0u; i < 256u && source->timer_bank.pending == 0u; i++) {
+            CHECK_EQ_U64(lynx_advance(source, 1u, &consumed, &stop), LYNX_OK);
+            CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+            CHECK_EQ_U64(consumed, 1u);
+        }
+        CHECK(source->timer_bank.pending != 0u);
+        CHECK_EQ_U64(source->wake_pending, 1u);
+        CHECK_EQ_U64(source->bus_hold, 1u);
+        CHECK(source->timer_bank.timers[0].count != 0u);
+        CHECK_EQ_U64(source->ram[0xFD00u], 0xA5u);
+        uint8_t raw_timer = 0u;
+        uint8_t mapped_timer = 0u;
+        CHECK_EQ_U64(lynx_read_memory(source, 0xFD00u, &raw_timer, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_read_cpu_memory(source, 0xFD00u, &mapped_timer, 1u), LYNX_OK);
+        CHECK_EQ_U64(raw_timer, 0xA5u);
+        CHECK_EQ_U64(mapped_timer, 1u);
+
+        /* A successful restore clears its destination's host watch, while
+           preserving the guest timer, pending IRQ, hold and request. */
+        CHECK_EQ_U64(lynx_watch_configure(source, 0x0400u, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_watch_configure(restored, 0x0400u, 1u), LYNX_OK);
+        CHECK_EQ_U64(save_into(source, blob_v), 0u);
+        CHECK_EQ_U64(lynx_snapshot_restore(restored, blob_v, SNAP_TOTAL), LYNX_OK);
+        CHECK_EQ_U64(restored->timer_bank.pending, source->timer_bank.pending);
+        CHECK_EQ_U64(restored->timer_bank.timers[0].count,
+                     source->timer_bank.timers[0].count);
+        CHECK_EQ_U64(restored->timer_bank.last_event_valid,
+                     source->timer_bank.last_event_valid);
+        CHECK_EQ_U64(restored->timer_bank.last_event_tick,
+                     source->timer_bank.last_event_tick);
+        CHECK_EQ_U64(restored->wake_pending, source->wake_pending);
+        CHECK_EQ_U64(restored->bus_hold, source->bus_hold);
+        CHECK_EQ_U64(restored->host_observation.watch_armed, 0u);
+        compare_snapshot_guest(source, restored);
+
+        /* The common held prefix includes the next event boundary and its
+           following tick, which consumes the event exactly once. */
+        const uint64_t next_edge = (source->guest_ticks / 16u + 1u) * 16u;
+        advance_ticks(source, next_edge - source->guest_ticks);
+        advance_ticks(restored, next_edge - restored->guest_ticks);
+        CHECK_EQ_U64(source->timer_bank.pending, restored->timer_bank.pending);
+        CHECK_EQ_U64(source->timer_bank.timers[0].count,
+                     restored->timer_bank.timers[0].count);
+        advance_ticks(source, 1u);
+        advance_ticks(restored, 1u);
+        CHECK_EQ_U64(source->timer_bank.pending, restored->timer_bank.pending);
+        CHECK_EQ_U64(source->timer_bank.timers[0].count,
+                     restored->timer_bank.timers[0].count);
+        compare_snapshot_guest(source, restored);
+
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(source, 0u), LYNX_OK);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(restored, 0u), LYNX_OK);
+        advance_ticks(source, 32u);
+        advance_ticks(restored, 32u);
+        compare_snapshot_guest(source, restored);
+        CHECK_EQ_U64(save_into(source, blob_v), 0u);
+        CHECK_EQ_U64(save_into(restored, blob_c), 0u);
+        CHECK(memcmp(blob_v, blob_c, SNAP_TOTAL) == 0);
+    }
+
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_snapshot\n",
+           check_failures == failures_before ? "ok" : "not ok");
 }
 
 static void case_snapshot_roundtrip(void)
@@ -5741,6 +5884,7 @@ static const struct {
     {"snapshot_refusal", case_snapshot_refusal},
     {"snapshot_roundtrip", case_snapshot_roundtrip},
     {"snapshot_continue", case_snapshot_continue},
+    {"timer_snapshot", case_timer_snapshot},
     {"timer_tracer", case_timer_tracer},
     {"timer_done_borrow", case_timer_done_borrow},
     {"timer_link_tracer", case_timer_link_tracer},
