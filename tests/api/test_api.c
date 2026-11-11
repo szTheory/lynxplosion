@@ -4588,7 +4588,7 @@ typedef struct scheduler_test_candidate {
     uint8_t source;
 } scheduler_test_candidate;
 
-static void check_event_candidate_permutation(const uint8_t order[9])
+static bool check_event_candidate_permutation(const uint8_t order[9])
 {
     scheduler_test_candidate candidates[9];
     uint8_t remaining[9];
@@ -4614,7 +4614,10 @@ static void check_event_candidate_permutation(const uint8_t order[9])
             }
         }
         const uint8_t selected = remaining[best];
-        CHECK_EQ_U64(candidates[selected].source, expected);
+        if (candidates[selected].source != expected) {
+            CHECK_NAMED(false, "timer.order.timer-before-cpu-prefix");
+            return false;
+        }
         CHECK_EQ_U64(candidates[selected].event.tick, 80u);
         if (expected < LYNX__TIMER_COUNT) {
             CHECK_EQ_U64(candidates[selected].event.priority,
@@ -4627,6 +4630,7 @@ static void check_event_candidate_permutation(const uint8_t order[9])
         memmove(&remaining[best], &remaining[best + 1u],
                 (remaining_count - best - 1u) * sizeof remaining[0]);
     }
+    return true;
 }
 
 static void configure_scheduler_timer_set(lynx_machine *m, bool reverse)
@@ -4723,7 +4727,9 @@ static void case_scheduler_order(void)
     scheduler_event_observation irregular[SCHEDULER_EVENT_COUNT];
 
     for (size_t i = 0u; i < sizeof permutations / sizeof permutations[0]; i++) {
-        check_event_candidate_permutation(permutations[i]);
+        if (!check_event_candidate_permutation(permutations[i])) {
+            goto done;
+        }
     }
     run_scheduler_event_prefix(0u, false, coarse);
     run_scheduler_event_prefix(1u, true, one_tick);
@@ -4734,6 +4740,7 @@ static void case_scheduler_order(void)
     CHECK(memcmp(coarse, one_tick, sizeof coarse) == 0);
     CHECK(memcmp(coarse, irregular, sizeof coarse) == 0);
     CHECK_EQ_U64(SCHEDULER_EVENT_COUNT, 5u);
+done:
     printf("TAP version 13\n1..1\n%s 1 - api.scheduler_order\n",
            check_failures == failures_before ? "ok" : "not ok");
 }
@@ -6145,6 +6152,62 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void case_timer_shared_phase(void)
+{
+    const int failures_before = check_failures;
+    lynx__timer_bank bank;
+    uint64_t next = 0u;
+    lynx__timer_init(&bank);
+    lynx__timer_mark_tick(&bank, 37u);
+    CHECK(timer_write_required(&bank, 0xFD00u, 3u));
+    CHECK(timer_write_required(&bank, 0xFD02u, 2u));
+    CHECK(timer_write_required(&bank, 0xFD01u, 0x0Eu));
+    const bool scheduled = lynx__timer_next(&bank, 37u, &next);
+    CHECK_NAMED(scheduled && next == 1024u, "timer.phase.shared-divider-edge");
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_shared_phase\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_timer_pending_after_disable(void)
+{
+    const int failures_before = check_failures;
+    static const uint8_t irq_probe[] = {0x58u, 0x4Cu, 0x01u, 0x02u};
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(load_bll_at(m, irq_probe, sizeof irq_probe, 0x0200u), LYNX_OK);
+    m->ram[0xFFFEu] = 0x00u;
+    m->ram[0xFFFFu] = 0x03u;
+    m->ram[0x0300u] = 0x4Cu;
+    m->ram[0x0301u] = 0x00u;
+    m->ram[0x0302u] = 0x03u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 0u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x88u));
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 17u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 17u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x08u));
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK_EQ_U64(m->timer_bank.timers[0].control_a, 0x08u);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 200u, &consumed, &stop), LYNX_OK);
+    CHECK_NAMED(m->cpu.s == 0xFAu, "timer.irq.pending-independent-of-enable");
+
+done:
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_pending_after_disable\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -6192,6 +6255,8 @@ static const struct {
     {"timer_phase", case_timer_phase},
     {"timer_done_gate", case_timer_done_gate},
     {"timer_reset_done_held", case_timer_reset_done_held},
+    {"timer_shared_phase", case_timer_shared_phase},
+    {"timer_pending_after_disable", case_timer_pending_after_disable},
     {"watch_controls", case_watch_controls},
     {"watch_independent", case_watch_independent},
     {"watch_post_write", case_watch_post_write},

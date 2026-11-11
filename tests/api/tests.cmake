@@ -152,7 +152,7 @@ lynx_add_test(NAME api.watch_controls.self_test
 
 # Plan 04-11 builds isolated timer-core variants and requires each mutant to
 # fail the independently named API assertion after a successful compile/link.
-foreach(timer_fault IN ITEMS done reset_done)
+foreach(timer_fault IN ITEMS done irq order phase reset_done)
   lynx_add_test(NAME timer.fault.${timer_fault}
     COMMAND ${CMAKE_COMMAND}
       "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"

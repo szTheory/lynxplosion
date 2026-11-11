@@ -157,6 +157,9 @@ suite.timers.pending_controls	suite
 suite.timers.result_controls	suite
 suite.timers.strict_comparison_controls	suite
 timer.fault.done	timer
+timer.fault.irq	timer
+timer.fault.order	timer
+timer.fault.phase	timer
 timer.fault.reset_done	timer
 toolchain.probe	toolchain
 toolchain.probe.self_test	toolchain

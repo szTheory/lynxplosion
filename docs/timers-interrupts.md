@@ -291,3 +291,39 @@ The default clean outputs were `build/check/liblynx_core.a`
 `build/check/tests/lynx-test-api`
 `2a76492c57052352e346b18d0c5aee23cdae8b6ae400bcfb05e9972ccf1fa32c`.
 These are build identities, not hardware-accuracy evidence.
+
+## Plan 04-11 Task 2: phase, order and pending sensitivity
+
+The three remaining CTest IDs use the same owned-copy, unique-anchor,
+successful-build and exact-assertion contract. Each clean API case passes
+before and after its actual mutant; timeout, sanitizer output, compile/link
+failure, and any nonmatching assertion remain failures of the control.
+
+| CTest ID | Isolated semantic fault | API case and required failure | Result |
+| --- | --- | --- | --- |
+| `timer.fault.phase` | Replace the shared `now % period` phase with zero at the scheduler query | `timer_shared_phase` → `timer.phase.shared-divider-edge` | Built and linked; exit 1 at the named assertion; clean case passed before and after. |
+| `timer.fault.order` | Reverse same-tick priority ordering | `scheduler_order` → `timer.order.timer-before-cpu-prefix` | Built and linked; exit 1 at the named assertion; clean case passed before and after. |
+| `timer.fault.irq` | Gate the latched timer IRQ line on timer 0's current enable | `timer_pending_after_disable` → `timer.irq.pending-independent-of-enable` | Built and linked; exit 1 at the named assertion; clean case passed before and after. |
+
+| Fault | Clean source SHA-256 | Mutated source SHA-256 | Mutant API executable SHA-256 | Configure + build |
+| --- | --- | --- | --- | --- |
+| `phase` | `3d37a5504e1635967422a1c5be212159858b2fa81e7d16f0b0cb77a0bd3b37b1` | `f426b346084eafab12cf1ab706680386a4eb724fb051b21a768cfaa45877b60f` | `7a663ede1fdd6e120db4b528fb63643212fe6163552ac8db8592a018d34946aa` | 2 s |
+| `order` | `6cc229e0f976aad738d2196f009431a41df6d8812f5c1b491d58854c57866799` | `b7d4f2167d7e2edef55e41c576baf865b4b1bc8c06c4955f5a31403faeb4e0a7` | `347b3170c71f7d4a68b2583afd5989c506a5e2635e0bf5504b28af1a985e368a` | 1 s |
+| `irq` | `6cc229e0f976aad738d2196f009431a41df6d8812f5c1b491d58854c57866799` | `5bef850186270a02ee8b5182e33564c9d270c660883c80aa35ec708c2fc71da1` | `4526b358c8cdf3f197bf1d77e0ff9f4ec74c34dd2174a08600b05ab73c07cebc` | 2 s |
+
+The CPU full-source, timer observation and strict-mismatch gate set passed
+5/5 before this batch in 2.28 s and 5/5 after it in 2.05 s. The default
+`core/timer.c`, `core/machine.c`, `build/check/liblynx_core.a`, and
+`build/check/tests/lynx-test-api` identities were unchanged across all three
+mutant runs: respectively `3d37a5504e1635967422a1c5be212159858b2fa81e7d16f0b0cb77a0bd3b37b1`,
+`6cc229e0f976aad738d2196f009431a41df6d8812f5c1b491d58854c57866799`,
+`6830b259f39c73d755efa45d270a10230295ff78d54d2903825317b7d6b05ed5`, and
+`250c2d301fd9b058cc2d40597f83f484aa2f27b830c3d70da0623827b918ffbd`.
+The pending-controls 55-fault matrix was not repeated; the two profile
+observation gates cover the clean pending contract, while each mutant's own
+API assertion supplies the negative evidence.
+
+The strict timer source comparison still has all 16 rows; only index 14 is
+pending (`0D` expected, `0C` observed) under D-10. Global EVD-02 remains open
+for Phase 5. EVD-05 remains a recurring Phase 4–6 requirement: this section
+records the Phase 4 slice only, with later device-fault evidence still due.
