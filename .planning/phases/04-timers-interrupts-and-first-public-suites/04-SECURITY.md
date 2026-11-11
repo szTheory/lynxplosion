@@ -1,8 +1,8 @@
 ---
 phase: "04"
 slug: timers-interrupts-and-first-public-suites
-status: draft
-threats_open: 1
+status: verified
+threats_open: 0
 asvs_level: 1
 created: "2026-11-11"
 ---
@@ -63,7 +63,7 @@ when fixes land.
 | T-04-29 | Tampering | Mutant isolation | high | mitigate | Private copied sources, unique anchors/directories, separate builds, production objects unchanged | closed |
 | T-04-30 | Spoofing | Mutant detection | high | mitigate | Successful configure/build, exact intended assertion/status, timeout/sanitizer excluded, clean API brackets | closed |
 | T-04-31 | Denial of service | Mutant cost | medium | mitigate | Targeted source list, finite build/runtime limits, CTest timeout and measured costs | closed |
-| T-04-32 | Tampering | Final qualification | high | mitigate | Previous source `7616f6d` and CI `356a920` pass all required environments; final WR-02 marker-parser fix now requires renewed exact-source qualification | open |
+| T-04-32 | Tampering | Final qualification | high | mitigate | Marker-fix source `baabaee` passed macOS, self-contained Ubuntu arm64 and exact-head hosted run 43111187855 with full 163 inventory/JUnit/no skips/artifact/history evidence; see 04-QUALIFICATION.md | closed |
 | T-04-33 | Information disclosure | Privacy | high | mitigate | Canonical check invokes tree/history hygiene; committed evidence uses normalized paths | closed |
 | T-04-34 | Spoofing | Claims | medium | mitigate | Runtime claim fields, strict mismatch versus observation distinction, explicit software limitations and qualification ledger | closed |
 | T-04-SC | Tampering | Supply chain | high | mitigate | Archive verification before extraction; pristine/tool/source/stamp and pin-list checks | closed |
@@ -95,8 +95,8 @@ negative controls and retain the unchanged positive observations.
 - [x] No risk acceptance inferred.
 - [x] Four implementation boundaries repaired and independently rechecked locally.
 - [x] Exact subcase inventory hardened and negative controls passed.
-- [ ] Final qualification completed after WR-02.
-- [ ] `threats_open: 0` confirmed and status verified after WR-02.
+- [x] Final qualification completed after WR-02.
+- [x] `threats_open: 0` confirmed and status verified after WR-02.
 
 O1/profile qualification, rights/licence/release and physical/firmware gates
 remain unresolved. Global EVD-02 remains open for Phase5 and recurring EVD-05
@@ -200,3 +200,20 @@ for this accepted source change. Earlier all-closed rows are historical.
 | Threats found | 35 |
 | Closed | 34 |
 | Open | 1 |
+
+## Final source closure after WR-02
+
+All 35 authored mitigations are closed again: exact marker-fix source `baabaee`
+passes the canonical gate on macOS, self-contained Linux arm64 and hosted CI.
+The qualifying hosted run is43111187855; earlier sources/runs remain dated
+records. No risk acceptance or hardware qualification is inferred. The final
+delta finding is fixed with demonstrated old/new behavior and all 11 review
+findings reconcile as fixed. ASVS 1 authored-register short-circuit applies.
+
+## Security Audit 2026-11-11
+
+| Metric | Count |
+|---|---|
+| Threats found | 35 |
+| Closed | 35 |
+| Open | 0 |

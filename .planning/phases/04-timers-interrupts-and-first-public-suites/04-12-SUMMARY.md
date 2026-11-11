@@ -8,14 +8,14 @@ requires:
     provides: Timer and CPU suite observations, source comparisons, fault controls, and pending-gate verifier
 provides:
   - Exact-source macOS and self-contained Ubuntu 24.04 arm64 qualification
-  - Exact-head CI qualification for metadata-only HEAD 356a920
+  - Exact-head CI qualification for final accepted source baabaee
   - D-10 observation/control record with strict index-14 mismatch and Phase 5 carry-forward
 affects: [phase-04-closeout, phase-05-display-input, qualification]
 actuals:
   tasks: 2
-  commits: 18
+  commits: 19
 plan_head_before: 0c4ff91c25261644cbca2913af3e8f60c1d1cab6
-plan_head_after: 356a920f21f3f8c573e17056a5bc120e9e20b9f6
+plan_head_after: baabaee1dc020df206f7f6aedaabc01f74cce050
 tech-stack:
   added: []
   patterns: [exact-source local and hosted qualification, D-10 bounded pending-state admission]
@@ -131,3 +131,20 @@ Plan 12 is complete. Formal Phase 4 goal verification and closeout remain root-o
 ---
 *Plan: 04-12*
 *Completed: 2026-11-11*
+
+## Final review supplement and qualification refresh
+
+The final nine-file delta review found WR-02, a source pin-marker parser that
+accepted trailing bytes after a valid hash. Root reproduced that behavior,
+then enforced the complete 64-byte/65-byte-LF forms and added two positive plus
+five malformed controls to the existing oracle test. Commit `baabaee` contains
+this final source fix. Earlier source/CI rows remain historical observations.
+
+The exact same final source `baabaee` now passes all 163 tests with exact JUnit,
+no skips, artifacts and history on macOS (131s), self-contained Ubuntu arm64
+(94s), and hosted [run 43111187855](https://github.com/szTheory/lynxplosion/actions/runs/43111187855)
+(90s check;95s job). The local gate also satisfies the prior-phase regression
+check once, under the planned reuse policy. All11 review findings are fixed;
+coverage and authored security mitigations are complete. The original strict
+index14 mismatch and global EVD-02/EVD-05 remain open. Formal phase closure is
+still root-owned after the goal verifier and covered-input fingerprint.

@@ -227,8 +227,8 @@ attempt as successful local evidence.
 
 The renewed macOS gate at `5719e3a` passed completely:163 tests, exact JUnit,
 no skips, artifact scan5s, history47s, total125s. This remains successful
-historical evidence for that source. The self-contained Ubuntu24.04.5 arm64
-checkout had266 commits, no shallow boundary or alternates, GCC13.3 and
+historical evidence for that source. The self-contained Ubuntu 24.04.5 arm64
+checkout had266 commits, no shallow boundary or alternates, GCC 13.3 and
 ShellCheck0.9.0. Its gate stopped at ShellCheck before the suite workflow:
 SC2015 rejected compound `A && B || refusal` shell expressions. The initial
 container wrapper attempt stopped before clone/check due to a reporting-line
@@ -358,3 +358,41 @@ source/test pins, generated oracle, wrapper, descriptor and proof identities
 are unchanged, but exact-source local/Linux/CI qualification must be renewed.
 Previous final-source rows above are dated evidence, not qualification of this
 later accepted harness change.
+
+## Final marker-fix qualification — source baabaee
+
+The accepted WR-02 pin-marker fix is now qualified at the exact same source
+`baabaee1dc020df206f7f6aedaabc01f74cce050` on all three environments. The
+shared predicate requires exactly 64 hash bytes or 65 bytes ending in one LF;
+two positive forms and five malformed forms use private oracle-control files.
+The unchanged old predicate reproduced the trailing-data false acceptance;
+the fixed six-test owning selection passed. No guest timing, source oracle,
+wrapper or descriptor identities changed.
+
+| Environment | Outcome | Measured costs |
+| --- | --- | --- |
+| macOS arm64, AppleClang 21 | Bounded 600s canonical local/regression gate exited 0; 163/163 tests, exact JUnit/no skips, artifact and history pass | CTest75.34s; workflow76s; artifacts7s; history46s; total131s |
+| Ubuntu 24.04.5 arm64, GCC 13.3 | Self-contained clone of 272 commits, shallow=false, no alternates; 163/163, exact JUnit/no skips, artifacts/history pass | setup packages25s; clone/identity3s; CTest65.84s; workflow69s; artifacts0s; history13s; total check94s |
+| Hosted Ubuntu 24.04 x86_64, GCC 13.3 | [Run 43111187855](https://github.com/szTheory/lynxplosion/actions/runs/43111187855), [job 130827321169](https://github.com/szTheory/lynxplosion/actions/runs/43111187855/job/130827321169), exact source baabaee, success; 163/163, exact JUnit/no skips, artifacts/history pass | queue3s; setup1s; checkout2s; cc65build8s; workflow60s (CTest56.30s); artifacts1s; history16s; check90s; job95s |
+
+The Linux wrapper was saved and syntax-checked before execution; package
+reporting uses plain dpkg-query without a format-variable expansion. The
+arch-specific official Ubuntu image was
+`ubuntu@sha256:19cad59657037cffa0ac9a48107019b768900ff1071140965827513ac866bd5e`;
+container and engine architectures were both aarch64/arm64. The source mount
+was read-only, and clone objects were independent. Raw logs stay in private
+temporary storage, including the final decoded hosted job log.
+
+Hosted timings identify pending-controls38.84s and result-controls31.12s as
+the slowest tests; these preserve distinct exact data/refusal proofs. The one
+job had no matrix duplication, and the source build took 8s. No demonstrated
+low-risk benefit justifies adding caches or concurrency. The scanner again
+passed with 30 nonfatal tr broken-pipe diagnostics; their occurrence is retained
+as the existing follow-up, not suppressed or counted as test failures.
+
+The local command above also fulfills the regression gate over 63 unique
+prior-phase test/check files. It was executed through GSD run-with-timeout600,
+exit 0, on this exact committed source; no second full local run is needed for
+a different bookkeeping label. EVD-02/EVD-05 remain globally open, and all
+D-10/hardware/rights limits remain unchanged. Formal phase goal verification
+follows these accepted-fix qualification results.

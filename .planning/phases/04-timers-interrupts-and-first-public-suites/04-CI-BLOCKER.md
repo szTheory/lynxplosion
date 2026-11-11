@@ -1,6 +1,6 @@
 # Phase 4 — historical external CI state blocker
 
-**Current status: resolved for qualification.** Fresh hosted run 43104539428 passed on exact head `356a920`. The old run below remains historical, not a passing result. Formal phase verification is still pending.
+**Current status: resolved for qualification.** Fresh recovery run 43104539428 passed on head `356a920`; the later final marker-fix run 43111187855 passed on source `baabaee`. The old run below remains historical, not a passing result. Formal phase verification is still pending.
 
 The following records the prior blocker. Implementation, reviews, fixes,
 the independent D-10 gate, and full local qualification are complete. The

@@ -87,3 +87,9 @@ See 04-12-SUMMARY.md and 04-QUALIFICATION.md. No additional implementation gaps
 were found when closing the existing audit; the resolved exact-name warning
 is not a human-only item. The initial prequalification task map above is dated
 history. Global EVD-02/EVD-05 remain open for their scheduled later slices.
+
+Final WR-02 adds two positive and five malformed pin-marker checks within the
+existing oracle ID. They demonstrated old false acceptance and fixed refusal.
+All163 inventory cases then passed on the same source `baabaee` in all three
+qualification environments. No new registered ID or missing behavior was
+introduced; qualification is complete under D-10, with global EVD scopes open.

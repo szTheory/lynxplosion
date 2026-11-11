@@ -3,8 +3,8 @@ phase: "04"
 slug: timers-interrupts-and-first-public-suites
 status: complete
 audit_status: complete
-qualification_status: pending-marker-fix-requalification
-nyquist_compliant: false
+qualification_status: qualified
+nyquist_compliant: true
 wave_0_complete: true
 created: "2026-11-10"
 ---
@@ -70,7 +70,7 @@ The commands remain the plan acceptance commands. The status column now reflects
 | 04-12-T1 | 12 | TIM-01, TIM-02, TIM-03, TIM-04, EVD-02, EVD-03, EVD-04, EVD-05 | T-04-32, T-04-33, T-04-34 | T-04-SC; Actual pending-gate implementation/records/inventory are independently audited; all16 rows and strict failure/global EVD-02 stay explicit. Executor returns to root for reviews/fixes before final qualification/push. | Targeted pending-gate audit; exact Plan 09 timer controls | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.timers\.(observation\.(lynx1\|lynx2)\|strict_comparison_controls\|cascade_model\|model_controls\|result_controls\|pending_controls)$'` | Existing implemented controls; root pending verifier/code/security/coverage/UI-applicability checkpoint | Task1 targeted evidence recorded: 7/7 at source `0c4ff91`; parent reviews and independent verifier pending |
 | 04-12-T2 | 12 | TIM-01, TIM-02, TIM-03, TIM-04, EVD-02, EVD-03, EVD-04, EVD-05 | T-04-32, T-04-33, T-04-34 | T-04-SC; Root reviews/verifier/fixes precede final full macOS/Linux-arm64/exact-head CI. Final source passes approved D-10 observation/control gate; strict index14/global EVD-02 remain open. | Final full qualification; exact tests/inventory/fast.txt | `sh scripts/check.sh` | Root resumes after all accepted fixes and targeted retests; one final local gate then self-contained Linux/exact-head CI | PLANNED/PENDING final qualification; not a product test gap or human-only item |
 
-Every command has an immediate fails_when sibling in its PLAN. Direct modes must report nonzero cases; CTest uses --no-tests=error. Full-gate rows refer to every exact ID in tests/inventory/fast.txt rather than an invented aggregate test ID. Final local/Ubuntu24.04 arm64/exact-head CI obligations remain separate from a command merely returning zero.
+Every command has an immediate fails_when sibling in its PLAN. Direct modes must report nonzero cases; CTest uses --no-tests=error. Full-gate rows refer to every exact ID in tests/inventory/fast.txt rather than an invented aggregate test ID. Final local/Ubuntu 24.04 arm64/exact-head CI obligations remain separate from a command merely returning zero.
 
 ## Audit outcome — 2026-11-11
 
@@ -163,3 +163,14 @@ oracle controls. The old production predicate fails the new trailing-data
 control; the tightened predicate and six owning tests pass. No CTest IDs or
 49/61 batch inventories change. Cross-platform qualification is renewed after
 this source change; previous complete-gate rows remain valid historical results.
+
+## Marker-fix qualification completed
+
+Exact source `baabaee` passed the full 163-test gate on macOS, self-contained
+Ubuntu arm64 and hosted run 43111187855, with no skips and complete JUnit,
+artifact and history results. Two positive/five malformed marker controls are
+inside the existing oracle-controls ID; registration and claim hashes are
+unchanged. All 25 tasks remain covered, the 11 review findings are fixed, and no
+human verification or unimplemented coverage gap remains. The current flags
+reflect this final evidence; intermediate reopened qualification rows above
+remain history. Global EVD-02/EVD-05 still retain their later-phase scopes.
