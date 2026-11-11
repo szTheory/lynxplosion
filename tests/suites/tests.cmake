@@ -5,6 +5,7 @@ target_include_directories(lynx-test-suites PRIVATE ${PROJECT_SOURCE_DIR}/core)
 target_link_libraries(lynx-test-suites PRIVATE lynx_core)
 target_compile_definitions(lynx-test-suites PRIVATE
   _POSIX_C_SOURCE=200809L
+  _XOPEN_SOURCE=700
   LYNX_PROJECT_ROOT="${PROJECT_SOURCE_DIR}"
   LYNX_SCRATCH_ROOT="${LYNX_SCRATCH_DIR}/suites")
 lynx_warnings(lynx-test-suites)

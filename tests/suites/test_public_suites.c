@@ -1321,6 +1321,8 @@ static int probe_model(uint8_t probe, uint8_t marker);
 static int timer_paths_make(timer_paths *paths, const char *directory, const char *profile)
 {
     char name[64];
+    unsigned profile_value;
+    if (profile_index(profile, &profile_value) != 0) return fail("timer record: invalid profile");
     if (snprintf(name, sizeof name, "raw-results-%s.tsv", profile) >= (int)sizeof name ||
         checked_join(paths->raw, sizeof paths->raw, directory, name) != 0) return fail("timer record path too long");
     if (snprintf(name, sizeof name, "run-record-%s.txt", profile) >= (int)sizeof name ||
@@ -2237,10 +2239,9 @@ static int clear_old_outputs(const char *directory, const char *case_name)
         int count = snprintf(name, sizeof name, "%s-%s.%s", kinds[i], case_name, extension);
         if (count < 0 || (size_t)count >= sizeof name ||
             checked_join(path, sizeof path, directory, name) != 0) return fail("output path too long");
-        if (remove(path) != 0) {
-            struct stat existing;
-            if (lstat(path, &existing) == 0) return fail("cannot clear stale suite output");
-        }
+        /* unlink removes a direct file entry or the symlink itself, never a
+           directory and never the target of an output symlink. */
+        if (unlink(path) != 0 && errno != ENOENT) return fail("cannot clear stale suite output");
     }
     return 0;
 }

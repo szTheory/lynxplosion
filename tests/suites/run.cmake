@@ -930,6 +930,14 @@ function(timer_symlink_output_control)
      NOT companion_after STREQUAL companion_before)
     message(FATAL_ERROR "suite_driver: output symlink control changed an outside target")
   endif()
+  file(REMOVE "${case_dir}/run-record-lynx1.txt")
+  file(MAKE_DIRECTORY "${case_dir}/run-record-lynx1.txt")
+  expect_failure("suite: cannot clear stale suite output"
+    "${TEST_BINARY}" observe timers lynx1 "${case_dir}" "${case_dir}/oracle.tsv"
+    "${case_dir}/timer-source-index14-pending.json")
+  if(NOT IS_DIRECTORY "${case_dir}/run-record-lynx1.txt")
+    message(FATAL_ERROR "suite_driver: output cleanup removed a directory")
+  endif()
   timer_case_end()
 endfunction()
 
@@ -1922,6 +1930,13 @@ endif()
 if(MODE STREQUAL "oracle_controls" AND FAILURE STREQUAL "")
   expect_success("oracle: cpu=18/18 timers=16/18 source identity and alternatives valid"
     "${TEST_BINARY}" validate-oracle "${ORACLE}")
+  expect_failure("suite: timer record: invalid profile"
+    "${TEST_BINARY}" timer-cascade-model invalid-profile "${WORK}/invalid-profile-not-created"
+    "${ORACLE}" "${ROOT}/docs/timer-source-index14-pending.json"
+    "${ROOT}/build/pins/lynx-tests")
+  if(EXISTS "${WORK}/invalid-profile-not-created")
+    set(FAILURE "invalid profile created an output directory")
+  endif()
 
   set(oracle_attack_parent "${WORK}/oracle-temp-attack")
   set(oracle_attack_out "${oracle_attack_parent}/generated.tsv")
