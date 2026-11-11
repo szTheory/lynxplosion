@@ -21,3 +21,10 @@ The final Phase 4 metadata head passed [the hosted gate](https://github.com/szTh
 ## Agent discretion and deferred ideas
 
 Native API spelling, bounded event/state fields, source-labelled software policies, focused assertions and plan slicing remain technical implementation choices. Audio and real-audio consumer closure are Phase 6; shared LibFuturo changes, hardware testing and releases retain their separate gates.
+
+
+## Planning preflight and bounded research recovery
+
+The optional implementation-research synthesis did not produce its owned report after requests to finalize; it was interrupted. The workflow's default existing-research path uses the three completed decision-cluster reports and CONTEXT directly; no typed synthesis completion is claimed. Independent planner and checker separation remains required. Its attributable untracked lookup cache was moved reversibly into private temporary evidence; no cache or third-party manual bytes are committed.
+
+The UI planning detector matched the token `page` in `page-mode` and reported no actual frontend evidence, with block=false. This is a headless C core/CLI consumer producing PPM files. Use `--skip-ui` for this plan invocation; no interactive frontend design contract is needed and no global UI setting is disabled. No AI or database integration exists. Validation strategy remains draft until exact task/test mapping and final coverage evidence exist.

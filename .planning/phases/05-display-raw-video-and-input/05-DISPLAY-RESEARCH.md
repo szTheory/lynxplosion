@@ -123,3 +123,12 @@ cycle schedule or palette latch rule from this primary documentation. Resolve
 only through a newly identified independent primary source or owner-authorized
 physical measurement; until then retain explicit software policy and visible
 uncertainty.
+
+
+## Validation Architecture
+
+Use the existing C17/CMake/CTest harness, sanitizers, exact inventory and no-skip/JUnit gates. No new framework. The current baseline contains scheduler, timer snapshot, API refusal and consumer output controls. Phase plans must add production video/input/consumer cases and exact semantic negative controls before depending on them; missing regex matches must fail with `--no-tests=error`. Existing quick regression is `ctest --preset check --no-tests=error -R '^api\.(advance_budget|scheduler_order|scheduler_limits|timer_snapshot_controls)$'`; owning new-feature regexes are fixed by plans after registration. Final qualification remains `sh scripts/check.sh` on macOS, self-contained Linux and exact-head CI; unchanged final-source evidence is reused, not repeated for prose edits.
+
+Required groups: timer-prescribed line/frame intervals; DMA grant/cost and page-stream invalidation; palette-before/after-line policy; exact input bit/handedness/sample edges; caller buffer and timeline parser hostility; no-frame/exact-target sentinels; mid-frame snapshot and split/watch continuation; original homebrew semantic responsiveness and public-only PPM rendering; source-derived page-mode run/precise visible blocker; strict unchanged timer offset14 revisit with independent preconditions. Named faults require an intended semantic diagnostic and clean positives, never compile failure or generic nonzero. Keep physical calibration/baseline/source agreement separate from repeatability.
+
+Suggested focused feedback budget is under 60 seconds for routine API/device groups; source fault batches may take longer and must state their measured bound. The current full gate is roughly two minutes hosted, not a promise for Phase 5. Update the per-task validation map from actual planner tasks and test IDs; no future command is claimed implemented or passed. All scoped software behaviors have automated evidence; hardware/rights decisions remain external gates rather than fake manual UAT.
