@@ -29,3 +29,11 @@ unchanged `scripts/build-suites.sh` for the existing `CDPATH= cd` assignments.
 The script stopped before its workflow/CTest step. This is outside Plan 06's
 changed files; Phase 12 owns the narrow correction and successful canonical
 gate. Do not report the full check as green until then.
+
+2026-11-11 checkpoint update: root corrected the empty assignments to
+`CDPATH=''` in build-suites.sh and generate-suite-oracle.sh. The exact canonical
+ShellCheck selection now passes. Related targeted suite/build/oracle/symbol
+checks pass after updating the prefix model expectation and the isolated
+build-control pin copy to include cpu/main.c and timers/main.c. These fixes
+are in the uncommitted working tree. Full Phase 4 qualification remains
+pending; this does not resolve the timer source-comparison disagreement.

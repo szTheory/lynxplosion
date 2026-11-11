@@ -40,8 +40,9 @@ It does not accept 12 as hardware-correct or claim the suite passes.
    prerequisite and keep it open in the rolling roadmap and requirements.
    Do not silently skip it, mark global evidence complete, or weaken O1.
 5. Complete remaining Phase 4 controls, reviews, fixes and final local/Linux/CI
-   qualification under the revised explicit gate. The existing ShellCheck
-   finding remains a required fix. No release, firmware, physical test, new
+   qualification under the revised explicit gate. The independent ShellCheck
+   finding is corrected in the working tree; final qualification is still
+   required. No release, firmware, physical test, new
    dependency, baseline adoption or raw-video API decision is included.
 6. In Phase 5, establish initial-state and bus/video preconditions from
    independent sources before repeating the unchanged comparison. If evidence
@@ -70,10 +71,17 @@ prerequisite unless independently required and approved.
   post-call continuation after all source result stores. It preserves the
   pending latch and leaves in-suite interrupt frames unchanged.
 - Current ordinary builds/runs reproduce the strict mismatch. Manifest,
-  claim, whitespace and tree-hygiene checks pass at the checkpoint. This is
-  not full-phase verification; the known ShellCheck issue remains.
+  claim, whitespace and tree-hygiene checks pass at the checkpoint. The exact
+  ShellCheck selection now passes after quoting empty CDPATH assignments in
+  both suite scripts. Source-build, oracle-tracer, oracle and symbol controls
+  pass; a failed build-control positive was repaired by copying the two newly
+  required C oracle files into its isolated pin tree, and that control passes.
+  The prefix tracer now checks the timer wrapper's executed A1/A2 model probe.
+  These are targeted checks, not full-phase qualification or source agreement.
 - Executor edits remain uncommitted in the timer wrapper/manifest,
-  build-suites.sh and test_public_suites.c. No pin or core timing was changed.
+  build-suites.sh and test_public_suites.c. Root's independent integration fixes
+  also remain in generate-suite-oracle.sh and tests/diag/test_diag.c and
+  tests/diag/tests.cmake. No pin, core timing or acceptance condition changed.
 - Raw/comparison records are in ignored
   build/check/scratch/suites/manual-timers/build. Debug session and normalized
   detailed evidence are in .planning/debug/timer-suite-cascade-count.md and
