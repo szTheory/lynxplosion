@@ -93,6 +93,10 @@ sequence, not a ceiling on the project goal.
 
 - [x] **EVD-01**: An original, project-authored diagnostic built with the pinned cc65 reports progress and pass/fail through a RAM result block (magic, schema, progress, error, done) read by symbol
 - [ ] **EVD-02**: A lynx-tests harness reads `g_results` by symbol from the build's label file, requires a completion sentinel and a guest-time minimum and bound, and compares against expectations generated from the pinned source with a count check
+  - Owner-approved 2026-11-11 split: Phase 4 completes the harness/control slice;
+    strict agreement for timer result offset 14 (0C versus unchanged 0D) stays
+    explicitly pending for Phase 5's startup/bus/video evidence. Global EVD-02
+    remains open; no other comparison or control is deferred.
 - [ ] **EVD-03**: A no-run negative control (CPU halted before tests start) makes every suite fail in the harness
 - [ ] **EVD-04**: The harness asserts which model a suite detected and fails when it does not match the selected profile
 - [ ] **EVD-05**: Each device phase adds at least one named-fault control that is shown to fail the intended test
@@ -219,7 +223,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUD-01 | Phase 6 | Pending |
 | AUD-02 | Phase 6 | Pending |
 | EVD-01 | Phase 3 | Complete |
-| EVD-02 | Phase 4 | Pending |
+| EVD-02 | Phases 4 and 5 | Phase 4 harness slice; exact timer offset-14 agreement pending Phase 5 |
 | EVD-03 | Phase 4 | Pending |
 | EVD-04 | Phase 4 | Pending |
 | EVD-05 | Phase 4 | Pending |

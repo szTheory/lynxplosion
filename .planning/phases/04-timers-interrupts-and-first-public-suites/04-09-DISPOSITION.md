@@ -1,7 +1,9 @@
-# Timer-suite comparison: proposed disposition
+# Timer-suite comparison: owner-approved disposition
 
-Status: **owner decision pending**. No acceptance gate, oracle, hardware policy,
-requirement completion, or phase boundary has been changed.
+Status: **approved by owner, 2026-11-11**, response "follow ur recs" to the
+recommended one-comparison deferral. Apply the gate revision below; the source
+oracle and strict mismatch remain unchanged. No hardware qualification,
+baseline, rights, release or physical-test approval is included.
 
 ## Decision in plain language
 
@@ -18,13 +20,13 @@ zero page. Historical initial-state/measurement evidence does not establish
 the expected counter value. These are known precondition differences, not a
 proven hardware diagnosis or permission to seed the counter to one.
 
-**Recommendation:** finish Phase 4's timer/harness evidence with this one
+**Selected recommendation:** finish Phase 4's timer/harness evidence with this one
 strict timing comparison explicitly pending, then revisit it during the
 already planned Phase 5 bus/video work. This changes the Phase 4 plan's
-all-values-agree acceptance condition and therefore needs an owner decision.
+all-values-agree acceptance condition; the owner has approved that change.
 It does not accept 12 as hardware-correct or claim the suite passes.
 
-## Concrete changes if the recommendation is selected
+## Approved concrete changes
 
 1. Keep the exact source expectation 13, all accepted sets, and the strict
    comparator's failing result. Preserve complete raw records for both
@@ -87,6 +89,6 @@ prerequisite unless independently required and approved.
   detailed evidence are in .planning/debug/timer-suite-cascade-count.md and
   .planning/debug/evidence/timer-suite-cascade-count.md.
 
-Until the owner chooses, preserve the strict comparison failure and Task 2
-halt automatically. The owner acts next on the disposition; no acknowledgment
-is needed merely to keep the existing stop in place.
+The disposition stop is lifted. Root updates/checks the remaining plans, then
+resumes execution under D-10. The strict comparison itself stays failing and
+visible. No further owner acknowledgment is needed for this approved work.

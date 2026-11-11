@@ -35,6 +35,27 @@ Standing authority: the owner requested autonomous remaining-phase work and dele
 ### Scope, rights and delivery
 - **D-09:** Required public suites are `cpu` and `timers`. `timers2` is source evidence for phase/enable-order behavior; add a bounded focused check only if it catches a distinct needed failure, otherwise list it explicitly as out of this phase's required set. Page-mode/audio/audio2 remain later. O1 stays open and blocks profile/suite-pass claims; raw selected-profile observations and software oracle controls can proceed. O5 still blocks project licence/release decisions; existing owner authority for this public repository permits its normal original code/metadata commits, not a new artifact publication channel. Correct the suite memo's overbroad public-artifact wording using that recorded authority. O6 remains draft and no emulator implementation source is consulted. Reconcile provenance's incorrect tag description and exact MIT copyright/notice identity. No firmware, commercial content, physical tests, release, new dependency or full-data vector rerun absent a new relevant CPU concern. Keep the current fast gate as the one regression/local qualification command; run final macOS/Linux qualification and exact-head CI, measure critical-path work before changing caches/concurrency.
 
+### Owner-approved timing comparison deferral
+
+- **D-10 (owner, 2026-11-11):** The owner selected the recommendation in
+  04-09-DISPOSITION.md with "follow ur recs". Finish the Phase 4 harness/control
+  slice with only timers result offset 14 pending under the provisional
+  flat5/no-DMA environment: observed 0C versus unchanged source 0D, on both
+  profiles. Keep the strict comparison failing, with all sixteen rows and raw
+  records intact. Distinguish completed observations from source agreement in
+  commands, test names, records and reports. A Phase 4 observation gate may
+  recognize exactly this documented pending row/environment; every other
+  mismatch, missing result, identity/model/count/time error or new failure
+  remains a gate failure. A generic nonzero exit or WILL_FAIL on a positive
+  suite test is insufficient. Require a separate exact-diagnostic control for
+  the known strict mismatch and independent timing proof for the provisional
+  observed count. Carry exact agreement into Phase 5 with startup/counter and
+  bus/video preconditions explicit; keep global EVD-02 open until its remaining
+  agreement evidence is resolved. Do not tune phase, costs, layout or counter
+  initialization to manufacture 0D. This lifts only the disposition stop;
+  O1 and all rights/physical/release gates remain in force. Remaining execution,
+  no-run, model, alternative-set and named-fault controls still must complete.
+
 ### Agent discretion
 
 Concrete private module/field names, bounded event representation, exact named test IDs and plan slicing are implementation choices. Resolve technical uncertainties through the declared source/fixture experiments; escalate a materially new scope/rights/authority/cost choice, not routine builds, format changes or checks covered by this phase.

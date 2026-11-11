@@ -183,6 +183,11 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. All devices advance from one master-tick scheduler with a documented total order (tick, priority, sequence). The timer bank (shared prescaler phase, link graph, DONE, reset-done, borrow) survives a snapshot round-trip with identical digests.
   2. Timer interrupt pending bits are observable separately from enables, and the CPU takes IRQs under the selected profile's sampling rules. The lynx-tests `timers` and `cpu` suites run headlessly from source-built tier-A images. `g_results` is read by symbol, completion needs a sentinel plus a guest-time minimum and bound, and results are compared with expectations generated from the pinned source, with a count check.
+     Owner-approved 2026-11-11: only timers result offset 14 remains an explicit
+     pending source agreement (0C versus 0D on both profiles). All sixteen rows
+     are compared and recorded; strict comparison remains failing. Complete
+     Phase 4's observation/control gate under D-10 and carry exact agreement to
+     Phase 5. All other errors still fail; EVD-02 remains globally open.
   3. A no-run control (CPU halted before the tests start) fails every suite. The harness fails any suite whose detected model does not match the selected profile.
   4. Named-fault controls (for example, DONE gating removed, or the wrong profile selected) each fail their intended test.
   5. A minimal CPU-sleep and bus-request model exists and is exercised by a test, so that later Suzy arbitration can attach without reworking the CPU or timers.
@@ -206,10 +211,14 @@ Plans:
 **Goal**: An original homebrew drives timer-generated frames that the host receives as raw video and that respond to a recorded logical input timeline.
 **Mode:** mvp
 **Depends on**: Phase 4
-**Requirements**: VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01 (real-frame consumer slice)
+**Requirements**: VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01 (real-frame consumer slice), EVD-02 (remaining timer agreement)
 **Success Criteria** (what must be TRUE):
   1. Changing the Timer 0 and Timer 2 settings changes line and frame timing as measured in guest ticks (no fixed 60 Hz). The host can stop advancement on a frame-complete event whose definition is documented.
   2. Display DMA appears as a bus requestor that costs ticks and closes page-mode streams. The lynx-tests `page-mode` suite runs with results captured and inventoried, or appears as a visible, documented skip. A named-fault control on DMA cost fails its intended test.
+     Revisit the unchanged timers offset-14 oracle with independently justified
+     startup/counter, page-mode, refresh and display-DMA preconditions. Preserve
+     the exact disagreement if evidence still cannot justify source agreement;
+     never tune the model or fixture to obtain the expected count.
   3. A per-line palette fixture shows the 16-entry, 12-bit palette latching per line. The host receives raw video with pen data, per-line palette state and timing metadata, separate from any scaling, rotation or colour presentation.
   4. The host supplies a logical input timeline, and the joystick and switch registers (d-pad, A, B, Option 1, Option 2, Pause) reflect it at the sampled guest time. The core performs no controller discovery.
   5. An original homebrew direct-load image, driven by a recorded input timeline, shows input-responsive frames that the consumer renders. The same recording yields the same raw-frame digest, labelled as repeatability.

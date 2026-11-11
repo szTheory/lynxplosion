@@ -21,6 +21,13 @@ how GSD workflows apply it. Update it when the owner changes a default.
   presets, Ninja, CTest, C ABI with an opaque handle.
 - 2026-11-09: O6 proceeds as a draft clean-room policy (implementers do not
   open GPL emulator source; research exposure recorded). Final decision pending.
+- 2026-11-11: owner said "follow ur recs" to the documented timer-comparison
+  disposition. Finish Phase 4 with timer result offset 14 explicitly pending
+  against the unchanged source oracle (observed 0C, expected 0D on both
+  profiles), then revisit it in Phase 5's bus/video prerequisite work. All
+  other comparisons and execution/model/count/fault controls remain required.
+  Strict source agreement remains failing and visible; no suite-pass or
+  hardware-correctness claim is authorized. See Phase 4 04-09-DISPOSITION.md.
 
 ## Discuss phases: fan out, synthesize, auto-follow
 

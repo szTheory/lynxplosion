@@ -3,12 +3,12 @@ gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
 current_plan: 9
-status: "Awaiting owner: timer comparison disposition"
-stopped_at: "04-09 tracer: timer result 0C versus source 0D; scope decision pending"
-last_updated: "2026-11-11T10:32:58.309Z"
+status: Ready to resume Plan 09 under approved D-10 gate
+stopped_at: 04-09 revised plans independently checked; executor continuation next
+last_updated: "2026-11-11T14:31:41.776Z"
 last_activity: 2026-11-11
-last_activity_desc: Plan 09 Task 1 comparison unresolved; owner disposition pending
-state_head: 9936ade4a5bff1e73af8f212fea6377a930ec44e
+last_activity_desc: Approved timer deferral planned and independently checked
+state_head: 63f44937d08cdb0faebf71b7cf03b88a70fac78f
 progress:
   total_phases: 6
   completed_phases: 3
@@ -31,8 +31,8 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
 Current Plan: 9
 Total Plans in Phase: 12
-Status: Awaiting owner: timer comparison disposition
-Last activity: 2026-11-11 - Plan 09 Task 1 comparison unresolved; owner disposition pending
+Status: Ready to resume Plan 09 under approved D-10 gate
+Last activity: 2026-11-11 - Approved timer deferral planned and independently checked
 
 Progress: [█████░░░░░] 50%
 
@@ -207,9 +207,9 @@ None yet.
 
 ### Blockers/Concerns
 
-Phase 4 is stopped at the Plan 09 timer comparison pending an owner scope/gate disposition. Plans 01-08 are complete; Plan 09 Task 2 has not started. The prior snapshot failures are resolved. Detailed alternatives are in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-09-DISPOSITION.md`; no acceptance condition has been changed.
+The owner approved the recommended one-comparison deferral on 2026-11-11 ("follow ur recs"). Root is revising/checking Plans 09-12, then resumes execution under D-10. Plans 01-08 are complete; Plan 09 Task 2 has not started. The prior snapshot failures are resolved. Approved details are in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-09-DISPOSITION.md`.
 
-- Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict failure, source oracle and Task 2 halt. Root recommends an explicit one-comparison deferral to Phase 5; owner acts next. No source/profile/hardware qualification is accepted.
+- Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict comparison failure and unchanged oracle while completing Phase 4's observation/control slice; exact agreement remains pending Phase 5. No source/profile/hardware qualification is accepted. No owner action is needed for this approved continuation.
 
 Other open owner decisions remain in force:
 
@@ -232,5 +232,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-11-11T09:27:33.107Z
-Stopped at: 04-09 tracer: timer result 0C versus source 0D; scope decision pending
+Stopped at: 04-09 revised plans independently checked; executor continuation next
 Resume file: None
