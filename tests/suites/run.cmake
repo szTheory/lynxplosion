@@ -1644,7 +1644,8 @@ if(MODE STREQUAL "symbol_controls" AND FAILURE STREQUAL "")
   expect_success("symbols: required suite labels and nonoverlapping extents valid"
     "${TEST_BINARY}" validate-symbols "${LABELS}")
   file(READ "${LABELS}" labels)
-  string(REGEX MATCH "al [0-9A-Fa-f]+ [.]?suite_entry" entry_row "${labels}")
+  string(REGEX MATCH "al ([0-9A-Fa-f]+) [.]?suite_entry" entry_row "${labels}")
+  set(entry_address "${CMAKE_MATCH_1}")
   string(REGEX MATCH "al ([0-9A-Fa-f]+) [.]?_g_results" result_row "${labels}")
   set(result_address "${CMAKE_MATCH_1}")
   if(entry_row STREQUAL "" OR result_row STREQUAL "")
@@ -1683,6 +1684,46 @@ if(MODE STREQUAL "symbol_controls" AND FAILURE STREQUAL "")
         expect_failure("suite: symbol: completion symbols overlap" "${TEST_BINARY}" validate-symbols "${WORK}/symbols-sentinel-model-overlap.lbl")
       endif()
     endif()
+
+    foreach(control progress model done probe_result)
+      set(control_name "suite_${control}")
+      string(REGEX MATCH "al ([0-9A-Fa-f]+) [.]?${control_name}" control_row "${labels}")
+      if(control_row STREQUAL "")
+        set(FAILURE "symbol controls could not locate ${control_name}")
+      else()
+        string(REPLACE "${control_row}" "al ${entry_address} ${control_name}" changed "${labels}")
+        file(WRITE "${WORK}/symbols-${control}-code-alias.lbl" "${changed}")
+        expect_failure("suite: symbol: control and code overlap" "${TEST_BINARY}" validate-symbols "${WORK}/symbols-${control}-code-alias.lbl")
+
+        string(REPLACE "${control_row}" "al ${result_address} ${control_name}" changed "${labels}")
+        file(WRITE "${WORK}/symbols-${control}-result-alias.lbl" "${changed}")
+        expect_failure("suite: symbol: result and completion overlap" "${TEST_BINARY}" validate-symbols "${WORK}/symbols-${control}-result-alias.lbl")
+      endif()
+    endforeach()
+
+    set(control_pairs
+      "suite_progress|suite_model"
+      "suite_progress|suite_done"
+      "suite_progress|suite_probe_result"
+      "suite_model|suite_done"
+      "suite_model|suite_probe_result"
+      "suite_done|suite_probe_result")
+    foreach(pair IN LISTS control_pairs)
+      string(REPLACE "|" ";" pair_parts "${pair}")
+      list(GET pair_parts 0 first_control)
+      list(GET pair_parts 1 second_control)
+      string(REGEX MATCH "al ([0-9A-Fa-f]+) [.]?${first_control}" first_row "${labels}")
+      set(first_address "${CMAKE_MATCH_1}")
+      string(REGEX MATCH "al [0-9A-Fa-f]+ [.]?${second_control}" second_row "${labels}")
+      if(first_row STREQUAL "" OR second_row STREQUAL "")
+        set(FAILURE "symbol controls could not locate pair ${first_control}/${second_control}")
+      else()
+        string(REPLACE "${second_row}" "al ${first_address} ${second_control}" changed "${labels}")
+        string(REPLACE "|" "-" pair_slug "${pair}")
+        file(WRITE "${WORK}/symbols-${pair_slug}-alias.lbl" "${changed}")
+        expect_failure("suite: symbol: completion symbols overlap" "${TEST_BINARY}" validate-symbols "${WORK}/symbols-${pair_slug}-alias.lbl")
+      endif()
+    endforeach()
   endif()
 
   file(WRITE "${WORK}/symbols-empty.lbl" "")

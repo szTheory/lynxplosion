@@ -29,7 +29,14 @@ enum {
     JSON_TEXT_MAX = 256,
     SYMBOL_LINE_MAX = 255,
     ORACLE_LINE_MAX = 255,
-    EXPECT_VALUES_MAX = 8
+    EXPECT_VALUES_MAX = 8,
+    SUITE_ZP_END = 0x0100,
+    SUITE_STACK_START = 0x0100,
+    SUITE_STACK_END = 0x0200,
+    SUITE_PAYLOAD_START = 0x0200,
+    SUITE_PAYLOAD_END = 0x6200,
+    SUITE_BSS_START = 0x8000,
+    SUITE_BSS_END = 0xC000
 };
 
 typedef struct suite_symbols {
@@ -547,7 +554,8 @@ static int ranges_valid(const suite_symbols *symbols, uint32_t extent)
                         symbols->value[6], symbols->value[11]};
     size_t i;
     size_t j;
-    if (code_start >= code_end || code_end > LYNX_ADDRESS_SPACE ||
+    if (code_start < SUITE_PAYLOAD_START || code_start >= code_end ||
+        code_end > SUITE_PAYLOAD_END || code_end > LYNX_ADDRESS_SPACE ||
         symbols->value[1] < code_start || symbols->value[1] >= code_end ||
         symbols->value[8] < code_start || symbols->value[8] >= code_end ||
         symbols->value[9] < code_start || symbols->value[9] >= code_end ||
@@ -558,18 +566,27 @@ static int ranges_valid(const suite_symbols *symbols, uint32_t extent)
          (symbols->value[13] < code_start || symbols->value[13] >= code_end))) {
         return fail("symbol: code extent invalid");
     }
-    if (result_start > LYNX_ADDRESS_SPACE - extent ||
+    if (result_start < SUITE_BSS_START || result_start > SUITE_BSS_END - extent ||
+        result_start > LYNX_ADDRESS_SPACE - extent ||
         result_end != result_start + extent ||
         (result_start < code_end && code_start < result_end)) {
         return fail("symbol: result extent or code overlap");
     }
-    if (data[0] >= LYNX_ADDRESS_SPACE || data[1] >= LYNX_ADDRESS_SPACE ||
-        data[2] >= LYNX_ADDRESS_SPACE || data[3] >= 0x0100u) {
-        return fail("symbol: byte range invalid");
-    }
     for (i = 0u; i < 4u; i++) {
+        if (data[i] >= LYNX_ADDRESS_SPACE) return fail("symbol: byte range invalid");
+        if (data[i] >= code_start && data[i] < code_end) return fail("symbol: control and code overlap");
         if (data[i] >= result_start && data[i] < result_end) return fail("symbol: result and completion overlap");
-        for (j = 0u; j < i; j++) if (data[i] == data[j]) return fail("symbol: completion symbols overlap");
+        for (j = 0u; j < i; j++) {
+            if (data[i] == data[j]) return fail("symbol: completion symbols overlap");
+        }
+    }
+    if (data[0] < SUITE_BSS_START || data[0] >= SUITE_BSS_END ||
+        data[1] < SUITE_BSS_START || data[1] >= SUITE_BSS_END ||
+        data[2] < SUITE_BSS_START || data[2] >= SUITE_BSS_END ||
+        data[3] >= SUITE_ZP_END ||
+        (code_start < SUITE_STACK_END && SUITE_STACK_START < code_end) ||
+        (result_start < SUITE_STACK_END && SUITE_STACK_START < result_end)) {
+        return fail("symbol: byte range invalid");
     }
     return 0;
 }
