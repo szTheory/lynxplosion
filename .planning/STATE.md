@@ -1,45 +1,45 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 4
-current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 12
-status: Plan 12 complete under D-10; Phase 4 formal goal verification and root closeout pending
-stopped_at: Completed 04-12; awaiting Phase 4 goal verification and root closeout
-last_updated: "2026-11-11T21:52:04.921Z"
+current_phase: 5
+current_phase_name: Display, Raw Video and Input
+current_plan: Not started
+status: planning
+stopped_at: Phase 4 complete, ready to plan Phase 5
+last_updated: "2026-11-11T22:59:47.250Z"
 last_activity: 2026-11-11
-last_activity_desc: Exact-head hosted CI passed on 356a920; Plan 12 qualification and summary recorded
-state_head: 356a920f21f3f8c573e17056a5bc120e9e20b9f6
+last_activity_desc: Phase 4 complete, transitioned to Phase 5
+state_head: b31730ee41c2cc12688844a0117860149e189d03
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 45
   completed_plans: 45
-  percent: 50
+  percent: 67
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-11-10)
+See: .planning/PROJECT.md (updated 2026-11-11)
 
 **Core value:** Every compatibility claim is tied to an exact, named Lynx model/configuration and to reproducible evidence from a deterministic, observable machine.
-**Current focus:** Phase 4 — Timers, Interrupts and First Public Suites
+**Current focus:** Phase 5 — Display, Raw Video and Input
 
 ## Current Position
 
-Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
-Current Plan: 12
-Total Plans in Phase: 12
-Status: Plan 12 complete under D-10; Phase 4 formal goal verification and root closeout pending
-Last activity: 2026-11-11 - Exact-head hosted CI passed on 356a920; Plan 12 qualification and summary recorded
+Phase: 5 — Display, Raw Video and Input
+Current Plan: Not started
+Total Plans in Phase: Not planned
+Status: Ready to plan
+Last activity: 2026-11-11 — Phase 4 complete, transitioned to Phase 5
 
-Progress: [█████░░░░░] 50%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 33
+- Total plans completed: 45
 - Average duration: -
 - Total execution time: 0 hours
 
@@ -50,6 +50,7 @@ Progress: [█████░░░░░] 50%
 | 1 | 13 | - | - |
 | 2 | 11 | - | - |
 | 3 | 9 | - | - |
+| 4 | 12 | - | - |
 
 **Recent Trend:**
 - Last 5 plans: -
@@ -114,7 +115,7 @@ Recent decisions affecting current work:
 
 - [Roadmap]: v1 follows the six research slices; all v1 runs are startup tier A (direct RAM load), never boot evidence.
 - [Roadmap]: No Lynx I/II baseline adopted (O1 open); both CPU profiles built as data; no suite-pass claim before O1.
-- [Roadmap]: Language/build/API not locked (O8 open); C17 + CMake/Ninja/CTest + C ABI is the research default only.
+- [Roadmap]: O8 accepted: C17 + CMake/Ninja/CTest + C ABI; preserve separate runtime model mappings.
 - [Phase 1]: Plan 01-01: status mapping fixed (ARGUMENT for NULL/invalid config, SIZE, ALIGNMENT, RANGE for bounds, STATE for bad magic/no content); lynx_guest_ticks counts from power-on or last load
 - [Phase 1]: Plan 01-01: sanitizer flags live on targets (lynx_sanitize), never CMAKE_C_FLAGS, so the plain nm twin stays uninstrumented; first CI run green in 19s on ubuntu-24.04 (run 42715092093)
 - [Phase 1]: 01-02: build identity uses the full 40-char git revision; configure fails above 127 characters (snapshot header reserves 128 bytes)
@@ -216,7 +217,7 @@ None yet.
 
 ### Blockers/Concerns
 
-Plans 01-12 are executed under the owner-approved D-10 disposition. The exact product/script source passed both full local gates and exact-head CI; Phase 4 formal goal verification and root closeout remain pending. The earlier queued outage-era run is retained as historical evidence in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-CI-BLOCKER.md` and the qualification ledger. Phases 5-6 have not started.
+Phase 4 is complete and its owning verification status is passed. Local macOS, self-contained Ubuntu arm64 and hosted CI qualify the final product/script source baabaee. Formal evidence is in `04-VERIFICATION.md` and `04-QUALIFICATION.md`. Phase 5 discussion is next; Phase 6 has not started.
 
 - Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict comparison failure and unchanged oracle while completing Phase 4; exact agreement remains pending Phase 5. No source/profile/hardware qualification is accepted. No owner action is needed for this approved continuation.
 - Plan 09's data-only control matrices use per-invocation fresh observations on both profiles and immutable hash-checked baselines for private fault copies; every mutation retains positive baseline validation before/after and its named diagnostic.
@@ -230,7 +231,8 @@ Other open owner decisions remain in force:
 - O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
 - Phase 3 goal verification and software qualification pass. CON-01 remains globally open for the actual-frame and actual-audio consumer obligations already scheduled in Phases 5 and 6; the Phase 3 snapshot/silence slice is complete. Research flags remain for Phases 4-6.
 - Carried follow-ups: the timer bank now consumes bus tick stamps with ordering controls; `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
-- Format 4 snapshot controls, source-suite identity/path/parser fixes, safe invocation cleanup and portable shell refusals are committed and qualified locally. Both canonical gates pass all 163 registered tests with no skips, complete JUnit, artifact and history checks. Product/script source is 7616f6d; exact-head CI passed on docs-only head 356a920 (run 43104539428). Outage-era run 43096967098 remains historical and unexecuted. Earlier deferred-item records are historical; current qualification and root verification records are authoritative.
+- Final marker validation rejects trailing pin data; its old behavior was reproduced before the fix. All final local/Linux/hosted gates pass. The outage-era queued run remains historical and unexecuted. Source qualification is authoritative in `04-QUALIFICATION.md`; metadata-only closeout needs an exact-head hosted run, without repeating unchanged local/Linux gates.
+
 
 ## Deferred Items
 
@@ -242,6 +244,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T21:52:04.162Z
-Stopped at: Completed 04-12; awaiting Phase 4 goal verification and root closeout
-Resume file: .planning/phases/04-timers-interrupts-and-first-public-suites/04-QUALIFICATION.md
+Last session: 2026-11-11
+Stopped at: Phase 4 complete, ready to plan Phase 5
+Resume file: None

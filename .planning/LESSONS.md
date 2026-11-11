@@ -165,3 +165,8 @@ or project gate. Use `dpkg-query -W ca-certificates` for simple version
 evidence, or keep the format expression single-quoted at the inner shell level.
 Confirm the emitted OS/tool/source preamble before treating a container run as
 qualification evidence.
+
+
+**Distinguish negative claim guards from open hardware decisions.** A review can verify that unsupported hardware/profile claims were not made while leaving calibration and baseline selection open. Preserving an existing stop does not require renewed owner confirmation.
+
+**Treat reference warnings according to their actual targets.** Phase completion scans inline code as paths: shell commands and brace shorthand produce false missing-file warnings. The Phase 4 command targets and all three RED JSON files exist; these warnings do not invalidate test or goal evidence. Use literal file paths for future artifact links and keep commands in verification prose.

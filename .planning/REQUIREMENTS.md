@@ -73,7 +73,7 @@ sequence, not a ceiling on the project goal.
 - [x] **TIM-01**: One master-tick clock and a scheduler with a total (tick, priority, sequence) order drive all devices
 - [x] **TIM-02**: Mikey timers form one shared-prescaler bank with linking, DONE, reset-done and borrow semantics
 - [x] **TIM-03**: Timer interrupts set pending bits separately from enables, and the CPU samples IRQs per the profile's rules
-- [ ] **TIM-04**: A minimal CPU-sleep and bus-request model exists so later Suzy arbitration does not require rework of the CPU or timers
+- [x] **TIM-04**: A minimal CPU-sleep and bus-request model exists so later Suzy arbitration does not require rework of the CPU or timers
 
 ### Display and input
 
@@ -216,7 +216,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TIM-01 | Phase 4 | Complete |
 | TIM-02 | Phase 4 | Complete |
 | TIM-03 | Phase 4 | Complete |
-| TIM-04 | Phase 4 | Pending |
+| TIM-04 | Phase 4 | Complete |
 | VID-01 | Phase 5 | Pending |
 | VID-02 | Phase 5 | Pending |
 | VID-03 | Phase 5 | Pending |

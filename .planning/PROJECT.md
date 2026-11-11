@@ -31,6 +31,9 @@ everything else fails, that link between claim, profile and evidence must hold.
 - ✓ Original source-built diagnostic reports semantic progress/pass/fail through linked-symbol RAM results; post-write watches and snapshot continuation preserve common-tick repeatability — Phase 3.
 - ✓ Independent public-API consumer produces the labelled 8x8 diagnostic RAM snapshot and valid placeholder-silence WAV with exclusive whole-directory publication and interruption controls — Phase 3 slice; real frames/audio remain Phases 5–6.
 
+- ✓ Instance-owned master-tick timer scheduling, stable same-tick ordering, IRQ latching, a private bus-hold seam and format-4 snapshot continuation — Phase 4; fixed phase and bus pricing remain unverified software policies.
+- ✓ Pinned, unchanged public CPU/timer sources with symbol-derived result capture, exact identities and named-fault controls — Phase 4 observation slice. CPU source comparisons agree; timer offset 14 remains explicitly pending under D-10, with strict comparison still failing.
+
 ### Active
 
 All items are hypotheses until shipped and verified. Formal, numbered
@@ -188,11 +191,12 @@ with its own evidence plan.
 | Baseline Lynx model/revision and CPU profile | Needs cited evidence; affects CPU tests | — Open |
 | Boot/firmware policy (independent startup, owner-supplied BIOS, or both) | Determines unattended CI path | — Open |
 | Cartridge/container format, banking, EEPROM/identity | Defines content contract | — Open |
-| Timing representation and advancement unit | Phase 1: `lynx_advance` budget in 16 MHz master ticks; per-device timing model open (needs bus/DMA/timer study) | — Open |
+| Timing representation and advancement unit | 16 MHz master-tick budgets; Phase 4 implements timer/IRQ ordering and private hold. Fixed phase and flat5 prices are unverified; video DMA/audio arbitration remain later work | Partially validated (software policy) |
 | Implementation language, build tooling, API/ABI: C17 (`CMAKE_C_EXTENSIONS OFF`, `-pedantic-errors`), CMake 3.25+ workflow presets, Ninja, CTest, C ABI with opaque handle | Owner accepted research default (O8), 2026-11-09 | ✓ Owner decision |
 | Repository visibility: public at github.com/szTheory/lynxplosion; no PII or credentials (owner, 2026-11-09) | Owner authority; recorded here so scans and CI assume a public tree | ✓ Owner decision |
 | Project licence (O5) and release route | Owner authority; no licence file until decided | — Open (owner); all rights reserved until decided |
 | Clean-room protocol (O6) | Rights boundary for emulator-source exposure | — Draft policy in docs/policy/clean-room.md; owner decision pending |
+| D-10 timer comparison disposition (owner, 2026-11-11) | Preserve unchanged expected 0D versus observed 0C at offset 14 only; all other comparisons and controls required; revisit with Phase 5 startup/bus/video evidence | ✓ Observation slice approved; strict agreement open |
 | LibFuturo fit | Needs a real core/consumer test | — Open |
 | ComLynx/accessories timing in roadmap | Scope/cost | — Open |
 
@@ -214,4 +218,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-10 after Phase 3*
+*Last updated: 2026-11-11 after Phase 4*
