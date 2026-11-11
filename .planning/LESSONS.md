@@ -126,3 +126,13 @@ STATE before making broader snapshot-validation claims.
 **Keep closeout handoffs bounded.** Reuse reviewed evidence and return concrete edits; repeated report reconstruction can dominate the critical path after tests finish. Parent-owned metadata closeout can avoid another broad executor context reload.
 
 **Validate MVP goal form before execution.** A roadmap `mode: mvp` requires the centralized user-story guard, including its literal `As a ...` prefix. Phase 3's inherited prose goal only failed at final verification. Reformat the same approved outcome and validate it before dispatch; changing grammar is routine planning repair, not a new scope decision.
+
+**Treat timing-test startup as part of the fixture contract.** Untouched test
+assembly and an exact source oracle do not establish equivalent execution
+preconditions after replacing CRT startup. Check display/refresh/page-mode
+state, zero-page initialization, link geometry and caller IRQ behavior before
+requiring fixed-loop timing agreement. In Phase 4 the current timer mismatch
+was explained by independent cycle accounting, not resolved by phase tuning;
+a synthetic page crossing could force agreement and was correctly rejected as
+a remedy. Preserve raw disagreements and seek a scope decision when the next
+real prerequisite belongs to a later phase.

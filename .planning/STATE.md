@@ -3,12 +3,12 @@ gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
 current_plan: 9
-status: Ready for Plan 9
-stopped_at: Completed 04-08-PLAN.md
-last_updated: "2026-11-11T09:30:38.425Z"
+status: "Awaiting owner: timer comparison disposition"
+stopped_at: "04-09 tracer: timer result 0C versus source 0D; scope decision pending"
+last_updated: "2026-11-11T10:32:58.309Z"
 last_activity: 2026-11-11
-last_activity_desc: Plan 8 complete, Phase 4 remains in progress
-state_head: cfbe934aca421e4edfb12817696f74ae1b98d05a
+last_activity_desc: Plan 09 Task 1 comparison unresolved; owner disposition pending
+state_head: 9936ade4a5bff1e73af8f212fea6377a930ec44e
 progress:
   total_phases: 6
   completed_phases: 3
@@ -31,8 +31,8 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
 Current Plan: 9
 Total Plans in Phase: 12
-Status: Ready for Plan 9
-Last activity: 2026-11-11 — Plan 8 complete, Phase 4 remains in progress
+Status: Awaiting owner: timer comparison disposition
+Last activity: 2026-11-11 - Plan 09 Task 1 comparison unresolved; owner disposition pending
 
 Progress: [█████░░░░░] 50%
 
@@ -207,7 +207,11 @@ None yet.
 
 ### Blockers/Concerns
 
-A phase-level verification blocker remains; Plan 6 can proceed. Other open owner decisions shape claims but do not stop work:
+Phase 4 is stopped at the Plan 09 timer comparison pending an owner scope/gate disposition. Plans 01-08 are complete; Plan 09 Task 2 has not started. The prior snapshot failures are resolved. Detailed alternatives are in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-09-DISPOSITION.md`; no acceptance condition has been changed.
+
+- Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict failure, source oracle and Task 2 halt. Root recommends an explicit one-comparison deferral to Phase 5; owner acts next. No source/profile/hardware qualification is accepted.
+
+Other open owner decisions remain in force:
 
 - O1 (baseline Lynx model/CPU profile): no baseline adopted; profiles are data (`none`, `lynx1`, `lynx2`); claims name profile `none` only.
 - O6 (clean-room protocol): policy and exposure record stay DRAFT; no emulator source opened in Phases 1-2.
@@ -228,5 +232,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-11-11T09:27:33.107Z
-Stopped at: Completed 04-08-PLAN.md
+Stopped at: 04-09 tracer: timer result 0C versus source 0D; scope decision pending
 Resume file: None
