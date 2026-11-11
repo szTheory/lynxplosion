@@ -60,6 +60,24 @@ CPU baseline decision O1 is open. The current flat five-master-tick timing is
 Phase 3 introduced snapshot format 3 with expanded startup and content
 identity. Phase 4 format 4 adds canonical timer/IRQ state, ownership hold and
 the current-tick scheduler cursor; earlier snapshot formats are refused.
+Format 4 records timer registers, the pending IRQ byte, timer phase policy,
+the current-tick event cursor, ownership hold, and CPU readiness as a bounded
+priced-cycle residual. Readiness does not grow while a request waits for bus
+ownership; timer events continue during a private hold. Timer pending state is
+independent of the CPU interrupt mask, while the mask still controls IRQ
+acceptance at CPU polls. The shared timer phase starts at fixed zero on
+init/reset/load, and timer-bank events precede a same-tick CPU bus action and
+its poll. These are deterministic software rules; the exact hardware phase
+and tie behavior remain unqualified.
+
+The timer registers `$FD00`–`$FD1F` and pending/acknowledge aliases `$FD80` and
+`$FD81` are implemented. `$FD91` remains unavailable: a guest request stays
+pending and returns the unavailable stop without changing hidden backing RAM.
+The private ownership hold does not implement Suzy bus ownership, CPUSLEEP,
+WAI, or STP. See [timer and interrupt behavior](timers-interrupts.md) for the
+modeled register details and [suite evidence](public-suites.md) for the
+separate observation and source-comparison status.
+
 Snapshot continuation tests restore a fresh same-identity machine and compare
 its final guest observations with uninterrupted execution; this is
 repeatability evidence, not a hardware-accuracy result.

@@ -155,6 +155,31 @@ hold transitions. `api.request_hold` also checks per-instance isolation.
 
 ## Verification scope and deferred semantics
 
+### Current pinned timer-suite observation status
+
+The pinned `timers` guest completes under both explicit software profile
+inputs. Each fresh observation contains 16 meaningful bytes in the linked
+18-byte extent, progress `8`, sentinel `a5`, and the wrapper's matching profile
+probe/marker. Under the recorded fixed-zero phase, flat-five-tick CPU cost,
+grant-time sampling, no page mode/video/refresh DMA, and zero-initialized
+counter, `lynx1` completes at 359,941 guest ticks and `lynx2` at 359,916.
+These are bounded software observations, not hardware measurements or profile
+qualification.
+
+Each profile agrees with 15 of the 16 unchanged timer-source expectations.
+Index 14 is the single owner-approved D-10 pending comparison: source expects
+`0d`, both observations contain `0c`. Strict timer comparison still exits 1
+with the mismatch diagnostic. The [qualification ledger](../.planning/phases/04-timers-interrupts-and-first-public-suites/04-QUALIFICATION.md)
+records every row, the bound descriptor/record/proof identities, and the
+targeted control results. The independent 64-phase software proof predicts 12
+acknowledgements and the last poll at offset 13,990 for every first-edge
+offset; it explains the present flat-five/no-DMA observation but does not
+establish why the unchanged source expects 13.
+
+Global EVD-02 therefore remains open for Phase 5 bus/video evidence. No timer
+phase, cost, source expectation, counter initialization, linked layout or DMA
+behavior is changed to force agreement.
+
 `api.timer_tracer` runs a project-authored strict BLL guest through timer-0
 register writes, expiry, mapped DONE/pending reads, and RAM result stores. Its
 independent boundary checks cover targets 79/80/81 and 96/97.

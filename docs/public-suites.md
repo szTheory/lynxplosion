@@ -1,4 +1,4 @@
-# Headless public CPU suite evidence
+# Headless public CPU and timer suite evidence
 
 The `suite.cpu.lynx1` and `suite.cpu.lynx2` tests build the pinned `lynx-tests` sources, derive expected bytes from their checked-in `main.c` and `tests.s`, load the linked BS93 object through the public BLL API, and run the CPU suite in fresh machines. Each profile runs once with zeroed result/zero-page storage and once with a deterministic test-private seeded pattern. Raw guest bytes and their source-oracle comparisons are separate records. A match means those software observations agree for this build and selected profile input; it does not establish agreement with a physical Lynx or qualify a CPU hardware profile. The overall default profile remains `none`.
 
@@ -8,6 +8,20 @@ The `suite.cpu.lynx1` and `suite.cpu.lynx2` tests build the pinned `lynx-tests` 
 
 The oracle uses a strict versioned TSV grammar. CPU expectations contain 18 meaningful bytes and both Lynx model tuples. Timer expectations contain 16 meaningful bytes in the pinned 18-byte result extent; the two reserved bytes remain outside the meaningful range. Accepted alternatives are sets, and the timer source's two and three value alternatives are preserved exactly. The C reader checks the complete row inventory, ordering, byte values, alternatives and source identity against the fresh build record before the harness can compare guest results.
 
+## CPU observations
+
+The two explicit profile runs complete with guest progress `8`, a guest-written
+completion sentinel `a5`, and matching 18/18 source comparisons. Each profile
+was run with zeroed and deterministic seeded result/zero-page storage; the two
+runs produced the same bytes for that profile. The recorded result bytes are
+listed in source-index order below. This is pinned-source software evidence;
+O1 remains open and the bytes do not qualify hardware profiles.
+
+| Profile | Guest ticks | Probe / marker | Raw results, indices 0–17 |
+| --- | ---: | --- | --- |
+| `lynx1` | 26,696 | `01` / `a1` | `00 00 52 06 01 02 80 02 30 bb 03 00 ff 00 02 02 00 00` |
+| `lynx2` | 26,841 | `00` / `a2` | `00 00 52 06 01 02 80 02 30 bb 03 00 fe 01 01 01 00 00` |
+
 The private `--test-source-shape-only` option is used only by negative controls against temporary source copies. It tests grammar failures without changing production pin verification or the source identity chain used by normal runs.
 
 ## Timer observations and the pending source row
@@ -16,9 +30,36 @@ The private `--test-source-shape-only` option is used only by negative controls 
 
 The timer wrapper executes its own A1/A2 model probe. The observed records preserve profile, probe and marker bytes, 16 meaningful results in the 18-byte extent, guest progress and sentinel, tick bounds, fixed phase, flat five-tick CPU cost, grant-time sampling, disabled page-mode/video and refresh DMA, and zero-initialized timer counter. A matching software observation does not establish hardware accuracy or profile qualification; the default profile remains `none` and O1 remains open.
 
+| Profile | Guest ticks | Probe / marker | Progress / sentinel | Raw timer results, indices 0–15 | Observation status |
+| --- | ---: | --- | --- | --- | --- |
+| `lynx1` | 359,941 | `01` / `a1` | `8` / `a5` | `08 7f 00 08 00 01 08 00 04 08 00 36 00 01 0c 08` | Complete bounded software observation; 15/16 source rows agree; D-10 row 14 pending |
+| `lynx2` | 359,916 | `00` / `a2` | `8` / `a5` | `08 7f 00 08 00 01 08 00 04 08 00 37 00 01 0c 08` | Complete bounded software observation; 15/16 source rows agree; D-10 row 14 pending |
+
+The full 16-row per-profile comparison and pinned source/tool/build/proof
+identities are recorded in the [Phase 4 qualification ledger](../.planning/phases/04-timers-interrupts-and-first-public-suites/04-QUALIFICATION.md).
+
 `timer-cascade-model` verifies the linked Test6 setup and poll opcodes, operands, addressing modes and branch targets against the unchanged pinned assembly. It derives 14-cycle no-IRQ and 24-cycle IRQ paths, yielding 70/120 tick poll intervals, then independently enumerates all64 first-edge delays over the source-declared 192 polls. The executable proof reports12 acknowledgments and final poll offset13990 for every phase, and binds those results to the actual BLL, labels, raw bytes, run record, comparison, oracle and pending descriptor. This matches the current bounded guest result without modifying its timing or the oracle. The pending row is scheduled for Phase5 review; global EVD-02 remains open.
 
-The timer test IDs `suite.timers.observation.lynx1`, `suite.timers.observation.lynx2`, `suite.timers.strict_comparison_controls`, and `suite.timers.cascade_model` each use invocation-owned scratch. The strict controls require exit1 and the exact source mismatch diagnostic only after valid observations and proof; they also require exactly16 comparison rows,15 accepted rows and the sole index14 mismatch `0c`/`EXPECT(0d)`.
+The exact fast inventory contains these eight timer tests. The two observation
+tests are the positive guest runs; the other six are strict, proof, model,
+record, descriptor or no-run controls. They are not suite-pass claims.
+
+| CTest ID | Role |
+| --- | --- |
+| `suite.timers.observation.lynx1` | Positive lynx1 timer observation |
+| `suite.timers.observation.lynx2` | Positive lynx2 timer observation |
+| `suite.timers.strict_comparison_controls` | Requires the unchanged strict mismatch and exact D-10 classification |
+| `suite.timers.cascade_model` | Independent 64-phase software proof against linked source and actual guest result |
+| `suite.timers.model_controls` | Rejects invalid/mismatched guest model evidence |
+| `suite.timers.pending_controls` | Rejects stale/malformed descriptor, records, identities and proof |
+| `suite.timers.result_controls` | Rejects result/count/time/completion faults and any second mismatch |
+| `suite.timers.no_run` | Proves held guest execution is absent, then validates resumed execution |
+
+The strict controls require exit 1 and the exact source mismatch diagnostic
+only after valid observations and proof; they also require exactly 16
+comparison rows, 15 accepted rows and the sole index 14 mismatch
+`0c`/`EXPECT(0d)`. The full Plan 12 Task 1 targeted integration gate and its
+current result are recorded in the qualification ledger.
 
 The timer controls `suite.timers.model_controls`, `suite.timers.result_controls`, and `suite.timers.pending_controls` also require exact named refusals. A wrong selected profile is an actual guest execution and is bracketed by fresh observations for both profiles. Captured-result, record, descriptor and companion mutations use private copies of an immutable baseline captured from fresh Lynx1/Lynx2 observations at the start of each control-test invocation; both baseline records are positively revalidated and their hashes checked before and after every individual mutation. Each batch ends with fresh observations for both profiles. The EXPECT alternative-set cases validate a separately labelled captured comparator corpus, not guest execution. These test controls do not accept another mismatch, alter D-10's pending row, or qualify the profiles.
 
@@ -49,6 +90,15 @@ cmake --preset check
 cmake --build --preset check
 ctest --preset check --no-tests=error --output-on-failure \
   -R '^suite\.(oracle_tracer|oracle_controls|symbol_controls|cpu\.(lynx1|lynx2|model_controls|bound_controls))$'
+```
+
+The timer observation/control slice can be rerun with:
+
+```sh
+cmake --preset check
+cmake --build --preset check
+ctest --preset check --no-tests=error --output-on-failure \
+  -R '^suite\.timers\.(observation\.(lynx1|lynx2)|strict_comparison_controls|cascade_model|model_controls|result_controls|pending_controls)$'
 ```
 
 The pinned upstream sources and this project’s wrapper remain subject to their fixture manifests and notices. No firmware or commercial game content is used. These software controls establish parser, identity, bounds and repeatable guest-execution behavior for the pinned source; hardware accuracy and public profile qualification remain unresolved.

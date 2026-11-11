@@ -11,6 +11,12 @@ original diagnostic that reports results and packed pixels in guest RAM.
 - `none` is the default CPU profile; `lynx1` and `lynx2` are explicit profiles.
   No Lynx I/II baseline or compatibility pass has been adopted (owner decision
   O1 remains open).
+- The pinned headless CPU suite has complete 18-byte software observations for
+  both explicit profiles. The timer guest also completes for both profiles,
+  with 15 of 16 source comparisons agreed and the owner-approved D-10 row still
+  pending (`0c` observed, unchanged source `0d`). The strict timer comparison
+  continues to fail on that row; these software results do not qualify hardware
+  profiles. See [suite evidence](docs/public-suites.md).
 - The sourced MAPCTL decoder selects RAM behind the Suzy, Mikey, ROM and vector
   windows. Missing ROM and unimplemented device routes refuse explicitly.
   Remaining device behavior and flat five-tick timing are provisional.
@@ -44,7 +50,7 @@ without the claim being regenerated.
 ## Running the checks
 
 ```sh
-scripts/check.sh
+sh scripts/check.sh
 ```
 
 This one command is also what CI runs. It prints tool versions, lints the shell
