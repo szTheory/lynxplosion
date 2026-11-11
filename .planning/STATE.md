@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-11-11T04:11:21.153Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-11-11T04:53:59.798Z"
 last_activity: 2026-11-10
 last_activity_desc: Phase 3 complete, transitioned to Phase 4
-state_head: 2054302d857bc2ae6e930e600f39aca7c896f667
+state_head: a6c06e542f0803d0c4170e3279f134de55703c89
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 34
+  completed_plans: 35
   percent: 50
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 ## Current Position
 
 Phase: 4 (Timers, Interrupts and First Public Suites) — READY TO EXECUTE
-Current Plan: 2
+Current Plan: 3
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-10 — Phase 3 complete, transitioned to Phase 4
@@ -93,6 +93,7 @@ Progress: [█████░░░░░] 50%
 | Phase 03 P07 | 56min | 2 tasks | 15 files |
 | Phase 03 P08 | 34 min | 2 tasks | 9 files |
 | Phase 04 P01 | 137 min | 3 tasks | 15 files |
+| Phase 04 P02 | 25min | 2 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -171,6 +172,9 @@ Recent decisions affecting current work:
 - [Phase 04]: Build pinned CPU and timer suites only in owned scratch; preserve exact source hashes and notices.
 - [Phase 04]: Accept only the source-derived first timer write as unavailable now or as the exact future post-write watch hit.
 - [Phase 04]: Task 1 is fixture-only and has no meaningful RED; correct the plan TDD marker and do not fabricate failure evidence.
+- [Phase 04]: Timer init/reset/load use deterministic timer-phase-fixed-zero-1; this is software policy, not calibration.
+- [Phase 04]: Timer-bank events precede same-tick CPU bus actions and their poll/completion under timer-cpu-poll-order-1.
+- [Phase 04]: Keep timer linking, CTLB lower observation bits, and timer snapshot continuation explicitly incomplete.
 
 ### Pending Todos
 
@@ -197,6 +201,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T04:09:21.325Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-11-11T04:53:59.390Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None
