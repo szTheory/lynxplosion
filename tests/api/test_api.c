@@ -5222,6 +5222,99 @@ static bool timer_write_required(lynx__timer_bank *bank, uint16_t addr, uint8_t 
     return false;
 }
 
+/* A held grant preserves a real BLL store while the shared timer clock keeps
+   advancing. This is the RED tracer for expired readiness: cpu_ready_at is
+   currently left behind by an idle hold, so the public remaining-cost byte
+   underflows after the target passes it. */
+static void case_request_hold(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    lynx_machine *other = NULL;
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK_EQ_U64(m->content_format, LYNX_CONTENT_BS93);
+
+    other = init_in(buf_b, &cfg);
+    if (other == NULL) {
+        CHECK(other != NULL);
+        goto done;
+    }
+    CHECK_EQ_U64(lynx_load_bll(other, bll_tracer, sizeof bll_tracer), LYNX_OK);
+
+    /* Timer 0 produces its IRQ on the fourth source edge (tick 64), after the
+       guest has posted its store to $0400 and before ownership is released. */
+    CHECK(timer_write_required(&m->timer_bank, 0xFD00u, 3u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 3u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x88u));
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    for (uint32_t i = 0u; i < 100u &&
+                           !(m->cpu.req_addr == 0x0400u &&
+                             (m->cpu.req_flags & LYNX__CF_WRITE) != 0u);
+         i++) {
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    }
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0400u);
+    CHECK_EQ_U64(m->cpu.req_flags & LYNX__CF_WRITE, LYNX__CF_WRITE);
+    CHECK(m->cpu_ready_at > m->guest_ticks);
+    m->cpu.p = (uint8_t)(m->cpu.p | 0x04u); /* I masks acceptance, not timer wake. */
+    const lynx__cpu request_before = m->cpu;
+    const uint64_t target = m->guest_ticks + 40u;
+    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx_advance(m, 40u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 40u);
+    CHECK_EQ_U64(ticks_of(m), target);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) == 0);
+    CHECK_EQ_U64(m->ram[0x0400u], 0u);
+    lynx_watch_event event;
+    memset(&event, 0xA5, sizeof event);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 0u);
+    uint32_t cpu_state = UINT32_MAX;
+    CHECK_EQ_U64(lynx_read_register(m, LYNX_REG_CPU_STATE, &cpu_state), LYNX_OK);
+    CHECK_EQ_HEX(cpu_state >> 24, 0u);
+
+    CHECK_EQ_U64(other->guest_ticks, 0u);
+    CHECK_EQ_U64(other->timer_bank.pending, 0u);
+    CHECK_EQ_U64(other->cpu_bus_held, 0u);
+    CHECK_EQ_U64(other->ram[0x0400u], 0u);
+
+    m->cpu_bus_held = 0u;
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0xA5u);
+    CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) != 0);
+    CHECK_EQ_U64(lynx_watch_get(m, &event), LYNX_OK);
+    CHECK_EQ_U64(event.hit, 1u);
+    CHECK_EQ_U64(event.address, 0x0400u);
+    CHECK_EQ_U64(event.value, 0xA5u);
+    CHECK_EQ_U64(event.hit_tick, target);
+    CHECK_EQ_U64(event.return_tick, target + 1u);
+    CHECK_EQ_U64(lynx_advance(m, 4u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 4u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0xA5u);
+
+done:
+    if (other != NULL) {
+        lynx_machine_deinit(other);
+    }
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.request_hold\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void case_timer_phase(void)
 {
     const int failures_before = check_failures;
@@ -5441,6 +5534,7 @@ static const struct {
     {"profile_divergence", case_profile_divergence},
     {"profile_select", case_profile_select},
     {"rom_unavailable", case_rom_unavailable},
+    {"request_hold", case_request_hold},
     {"reset_power_on", case_reset_power_on},
     {"sha256", case_sha256},
     {"snapshot_refusal", case_snapshot_refusal},

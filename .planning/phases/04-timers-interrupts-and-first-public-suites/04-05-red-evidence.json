@@ -1,0 +1,11 @@
+{
+  "command": "build/check/tests/lynx-test-api request_hold",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.request_hold\n",
+  "targetTest": "api.request_hold",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "After a held posted store advances guest time beyond cpu_ready_at, the CPU remaining-cost byte is zero and cpu_ready_at is normalized to guest_ticks.",
+  "actual": "The target test executed; the held request and timer checks passed, then LYNX_REG_CPU_STATE >> 24 returned 0xdc (220) at guest tick 95 instead of 0.",
+  "semanticAssessment": "Valid RED: the new test compiled and executed its target case, then failed on the planned public remaining-cost assertion after a real BLL store request was held while the timer advanced. The failure is the stale readiness underflow, not collection, compilation, fixture setup, or an unrelated assertion.",
+  "diagnostics": "tests/api/test_api.c:5284: cpu_state >> 24 == 0u failed: 0xdc != 0x0"
+}
