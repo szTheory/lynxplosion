@@ -10,11 +10,16 @@ set_target_properties(lynx-test-suites PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PRO
 
 find_program(LYNX_SUITES_ENV_EXECUTABLE env REQUIRED)
 function(lynx_suite_test name mode timeout)
+  set(profile "")
+  if(ARGC GREATER 3)
+    set(profile "${ARGV3}")
+  endif()
   lynx_add_test(NAME ${name}
     COMMAND ${CMAKE_COMMAND}
       -DMODE=${mode}
+      -DPROFILE=${profile}
       -DROOT=${PROJECT_SOURCE_DIR}
-      -DWORK=${LYNX_SCRATCH_DIR}/suites/${mode}
+      -DWORK=${LYNX_SCRATCH_DIR}/suites/${name}
       -DSCRATCH_ROOT=${LYNX_SCRATCH_DIR}/suites
       -DTEST_BINARY=$<TARGET_FILE:lynx-test-suites>
       -DENV_EXECUTABLE=${LYNX_SUITES_ENV_EXECUTABLE}
@@ -22,7 +27,8 @@ function(lynx_suite_test name mode timeout)
     LABELS suite TIMEOUT ${timeout})
 endfunction()
 
-lynx_suite_test(suite.cpu.lynx1 cpu 60)
+lynx_suite_test(suite.cpu.lynx1 cpu 60 lynx1)
+lynx_suite_test(suite.cpu.lynx2 cpu 60 lynx2)
 lynx_suite_test(suite.oracle_tracer tracer 60)
 lynx_suite_test(suite.oracle_controls oracle_controls 60)
 lynx_suite_test(suite.symbol_controls symbol_controls 60)

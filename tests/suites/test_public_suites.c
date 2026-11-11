@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "internal.h"
 #include "lynxplosion.h"
 #include "sha256.h"
 
@@ -637,19 +638,21 @@ static int checked_join(char *out, size_t capacity, const char *directory, const
     return count < 0 || (size_t)count >= capacity;
 }
 
-static int clear_old_outputs(const char *directory)
+static int clear_old_outputs(const char *directory, const char *case_name)
 {
-    static const char *const names[] = {
-        "run-record.txt", "raw-results.tsv", "comparison.tsv"
-    };
+    static const char *const kinds[] = {"run-record", "raw-results", "comparison"};
     struct stat info;
     char path[4096];
     size_t i;
     if (lstat(directory, &info) != 0 || !S_ISDIR(info.st_mode) || S_ISLNK(info.st_mode)) {
         return fail("build directory must be a real invocation-owned directory");
     }
-    for (i = 0u; i < sizeof names / sizeof names[0]; i++) {
-        if (checked_join(path, sizeof path, directory, names[i]) != 0) return fail("output path too long");
+    for (i = 0u; i < sizeof kinds / sizeof kinds[0]; i++) {
+        char name[64];
+        int count = snprintf(name, sizeof name, "%s-%s.tsv", kinds[i], case_name);
+        if (i == 0u) count = snprintf(name, sizeof name, "%s-%s.txt", kinds[i], case_name);
+        if (count < 0 || (size_t)count >= sizeof name ||
+            checked_join(path, sizeof path, directory, name) != 0) return fail("output path too long");
         if (remove(path) != 0) {
             struct stat existing;
             if (lstat(path, &existing) == 0) return fail("cannot clear stale suite output");
@@ -658,13 +661,15 @@ static int clear_old_outputs(const char *directory)
     return 0;
 }
 
-static int write_raw(const char *path, const char *suite, const char *profile,
+static int write_raw(const char *path, const char *suite, const char *machine_profile,
+                     const char *selected_profile, const char *case_name,
                      const uint8_t *results, uint32_t count)
 {
     FILE *file = fopen(path, "wb");
     uint32_t i;
     if (file == NULL) return fail("cannot create raw result record");
-    (void)fprintf(file, "suite\t%s\nprofile_input\t%s\n", suite, profile);
+    (void)fprintf(file, "suite\t%s\nmachine_profile\t%s\nprofile_input\t%s\nram_seed\t%s\nresult_count\t%u\n",
+                  suite, machine_profile, selected_profile, case_name, count);
     for (i = 0u; i < count; i++) (void)fprintf(file, "result\t%" PRIu32 "\t%02x\n", i, results[i]);
     if (fclose(file) != 0) return fail("cannot close raw result record");
     return 0;
@@ -692,28 +697,128 @@ static int write_comparison(const char *path, const suite_oracle *oracle,
     return match != 0 ? 0 : fail("source oracle comparison mismatch");
 }
 
-static int write_run_record(const char *path, const char *profile,
+static const char *profile_label(unsigned profile)
+{
+    return profile == 0u ? "lynx1" : "lynx2";
+}
+
+static int profile_index(const char *name, unsigned *index)
+{
+    if (strcmp(name, "lynx1") == 0) {
+        *index = 0u;
+        return 0;
+    }
+    if (strcmp(name, "lynx2") == 0) {
+        *index = 1u;
+        return 0;
+    }
+    return 1;
+}
+
+static int probe_model(const uint8_t probe, const uint8_t marker)
+{
+    if (probe == 0x01u && marker == 0xA1u) return 0;
+    if (probe == 0x00u && marker == 0xA2u) return 1;
+    return -1;
+}
+
+static int tuple_model(const suite_oracle *oracle, const uint8_t *results)
+{
+    unsigned model;
+    int found = -1;
+    for (model = 0u; model < 2u; model++) {
+        if (memcmp(results + 12u, oracle->tuple[model], 4u) == 0) {
+            if (found >= 0) return -1;
+            found = (int)model;
+        }
+    }
+    return found;
+}
+
+static uint8_t seed_byte(uint32_t address)
+{
+    return (uint8_t)(0x5Au ^ (address * 37u));
+}
+
+static int prepare_cpu_ram(machine_instance *instance, const suite_symbols *symbols,
+                           const char *case_name)
+{
+    uint32_t i;
+    if (strcmp(case_name, "zero") == 0) {
+        for (i = 0u; i < 0x100u; i++) {
+            if (instance->machine->ram[i] != 0u) return fail("fresh zero-page RAM was not zero");
+        }
+        for (i = 0u; i < CPU_MEANINGFUL; i++) {
+            if (instance->machine->ram[symbols->value[2] + i] != 0u) {
+                return fail("fresh CPU result RAM was not zero");
+            }
+        }
+        for (i = 4u; i <= 6u; i++) {
+            if (instance->machine->ram[symbols->value[i]] != 0u) {
+                return fail("fresh CPU completion RAM was not zero");
+            }
+        }
+        return 0;
+    }
+    if (strcmp(case_name, "seeded") != 0) return fail("CPU RAM case must be zero or seeded");
+    for (i = 0u; i < 0x100u; i++) instance->machine->ram[i] = seed_byte(i);
+    memset(instance->machine->ram + symbols->value[2], 0x5Au, CPU_MEANINGFUL);
+    instance->machine->ram[symbols->value[4]] = 0xC3u;
+    instance->machine->ram[symbols->value[5]] = 0x3Cu;
+    instance->machine->ram[symbols->value[6]] = 0x69u;
+    for (i = 0u; i < 0x100u; i++) {
+        if (instance->machine->ram[i] != seed_byte(i)) return fail("seeded zero-page RAM was not established");
+    }
+    for (i = 0u; i < CPU_MEANINGFUL; i++) {
+        if (instance->machine->ram[symbols->value[2] + i] != 0x5Au) {
+            return fail("seeded CPU result RAM was not established");
+        }
+    }
+    if (instance->machine->ram[symbols->value[4]] != 0xC3u ||
+        instance->machine->ram[symbols->value[5]] != 0x3Cu ||
+        instance->machine->ram[symbols->value[6]] != 0x69u) {
+        return fail("seeded CPU completion RAM was not established");
+    }
+    return 0;
+}
+
+static int write_run_record(const char *path, const char *machine_profile,
+                            const char *selected_profile, const char *case_name,
                             const char *bll_sha, const char *labels_sha,
                             const char *oracle_sha, uint64_t ticks,
-                            uint8_t probe, uint8_t model, uint8_t progress)
+                            uint8_t probe, uint8_t model, uint8_t progress,
+                            int observed_model, int source_tuple_model)
 {
     FILE *file = fopen(path, "wb");
     if (file == NULL) return fail("cannot create suite run record");
     (void)fprintf(file,
         "evidence=raw-observation-plus-source-comparison\n"
-        "suite=cpu\nprofile_input=%s\nbll_sha256=%s\nlabels_sha256=%s\noracle_sha256=%s\n"
+        "suite=cpu\nmachine_profile=%s\nprofile_input=%s\nram_seed=%s\n"
+        "bll_sha256=%s\nlabels_sha256=%s\noracle_sha256=%s\n"
+        "detected_model=%s\nmodel_probe_bytes=%02x,%02x\nsource_tuple_model=%s\n"
+        "meaningful_count=18\nreserved_count=0\ntick_min=%u\ntick_max=%u\n"
+        "ticks_observed=%" PRIu64 "\ncompletion_margin_ticks=%" PRIu64 "\n"
+        "maximum_headroom_ticks=%" PRIu64 "\n"
         "guest_ticks=%" PRIu64 "\nminimum_guest_ticks=%u\nmaximum_guest_ticks=%u\n"
         "meaningful_results=18\nreserved_results=0\nguest_probe_byte=%02x\n"
         "guest_model_marker=%02x\nguest_progress=%u\ncompletion_sentinel=a5\n"
         "scheduler_policy=timer-cpu-poll-order-1\nphase_policy=timer-phase-fixed-zero-1\n"
-        "hardware_accuracy=unverified\n",
-        profile, bll_sha, labels_sha, oracle_sha, ticks, CPU_MIN_TICKS, CPU_MAX_TICKS,
+        "source_comparison=separate-record\nhardware_accuracy=unverified\nprofile_qualification=unresolved\n",
+        machine_profile, selected_profile, case_name,
+        bll_sha, labels_sha, oracle_sha,
+        observed_model < 0 ? "unknown" : profile_label((unsigned)observed_model),
+        probe, model,
+        source_tuple_model < 0 ? "unknown" : profile_label((unsigned)source_tuple_model),
+        CPU_MIN_TICKS, CPU_MAX_TICKS, ticks,
+        ticks - CPU_MIN_TICKS, CPU_MAX_TICKS - ticks,
+        ticks, CPU_MIN_TICKS, CPU_MAX_TICKS,
         probe, model, progress);
     if (fclose(file) != 0) return fail("cannot close suite run record");
     return 0;
 }
 
-static int run_cpu(const char *profile_name, const char *directory, const char *oracle_path)
+static int run_cpu(const char *machine_profile_name, const char *selected_profile_name,
+                   const char *directory, const char *oracle_path, const char *case_name)
 {
     uint8_t *bll = NULL;
     size_t bll_length = 0u;
@@ -722,6 +827,9 @@ static int run_cpu(const char *profile_name, const char *directory, const char *
     char path[4096];
     char bll_path[4096];
     char labels_path[4096];
+    char record_name[64];
+    char raw_name[64];
+    char comparison_name[64];
     char record_path[4096];
     char raw_path[4096];
     char comparison_path[4096];
@@ -735,9 +843,9 @@ static int run_cpu(const char *profile_name, const char *directory, const char *
     uint8_t model = 0u;
     uint8_t done = 0u;
     uint8_t probe = 0u;
-    uint32_t profile;
-    uint8_t expected_probe;
-    uint8_t expected_model;
+    uint32_t machine_profile;
+    unsigned machine_profile_index;
+    uint32_t selected_profile;
     uint64_t guest_ticks = 0u;
     uint64_t total_consumed = 0u;
     lynx_stop_reason stop = LYNX_STOP_BUDGET;
@@ -748,25 +856,29 @@ static int run_cpu(const char *profile_name, const char *directory, const char *
     suite_oracle oracle;
     int complete = 0;
     int initial_done_clear_seen = 0;
+    int probe_observed_model = -1;
+    int guest_model = -1;
+    int result_tuple_model = -1;
     int result = 1;
-    uint32_t i;
 
-    if (strcmp(profile_name, "lynx1") == 0) {
-        profile = LYNX_PROFILE_LYNX1;
-        expected_probe = 1u;
-        expected_model = 0xA1u;
-    } else if (strcmp(profile_name, "lynx2") == 0) {
-        profile = LYNX_PROFILE_LYNX2;
-        expected_probe = 0u;
-        expected_model = 0xA2u;
-    } else return fail("explicit lynx1 or lynx2 profile input required");
-    if (clear_old_outputs(directory) != 0) return 1;
+    if (profile_index(machine_profile_name, &machine_profile_index) != 0 ||
+        profile_index(selected_profile_name, &selected_profile) != 0) {
+        return fail("explicit lynx1 or lynx2 profile input required");
+    }
+    machine_profile = machine_profile_index == 0u ? LYNX_PROFILE_LYNX1 : LYNX_PROFILE_LYNX2;
+    if (strcmp(case_name, "zero") != 0 && strcmp(case_name, "seeded") != 0) {
+        return fail("CPU RAM case must be zero or seeded");
+    }
+    if (clear_old_outputs(directory, case_name) != 0) return 1;
     if (parse_oracle(oracle_path, &oracle) != 0 || read_build_identity(directory, &oracle) != 0) goto done;
-    if (checked_join(bll_path, sizeof bll_path, directory, "cpu.bll") != 0 ||
+    if (snprintf(record_name, sizeof record_name, "run-record-%s.txt", case_name) >= (int)sizeof record_name ||
+        snprintf(raw_name, sizeof raw_name, "raw-results-%s.tsv", case_name) >= (int)sizeof raw_name ||
+        snprintf(comparison_name, sizeof comparison_name, "comparison-%s.tsv", case_name) >= (int)sizeof comparison_name ||
+        checked_join(bll_path, sizeof bll_path, directory, "cpu.bll") != 0 ||
         checked_join(labels_path, sizeof labels_path, directory, "cpu.lbl") != 0 ||
-        checked_join(record_path, sizeof record_path, directory, "run-record.txt") != 0 ||
-        checked_join(raw_path, sizeof raw_path, directory, "raw-results.tsv") != 0 ||
-        checked_join(comparison_path, sizeof comparison_path, directory, "comparison.tsv") != 0) {
+        checked_join(record_path, sizeof record_path, directory, record_name) != 0 ||
+        checked_join(raw_path, sizeof raw_path, directory, raw_name) != 0 ||
+        checked_join(comparison_path, sizeof comparison_path, directory, comparison_name) != 0) {
         (void)fail("suite input path too long");
         goto done;
     }
@@ -777,7 +889,7 @@ static int run_cpu(const char *profile_name, const char *directory, const char *
     if (file_sha256(bll_path, bll_sha) != 0 ||
         file_sha256(labels_path, labels_sha) != 0 ||
         file_sha256(oracle_path, oracle_sha) != 0) goto done;
-    if (machine_create(&instance, bll, bll_length, profile) != 0 ||
+    if (machine_create(&instance, bll, bll_length, machine_profile) != 0 ||
         lynx_get_identity(instance.machine, &identity) != LYNX_OK ||
         identity.has_content != 1u || identity.content_format != LYNX_CONTENT_BS93 ||
         identity.startup_tier != LYNX_STARTUP_A ||
@@ -798,6 +910,7 @@ static int run_cpu(const char *profile_name, const char *directory, const char *
         (void)fail("public BLL content identity mismatch");
         goto done;
     }
+    if (prepare_cpu_ram(&instance, &symbols, case_name) != 0) goto done;
     if (snprintf(path, sizeof path, "%s/build-record.txt", directory) >= (int)sizeof path ||
         record_value(path, "cpu_object_sha256", build_sha, sizeof build_sha) != 0 ||
         strcmp(build_sha, identity_sha) != 0) {
@@ -876,31 +989,39 @@ static int run_cpu(const char *profile_name, const char *directory, const char *
         goto done;
     }
     if (guest_ticks < CPU_MIN_TICKS || guest_ticks > CPU_MAX_TICKS ||
-        total_consumed == 0u || done != 0xA5u || progress != 8u ||
-        probe != expected_probe || model != expected_model) {
-        (void)fail("completion, progress, source-work bound, or guest model evidence mismatch");
+        total_consumed == 0u || done != 0xA5u || progress != 8u) {
+        (void)fail("completion, progress, or source-work bound mismatch");
         goto done;
     }
     if (lynx_read_memory(instance.machine, symbols.value[2], results, CPU_MEANINGFUL) != LYNX_OK) {
         (void)fail("validated CPU result buffer could not be read");
         goto done;
     }
-    for (i = 0u; i < 4u; i++) {
-        if (results[12u + i] != oracle.tuple[profile == LYNX_PROFILE_LYNX1 ? 0u : 1u][i]) {
-            (void)fail("upstream CPU model tuple differs from selected profile input");
-            if (write_raw(raw_path, "cpu", profile_name, results, CPU_MEANINGFUL) != 0) goto done;
-            goto done;
-        }
-    }
-    if (write_raw(raw_path, "cpu", profile_name, results, CPU_MEANINGFUL) != 0 ||
-        write_run_record(record_path, profile_name, identity_sha, labels_sha,
-                         oracle_sha, guest_ticks, probe, model, progress) != 0) goto done;
+    probe_observed_model = probe_model(probe, model);
+    result_tuple_model = tuple_model(&oracle, results);
+    if (probe_observed_model == result_tuple_model) guest_model = probe_observed_model;
+    if (write_raw(raw_path, "cpu", machine_profile_name, selected_profile_name,
+                  case_name, results, CPU_MEANINGFUL) != 0 ||
+        write_run_record(record_path, machine_profile_name, selected_profile_name,
+                         case_name, identity_sha, labels_sha, oracle_sha, guest_ticks,
+                         probe, model, progress, guest_model, result_tuple_model) != 0) goto done;
     result = write_comparison(comparison_path, &oracle, results, CPU_MEANINGFUL);
-    if (result == 0) {
-        printf("suite raw source comparison: match; suite=cpu profile_input=%s ticks=%" PRIu64
-               " results=%u guest_model_marker=%02x guest_probe_byte=%02x\n",
-               profile_name, guest_ticks, CPU_MEANINGFUL, model, probe);
-        printf("hardware_accuracy=unverified profile_qualification=unresolved\n");
+    if (result != 0) goto done;
+    printf("suite raw source comparison: match; suite=cpu machine_profile=%s profile_input=%s ram_seed=%s"
+           " ticks=%" PRIu64 " results=%u detected_model=%s source_tuple_model=%s"
+           " guest_model_marker=%02x guest_probe_byte=%02x\n",
+           machine_profile_name, selected_profile_name, case_name, guest_ticks, CPU_MEANINGFUL,
+           guest_model < 0 ? "unknown" : profile_label((unsigned)guest_model),
+           result_tuple_model < 0 ? "unknown" : profile_label((unsigned)result_tuple_model), model, probe);
+    printf("hardware_accuracy=unverified profile_qualification=unresolved\n");
+    if (probe_observed_model < 0) {
+        result = fail("guest model probe/marker evidence is invalid");
+    } else if (result_tuple_model < 0) {
+        result = fail("CPU result tuple does not match exactly one source model tuple");
+    } else if (probe_observed_model != result_tuple_model) {
+        result = fail("guest model probe and source-defined tuple disagree");
+    } else if (guest_model != (int)selected_profile) {
+        result = fail("detected model does not match selected profile input");
     }
 done:
     machine_destroy(&instance);
@@ -947,11 +1068,17 @@ static int validate_time_mode(const char *text)
 int main(int argc, char **argv)
 {
     if (argc == 6 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu") == 0) {
-        return run_cpu(argv[3], argv[4], argv[5]);
+        return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero");
+    }
+    if (argc == 7 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu") == 0) {
+        return run_cpu(argv[3], argv[3], argv[4], argv[5], argv[6]);
+    }
+    if (argc == 8 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu-selected") == 0) {
+        return run_cpu(argv[3], argv[4], argv[5], argv[6], argv[7]);
     }
     if (argc == 3 && strcmp(argv[1], "validate-oracle") == 0) return validate_oracle_mode(argv[2]);
     if (argc == 3 && strcmp(argv[1], "validate-symbols") == 0) return validate_symbols_mode(argv[2]);
     if (argc == 3 && strcmp(argv[1], "validate-time") == 0) return validate_time_mode(argv[2]);
-    fprintf(stderr, "usage: lynx-test-suites run cpu PROFILE BUILDDIR ORACLE\n");
+    fprintf(stderr, "usage: lynx-test-suites run cpu PROFILE BUILDDIR ORACLE [zero|seeded]\n");
     return 2;
 }

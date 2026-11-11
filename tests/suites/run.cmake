@@ -12,6 +12,9 @@ endif()
 if(NOT MODE MATCHES "^(cpu|tracer|oracle_controls|symbol_controls)$")
   message(FATAL_ERROR "suite_driver: unknown mode")
 endif()
+if(MODE STREQUAL "cpu" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
+  message(FATAL_ERROR "suite_driver: explicit CPU PROFILE is required")
+endif()
 
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/tmp" "${WORK}/build")
@@ -80,26 +83,56 @@ if(FAILURE STREQUAL "")
 endif()
 
 if(FAILURE STREQUAL "")
-  execute_process(
-    COMMAND "${TEST_BINARY}" run cpu lynx1 "${SUITE_BUILD}" "${ORACLE}"
-    TIMEOUT 45 RESULT_VARIABLE run_rc OUTPUT_VARIABLE run_out ERROR_VARIABLE run_err)
-  if(NOT run_rc STREQUAL "0" OR
-     NOT run_out MATCHES "suite raw source comparison: match; suite=cpu profile_input=lynx1 ticks=[0-9]+ results=18" OR
-     NOT run_out MATCHES "hardware_accuracy=unverified profile_qualification=unresolved")
-    set(FAILURE "bounded CPU guest did not produce source comparison evidence: ${run_rc} ${run_out} ${run_err}")
-  endif()
-endif()
-
-if(FAILURE STREQUAL "")
-  file(READ "${SUITE_BUILD}/run-record.txt" run_record)
-  file(READ "${SUITE_BUILD}/raw-results.tsv" raw_results)
-  file(READ "${SUITE_BUILD}/comparison.tsv" comparison)
-  if(NOT run_record MATCHES "labels_sha256=[0-9a-f][0-9a-f]+" OR
-     NOT run_record MATCHES "oracle_sha256=[0-9a-f][0-9a-f]+" OR
-     NOT run_record MATCHES "guest_progress=8" OR
-     NOT raw_results MATCHES "result\t17\t00" OR
-     NOT comparison MATCHES "comparison\tmatch")
-    set(FAILURE "raw, comparison, or source-bound run record is incomplete")
+  if(MODE STREQUAL "cpu")
+    set(all_run_out "")
+    foreach(ram_case zero seeded)
+      execute_process(
+        COMMAND "${TEST_BINARY}" run cpu "${PROFILE}" "${SUITE_BUILD}" "${ORACLE}" "${ram_case}"
+        TIMEOUT 45 RESULT_VARIABLE run_rc OUTPUT_VARIABLE run_out ERROR_VARIABLE run_err)
+      if(NOT run_rc STREQUAL "0" OR
+         NOT run_out MATCHES "suite raw source comparison: match; suite=cpu machine_profile=${PROFILE} profile_input=${PROFILE} ram_seed=${ram_case} ticks=[0-9]+ results=18 detected_model=${PROFILE} source_tuple_model=${PROFILE}" OR
+         NOT run_out MATCHES "hardware_accuracy=unverified profile_qualification=unresolved")
+        set(FAILURE "bounded CPU guest did not produce ${PROFILE}/${ram_case} source comparison evidence: ${run_rc} ${run_out} ${run_err}")
+        break()
+      endif()
+      string(APPEND all_run_out "${run_out}\n")
+      file(READ "${SUITE_BUILD}/run-record-${ram_case}.txt" run_record)
+      file(READ "${SUITE_BUILD}/raw-results-${ram_case}.tsv" raw_results)
+      file(READ "${SUITE_BUILD}/comparison-${ram_case}.tsv" comparison)
+      if(NOT run_record MATCHES "labels_sha256=[0-9a-f][0-9a-f]+" OR
+         NOT run_record MATCHES "oracle_sha256=[0-9a-f][0-9a-f]+" OR
+         NOT run_record MATCHES "detected_model=${PROFILE}" OR
+         NOT run_record MATCHES "source_tuple_model=${PROFILE}" OR
+         NOT run_record MATCHES "meaningful_count=18" OR
+         NOT run_record MATCHES "reserved_count=0" OR
+         NOT run_record MATCHES "tick_min=256" OR
+         NOT run_record MATCHES "tick_max=50000000" OR
+         NOT run_record MATCHES "ticks_observed=[0-9]+" OR
+         NOT run_record MATCHES "completion_margin_ticks=[0-9]+" OR
+         NOT run_record MATCHES "maximum_headroom_ticks=[0-9]+" OR
+         NOT run_record MATCHES "guest_progress=8" OR
+         NOT raw_results MATCHES "result_count\t18" OR
+         NOT raw_results MATCHES "result\t17\t00" OR
+         NOT comparison MATCHES "comparison\tmatch")
+        set(FAILURE "raw, comparison, model or source-bound ${ram_case} record is incomplete")
+        break()
+      endif()
+      file(STRINGS "${SUITE_BUILD}/raw-results-${ram_case}.tsv" raw_lines REGEX "^result\t[0-9]+\t[0-9a-f][0-9a-f]$")
+      list(LENGTH raw_lines raw_count)
+      if(NOT raw_count EQUAL 18)
+        set(FAILURE "CPU ${PROFILE}/${ram_case} raw observation must contain exactly 18 values; got ${raw_count}")
+        break()
+      endif()
+      if(ram_case STREQUAL "zero")
+        set(zero_results "${raw_lines}")
+        set(zero_comparison "${comparison}")
+      else()
+        if(NOT raw_lines STREQUAL zero_results OR NOT comparison STREQUAL zero_comparison)
+          set(FAILURE "fresh zero and seeded CPU instances produced different raw or source comparison results")
+          break()
+        endif()
+      endif()
+    endforeach()
   endif()
 endif()
 
@@ -268,4 +301,4 @@ file(REMOVE_RECURSE "${WORK}")
 if(NOT FAILURE STREQUAL "")
   message(FATAL_ERROR "suite_driver: ${FAILURE}")
 endif()
-message(STATUS "${run_out}")
+message(STATUS "${all_run_out}")
