@@ -2,14 +2,14 @@
 phase: "04"
 slug: timers-interrupts-and-first-public-suites
 status: draft
-threats_open: 5
+threats_open: 1
 asvs_level: 1
 created: "2026-11-11"
 ---
 
 # Phase 4 — Security
 
-Whole-phase authored-register audit, baseline `7b848d0` through reviewed
+Initial whole-phase authored-register audit, baseline `7b848d0` through reviewed
 `db7149e`, including Plan 12 Task 1. Typed security auditor returned
 `OPEN_THREATS`: 29 closed and six open of 35 unique authored threats. Five
 open high threats block the configured high threshold; the medium inventory
@@ -33,7 +33,7 @@ when fixes land.
 | Threat ID | Category | Component | Severity | Disposition | Mitigation / audit evidence | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | T-04-01 | Tampering | Source build | high | mitigate | `scripts/build-suites.sh`: pin/tool checks and unchanged upstream inputs before/after assembly; object gap tracked separately below | closed |
-| T-04-02 | Elevation of privilege | Output paths | high | mitigate | Predictable `OUT.$$` oracle temporary follows planted symlink; harness cleanup lacks canonical ancestor containment; CMake cleanup uses lexical prefix | open |
+| T-04-02 | Elevation of privilege | Output paths | high | mitigate | Canonical strict scratch containment and path-bound owner markers precede C writes/cleanup; unique CMake run dirs avoid recursive deletion; exclusive temporary files/rename publish regular outputs. Root adds unlink-only cleanup, invalid-profile preflight and seeded old-remove proof; outside-target controls pass | closed |
 | T-04-03 | Information disclosure | Rights/provenance | medium | mitigate | Complete upstream NOTICE, copied generated notices, provenance publication boundaries, hygiene checks; refresh exposure list for newly read main.c files | closed |
 | T-04-04 | Denial of service | Scheduler | high | mitigate | `core/machine.c` subtraction-safe bounds, finite candidates, idle jump; `core/timer.c` bounded source scan and checked addition | closed |
 | T-04-05 | Tampering | Guest routes | high | mitigate | Complete route preflight before unsupported access; pure mapped inspection range preflight | closed |
@@ -50,16 +50,16 @@ when fixes land.
 | T-04-16 | Tampering | Snapshot restore | high | mitigate | Full identity/hash/CPU/timer/time validation before apply; rehashed hostile inputs preserve instance and watch | closed |
 | T-04-17 | Denial of service | Snapshot bounds | high | mitigate | Reachable residual limits, safe time headroom, legal links/status/cursor and hostile controls | closed |
 | T-04-18 | Information disclosure | Snapshot observers | medium | mitigate | Explicit guest-only serialization; observer clear only after successful apply; refusal preservation controls | closed |
-| T-04-19 | Tampering | Text parser | high | mitigate | `read_text` omits NUL used by later strstr; exact-limit missing-token input reproduced ASan overread. Metadata revision[41] is incorrectly copied with capacity65 | open |
-| T-04-20 | Elevation of privilege | Symbol extents | high | mitigate | Completion/progress/model/probe versus code overlap is unchecked; actual copied labels with done=entry accepted by validate-symbols | open |
+| T-04-19 | Tampering | Text parser | high | mitigate | Bounded allocation reserves limit+1 and appends NUL; embedded NUL/oversize still refuse. Metadata uses actual destination capacities and validates exact hex lengths before copying. Sanitized exact/zero/over-limit and long-revision controls pass | closed |
+| T-04-20 | Elevation of privilege | Symbol extents | high | mitigate | Every control byte excludes code/results/other controls; linked payload, BSS, zero-page and stack limits are explicit. All code/result/pairwise aliases reject in symbol_controls | closed |
 | T-04-21 | Spoofing | Completion | high | mitigate | Guest post-return sentinel and probes; shared completion validation and bounded actual watches | closed |
 | T-04-22 | Spoofing | CPU model | high | mitigate | Executed probe, independent source tuple, selection checks, actual opposite-profile controls | closed |
 | T-04-23 | Tampering | CPU results | high | mitigate | Exact 18-row oracle, complete count/progress/time/sentinel checks and actual completion faults | closed |
 | T-04-24 | Spoofing | Timer model | high | mitigate | Independent executed RMB0 probe and actual opposite-selection fault | closed |
 | T-04-25 | Tampering | Timer results | high | mitigate | 16 meaningful /18 reserved, exact alternatives and adjacent rejection controls | closed |
 | T-04-26 | Spoofing | No execution | high | mitigate | Hold before first instruction, CPU/RAM invariance, ordinary validator rejects absent execution; real sentinel/time faults | closed |
-| T-04-27 | Tampering | Evidence identity | high | mitigate | Captured CPU validator omits build identity/object binding; edited oracle revision plus refreshed record hash accepted. Strict/no-run timers omit build object hash comparison | open |
-| T-04-28 | Repudiation | Subcase inventory | medium | mitigate | Timer batch guard checks only nonzero count. Enforce unique exact names and missing/duplicate self-controls; current 49 result and55 pending cases are present | open — below high threshold |
+| T-04-27 | Tampering | Evidence identity | high | mitigate | All run/captured/proof paths check pinned source revision/archive and actual source/manifest hashes; CPU and timer BLL/labels match build-record identities before cleanup. Self-consistent source edits and artifact edits reject; seeded outputs preserved | closed |
+| T-04-28 | Repudiation | Subcase inventory | medium | mitigate | Exact ordered unique manifests enforce 49 result and 61 pending case names; missing/duplicate self-controls pass. Six added identity/output cases explain 55→61; historical 48→49 is Plan 10 copied-profile control | closed |
 | T-04-29 | Tampering | Mutant isolation | high | mitigate | Private copied sources, unique anchors/directories, separate builds, production objects unchanged | closed |
 | T-04-30 | Spoofing | Mutant detection | high | mitigate | Successful configure/build, exact intended assertion/status, timeout/sanitizer excluded, clean API brackets | closed |
 | T-04-31 | Denial of service | Mutant cost | medium | mitigate | Targeted source list, finite build/runtime limits, CTest timeout and measured costs | closed |
@@ -93,8 +93,8 @@ negative controls and retain the unchanged positive observations.
 
 - [x] All authored threats have dispositions.
 - [x] No risk acceptance inferred.
-- [ ] Four implementation boundaries repaired and re-audited.
-- [ ] Exact subcase inventory hardened.
+- [x] Four implementation boundaries repaired and independently rechecked locally.
+- [x] Exact subcase inventory hardened and negative controls passed.
 - [ ] Final qualification completed.
 - [ ] `threats_open: 0` confirmed and status verified.
 
@@ -102,4 +102,39 @@ O1/profile qualification, rights/licence/release and physical/firmware gates
 remain unresolved. Global EVD-02 remains open for Phase5 and recurring EVD-05
 for Phases4–6. No hardware or suite-pass claim is authorized.
 
-**Approval:** pending implementation fixes and final qualification.
+**Approval:** implementation controls repaired; final qualification remains pending.
+
+## Independent Delta Recheck
+
+Root reviewed `272dd2b..27145c8`, including the source changes rather than only
+fix-report claims. The delegated follow-up audit failed at automated content
+screening before a review ran; root performed this read-only delta review
+locally. This is not a second successful typed-auditor verdict.
+
+The unchanged 29 closed threats retain their initial evidence; core timer,
+request and snapshot implementations are unchanged by these fixes. All five
+implementation/inventory findings above are now closed. T-04-32 alone remains
+open: Plan 12 Task 2 must still qualify the final reviewed source on all three
+required environments. There is no risk acceptance and no final SECURED claim.
+
+For the code changes committed as `27145c8`, the sanitized suite target built successfully. Root's six-test
+selection passed oracle/symbol controls, both timer profile observations,
+strict-comparison controls and 61-case pending controls (60.72s wall). The two
+CPU/tracer acceptance tests passed (1.40s wall). An isolated same-source
+sanitized control replaced only unlink with the prior remove operation:
+fixed code refused the directory output and preserved it; prior behavior
+returned success and removed that directory. No production source was mutated
+for the control. The oracle exact-limit/missing-token controls exercise the
+same ASan-enabled text reader that previously overread.
+
+The fixer separately recorded49-case result controls and CPU identity controls
+passing; no test result was inferred from compilation alone. Existing source
+and object checks precede cleanup, while proof/companion writes share the
+owned atomic writer. Marker/path validation rejects canonical-ancestor
+escapes; unlinking an owned symlink removes the entry without touching its
+target. Active replacement by a party with write access to the same owned
+scratch directory is not represented as an authenticated multiuser boundary.
+
+| Audit date | Threats total | Closed | Open | Run by |
+| --- | --- | --- | --- | --- |
+| 2026-11-11 |35|34|1 high, planned final qualification|Root independent delta review, source `27145c8`|

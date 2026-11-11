@@ -56,3 +56,11 @@ The documentation accurately distinguishes complete CPU observations, timer obse
 - `.planning/phases/04-timers-interrupts-and-first-public-suites/04-12-PLAN.md`
 
 No build, test, CI job, GUI, screenshot, or publication was run for this applicability review.
+
+## Post-review disposition
+
+The three applicable wording findings are fixed in the reviewed source:
+expanded CLI help, an explicit single PROFILE argument, and the README scope
+lead-in. Root checked the actual text; the CPU help control passes. Original
+scores/findings above retain the initial audit history. Visual applicability
+remains N/A; no human visual check is required.
