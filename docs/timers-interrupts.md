@@ -134,6 +134,29 @@ register blocks, all seven dividers, count 0/255, reload and one-shot behavior,
 shared-phase-preserving writes, timer-4's UART exception, reset/load, two
 instances, and bounded CPU-held progress.
 
+`api.irq_pending` runs an original BLL guest under both explicit CPU profiles.
+It installs an IRQ vector in RAM through guest MAPCTL control, forces and
+reads simultaneous pending bits through both `$FD80`/`$FD81` aliases, checks a
+zero acknowledgement and selected-bit clearing, then receives a timer-0 IRQ
+after the guest disables that timer's IRQ enable. A second guest proves a
+count-enabled timer with IRQ disabled reaches DONE without creating a pending
+bit. The handler writes a watched marker before acknowledgement; the test
+checks its live stack frame, saved return PC/status, pending value, selected
+acknowledgement, and RTI return. These checks establish the implemented
+software latch path under both profiles, not a Lynx I/II compatibility pass.
+
+`api.irq_poll` gives the timer and CPU independent boundary observations under
+both profiles. With the fixed-zero phase policy and flat5 placeholder costs,
+timer 0 expires at tick 80: the preceding poll at 75 sees no pending bit; the
+event then occurs while the next NOP is in flight, and its poll at 85 accepts
+the IRQ. The watched handler store is sampled at tick 150 and returns at 151.
+A separate guest clears the timer bit with an `INTRST` write granted at tick
+80; the timer event is applied first, the write clears it, and that same CPU
+cycle's poll sees zero and does not enter IRQ. The assertions encode the
+project's `timer-cpu-poll-order-1` policy. The exact tick values depend on the
+named software phase and placeholder bus costs; they are not hardware timing
+measurements.
+
 The pinned `timers2` suite is supporting source evidence for phase and enable
 ordering only. Independent project-authored phase/enable cases cover that
 failure class, so `timers2` is explicitly outside this phase's required suite

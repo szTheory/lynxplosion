@@ -38,6 +38,8 @@ lynx_add_test(NAME api.identity COMMAND lynx-test-api identity LABELS api TIMEOU
 lynx_add_test(NAME api.init_refusal COMMAND lynx-test-api init_refusal LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.inspect_pure COMMAND lynx-test-api inspect_pure LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.instances_independent COMMAND lynx-test-api instances_independent LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.irq_pending COMMAND lynx-test-api irq_pending LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.irq_poll COMMAND lynx-test-api irq_poll LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.load_refusal_unchanged COMMAND lynx-test-api load_refusal_unchanged LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.profile_select COMMAND lynx-test-api profile_select LABELS api TIMEOUT 30)
 lynx_add_test(NAME cpu.profile_divergence COMMAND lynx-test-api profile_divergence LABELS cpu TIMEOUT 30)

@@ -110,6 +110,101 @@ static const uint8_t timer_tracer_program[] = {
     0x4Cu, 0x0Du, 0x02u                  /* JMP loop */
 };
 
+/* Original guest for the mapped IRQ path. It maps the RAM vector window,
+   installs an IRQ vector and handler, checks FD80/FD81 force/ack semantics,
+   then waits for a timer-0 IRQ while I is set. It disables that source after
+   the pending bit is latched, clears I, and returns through RTI. The handler
+   stores a marker before acknowledging so the host can inspect the live stack. */
+static const uint8_t irq_guest_program[0x100u + 23u] = {
+    0xA9u, 0x08u,                         /* LDA #$08 */
+    0x8Du, 0xF9u, 0xFFu,                 /* STA MAPCTL: RAM vectors */
+    0xA9u, 0x00u,                         /* LDA #$00 */
+    0x8Du, 0xFEu, 0xFFu,                 /* STA IRQ vector low */
+    0xA9u, 0x03u,                         /* LDA #$03 */
+    0x8Du, 0xFFu, 0xFFu,                 /* STA IRQ vector high -> $0300 */
+    0x78u,                               /* SEI: pending does not enter yet */
+    0xA9u, 0x03u,                         /* LDA #$03 */
+    0x8Du, 0x81u, 0xFDu,                 /* STA INTSET: force T0 and T1 */
+    0xADu, 0x80u, 0xFDu,                 /* LDA INTRST: same pending view */
+    0x8Du, 0x00u, 0x04u,                 /* STA $0400 */
+    0xADu, 0x81u, 0xFDu,                 /* LDA INTSET: pure alias read */
+    0x8Du, 0x01u, 0x04u,                 /* STA $0401 */
+    0xA9u, 0x00u,                         /* LDA #0: zero acknowledgement */
+    0x8Du, 0x80u, 0xFDu,                 /* STA INTRST */
+    0xADu, 0x81u, 0xFDu,                 /* LDA INTSET */
+    0x8Du, 0x02u, 0x04u,                 /* STA $0402 */
+    0xA9u, 0x01u,                         /* LDA #1 */
+    0x8Du, 0x80u, 0xFDu,                 /* STA INTRST: clear only T0 */
+    0xADu, 0x81u, 0xFDu,                 /* LDA INTSET */
+    0x8Du, 0x03u, 0x04u,                 /* STA $0403: T1 remains */
+    0xA9u, 0x02u,                         /* LDA #2 */
+    0x8Du, 0x80u, 0xFDu,                 /* STA INTRST: clear T1 */
+    0xA9u, 0x00u,                         /* LDA #0 */
+    0x8Du, 0x00u, 0xFDu,                 /* STA timer 0 backup */
+    0x8Du, 0x02u, 0xFDu,                 /* STA timer 0 count */
+    0xA9u, 0x88u,                         /* LDA #IRQ|COUNT */
+    0x8Du, 0x01u, 0xFDu,                 /* STA timer 0 CTLA */
+    0xADu, 0x81u, 0xFDu,                 /* wait: LDA pending */
+    0x29u, 0x01u,                         /* AND #T0 */
+    0xF0u, 0xF9u,                         /* BEQ wait */
+    0xA9u, 0x08u,                         /* LDA #COUNT: disable IRQ source */
+    0x8Du, 0x01u, 0xFDu,                 /* STA timer 0 CTLA */
+    0xADu, 0x81u, 0xFDu,                 /* pending must remain after disable */
+    0x8Du, 0x04u, 0x04u,                 /* STA $0404: host stop before CLI */
+    0x58u,                               /* CLI */
+    0xEAu,                               /* NOP: existing profile POLL takes IRQ */
+    0x4Cu, 0x5Du, 0x02u,                 /* JMP $025D after RTI */
+    [0x100u] = 0xA9u, 0xA5u,             /* IRQ handler: LDA #$A5 */
+    0x8Du, 0x05u, 0x04u,                 /* STA $0405: live-stack watch */
+    0xADu, 0x81u, 0xFDu,                 /* LDA pending */
+    0x8Du, 0x06u, 0x04u,                 /* STA $0406 */
+    0xA9u, 0x01u,                         /* LDA #T0 */
+    0x8Du, 0x80u, 0xFDu,                 /* STA INTRST */
+    0xADu, 0x80u, 0xFDu,                 /* LDA pending after acknowledgement */
+    0x8Du, 0x07u, 0x04u,                 /* STA $0407 */
+    0x40u                                /* RTI */
+};
+
+/* A masked source still counts and sets DONE, but cannot create a new pending
+   interrupt. The guest waits on mapped CTLB, records FD81, and stops on that
+   nonempty result write. */
+static const uint8_t irq_disabled_source_program[] = {
+    0x78u,                               /* SEI */
+    0xA9u, 0x00u,                         /* LDA #0 */
+    0x8Du, 0x02u, 0xFDu,                 /* STA timer 0 count */
+    0xA9u, 0x08u,                         /* LDA #COUNT, IRQ disabled */
+    0x8Du, 0x01u, 0xFDu,                 /* STA timer 0 CTLA */
+    0xADu, 0x03u, 0xFDu,                 /* wait: LDA CTLB */
+    0x29u, 0x08u,                         /* AND #DONE */
+    0xF0u, 0xF9u,                         /* BEQ wait */
+    0xADu, 0x81u, 0xFDu,                 /* LDA pending */
+    0x8Du, 0x00u, 0x04u,                 /* STA $0400 */
+    0x4Cu, 0x0Bu, 0x02u                  /* JMP wait */
+};
+
+/* The seventh NOP's POLL is at tick 75. Timer 0 expires at 80 while the
+   eighth NOP has its opcode cycle in flight; its POLL at 85 must see IRQ. */
+static const uint8_t irq_poll_boundary_program[0x100u + 5u] = {
+    0x58u,                               /* CLI */
+    0xEAu, 0xEAu, 0xEAu, 0xEAu,
+    0xEAu, 0xEAu, 0xEAu, 0xEAu,         /* eight NOPs */
+    0x4Cu, 0x09u, 0x02u,                 /* JMP $0209 if no IRQ */
+    [0x100u] = 0xA9u, 0xA5u,             /* handler at $0300 */
+    0x8Du, 0x00u, 0x04u                  /* STA $0400 */
+};
+
+/* Thirteen cycles precede STA; its final bus cycle/POLL is at tick 80, when
+   the timer event is also due. INTRST must clear the newly latched bit before
+   that CPU cycle samples the line. */
+static const uint8_t irq_poll_ack_program[] = {
+    0x58u,                               /* CLI */
+    0xE6u, 0x10u,                         /* INC $10: five cycles */
+    0xADu, 0x00u, 0x04u,                 /* LDA $0400: four cycles */
+    0xA9u, 0x01u,                         /* LDA #T0 */
+    0x8Du, 0x80u, 0xFDu,                 /* STA INTRST at tick 80 */
+    0x4Cu, 0x0Bu, 0x02u                  /* JMP $020B if no IRQ */
+};
+
 /* Project-authored guest reproducing pinned lynx-tests/timers Test 1's
    CTLB borrow input: count $80, write DONE+borrow-in ($0A), then record the
    mapped count and CTLB value. */
@@ -3811,6 +3906,258 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void run_irq_guest_profile(uint32_t profile)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.profile = profile;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, irq_guest_program, sizeof irq_guest_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0404u, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 5000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop != LYNX_STOP_WATCH) {
+        goto done;
+    }
+    CHECK(consumed != 0u && consumed < 5000u);
+    CHECK_EQ_U64(ticks_of(m), consumed);
+    CHECK_EQ_U64(m->mapctl, 0x08u);
+    CHECK_EQ_U64(m->ram[0xFFFEu], 0x00u);
+    CHECK_EQ_U64(m->ram[0xFFFFu], 0x03u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0x03u);
+    CHECK_EQ_U64(m->ram[0x0401u], 0x03u);
+    CHECK_EQ_U64(m->ram[0x0402u], 0x03u);
+    CHECK_EQ_U64(m->ram[0x0403u], 0x02u);
+    CHECK_EQ_U64(m->ram[0x0404u], 0x01u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK_EQ_U64(m->timer_bank.timers[0].control_a, 0x08u);
+    CHECK_EQ_U64(m->cpu.s, 0xFDu);
+    CHECK_EQ_U64(m->cpu.p & 0x04u, 0x04u); /* SEI still masks acceptance. */
+    CHECK_EQ_U64(m->cpu.pc, 0x025Bu); /* Next instruction is CLI. */
+    CHECK_EQ_U64(m->ram[0x01FBu], 0u);
+    uint8_t pending[2] = {0xA5u, 0xA5u};
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD80u, pending, sizeof pending), LYNX_OK);
+    CHECK_EQ_U64(pending[0], 0x01u);
+    CHECK_EQ_U64(pending[1], 0x01u);
+
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0405u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop != LYNX_STOP_WATCH) {
+        goto done;
+    }
+    CHECK_EQ_U64(m->host_observation.watch_event.hit_tick + 1u, ticks_of(m));
+    CHECK_EQ_U64(m->host_observation.watch_event.address, 0x0405u);
+    CHECK_EQ_U64(m->ram[0x0405u], 0xA5u);
+    CHECK_EQ_U64(m->cpu.pc, 0x0305u);
+    CHECK_EQ_U64(m->cpu.s, 0xFAu);
+    CHECK_EQ_U64(m->cpu.p & 0x04u, 0x04u); /* IRQ entry sets I after saving P. */
+    CHECK_EQ_U64(m->ram[0x01FDu], 0x02u);
+    CHECK_EQ_U64(m->ram[0x01FCu], 0x5Du); /* RTI returns to the guest JMP. */
+    CHECK_EQ_U64(m->ram[0x01FBu] & 0x04u, 0u); /* Saved P had I clear after CLI. */
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0407u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop != LYNX_STOP_WATCH) {
+        goto done;
+    }
+    CHECK_EQ_U64(m->ram[0x0406u], 0x01u);
+    CHECK_EQ_U64(m->ram[0x0407u], 0x00u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u);
+    CHECK_EQ_U64(m->timer_bank.timers[0].control_a, 0x08u);
+    CHECK_EQ_U64(lynx_advance(m, 30u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 30u);
+    CHECK_EQ_U64(m->cpu.s, 0xFDu);
+    CHECK_EQ_U64(m->cpu.pc, 0x025Du);
+    if (check_failures != failures_before) {
+        fprintf(stderr, "profile %s IRQ guest evidence failed\n", lynx_profile_name(profile));
+    }
+
+done:
+    lynx_machine_deinit(m);
+}
+
+static void run_irq_disabled_source_profile(uint32_t profile)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.profile = profile;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, irq_disabled_source_program,
+                             sizeof irq_disabled_source_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 3000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop == LYNX_STOP_WATCH) {
+        CHECK(consumed != 0u && consumed < 3000u);
+        CHECK_EQ_U64(m->ram[0x0400u], 0u);
+        CHECK_EQ_U64(m->timer_bank.timers[0].control_a, 0x08u);
+        CHECK_EQ_U64(m->timer_bank.timers[0].control_b & 0x08u, 0x08u);
+        CHECK_EQ_U64(m->timer_bank.pending, 0u);
+        CHECK_EQ_U64(m->cpu.s, 0xFDu);
+        CHECK_EQ_U64(m->cpu.p & 0x04u, 0x04u);
+        uint8_t pending[2] = {0xA5u, 0xA5u};
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD80u, pending, sizeof pending), LYNX_OK);
+        CHECK_EQ_U64(pending[0], 0u);
+        CHECK_EQ_U64(pending[1], 0u);
+    }
+    lynx_machine_deinit(m);
+}
+
+static void case_irq_pending(void)
+{
+    const int failures_before = check_failures;
+    run_irq_guest_profile(LYNX_PROFILE_LYNX1);
+    run_irq_guest_profile(LYNX_PROFILE_LYNX2);
+    run_irq_disabled_source_profile(LYNX_PROFILE_LYNX1);
+    run_irq_disabled_source_profile(LYNX_PROFILE_LYNX2);
+    printf("TAP version 13\n1..1\n%s 1 - api.irq_pending\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void irq_timer_event_at_eighty(lynx_machine *m)
+{
+    m->timer_bank.timers[0].count = 4u;
+    m->timer_bank.timers[0].control_a = 0x88u; /* IRQ + COUNT, source period 16. */
+}
+
+static void run_irq_poll_after_profile(uint32_t profile)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.profile = profile;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, irq_poll_boundary_program,
+                             sizeof irq_poll_boundary_program, 0x0200u), LYNX_OK);
+    m->mapctl = 0x08u;
+    m->ram[0xFFFEu] = 0x00u;
+    m->ram[0xFFFFu] = 0x03u;
+    irq_timer_event_at_eighty(m);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 76u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 76u);
+    CHECK_EQ_U64(ticks_of(m), 76u);
+    CHECK_EQ_U64(m->cpu.pc, 0x0208u);
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0208u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u);
+    CHECK_EQ_U64(m->cpu.s, 0xFDu);
+
+    /* Target 80 is exclusive: neither the timer event nor the due CPU fetch
+       is visible until the next call includes tick 80. */
+    CHECK_EQ_U64(lynx_advance(m, 4u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 4u);
+    CHECK_EQ_U64(ticks_of(m), 80u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u);
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0208u);
+
+    /* At tick 80 the timer event precedes the in-flight NOP opcode fetch. The
+       event is now pending, while the next cycle's POLL is still five ticks
+       away; the seventh NOP's poll at 75 did not take this later event. */
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(ticks_of(m), 81u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK_EQ_U64(m->cpu.pc, 0x0209u);
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0209u);
+    CHECK_EQ_U64(m->cpu_ready_at, 85u);
+    CHECK_EQ_U64(m->cpu.s, 0xFDu);
+
+    CHECK_EQ_U64(lynx_advance(m, 4u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 4u);
+    CHECK_EQ_U64(ticks_of(m), 85u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0209u);
+    CHECK_EQ_U64(m->cpu.s, 0xFDu);
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(ticks_of(m), 86u);
+    CHECK_EQ_U64(m->cpu.req_kind, LYNX__CK_DUMMY_STREAM);
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0209u);
+    CHECK_EQ_U64(m->cpu.s, 0xFDu);
+
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(m->host_observation.watch_event.hit_tick, 150u);
+    CHECK_EQ_U64(m->host_observation.watch_event.return_tick, 151u);
+    CHECK_EQ_U64(ticks_of(m), 151u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0xA5u);
+    CHECK_EQ_U64(m->cpu.pc, 0x0305u);
+    CHECK_EQ_U64(m->cpu.s, 0xFAu);
+    CHECK_EQ_U64(m->ram[0x01FDu], 0x02u);
+    CHECK_EQ_U64(m->ram[0x01FCu], 0x09u);
+    CHECK_EQ_U64(m->ram[0x01FBu] & 0x04u, 0u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    lynx_machine_deinit(m);
+}
+
+static void run_irq_poll_same_tick_ack_profile(uint32_t profile)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.profile = profile;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, irq_poll_ack_program,
+                             sizeof irq_poll_ack_program, 0x0200u), LYNX_OK);
+    irq_timer_event_at_eighty(m);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 81u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 81u);
+    CHECK_EQ_U64(ticks_of(m), 81u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u);
+    CHECK_EQ_U64(m->timer_bank.timers[0].control_b & 0x08u, 0x08u);
+    CHECK_EQ_U64(m->cpu.pc, 0x020Bu);
+    CHECK_EQ_U64(m->cpu.req_kind, LYNX__CK_OPCODE);
+    CHECK_EQ_U64(m->cpu.req_addr, 0x020Bu);
+    CHECK_EQ_U64(m->cpu_ready_at, 85u);
+    CHECK_EQ_U64(m->cpu.s, 0xFDu);
+    CHECK_EQ_U64(lynx_advance(m, 4u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 4u);
+    CHECK_EQ_U64(ticks_of(m), 85u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u);
+    CHECK_EQ_U64(m->cpu.req_kind, LYNX__CK_OPCODE);
+    CHECK_EQ_U64(m->cpu.s, 0xFDu);
+    lynx_machine_deinit(m);
+}
+
+static void case_irq_poll(void)
+{
+    const int failures_before = check_failures;
+    run_irq_poll_after_profile(LYNX_PROFILE_LYNX1);
+    run_irq_poll_after_profile(LYNX_PROFILE_LYNX2);
+    run_irq_poll_same_tick_ack_profile(LYNX_PROFILE_LYNX1);
+    run_irq_poll_same_tick_ack_profile(LYNX_PROFILE_LYNX2);
+    printf("TAP version 13\n1..1\n%s 1 - api.irq_poll\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 enum {
     TIMER_CTLB_CLEAR_BEFORE = 0u,
     TIMER_CTLB_CLEAR_ON = 1u,
@@ -4688,9 +5035,12 @@ static const struct {
     {"cpu_program", case_cpu_program},
     {"identity", case_identity},
     {"init_refusal", case_init_refusal},
+    {"irq_pending", case_irq_pending},
     {"inspect_pure", case_inspect_pure},
     {"instances_independent", case_instances_independent},
     {"map_matrix", case_map_matrix},
+    {"irq_poll", case_irq_poll},
+    {"irq_pending", case_irq_pending},
     {"memory_peek_pure", case_memory_peek_pure},
     {"load_refusal_unchanged", case_load_refusal_unchanged},
     {"profile_divergence", case_profile_divergence},

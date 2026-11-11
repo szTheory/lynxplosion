@@ -18,6 +18,8 @@ api.identity	api
 api.init_refusal	api
 api.inspect_pure	api
 api.instances_independent	api
+api.irq_pending	api
+api.irq_poll	api
 api.load_refusal_unchanged	api
 api.memory_peek_pure	api
 api.memory_peek_pure.self_test	api
