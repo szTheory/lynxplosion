@@ -1,6 +1,6 @@
-# Phase 4 software qualification ledger — Plan 12 Task 1
+# Phase 4 software qualification ledger — Plan 12 Tasks 1–2
 
-**Status:** Task 1 evidence and parent reviews/fixes/independent pending verification are recorded. The first final macOS attempt failed artifact policy after all tests passed; cleanup is repaired and renewed local/Linux/CI qualification is pending. This is not Phase 4 completion.
+**Status:** Task 1 evidence, parent reviews/fixes, and independent pending-gate verification are recorded. The exact-source macOS and Ubuntu local gates passed at `7616f6d`; exact-head CI remains pending root review. This is not Phase 4 completion.
 
 ## Scope and decision boundary
 
@@ -180,14 +180,14 @@ CI against the final reviewed head have not yet run.
 
 ## Open evidence and owner gates
 
-The parent review checkpoint is now complete; see
-[04-PARENT-CHECKPOINT.md](04-PARENT-CHECKPOINT.md). All implementation findings
-are repaired, coverage and UI applicability are reconciled, and the independent
-[D-10 verifier](04-PENDING-GATE-VERIFICATION.md) passed. These later records
-supersede Task 1's historical pending-review status above. Final local,
-self-contained Ubuntu and exact-head CI qualification remain pending Plan 12
-Task 2. The live descriptor identity is recorded by that independent verifier;
-the hashes in the Task 1 tables remain historical observations.
+The parent review checkpoint is complete; see
+[04-PARENT-CHECKPOINT.md](04-PARENT-CHECKPOINT.md). Implementation findings
+are repaired, coverage and UI applicability are reconciled, and the bounded
+[D-10 verifier](04-PENDING-GATE-VERIFICATION.md) passed. Plan 12 Task 2's
+exact-source macOS and self-contained Ubuntu gates subsequently passed; exact-
+head CI remains pending root review. The current live descriptor identity is
+recorded in the final qualification section below. Hashes in the Task 1 tables
+remain historical observations.
 
 - Global EVD-02 remains open. Phase 5 must establish the relevant initial
   state, page-mode and bus/video prerequisites using independent evidence,
@@ -200,10 +200,10 @@ the hashes in the Task 1 tables remain historical observations.
   hardware test, licence decision, or release is implied or authorized here.
 - The plan's descriptor-less prohibitions remain unresolved/unverified until
   their required descriptor or owner evidence exists.
-- Root owns full-phase code/security/coverage review and UI applicability,
-  accepted fixes and targeted retests, plus independent pending-gate
-  acceptance. These are required before Task 2's final local/Linux/CI
-  qualification and any phase-completion record.
+- Root completed the full-phase code/security/coverage review, UI applicability,
+  accepted fixes and targeted retests, and independent pending-gate acceptance.
+  Exact-head CI and any phase-completion record remain pending; passing local
+  gates do not imply hardware/profile qualification.
 
 ## First Task 2 attempt and bounded repair
 
@@ -240,6 +240,39 @@ Recipe/generator hashes in the pending descriptor and corresponding exact
 mutation anchors are rebound to the changed script bytes. The oracle contents,
 source pin, wrapper, source expectations, cost/phase/counter environment and
 linked-code timing proof are unchanged. Syntax checks, local ShellCheck and
-four affected build/oracle/both-profile tests pass in4.91s. Renew full local
-and Linux qualification on this committed source; prior macOS success does not
-substitute for the final exact-source run.
+four affected build/oracle/both-profile tests passed in 4.91s. Full local and
+Linux qualification was still required on this committed source; prior macOS
+success did not substitute for that exact-source run. Results follow.
+
+## Final exact-source qualification (Plan 12 Task 2 local gates)
+
+Both canonical `sh scripts/check.sh` runs passed the reviewed source
+`7616f6d1d12b98eac6cf4d4e979ac1c90f0e01ac`. The current pending descriptor is
+`676b711e3e6cd4258fafb9191473cc531b8daee659dc10ee3a0767429764dacd` after the
+portable recipe/oracle-generator identity rebind. The source oracle, timer
+expectations, execution environment, and D-10 admission/proof behavior did not
+change. The strict timer comparison still returns exit 1 for the exact index-14
+`actual 0c / expected 0d` row in both profiles; the separate bounded observation
+path remains the sole approved exception.
+
+| Environment | Tool identities | Inventory and outcome | Measured `check.sh` steps |
+| --- | --- | --- | --- |
+| macOS Apple Silicon (`Darwin-arm64`) | Apple clang 21.0.0.21000101; CMake 4.4.3; Ninja 1.13.2; ShellCheck 0.11.0; Git 2.41.0 | 163/163 tests; JUnit accounted for all 163 exactly once; 0 declared skips; artifact scan passed at 6,346 files; history hygiene passed | identities 0s; pins 0s; cached cc65 0s (built in 2s); probe/fixtures 0s; ShellCheck 2s; CMake workflow 64s including 63.80s test time; JUnit 0s; artifacts 5s; history 41s; total 112s |
+| Ubuntu 24.04.5 arm64 (`aarch64`) | GCC 13.3.0; CMake 3.28.3; Ninja 1.11.1; ShellCheck 0.9.0; Git 2.43.0; ca-certificates `20260816ubuntu0.24.04.2` | 163/163 tests; JUnit accounted for all 163 exactly once; 0 declared skips; artifact scan passed at 6,322 files; history hygiene passed. The container used a full clone: 267 commits, not shallow, no object alternates. | identities 0s; pins 2s; cc65 build 5s; probe/fixtures 0s; ShellCheck 2s; CMake workflow 54s including 52.90s test time; JUnit 0s; artifacts 2s; history 10s; total 75s |
+
+The Linux run passed ShellCheck 0.9.0 after the nine compound-refusal
+expressions were rewritten as explicit conditionals. The test command was run
+in a self-contained `ubuntu:24.04` arm64 container cloned from the full source
+history at the exact commit above. Container package installation and clone
+setup occurred before `check.sh` and were not separately timed by the check
+runner. Linux raw output is retained outside the repository at
+`/private/tmp/lynxplosion-phase04-final-linux-7616f6d-retry.log`; macOS output
+was streamed through the managed session and its summary is recorded above.
+
+The earlier ShellCheck wrapper setup failures and the first artifact-retention
+failure remain historical failure records above; neither substitutes for these
+passing exact-source results. CI against this exact head has not run. Root
+review of the final ledger and the existing `origin/main` push/CI handoff are
+the next actions. EVD-02, EVD-05, O1, the strict timer mismatch, hardware/profile
+qualification, rights, physical-test, publication, and release gates remain
+open as described above.

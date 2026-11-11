@@ -157,3 +157,11 @@ the local newer version accepted. Use explicit conditional refusals in portable
 scripts and keep lint severity intact. When script bytes are evidence-bound,
 update their exact descriptor and mutation-control hashes together, preserving
 source oracle content and guest behavior.
+
+**Container reporting wrappers need a quoting check before execution.** A
+double-quoted `dpkg-query -f="${Version}"` inside `sh -lc` expands in the
+container shell; with `set -u`, an unset variable stops setup before the clone
+or project gate. Use `dpkg-query -W ca-certificates` for simple version
+evidence, or keep the format expression single-quoted at the inner shell level.
+Confirm the emitted OS/tool/source preamble before treating a container run as
+qualification evidence.
