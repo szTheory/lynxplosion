@@ -13,7 +13,7 @@ Initial whole-phase authored-register audit, baseline `7b848d0` through reviewed
 `db7149e`, including Plan 12 Task 1. Typed security auditor returned
 `OPEN_THREATS`: 29 closed and six open of 35 unique authored threats. Five
 open high threats block the configured high threshold; the medium inventory
-finding is also scheduled for repair. Final qualification has not run.
+finding was also scheduled for repair. At that initial audit, final qualification had not run.
 
 ## Trust Boundaries
 
@@ -63,7 +63,7 @@ when fixes land.
 | T-04-29 | Tampering | Mutant isolation | high | mitigate | Private copied sources, unique anchors/directories, separate builds, production objects unchanged | closed |
 | T-04-30 | Spoofing | Mutant detection | high | mitigate | Successful configure/build, exact intended assertion/status, timeout/sanitizer excluded, clean API brackets | closed |
 | T-04-31 | Denial of service | Mutant cost | medium | mitigate | Targeted source list, finite build/runtime limits, CTest timeout and measured costs | closed |
-| T-04-32 | Tampering | Final qualification | high | mitigate | Planned Plan12 Task2: exact final reviewed source and complete inventory on macOS, self-contained Ubuntu and exact-head CI; not an implementation defect | open |
+| T-04-32 | Tampering | Final qualification | high | mitigate | Previous source `7616f6d` and CI `356a920` pass all required environments; final WR-02 marker-parser fix now requires renewed exact-source qualification | open |
 | T-04-33 | Information disclosure | Privacy | high | mitigate | Canonical check invokes tree/history hygiene; committed evidence uses normalized paths | closed |
 | T-04-34 | Spoofing | Claims | medium | mitigate | Runtime claim fields, strict mismatch versus observation distinction, explicit software limitations and qualification ledger | closed |
 | T-04-SC | Tampering | Supply chain | high | mitigate | Archive verification before extraction; pristine/tool/source/stamp and pin-list checks | closed |
@@ -95,14 +95,14 @@ negative controls and retain the unchanged positive observations.
 - [x] No risk acceptance inferred.
 - [x] Four implementation boundaries repaired and independently rechecked locally.
 - [x] Exact subcase inventory hardened and negative controls passed.
-- [ ] Final qualification completed.
-- [ ] `threats_open: 0` confirmed and status verified.
+- [ ] Final qualification completed after WR-02.
+- [ ] `threats_open: 0` confirmed and status verified after WR-02.
 
 O1/profile qualification, rights/licence/release and physical/firmware gates
 remain unresolved. Global EVD-02 remains open for Phase5 and recurring EVD-05
 for Phases4–6. No hardware or suite-pass claim is authorized.
 
-**Approval:** implementation controls repaired; final qualification remains pending.
+**Approval:** verified software-scope mitigations and qualification; hardware and global source agreement remain unresolved.
 
 ## Independent Delta Recheck
 
@@ -163,3 +163,40 @@ source/tool/path refusal logic is preserved and exact descriptor script hashes
 are rebound. Build/oracle controls and both profile observations pass. T-04-32
 remains open for final exact-source qualification; no lint severity exemption
 or risk acceptance was introduced.
+
+## Final qualification closure
+
+T-04-32 is now closed from observed evidence: the exact reviewed source passed
+both canonical local environments and the fresh exact-head hosted CI run.
+The old zero-job outage run is not counted. All 35 authored threats are closed;
+there are no accepted risks and no blocking implementation/qualification gaps.
+The initial audit and subsequent failed/repair attempts above remain history.
+ASVS 1's authored-register short-circuit applies; no repeated broad audit is
+needed merely to recheck the already observed qualification result. Hardware,
+rights and global EVD-02/EVD-05 boundaries remain unchanged.
+
+## Security Audit 2026-11-11
+
+| Metric | Count |
+|---|---|
+| Threats found | 35 |
+| Closed | 35 |
+| Open | 0 |
+
+## Post-qualification review supplement
+
+Final independent nine-file delta review found WR-02: the pin marker accepted
+trailing bytes after a valid prefix. Root reproduced the old acceptance using
+the production predicate, then tightened it to the producer's exact 64/65-byte
+forms. Six affected checks pass with private malformed-marker fixtures; shared
+pin caches are unchanged. Existing implementation mitigations remain closed,
+but T-04-32 is reopened until renewed final local/Linux/hosted evidence exists
+for this accepted source change. Earlier all-closed rows are historical.
+
+## Security Audit 2026-11-11
+
+| Metric | Count |
+|---|---|
+| Threats found | 35 |
+| Closed | 34 |
+| Open | 1 |

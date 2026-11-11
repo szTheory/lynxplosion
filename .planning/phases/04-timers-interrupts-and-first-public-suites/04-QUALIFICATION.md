@@ -1,6 +1,6 @@
 # Phase 4 software qualification ledger — Plan 12 Tasks 1–2
 
-**Status:** Task 1 evidence, parent reviews/fixes, and independent pending-gate verification are recorded. The exact-source macOS and Ubuntu local gates passed at `7616f6d`; exact-head CI remains pending root review. This is not Phase 4 completion.
+**Status:** Plan 12 Tasks 1–2 are complete under the approved D-10 software observation/control scope. macOS and self-contained Ubuntu arm64 gates passed the unchanged product/script source at `7616f6d`; exact-head GitHub Actions passed on metadata-only head `356a920`. Phase 4 formal goal verification and closeout remain root-owned. This is not source-oracle agreement, hardware/profile qualification, or Phase 4 completion.
 
 ## Scope and decision boundary
 
@@ -202,8 +202,8 @@ remain historical observations.
   their required descriptor or owner evidence exists.
 - Root completed the full-phase code/security/coverage review, UI applicability,
   accepted fixes and targeted retests, and independent pending-gate acceptance.
-  Exact-head CI and any phase-completion record remain pending; passing local
-  gates do not imply hardware/profile qualification.
+  At that point exact-head CI and any phase-completion record remained pending;
+  passing local gates do not imply hardware/profile qualification.
 
 ## First Task 2 attempt and bounded repair
 
@@ -271,21 +271,90 @@ was streamed through the managed session and its summary is recorded above.
 
 The earlier ShellCheck wrapper setup failures and the first artifact-retention
 failure remain historical failure records above; neither substitutes for these
-passing exact-source results. CI against this exact head has not run. Root
-review of the final ledger and the existing `origin/main` push/CI handoff are
-the next actions. EVD-02, EVD-05, O1, the strict timer mismatch, hardware/profile
-qualification, rights, physical-test, publication, and release gates remain
-open as described above.
+passing exact-source results. At this point in the record, CI had not run; its
+later exact-head result is recorded below. EVD-02, EVD-05, O1, the strict timer
+mismatch, hardware/profile qualification, rights, physical-test, publication,
+and release gates remain open as described above.
 
-## External hosted CI blocker
+## Historical outage-era hosted CI attempt (run #19)
 
 The reviewed `f920844` head is pushed through the existing origin/main channel.
 Its exact run43096967098 remains queued with zero jobs after a declared GitHub
 Actions outage and a public backlog-drained/resolved update. One cancellation
 attempt was refused as already completed; one standard same-run rerun was
 refused as already running. Fresh APIs still show queued/attempt1/no jobs.
-No CI result exists to qualify or inspect. Plan12Task2 and phase completion
-remain pending; full local results above remain valid for their exact source.
-See [04-CI-BLOCKER.md](04-CI-BLOCKER.md) for official incident evidence, bounded
-recovery and the resume procedure. No gate was waived and no replacement push
-was used to bypass the inconsistent run.
+That run produced no result to qualify or inspect. It remains an unexecuted
+outage-era record, not a pass. The fresh successful run below is distinct.
+See [04-CI-BLOCKER.md](04-CI-BLOCKER.md) for the official incident timeline
+and bounded recovery history. The outage overlaps the queue but is not proven
+to be its sole cause; no gate was waived.
+
+## Exact-head hosted CI qualification (run #20)
+
+GitHub Actions [run #20](https://github.com/szTheory/lynxplosion/actions/runs/43104539428)
+and its [check job](https://github.com/szTheory/lynxplosion/actions/runs/43104539428/job/130804286324)
+passed on exact pushed HEAD
+`356a920f21f3f8c573e17056a5bc120e9e20b9f6`. That commit adds qualification
+and outage-recovery records only; the last product/script source change remains
+`7616f6d1d12b98eac6cf4d4e979ac1c90f0e01ac`. The earlier run #19
+(`43096967098`) remains queued with zero jobs and no conclusion, as documented
+in the historical section and [CI handoff](04-CI-BLOCKER.md); it is not counted
+as successful evidence.
+
+The workflow used one Ubuntu 24.04.5 `check` job on `Linux-x86_64`, with
+`fetch-depth: 0`; build identity recorded the exact CI HEAD and GCC 13.3.0.
+The runner reported GCC 13.3.0, CMake 3.31.6, Ninja 1.13.2, ShellCheck 0.9.0,
+and Git 2.56.0. Pinned cc65 revision `eebf54af545f4ae52f8489a2f6d4d5f93e7942d2`
+and `lynx-tests` 1.4.9 were verified against their expected archive hashes.
+The full fast inventory passed: CTest reported 163/163 and zero failures;
+JUnit accounted for all 163 tests exactly once with zero declared skips. The
+artifact scan passed at 6,322 files (one exactly 512 bytes), and history
+hygiene passed.
+
+| CI segment | Measured time |
+| --- | ---: |
+| Queue | about 2s |
+| Identities | 0s |
+| Pinned inputs | 1s |
+| cc65 build | 16s |
+| Probe/fixtures | 0s |
+| ShellCheck | 2s |
+| Configure/build/test workflow | 82s (CTest 77.31s) |
+| JUnit accounting | 0s |
+| Artifact scan | 2s |
+| History hygiene | 20s |
+| `check.sh` total | 124s |
+| Hosted job | 2m 9s |
+
+The hosted lane had one job, no duplicated matrix work, and a roughly two-second
+queue. This run does not justify adding caches, concurrency, or matrix breadth;
+the measured critical path was the test workflow and history scan. The log also
+contains 35 `tr: write error: Broken pipe` diagnostics during the artifact scan;
+the scan reported success and the job completed green. Their cause was not
+established here, so they are recorded for review without changing the scanner
+or suppressing output.
+
+This CI result confirms the same software inventory and cleanup/history gates
+on its exact pushed head. It does not change the strict timer comparison:
+expected `0d` versus actual `0c` remains the sole approved pending row at index
+14 for both profiles, the strict command still exits 1, and the separate
+observation/control path admits only that exact state with the independent
+64-phase/12-count proof. All other disagreements and model, count, time,
+identity, completion, or pending-state faults remain failures. Global EVD-02
+stays open for Phase 5; recurring EVD-05 stays open for the future DMA/audio
+slices. O1, O5, O6, O9 and all rights, physical-test, publication, and release
+gates remain unchanged. Formal Phase 4 goal verification and phase closeout
+remain with root.
+
+## Accepted final-review marker fix awaiting requalification
+
+After run 20, independent final delta review found a remaining malformed-marker
+acceptance (WR-02). Root proved the old predicate accepted hash+newline+extra
+data, then required the complete 64-byte hash or 65-byte hash/newline form.
+The existing oracle-controls test now covers two valid and five malformed
+forms through the same production predicate, without mutating shared pins.
+The affected six-test selection passed in 4.33s. Product guest behavior,
+source/test pins, generated oracle, wrapper, descriptor and proof identities
+are unchanged, but exact-source local/Linux/CI qualification must be renewed.
+Previous final-source rows above are dated evidence, not qualification of this
+later accepted harness change.

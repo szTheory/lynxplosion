@@ -46,7 +46,8 @@ key-decisions:
 patterns-established:
   - "Build scripts verify pin markers, tool/source/license hashes and unchanged upstream assembly before publishing temporary outputs."
   - "Prefix evidence reports linker labels, exact address/PC, request, progress, model byte and done sentinel separately from suite completion."
-requirements-completed: [EVD-02, EVD-04]
+requirements-completed: [EVD-04]
+requirements-partial: [EVD-02]
 coverage:
   - id: D1
     description: "Both untouched suites assemble, link as strict tier-A BS93 objects, load through the public API and stop at their source-derived first timer write."
@@ -164,3 +165,5 @@ Summary files, manifests, wrappers, build script, diagnostic test and task commi
 ---
 *Phase: 04-timers-interrupts-and-first-public-suites*
 *Completed: 2026-11-10*
+
+Post-disposition traceability: this plan completed the build/provenance slice of EVD-02. Global source agreement remains open under D-10 for Phase 5; the frontmatter records that partial scope without changing historical build evidence.

@@ -3,8 +3,8 @@ phase: 04
 fixed_at: 2026-11-11T19:31:29Z
 review_path: .planning/phases/04-timers-interrupts-and-first-public-suites/04-REVIEW.md
 iteration: 1
-findings_in_scope: 10
-fixed: 10
+findings_in_scope: 11
+fixed: 11
 skipped: 0
 status: all_fixed
 ---
@@ -17,11 +17,33 @@ status: all_fixed
 
 **Summary:**
 
-- Findings in scope: 10
-- Fixed: 10
+- Findings in scope: 11
+- Fixed: 11
 - Skipped: 0
 
 ## Fixed Issues
+
+### WR-02: Pin marker parser accepts trailing content
+
+**Disposition:** fixed; exact-source cross-platform qualification is being renewed.
+**Files:** tests/suites/test_public_suites.c, tests/suites/run.cmake.
+**Fix:** the shared production pin-marker predicate accepts exactly 64 hash
+bytes or exactly 65 bytes with a single terminal newline. No trailing data,
+second newline, suffix byte, short hash or wrong identity is accepted. The
+validator's private test mode uses this same predicate and bounded text reader;
+controls never mutate shared pinned-source cache files.
+
+**Before evidence:** the new oracle control, using the unchanged old prefix
+predicate, failed as intended: trailing-data input returned 0/valid identity
+when exit 1/malformed identity was required (CTest exit 8,4.33s selection later
+passes). **After evidence:** the six-test oracle/CPU/both-timer/strict selection
+passes in 4.33s; the old predicate control failed in 1.71s. Bare and one-newline
+positive marker forms both pass; all five malformed forms refuse exactly.
+No guest, source pin, oracle or D-10 binding/timing behavior changed. The final
+nine-file review is otherwise clean and remains applicable; the original 35-file
+review is preserved in 04-REVIEW-INITIAL.md. Old qualification source/CI rows
+remain dated facts; final gates must be refreshed on the committed marker fix.
+
 
 ### CR-01: BLOCKER — Predictable oracle temporary can overwrite a symlink target
 
@@ -117,7 +139,7 @@ Source27145c8 additionally validates profiles before timer path construction,
 uses unlink so output cleanup cannot remove directories, declares the POSIX
 filesystem feature level for Linux, and adds permanent rejection controls. A
 sanitized isolated old-remove control proves the prior directory deletion.
-All original findings now reconcile as fixed in04-REVIEW-DISPOSITION.md; no
+All original findings now reconcile as fixed in 04-REVIEW-DISPOSITION.md; no
 human verification is required. Final platform/CI qualification remains pending.
 
 ## Qualification repair: successful invocation cleanup

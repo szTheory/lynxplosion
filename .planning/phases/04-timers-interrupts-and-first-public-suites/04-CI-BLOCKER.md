@@ -1,6 +1,8 @@
-# Phase 4 — external CI state blocker
+# Phase 4 — historical external CI state blocker
 
-Phase 4 remains in progress at Plan 12 Task 2. Implementation, reviews, fixes,
+**Current status: resolved for qualification.** Fresh hosted run 43104539428 passed on exact head `356a920`. The old run below remains historical, not a passing result. Formal phase verification is still pending.
+
+The following records the prior blocker. Implementation, reviews, fixes,
 the independent D-10 gate, and full local qualification are complete. The
 required hosted CI result is unavailable. No phase completion is claimed.
 

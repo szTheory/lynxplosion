@@ -4,7 +4,7 @@
 **Audited source:** `db7149eebde4c2a09f4cfc9c57cb414b4e89e3d9`
 **Result:** 25/25 plan tasks mapped. No current product-behavior coverage gap found. Final qualification remains pending.
 
-This is an audit of existing tests and their recorded results. It did not add or rerun behavioral tests. Owning Plan summaries contain the execution evidence; Plan12 Task1 evidence is in [04-QUALIFICATION.md](04-QUALIFICATION.md). The only live queries were CTest discovery and the claim/inventory hash check.
+This is an audit of existing tests and their recorded results. It did not add or rerun behavioral tests. Owning Plan summaries contain the execution evidence; Plan 12 Task1 evidence is in [04-QUALIFICATION.md](04-QUALIFICATION.md). The only live queries were CTest discovery and the claim/inventory hash check.
 
 ## Task map
 
@@ -27,7 +27,7 @@ This is an audit of existing tests and their recorded results. It did not add or
 | 04-07-T2 | EVD-02, EVD-04 | `suite.oracle_controls`, `suite.symbol_controls`, `suite.oracle_tracer`: malformed/stale source/oracle, source shape/count/grammar, missing/duplicate/overlapping/out-of-range symbols and time boundaries. | Plan07 records 4/4 passing with exact parser diagnostics. |
 | 04-08-T1 | EVD-02, EVD-04, EVD-05, TIM-03 | `suite.cpu.lynx1`, `suite.cpu.lynx2`: fresh zeroed and seeded runs, independent guest probe/marker and source tuple, all 18 CPU comparisons. | Plan08 records 7/7 selected tests passing; both profiles match 18/18 and zeroed/seeded results agree. |
 | 04-08-T2 | EVD-02, EVD-04, EVD-05, TIM-03 | `suite.cpu.model_controls`, `suite.cpu.bound_controls`: actual opposite-profile execution; missing/invalid probe, tuple disagreement, count/zero/progress/sentinel/identity faults; exact time floor/ceiling and overflow. | Plan08 records the exact control selection passing with clean positives bracketing the opposite-profile case. |
-| 04-09-T1 | EVD-02, EVD-04, EVD-05, TIM-02, TIM-03 | `suite.timers.observation.lynx1/.lynx2`, `strict_comparison_controls`, `cascade_model`: full 16-row observations, exact strict exit1, independent linked 64-phase count proof. | Plan 09 and the Plan12 ledger record both complete observations, 15/16 agreements per profile, exact pending row14 (`0c` vs unchanged `0d`), and 12 acknowledgements for all 64 phases. |
+| 04-09-T1 | EVD-02, EVD-04, EVD-05, TIM-02, TIM-03 | `suite.timers.observation.lynx1/.lynx2`, `strict_comparison_controls`, `cascade_model`: full 16-row observations, exact strict exit1, independent linked 64-phase count proof. | Plan 09 and the Plan 12 ledger record both complete observations, 15/16 agreements per profile, exact pending row14 (`0c` vs unchanged `0d`), and 12 acknowledgements for all 64 phases. |
 | 04-09-T2 | EVD-02, EVD-04, EVD-05, TIM-02, TIM-03 | `suite.timers.model_controls`, `result_controls`, `pending_controls`: actual wrong-profile run; captured alternatives/shape/time/result faults; malformed or stale pending descriptor/companion/proof/source identities. | Plan 09 records these control batches passing. Current source lists 49 result-control cases and 55 pending descriptor/companion/proof cases; details below. |
 | 04-10-T1 | EVD-02..05, TIM-04 | `suite.cpu.no_run`, `suite.timers.no_run`: each suite/profile is held before the first instruction; CPU/request and all RAM are unchanged while guest time reaches the minimum, then the exact absent-execution refusal is required. Hold release must be followed by a fresh valid positive. | Plan 10 records the 2 CTests passing; together they execute four held suite/profile cases. |
 | 04-10-T2 | EVD-02..05, TIM-04 | `suite.completion_controls`, `suite.selection_controls`: 8 actual omitted-sentinel/256-tick faults across both suites and profiles; empty, wrong, duplicate and incomplete selections; registration-to-inventory binding. | Plan 10 records the exact 8-case manifest, named refusals and clean positives before/after each fault; its targeted 9/9 suite selection passed. |
@@ -63,7 +63,7 @@ The read-only `ctest -N` discovery found 49 Phase4-related registered IDs across
 
 ## Remaining qualification and global limits
 
-- Plan12 Task2 stays pending until root records full-phase code/security/coverage and UI-applicability outcomes, accepted fixes and targeted retests, and independent acceptance of the pending-gate verifier. Only then run the planned final local gate, Linux arm64 gate and exact-head CI. No broad final gate or CI was run during this audit.
+- Plan 12 Task2 stays pending until root records full-phase code/security/coverage and UI-applicability outcomes, accepted fixes and targeted retests, and independent acceptance of the pending-gate verifier. Only then run the planned final local gate, Linux arm64 gate and exact-head CI. No broad final gate or CI was run during this audit.
 - Global EVD-02 stays open for Phase5 startup/counter and bus/video preconditions and a repeat of the unchanged strict comparison. Do not tune the phase, costs, counter, wrapper or oracle to manufacture `0d`.
 - Global EVD-05 remains open for later device-fault controls in Phases5/6. O1/model taxonomy, physical/hardware qualification, descriptor-less prohibitions, rights, licence, publication and release limits remain unresolved. No hardware, firmware, BIOS or commercial content claim follows from these software tests.
 - The repository's untracked `.planning/state.json` was left untouched. No source, test, fixture, inventory, requirement, state or qualification-finalization change was made by this audit.
@@ -77,3 +77,13 @@ Plan 10 added the copied Lynx II profile case to reach49. The post-review pendin
 inventory grows55→61 through six output/identity cases. Current aggregate
 controls pass; the original audit observations above describe the pre-fix tree.
 No CTest IDs changed. Final full-inventory qualification is still pending.
+
+## Final qualification completion
+
+The prior pending Plan 12 obligation is fulfilled. All 25 mapped tasks now have
+execution summaries; full macOS/Ubuntu gates and exact-head hosted CI pass the
+complete 163-test inventory, exact JUnit/no skips, artifact and history gates.
+See 04-12-SUMMARY.md and 04-QUALIFICATION.md. No additional implementation gaps
+were found when closing the existing audit; the resolved exact-name warning
+is not a human-only item. The initial prequalification task map above is dated
+history. Global EVD-02/EVD-05 remain open for their scheduled later slices.

@@ -1099,6 +1099,12 @@ static int verify_pinned_source(const char *relative_path, const char *expected_
     return 0;
 }
 
+static int pin_marker_matches(const char *stamp, size_t length, const char *expected)
+{
+    return (length == 64u || (length == 65u && stamp[64] == '\n')) &&
+           memcmp(stamp, expected, 64u) == 0;
+}
+
 static int verify_pinned_revision(const suite_oracle *oracle)
 {
     char pins_path[4096];
@@ -1141,9 +1147,7 @@ static int verify_pinned_revision(const suite_oracle *oracle)
         }
         offset = end + 1u;
     }
-    if (found == 0 || stamp_length < 64u ||
-        memcmp(stamp, oracle->archive, 64u) != 0 ||
-        (stamp[64] != '\n' && stamp[64] != '\0')) goto bad;
+    if (found == 0 || !pin_marker_matches(stamp, stamp_length, oracle->archive)) goto bad;
     free(pins);
     free(stamp);
     return 0;
@@ -3158,6 +3162,20 @@ static int validate_oracle_mode(const char *path)
     return 0;
 }
 
+static int validate_pin_marker_mode(const char *path, const char *expected)
+{
+    char *stamp = NULL;
+    size_t length = 0u;
+    int matches;
+    if (!valid_hex(expected, 64u)) return fail("pin marker: expected identity invalid");
+    if (read_text(path, &stamp, &length, 1024u) != 0) return 1;
+    matches = pin_marker_matches(stamp, length, expected);
+    free(stamp);
+    if (!matches) return fail("pin marker: malformed or mismatched identity");
+    puts("pin marker: exact identity valid");
+    return 0;
+}
+
 static int validate_text_token_mode(const char *path, const char *limit_text,
                                     const char *token)
 {
@@ -3564,6 +3582,9 @@ int main(int argc, char **argv)
         return validate_timer_record_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);
     }
     if (argc == 3 && strcmp(argv[1], "validate-oracle") == 0) return validate_oracle_mode(argv[2]);
+    if (argc == 4 && strcmp(argv[1], "validate-pin-marker") == 0) {
+        return validate_pin_marker_mode(argv[2], argv[3]);
+    }
     if (argc == 5 && strcmp(argv[1], "validate-text-token") == 0) {
         return validate_text_token_mode(argv[2], argv[3], argv[4]);
     }

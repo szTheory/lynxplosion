@@ -1,11 +1,11 @@
 ---
 phase: "04"
 slug: timers-interrupts-and-first-public-suites
-status: draft
-audit_status: repaired-prequalification
-qualification_status: pending-independent-verifier
+status: complete
+audit_status: complete
+qualification_status: pending-marker-fix-requalification
 nyquist_compliant: false
-wave_0_complete: false
+wave_0_complete: true
 created: "2026-11-10"
 ---
 
@@ -40,7 +40,7 @@ After each meaningful task, run its exact direct mode or targeted registered CTe
 
 ## Per-Task Verification Map
 
-The commands remain the plan acceptance commands. The status column now reflects observed evidence from Plans01–11 and the Plan12 Task1 ledger; it does not claim final phase qualification. Detailed current registrations, control inventories, evidence boundaries, and ownership are in [04-COVERAGE-AUDIT.md](04-COVERAGE-AUDIT.md). New code/test modes are Wave0 work inside the owning leading behavior task; CTest registration, fast inventory and claim hash land in that same implementation commit.
+The commands remain the plan acceptance commands. The status column now reflects observed evidence from Plans01–11 and the Plan 12 Task1 ledger; it does not claim final phase qualification. Detailed current registrations, control inventories, evidence boundaries, and ownership are in [04-COVERAGE-AUDIT.md](04-COVERAGE-AUDIT.md). New code/test modes are Wave0 work inside the owning leading behavior task; CTest registration, fast inventory and claim hash land in that same implementation commit.
 
 | Task | Wave | Requirements | Threat refs | Expected secure behavior | Type | Exact automated command | Source/scaffold | Status |
 |---|---|---|---|---|---|---|---|---|
@@ -61,7 +61,7 @@ The commands remain the plan acceptance commands. The status column now reflects
 | 04-07-T2 | 7 | EVD-02, EVD-04 | T-04-19, T-04-20, T-04-21 | T-04-SC; Every invalid input fails its specific assertion before dependent RAM reads, with a nonempty fault inventory and fresh positives. | Behavior/control expansion; suite.oracle_tracer, suite.oracle_controls, suite.symbol_controls, suite.cpu.lynx1 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.(oracle_tracer\|oracle_controls\|symbol_controls\|cpu\.lynx1)$'` | Wave0 generator/suite executable/modes; existing pinned toolchain | Targeted evidence recorded as passing; final phase qualification remains pending |
 | 04-08-T1 | 8 | EVD-02, EVD-04, EVD-05, TIM-03 | T-04-22, T-04-23 | T-04-SC; Both explicitly selected CPU profiles really complete, derive the observed model independently and compare the complete source-generated result set. | End-to-end tracer; suite.cpu.lynx1, suite.cpu.lynx2 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.cpu\.(lynx1\|lynx2)$'` | Wave0 generator/suite executable/modes; existing pinned toolchain | Targeted evidence recorded as passing; final phase qualification remains pending |
 | 04-08-T2 | 8 | EVD-02, EVD-04, EVD-05, TIM-03 | T-04-22, T-04-23 | T-04-SC; Each seeded error reaches its intended validator failure with exact status/message and positive controls restore clean behavior. | Behavior/control expansion; suite.cpu.model_controls, suite.cpu.bound_controls | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.cpu\.(model_controls\|bound_controls)$'` | Wave0 generator/suite executable/modes; existing pinned toolchain | Targeted evidence recorded as passing; final phase qualification remains pending |
-| 04-09-T1 | 9 | EVD-02, EVD-04, EVD-05, TIM-02, TIM-03 | T-04-24, T-04-25 | T-04-SC; Both profiles have complete model/progress/sentinel/bounds/count/identity observations; all16 timer rows are compared,15 agree and only bound index14 actual0C/source0D is pending. Independent64-phase model predicts12. Strict CLI still returns exact exit1/diagnostic/row. | End-to-end observation; suite.timers.observation.lynx1, suite.timers.observation.lynx2, suite.timers.strict_comparison_controls, suite.timers.cascade_model | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.(build\|build_controls\|oracle_tracer\|oracle_controls\|symbol_controls\|timers\.(observation\.(lynx1\|lynx2)\|strict_comparison_controls\|cascade_model))$'` | Preserve/integrate seven current edits; separate observe/strict modes, exact descriptor and proof; atomic registrations/inventory/claim | Targeted evidence recorded as passing; final phase qualification remains pending |
+| 04-09-T1 | 9 | EVD-02, EVD-04, EVD-05, TIM-02, TIM-03 | T-04-24, T-04-25 | T-04-SC; Both profiles have complete model/progress/sentinel/bounds/count/identity observations; all16 timer rows are compared,15 agree and only bound index14 actual0C/source0D is pending. Independent64-phase model predicts12. Strict CLI still returns exact exit 1/diagnostic/row. | End-to-end observation; suite.timers.observation.lynx1, suite.timers.observation.lynx2, suite.timers.strict_comparison_controls, suite.timers.cascade_model | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.(build\|build_controls\|oracle_tracer\|oracle_controls\|symbol_controls\|timers\.(observation\.(lynx1\|lynx2)\|strict_comparison_controls\|cascade_model))$'` | Preserve/integrate seven current edits; separate observe/strict modes, exact descriptor and proof; atomic registrations/inventory/claim | Targeted evidence recorded as passing; final phase qualification remains pending |
 | 04-09-T2 | 9 | EVD-02, EVD-04, EVD-05, TIM-02, TIM-03 | T-04-24, T-04-25 | T-04-SC; Actual model mismatch and shape/alternatives faults reach exact earlier refusals; changed pending value/descriptor/environment/proof, second mismatch or independent execution error never passes. | Behavior controls; suite.timers.model_controls, suite.timers.result_controls, suite.timers.pending_controls | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.timers\.(model_controls\|result_controls\|pending_controls)$'` | Existing guest/model behavior; normal verified controls, no fabricated product RED | Targeted evidence recorded as passing; final phase qualification remains pending |
 | 04-10-T1 | 10 | EVD-03, EVD-02, EVD-04, EVD-05, TIM-04 | T-04-26, T-04-27, T-04-28 | T-04-SC; Both real suites fail completion despite time reaching minimum and oracle-like initial RAM, with proof no test instruction ran. | End-to-end tracer; suite.cpu.no_run, suite.timers.no_run | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.(cpu\|timers)\.no_run$'` | Wave0 generator/suite executable/modes; existing pinned toolchain | Targeted evidence recorded as passing; final phase qualification remains pending |
 | 04-10-T2 | 10 | EVD-03, EVD-02, EVD-04, EVD-05, TIM-04 | T-04-26, T-04-27, T-04-28 | T-04-SC; Each missing/stale/zero/premature execution fact fails its intended assertion and no empty case inventory can appear green. | Behavior/control expansion; suite.completion_controls, suite.selection_controls | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.(completion_controls\|selection_controls)$'` | Wave0 generator/suite executable/modes; existing pinned toolchain | Targeted evidence recorded as passing; final phase qualification remains pending |
@@ -76,9 +76,9 @@ Every command has an immediate fails_when sibling in its PLAN. Direct modes must
 
 - All 25 tasks map to registered behavioral checks, named negative controls, or the explicit final qualification obligation. See [04-COVERAGE-AUDIT.md](04-COVERAGE-AUDIT.md) for the 25-row map and hard-path inventories.
 - A headless `ctest -N` discovery found 49 relevant Phase4 CTest IDs. Each appears exactly once in `tests/inventory/fast.txt`; `sh scripts/check-claims.sh --inventory-sha256` passed with digest `4c96587c3303c64aaa14874597cc173288eaf155dce9edca465aa3c3893034`. These are inventory checks, not test executions.
-- Plan12 Task1 is complete and committed at HEAD `db7149e`; its ledger records the seven targeted timer integration tests passing at source `0c4ff91`. HEAD changes only README and documentation/qualification records. This audit did not rerun those tests.
+- Plan 12 Task1 is complete and committed at HEAD `db7149e`; its ledger records the seven targeted timer integration tests passing at source `0c4ff91`. HEAD changes only README and documentation/qualification records. This audit did not rerun those tests.
 - No current product behavior gap was found in source/test mapping. One actionable review finding remains: current source has 49 timer result-control cases (the Plan 09 historical evidence records 48) and 55 pending descriptor/companion/proof cases, but their batch guards only require `case_count >= 1`. Removing a mutation call could leave an aggregate CTest green. Root owns reconciling the 48/49 drift and adding an exact unique case-name manifest with missing/duplicate detection before final qualification; this is not manual-only and does not require a new owner decision.
-- Plan12 Task2 remains **PLANNED/PENDING** until root completes the full-phase code/security/coverage and UI-applicability reviews, accepted fixes/targeted retests, and independent pending-gate verification. It is cross-platform/exact-head qualification work, not a missing product test and not a human-only UAT item.
+- Plan 12 Task2 remains **PLANNED/PENDING** until root completes the full-phase code/security/coverage and UI-applicability reviews, accepted fixes/targeted retests, and independent pending-gate verification. It is cross-platform/exact-head qualification work, not a missing product test and not a human-only UAT item.
 
 The audit leaves `nyquist_compliant: false`, `wave_0_complete: false`, and final qualification pending. It did not modify implementation or test files and preserved the untracked `.planning/state.json`.
 
@@ -92,13 +92,13 @@ The audit leaves `nyquist_compliant: false`, `wave_0_complete: false`, and final
 
 ## Approved D-10 pending-comparison contract
 
-The successful timer check is complete **software observation/control evidence**, not source-suite agreement. Keep16 comparisons,15 required agreements and only source index14 expected0D/actual0C pending on both profiles. Strict run timers remains exit1 with its exact diagnostic and complete comparison output. The separately registered strict-comparison control must prove that precise refusal; generic nonzero or WILL_FAIL acceptance is invalid.
+The successful timer check is complete **software observation/control evidence**, not source-suite agreement. Keep16 comparisons,15 required agreements and only source index14 expected0D/actual0C pending on both profiles. Strict run timers remains exit 1 with its exact diagnostic and complete comparison output. The separately registered strict-comparison control must prove that precise refusal; generic nonzero or WILL_FAIL acceptance is invalid.
 
 The structured pending descriptor and each per-run pending record bind original source/tool/wrapper/oracle/build identity, exact profiles and policies, flat5/no-DMA/zero-counter environment, all execution/model/count/time facts, and independent64-phase12-count proof derived from validated pinned instructions and actual linked BLL opcode/address/branch geometry, with cost_ticks5 separate from sample_offset_ticks0. Missing/stale descriptor, wrong raw14 value (including0B or0D), second mismatch or any independent failure fails the observation gate. Controls must prove named diagnostics precede pending classification. Include malformed JSON, unknown/duplicate/missing keys, missing/stale schema/version and wrong type/value controls with exact named failures. Keep the original flat key=value run record and a distinct JSON pending companion; finalize/hash raw/run/comparison/proof inputs first, with no self-hash or cyclic identity links. No skipping row14, acceptance of all mismatches, retuned phase/costs/layout/counter, oracle edit or Phase5 implementation is authorized.
 
 Plans10–11 use observation-gate timer positives and full-source CPU positives. True no-run holds before the first instruction; each negative/mutant must reach its intended named failure, not the known pending comparison. Fixture/harness/fault controls over already implemented behavior are normal verified tasks with tdd=false. Actual new production bugs require genuine pre-fix behavior RED.
 
-Plan12 Task1 returns to root for full-phase code/security/coverage review, UI applicability, accepted fixes and independent pending-gate verifier. Final full macOS/Linux/exact-head CI follows that checkpoint, with no push/CI first. Source changes after qualification invalidate affected exact-source evidence.
+Plan 12 Task1 returns to root for full-phase code/security/coverage review, UI applicability, accepted fixes and independent pending-gate verifier. Final full macOS/Linux/exact-head CI follows that checkpoint, with no push/CI first. Source changes after qualification invalidate affected exact-source evidence.
 
 Global EVD-02 stays open and carried to Phase5 even if Phase4 completes. O1 and the two existing prohibitions remain unresolved; unresolved verification is null, no invented check descriptor. No hardware, firmware, physical, licence, release or new publication authority is inferred.
 
@@ -138,3 +138,28 @@ acceptance tests pass. The Plan 07 Task 1 command now uses the registered owned-
 driver; the previous direct unmarked CLI call is no longer a valid acceptance
 path. Independent pending-gate verification and Plan 12 Task 2 qualification remain
 outstanding, so compliance/completion flags remain false.
+
+## Final coverage qualification
+
+All 25 plan tasks are executed and mapped; Plan 12 SUMMARY now records complete
+macOS, self-contained Ubuntu arm64 and exact-head hosted qualification. The
+full 163-test fast inventory ran exactly once each, no skips, with all existing
+and added refusal/mutation/manifest controls. The scoped D-10 verifier passed,
+all implementation review findings are fixed, and 49/61 exact subcase manifests
+retain their missing/duplicate controls. No new behavior gap remains and no
+human UAT is needed. The flags above refer to this final software-scope audit;
+earlier prequalification/pending statements are dated history, not live gaps.
+
+The final canonical local command also serves as the regression gate under
+Plan 12's explicit one-run policy. Product/scripts did not change after source
+7616f6d; hosted run 43104539428 repeats the whole gate at exact docs-only
+head `356a920`. Global EVD-02's source agreement and recurring EVD-05 future-device
+coverage remain open, independently of this phase's complete coverage.
+
+## Final marker review supplement
+
+WR-02 adds five malformed pin-marker forms plus two valid forms to the existing
+oracle controls. The old production predicate fails the new trailing-data
+control; the tightened predicate and six owning tests pass. No CTest IDs or
+49/61 batch inventories change. Cross-platform qualification is renewed after
+this source change; previous complete-gate rows remain valid historical results.

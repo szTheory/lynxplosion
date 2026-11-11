@@ -3,6 +3,10 @@ phase: 04
 review: 04-REVIEW.md
 titles: json
 findings:
+  - id: WR-02
+    severity: warning
+    disposition: fixed
+    title: "Pin marker parser accepts trailing content"
   - id: CR-01
     severity: critical
     disposition: fixed
@@ -44,24 +48,25 @@ findings:
     disposition: fixed
     title: "INFO — README opening omits the newly documented timer suite"
 open: 0
-total: 10
-recorded: 2026-11-11T19:38:12.933Z
+total: 11
+recorded: 2026-11-11T22:14:28.956Z
 ---
 
 # Phase 04: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-01 | critical | fixed | 04-REVIEW-FIX.md |
-| CR-02 | critical | fixed | 04-REVIEW-FIX.md |
-| CR-03 | critical | fixed | 04-REVIEW-FIX.md |
-| CR-04 | critical | fixed | 04-REVIEW-FIX.md |
-| CR-05 | critical | fixed | 04-REVIEW-FIX.md |
-| CR-06 | critical | fixed | 04-REVIEW-FIX.md |
-| WR-01 | warning | fixed | 04-REVIEW-FIX.md |
-| IN-01 | info | fixed | 04-REVIEW-FIX.md |
-| IN-02 | info | fixed | 04-REVIEW-FIX.md |
-| IN-03 | info | fixed | 04-REVIEW-FIX.md |
+| WR-02 | warning | fixed | 04-REVIEW-FIX.md |
+| CR-01 | critical | fixed | 04-REVIEW-FIX.md (not in the current review) |
+| CR-02 | critical | fixed | 04-REVIEW-FIX.md (not in the current review) |
+| CR-03 | critical | fixed | 04-REVIEW-FIX.md (not in the current review) |
+| CR-04 | critical | fixed | 04-REVIEW-FIX.md (not in the current review) |
+| CR-05 | critical | fixed | 04-REVIEW-FIX.md (not in the current review) |
+| CR-06 | critical | fixed | 04-REVIEW-FIX.md (not in the current review) |
+| WR-01 | warning | fixed | 04-REVIEW-FIX.md (not in the current review) |
+| IN-01 | info | fixed | 04-REVIEW-FIX.md (not in the current review) |
+| IN-02 | info | fixed | 04-REVIEW-FIX.md (not in the current review) |
+| IN-03 | info | fixed | 04-REVIEW-FIX.md (not in the current review) |
 
 Dispositions: `open` (recorded, not yet triaged), `fixed`, `skipped`, `deferred`.
 Set `deferred` by hand and put the reason in the Source cell; both are preserved. A `|` in the reason is kept as prose and escaped on the next run.

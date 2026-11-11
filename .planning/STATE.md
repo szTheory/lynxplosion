@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
 current_plan: 12
-status: Resuming Plan 12 Task 2 hosted CI after GitHub recovery; source qualification unchanged
-stopped_at: Phase 4 Plan 12 Task 2 blocked on external GitHub Actions state; no source changes needed
-last_updated: "2026-11-11T21:35:36.317Z"
+status: Plan 12 complete under D-10; Phase 4 formal goal verification and root closeout pending
+stopped_at: Completed 04-12; awaiting Phase 4 goal verification and root closeout
+last_updated: "2026-11-11T21:52:04.921Z"
 last_activity: 2026-11-11
-last_activity_desc: Owner requested retry after outage; Actions operational, old run still inconsistent; preparing fresh normal main CI trigger
-state_head: 35b31ba678b5f46fdafd74dc9953373760ec7ed3
+last_activity_desc: Exact-head hosted CI passed on 356a920; Plan 12 qualification and summary recorded
+state_head: 356a920f21f3f8c573e17056a5bc120e9e20b9f6
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 44
+  completed_plans: 45
   percent: 50
 ---
 
@@ -31,8 +31,8 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
 Current Plan: 12
 Total Plans in Phase: 12
-Status: Resuming Plan 12 Task 2 hosted CI after GitHub recovery; source qualification unchanged
-Last activity: 2026-11-11 - Owner requested retry after outage; Actions operational, old run still inconsistent; preparing fresh normal main CI trigger
+Status: Plan 12 complete under D-10; Phase 4 formal goal verification and root closeout pending
+Last activity: 2026-11-11 - Exact-head hosted CI passed on 356a920; Plan 12 qualification and summary recorded
 
 Progress: [█████░░░░░] 50%
 
@@ -103,6 +103,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P09 | 74 min | 2 tasks | 15 files |
 | Phase 04 P10 | 46min | 2 tasks | 6 files |
 | Phase 04 P11 | 30min | 2 tasks | 6 files |
+| Phase 04 P12 | 4h 14m | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -215,7 +216,7 @@ None yet.
 
 ### Blockers/Concerns
 
-Plans 01-11 and Plan 12 implementation/reviews/local qualification are complete under the owner-approved D-10 disposition. Plan 12 Task 2 is blocked on inconsistent external GitHub Actions state: both full local gates pass, but the exact-head run has no jobs; cancellation says completed and rerun says already running. See `.planning/phases/04-timers-interrupts-and-first-public-suites/04-CI-BLOCKER.md` for exact evidence and resume procedure. No owner confirmation or source fix is indicated. Phase 4 formal goal verification/completion remains pending CI; Phases 5-6 have not started.
+Plans 01-12 are executed under the owner-approved D-10 disposition. The exact product/script source passed both full local gates and exact-head CI; Phase 4 formal goal verification and root closeout remain pending. The earlier queued outage-era run is retained as historical evidence in `.planning/phases/04-timers-interrupts-and-first-public-suites/04-CI-BLOCKER.md` and the qualification ledger. Phases 5-6 have not started.
 
 - Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict comparison failure and unchanged oracle while completing Phase 4; exact agreement remains pending Phase 5. No source/profile/hardware qualification is accepted. No owner action is needed for this approved continuation.
 - Plan 09's data-only control matrices use per-invocation fresh observations on both profiles and immutable hash-checked baselines for private fault copies; every mutation retains positive baseline validation before/after and its named diagnostic.
@@ -229,7 +230,7 @@ Other open owner decisions remain in force:
 - O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
 - Phase 3 goal verification and software qualification pass. CON-01 remains globally open for the actual-frame and actual-audio consumer obligations already scheduled in Phases 5 and 6; the Phase 3 snapshot/silence slice is complete. Research flags remain for Phases 4-6.
 - Carried follow-ups: the timer bank now consumes bus tick stamps with ordering controls; `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
-- Format 4 snapshot controls, source-suite identity/path/parser fixes, safe invocation cleanup and portable shell refusals are committed and qualified locally. Both canonical gates pass all 163 registered tests with no skips, complete JUnit, artifact and history checks. The reviewed CI head is f920844; the qualified product/script source is 7616f6d. Hosted CI alone remains unavailable. Earlier deferred-item records are historical; current qualification and blocker records are authoritative.
+- Format 4 snapshot controls, source-suite identity/path/parser fixes, safe invocation cleanup and portable shell refusals are committed and qualified locally. Both canonical gates pass all 163 registered tests with no skips, complete JUnit, artifact and history checks. Product/script source is 7616f6d; exact-head CI passed on docs-only head 356a920 (run 43104539428). Outage-era run 43096967098 remains historical and unexecuted. Earlier deferred-item records are historical; current qualification and root verification records are authoritative.
 
 ## Deferred Items
 
@@ -241,6 +242,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T21:30:14.872Z
-Stopped at: Phase 4 Plan 12 Task 2 blocked on external GitHub Actions state; no source changes needed
-Resume file: .planning/phases/04-timers-interrupts-and-first-public-suites/04-CI-BLOCKER.md
+Last session: 2026-11-11T21:52:04.162Z
+Stopped at: Completed 04-12; awaiting Phase 4 goal verification and root closeout
+Resume file: .planning/phases/04-timers-interrupts-and-first-public-suites/04-QUALIFICATION.md
