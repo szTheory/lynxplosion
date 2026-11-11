@@ -2,7 +2,7 @@
 phase: "3"
 slug: "memory-map-direct-load-startup-and-first-diagnostic"
 status: validated
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: true
 created: "2026-11-10"
 audited: "2026-11-10"
@@ -10,7 +10,7 @@ audited: "2026-11-10"
 
 # Phase 3 — Validation Strategy
 
-> **Coverage verdict: PARTIAL.** The in-scope behavior and its negative controls are automated and registered. One Plan 03-09 publication interruption assertion is missing; see Task 03-09 T1 below. This is a test-coverage result, separate from phase qualification: parent code/security review and exact-head CI are still pending.
+> **Coverage verdict: COVERED for Phase 3 scope.** All in-scope behavior and negative controls are automated and registered, including deterministic interruption at both publication boundaries. CON-01 coverage here is the planned diagnostic snapshot and placeholder-silence output. This is separate from phase qualification: full-platform requalification and exact-head CI after the source fix remain pending.
 
 ## Test Infrastructure
 
@@ -36,7 +36,7 @@ audited: "2026-11-10"
 | API-08 | `api.watch_post_write`, `api.watch_controls(.self_test)`, `api.watch_independent`; committed store/tick/continuation, half-open budget, range edges, rearm, instance isolation, and stop-before-store/repeated-store mutants. | **COVERED** |
 | DET-03 | `api.snapshot_continue(.self_test)`, `api.snapshot_refusal`, `det.diagnostic_restore(.self_test)`, `det.two_instances`; uninterrupted, sliced, watched and restored observations at common ticks; rehashed invalid-state refusal preserves state. | **COVERED** — equality establishes repeatability, not hardware accuracy. |
 | HB-01 | `consumer.snapshot_ppm`, `consumer.public_api`, `consumer.refusal_controls`; independently parsed exact 8x8 P3 samples/palette and SNAPSHOT/tick/content/startup/profile metadata; empty or wrong pixel data refuses. | **COVERED** — diagnostic snapshot, not a frame or video-accuracy claim. |
-| CON-01 | `consumer.public_api`, `consumer.snapshot_ppm`, `consumer.silence_wav`, `consumer.refusal_controls`; public-header boundary, independent PPM/WAV parser, exact silence samples/metadata, invalid-input refusal, existing-path preservation, injected write/close failures and concurrent publishers. | **PARTIAL** — Phase 3 delivers the documented snapshot/silence portion; real frame/audio streams are later-phase work. The interruption assertion in Task 03-09 T1 is also missing. |
+| CON-01 | `consumer.public_api`, `consumer.snapshot_ppm`, `consumer.silence_wav`, `consumer.refusal_controls`; public-header boundary, independent PPM/WAV parser, exact silence samples/metadata, invalid-input refusal, existing-path preservation, injected write/close failures, competing publishers, and SIGKILL interruption at both publication barriers. | **COVERED for Phase 3 scope** — diagnostic snapshot and placeholder-silence output. Real frame/audio streams remain later-phase work. |
 
 ## Per-Task Coverage Map
 
@@ -60,14 +60,12 @@ The map contains both tasks from each of the nine plans. “Covered” means the
 | 03-07 T2 — result/symbol/continuation oracle | EVD-01, API-08, DET-03 | `diag.result_symbol`, `diag.result_controls`, `det.diagnostic_restore(.self_test)` | COVERED |
 | 03-08 T1 — runner agreement/provenance | EVD-01, MEM-03, DET-03 | `diag.result_controls`, `fixture.bll_header(.self_test)`, `runner.cli`, `docs.provenance`, `policy.*` | COVERED |
 | 03-08 T2 — public consumer output | HB-01, CON-01, MEM-03 | `consumer.public_api`, `consumer.snapshot_ppm`, `consumer.silence_wav`, `consumer.refusal_controls` | COVERED |
-| 03-09 T1 — atomic consumer publication | HB-01, CON-01 | `consumer.refusal_controls` verifies conflicting publishers and write/close failures, but does not interrupt a process between staging and publish. | PARTIAL |
+| 03-09 T1 — atomic consumer publication | HB-01, CON-01 | `consumer.refusal_controls` synchronizes at before-manifest and before-publish barriers, validates expected staged files, SIGKILLs and reaps the exact child, checks final-path absence and sibling preservation, then cleans only its owned stage. An early-publish mutant fails at the intended assertion. | COVERED |
 | 03-09 T2 — docs and delivery qualification | All Phase 3 requirements | Local and Ubuntu `sh scripts/check.sh` results in `03-09-CHECKPOINT.md`; exact-head CI is not recorded. | COVERED for test coverage; CI qualification pending |
 
-### Missing assertion and recommended test
+### WR-01 closure evidence
 
-`consumer.refusal_controls` proves concurrent publishers yield one complete winner and one refusal, and injected write/close failures leave no final output path. There is no deterministic control that interrupts a consumer after it has created staging files but before the exclusive directory rename. Therefore the test does not establish the planned interruption assertion: **after process interruption, the final destination is absent, and any leftover private staging directory contains no `snapshot.manifest` success marker.**
-
-Recommended test: add a test-only barrier/pause point after staged PPM/WAV creation and before manifest publication/rename. Have the parent test wait for that explicit readiness signal, terminate the child, then assert the final destination is absent and any owned leftover staging directory has no `snapshot.manifest`. Avoid a timing-only kill loop. This gap is routed to the parent; no production or test source was changed in this audit.
+Test-only pipe barriers pause the consumer after PPM/WAV close but before manifest creation, and again after manifest close but before exclusive publication. `consumer.refusal_controls` waits for each explicit event, validates the partial or complete owned staging contents, confirms the requested output path is absent, SIGKILLs and reaps the exact child, then rechecks destination absence, sibling marker preservation and stage contents. It removes only its invocation-owned staging path. A temporary mutant that published before the first checkpoint failed at the expected final-path assertion. The released consumer binary contains no test-control strings.
 
 ## Residual Assumptions and Prohibitions
 
@@ -84,28 +82,28 @@ The edge probe retains all 14 original observations: nine have explicit predicat
 | MEM-04 firmware boundary | `runner.cli`, `api.bll_load`, `memory.rom_unavailable(.self_test)` | No distinct firmware input path is exposed; rights/provenance of arbitrary caller bytes remains outside this proof. |
 | EVD-01 result meaning | `diag.result_controls`, `diag.result_symbol` | No-run, broken, timeout, field corruption and symbol faults covered; physical accuracy is not. |
 | HB-01 pixel/palette interpretation | `consumer.snapshot_ppm`, `consumer.refusal_controls` | Independent diagnostic pixel/output contract covered; no canonical video claim. |
-| CON-01 publisher concurrency | `consumer.refusal_controls` | Competing publishers yield one complete output and one refusal; interruption remains the separate PARTIAL gap above. |
+| CON-01 publisher concurrency and interruption | `consumer.refusal_controls` | Competing publishers yield one complete output and one refusal; deterministic interruption controls cover pre-manifest and pre-publish states. |
 
 Two descriptor-less prohibitions in Plan 03-09 remain flagged-unverified: do not present tier-A repeatability as BIOS boot/cartridge compatibility/hardware accuracy/adopted model baseline; do not use firmware, commercial games or emulator implementation source to manufacture a diagnostic, licence or release authorization. Tests do not clear owner-gated rights, hardware or release decisions.
 
 ## Validation Sign-Off
 
-- [x] Plans 03-01 through 03-09 have task-level automated checks; Task 03-09 T1 retains one explicit interruption-control gap.
+- [x] All 18 tasks have automated verification; the prior WR-01 interruption-control gap is closed by deterministic registered controls.
 - [x] The focused current retest is nonempty and the exact inventory remains 120 tests with zero declared skips in recorded full-gate runs.
 - [x] The full-data CPU-vector lane was not run as part of this audit.
 - [x] Local/macOS and Ubuntu full-gate evidence is recorded in the Plan 03-09 checkpoint.
-- [ ] `nyquist_compliant: true` — withheld until the deterministic interruption assertion is added and passes.
+- [x] `nyquist_compliant: true` for Phase 3 scope; CON-01's later-phase frame/audio streams are outside this phase.
 
 ## Phase Qualification (separate from coverage)
 
 | Gate | Status |
 |---|---|
-| macOS local full check | Recorded pass: 120/120, zero declared skips. |
-| Ubuntu 24.04 local full check | Recorded pass: 120/120, zero declared skips. |
-| Parent code review | Pending. |
+| macOS focused post-fix check | Current focused build passed; `ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.'` passed 4/4. |
+| macOS/Linux full checks | Prior to source fix, checkpoint recorded 120/120 and zero declared skips on both platforms. Full-platform requalification after this source fix remains pending. |
+| Code review of fix delta | Clean; `03-REVIEW.md` records zero findings for commit `61d79af`. |
 | Parent security review | Pending. |
-| Exact-head CI | Pending; no CI run is recorded in the Plan 03-09 checkpoint. |
-| Plan 03-09 summary | Intentionally pending parent review and exact-head CI; implementation, docs and local/Linux checks are recorded in `03-09-CHECKPOINT.md`. |
+| Exact-head CI | Pending after source fix; no CI result is recorded. |
+| Plan 03-09 summary | Pending root executor's full-platform requalification and exact-head CI; this audit does not claim phase completion. |
 
 **Hardware and rights boundary:** no physical hardware, BIOS, commercial game content, release or publication qualification is included. MAPCTL/device policy, timing and snapshot/pixel repeatability are not hardware-accuracy evidence.
 
@@ -116,3 +114,11 @@ Two descriptor-less prohibitions in Plan 03-09 remain flagged-unverified: do not
 | Gaps found | 1 |
 | Resolved | 0 |
 | Escalated | 1 |
+
+## Validation Audit 2026-11-11
+
+| Metric | Count |
+|---|---|
+| Gaps found | 1 |
+| Resolved | 1 |
+| Escalated | 0 |

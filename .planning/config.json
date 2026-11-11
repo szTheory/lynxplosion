@@ -53,7 +53,8 @@
     "tdd_mode": false,
     "ui_review": true,
     "_auto_chain_active": false,
-    "use_worktrees": false
+    "use_worktrees": false,
+    "test_command": "sh scripts/check.sh"
   },
   "ship": {
     "pr_body_sections": []

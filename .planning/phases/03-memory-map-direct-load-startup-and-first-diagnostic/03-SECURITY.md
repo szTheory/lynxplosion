@@ -1,8 +1,8 @@
 ---
 phase: "03"
 slug: memory-map-direct-load-startup-and-first-diagnostic
-status: in-progress
-threats_open: 2
+status: verified
+threats_open: 0
 asvs_level: 1
 block_on: high
 created: "2026-11-10"
@@ -10,7 +10,7 @@ created: "2026-11-10"
 
 # Phase 3 — Security
 
-The initial auditor verified 17 of 19 unique planned threats from source and control presence (ASVS L1). Exact-head CI remains pending. Root corrected the unsupported template acceptance disposition and registered the scanner surface; those two rows await the delta audit. No owner risk acceptance is inferred.
+The initial and bounded delta audits verify 19 of 20 unique threats from source and control presence (ASVS L1). No blocking threats remain. Final local/Linux requalification and exact-head CI remain pending under the medium-severity delivery-evidence row. No owner risk acceptance is inferred.
 
 ## Trust Boundaries
 
@@ -44,8 +44,8 @@ The initial auditor verified 17 of 19 unique planned threats from source and con
 | T-3-16 | high | mitigate | independent consumer input and encoding: `CMakeLists.txt:89; consumer/main.c:166,367,407,500` | closed |
 | T-3-17 | high | mitigate | consumer filesystem publication: `consumer/main.c:523,572,584,634; tests/consumer/check_artifacts.c:819` | closed |
 | T-3-18 | medium | mitigate | Delivery qualification: local/Linux evidence in 03-09-CHECKPOINT.md; exact final-head CI pending. | open — below high threshold (non-blocking) |
-| T-3-SC | high | mitigate | Corrected current-delivery disposition: no new project dependency/install path; pins.txt, scripts/fetch-pin.sh:148 and scripts/check.sh:136,353. Delta audit pending. | open |
-| T-3-19 | high | mitigate | Newly registered scanner change: scripts/scan-binaries.sh:128 and tests/hygiene/scan_control.sh:187. Delta audit pending. | open |
+| T-3-SC | high | mitigate | Corrected current-delivery disposition: no new project dependency/install path; pins.txt, scripts/fetch-pin.sh:148 and scripts/check.sh:136,353. Verified by delta auditor. | closed |
+| T-3-19 | high | mitigate | Newly registered scanner change: scripts/scan-binaries.sh:128 and tests/hygiene/scan_control.sh:187. Verified by delta auditor. | closed |
 
 ## Accepted Risks Log
 
@@ -53,7 +53,7 @@ No accepted risks. Nine repeated T-3-SC plan rows originally said `accept`, with
 
 ## Coverage and Qualification Limits
 
-The initial L1 source audit closes T-3-17's implementation mitigation, but does not establish the missing deterministic interruption experiment. The coverage audit records that gap in 03-VALIDATION.md; a focused fix remains required. No test was executed by the security auditor. Green software checks do not establish hardware accuracy or grant rights, firmware, physical-testing, licence or release authority.
+The delta audit verifies test-only barriers before manifest staging and before publication, with independent staged-file checks, exact-child SIGKILL/reaping, final-path absence and sibling preservation. The focused consumer tests pass and a premature-publication mutant fails its intended assertion, as recorded in 03-REVIEW-FIX.md and the validation audit. No test was executed by the security auditor. Green software checks do not establish hardware accuracy or grant rights, firmware, physical-testing, licence or release authority.
 
 ## Security Audit Trail
 
@@ -61,7 +61,13 @@ The initial L1 source audit closes T-3-17's implementation mitigation, but does 
 |---|---|---|---|
 | Initial source audit | 17/19 | T-3-SC blocking; T-3-18 non-blocking | Typed security auditor, all nine plans and eight summaries plus plan 09 checkpoint. |
 | Root disposition correction | pending delta audit | T-3-SC and newly registered T-3-19 blocking pending verification | No new risk accepted; scanner warning mapped explicitly. |
+| Delta source audit | 19/20 | T-3-18 non-blocking | T-3-SC verified against all nine corrected rows and pinned-toolchain controls; T-3-19 verified against fail-closed iconv/byte comparison and invalid/long-valid UTF-8 controls; T-3-17 interruption gap resolved. No unmapped flag remains. |
 
 ## Sign-Off
 
-Pending disposition/scanner delta audit, interruption control and final delivery evidence.
+- [x] Every threat has a supported disposition; no accepted risk inferred.
+- [x] No high or critical threat remains open (`threats_open: 0`).
+- [x] Scanner and test-only interruption surfaces are explicitly mapped.
+- [ ] Final delivery evidence closes T-3-18 after required platform checks and exact-head CI.
+
+Security implementation audit verified; overall phase completion remains pending delivery qualification.
