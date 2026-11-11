@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
-current_plan: 10
-status: Ready to execute Plan 10; Plan 09 complete under approved D-10 gate
-stopped_at: Completed 04-09-PLAN.md; next Plan 10
-last_updated: "2026-11-11T15:49:27.263Z"
+current_plan: 11
+status: Ready to execute Plan 11; Plan 10 complete under approved D-10 gate
+stopped_at: Completed 04-10-PLAN.md
+last_updated: "2026-11-11T16:37:57.139Z"
 last_activity: 2026-11-11
-last_activity_desc: Completed Plan 09 timer observations and controls; exact index14 agreement remains pending Phase 5
-state_head: 42bf6e5639478a766380302abb2af85163eda03e
+last_activity_desc: Completed Plan 10 completion and no-run controls; exact index14 agreement remains pending Phase 5
+state_head: dfa78843d17370e73476927051d548cfa02fb6af
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 45
-  completed_plans: 42
+  completed_plans: 43
   percent: 50
 ---
 
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 ## Current Position
 
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
-Current Plan: 10
+Current Plan: 11
 Total Plans in Phase: 12
-Status: Ready to execute Plan 10; Plan 09 is complete under the approved D-10 gate
-Last activity: 2026-11-11 - Completed Plan 09 timer observations and controls; exact index14 agreement remains pending Phase 5
+Status: Ready to execute Plan 11; Plan 10 is complete under the approved D-10 gate
+Last activity: 2026-11-11 - Completed Plan 10 completion and no-run controls; exact index14 agreement remains pending Phase 5
 
 Progress: [█████░░░░░] 50%
 
@@ -101,6 +101,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P07 | 20 min | 2 tasks | 13 files |
 | Phase 04 P08 | 30min | 2 tasks | 6 files |
 | Phase 04 P09 | 74 min | 2 tasks | 15 files |
+| Phase 04 P10 | 46min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -202,6 +203,8 @@ Recent decisions affecting current work:
 - [Phase 04]: CPU suite matches remain raw software-oracle evidence; O1 and hardware qualification stay open, and the overall default remains none.
 - [Phase 04]: Use independent zeroed and deterministic seeded guest instances; add no public debug API or production fault flag.
 - [Phase 04]: Plan 04-09 uses immutable two-profile observation baselines for captured-data timer faults, with fresh guest observations at batch boundaries and per-case positive/hash checks.
+- [Phase 04]: D-10 remains limited to timer offset 14 at observed 0C versus unchanged source 0D; global EVD-02 stays open.
+- [Phase 04]: Same-profile deterministic hashes cannot prove freshness; actual fresh-machine completion and watch checks must ignore prior output files.
 
 ### Pending Todos
 
@@ -234,6 +237,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T15:49:26.975Z
-Stopped at: Completed 04-09-PLAN.md; next Plan 10
+Last session: 2026-11-11T16:37:56.757Z
+Stopped at: Completed 04-10-PLAN.md
 Resume file: None
