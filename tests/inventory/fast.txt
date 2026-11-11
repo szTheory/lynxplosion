@@ -146,8 +146,11 @@ suite.oracle_controls	suite
 suite.oracle_tracer	suite
 suite.symbol_controls	suite
 suite.timers.cascade_model	suite
+suite.timers.model_controls	suite
 suite.timers.observation.lynx1	suite
 suite.timers.observation.lynx2	suite
+suite.timers.pending_controls	suite
+suite.timers.result_controls	suite
 suite.timers.strict_comparison_controls	suite
 toolchain.probe	toolchain
 toolchain.probe.self_test	toolchain

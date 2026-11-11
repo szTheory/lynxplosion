@@ -1088,11 +1088,57 @@ static int validate_timer_comparison_file(const char *path, const suite_oracle *
     return 0;
 }
 
+static int timer_record_field(const char *path, const char *key,
+                              char *value, size_t capacity)
+{
+    char *text = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    unsigned found = 0u;
+    if (read_text(path, &text, &length, 16384u) != 0) {
+        char message[128];
+        (void)snprintf(message, sizeof message, "timer record unreadable: %s", key);
+        return fail(message);
+    }
+    while (offset < length) {
+        size_t line_length = 0u;
+        char line[256];
+        char *equals;
+        while (offset + line_length < length && text[offset + line_length] != '\n') line_length++;
+        if (line_length == 0u || line_length >= sizeof line) {
+            free(text);
+            return fail("timer record malformed field line");
+        }
+        memcpy(line, text + offset, line_length);
+        line[line_length] = '\0';
+        offset += line_length + (offset + line_length < length ? 1u : 0u);
+        equals = strchr(line, '=');
+        if (equals == NULL || equals == line || equals[1] == '\0' || strchr(equals + 1, '=') != NULL) {
+            free(text);
+            return fail("timer record malformed field line");
+        }
+        *equals = '\0';
+        if (strcmp(line, key) == 0) {
+            if (found++ != 0u || copy_field(value, capacity, equals + 1) != 0) {
+                free(text);
+                return fail("timer record duplicate or oversized field");
+            }
+        }
+    }
+    free(text);
+    if (found != 1u) {
+        char message[128];
+        (void)snprintf(message, sizeof message, "timer record missing field: %s", key);
+        return fail(message);
+    }
+    return 0;
+}
+
 static int timer_record_is(const char *path, const char *key, const char *expected,
                            const char *diagnostic)
 {
     char value[256];
-    if (record_value(path, key, value, sizeof value) != 0) return fail(diagnostic);
+    if (timer_record_field(path, key, value, sizeof value) != 0) return 1;
     return strcmp(value, expected) == 0 ? 0 : fail(diagnostic);
 }
 
@@ -1100,7 +1146,7 @@ static int timer_record_number(const char *path, const char *key, uint32_t *out,
                                const char *diagnostic)
 {
     char value[64];
-    if (record_value(path, key, value, sizeof value) != 0 || parse_decimal(value, out) != 0) {
+    if (timer_record_field(path, key, value, sizeof value) != 0 || parse_decimal(value, out) != 0) {
         return fail(diagnostic);
     }
     return 0;
@@ -1160,26 +1206,41 @@ static int validate_timer_observation(const char *profile, const char *directory
         goto done;
     }
     if (read_timer_raw(paths->raw, profile, results) != 0) goto done;
+    {
+        uint32_t index;
+        int all_zero = 1;
+        for (index = 0u; index < TIMER_MEANINGFUL; index++) {
+            if (results[index] != 0u) all_zero = 0;
+        }
+        if (all_zero != 0) {
+            (void)fail("timer record: zero/unexecuted result block");
+            goto done;
+        }
+    }
     if (timer_record_is(paths->record, "suite", "timers", "timer record: run identity mismatch") != 0 ||
         timer_record_is(paths->record, "machine_profile", profile, "timer record: run identity mismatch") != 0 ||
         timer_record_is(paths->record, "profile_input", profile, "timer record: run identity mismatch") != 0 ||
         timer_record_is(paths->record, "ram_seed", "zero", "timer record: run identity mismatch") != 0 ||
-        timer_record_is(paths->record, "bll_sha256", bll_sha, "timer record: source identity mismatch") != 0 ||
-        timer_record_is(paths->record, "labels_sha256", labels_sha, "timer record: source identity mismatch") != 0 ||
-        timer_record_is(paths->record, "oracle_sha256", oracle_sha, "timer record: source identity mismatch") != 0 ||
         timer_record_is(paths->record, "model_probe_source", "fixtures/suites/timers-wrapper.s", "timer record: model probe identity mismatch") != 0) {
         goto done;
     }
-    if (record_value(paths->record, "model_probe_source_sha256", value, sizeof value) != 0 ||
-        record_value(paths->record, "wrapper_sha256", wrapper_sha, sizeof wrapper_sha) != 0 ||
-        !valid_hex(wrapper_sha, 64u) || strcmp(value, wrapper_sha) != 0 ||
-        record_value(paths->record, "detected_model", value, sizeof value) != 0) {
-        (void)fail("timer record: model or wrapper identity mismatch");
+    if (timer_record_is(paths->record, "bll_sha256", bll_sha, "timer record: BLL object identity mismatch") != 0 ||
+        timer_record_is(paths->record, "labels_sha256", labels_sha, "timer record: labels identity mismatch") != 0 ||
+        timer_record_is(paths->record, "oracle_sha256", oracle_sha, "timer record: oracle identity mismatch") != 0) goto done;
+    if (timer_record_field(paths->record, "model_probe_source_sha256", value, sizeof value) != 0 ||
+        timer_record_field(paths->record, "wrapper_sha256", wrapper_sha, sizeof wrapper_sha) != 0 ||
+        !valid_hex(wrapper_sha, 64u) || strcmp(value, wrapper_sha) != 0) {
+        (void)fail("timer record: wrapper identity mismatch");
+        goto done;
+    }
+    if (
+        timer_record_field(paths->record, "detected_model", value, sizeof value) != 0) {
+        (void)fail("timer record: detected model field missing");
         goto done;
     }
     (void)snprintf(expected_detected, sizeof expected_detected, "%s", profile_label(profile_idx));
     if (strcmp(value, expected_detected) != 0 ||
-        record_value(paths->record, "model_probe_bytes", value, sizeof value) != 0 ||
+        timer_record_field(paths->record, "model_probe_bytes", value, sizeof value) != 0 ||
         (comma = strchr(value, ',')) == NULL || (size_t)(comma - value) != 2u || strlen(comma + 1) != 2u) {
         (void)fail("timer record: model probe or selected profile mismatch");
         goto done;
@@ -1225,9 +1286,9 @@ static int validate_timer_observation(const char *profile, const char *directory
     if (n < 0 || (size_t)n >= sizeof expected_rts_address) goto done;
     n = snprintf(expected_after_address, sizeof expected_after_address, "suite_after_tests@%04x", symbols.value[13]);
     if (n < 0 || (size_t)n >= sizeof expected_after_address) goto done;
-    if (record_value(paths->record, "model_probe_symbol", value, sizeof value) != 0 ||
+    if (timer_record_field(paths->record, "model_probe_symbol", value, sizeof value) != 0 ||
         strcmp(value, expected_address) != 0 ||
-        record_value(paths->record, "model_marker_symbol", value, sizeof value) != 0 ||
+        timer_record_field(paths->record, "model_marker_symbol", value, sizeof value) != 0 ||
         strcmp(value, expected_model_address) != 0 ||
         timer_record_is(paths->record, "source_runner_rts_symbol", expected_rts_address, "timer record: source-runner boundary mismatch") != 0 ||
         timer_record_is(paths->record, "postamble_return_symbol", expected_after_address, "timer record: source-runner boundary mismatch") != 0) goto done;
@@ -1241,18 +1302,45 @@ static int validate_timer_observation(const char *profile, const char *directory
         timer_record_number(paths->record, "completion_margin_ticks", &margin, "timer record: completion margin mismatch") != 0 ||
         timer_record_number(paths->record, "maximum_headroom_ticks", &headroom, "timer record: maximum headroom mismatch") != 0 ||
         timer_record_number(paths->record, "guest_progress", &progress, "timer record: guest progress evidence mismatch") != 0) goto done;
-    if (count != TIMER_MEANINGFUL || reserved != TIMER_RESERVED || extent != RESULT_EXTENT ||
-        tick_min != TIMER_MIN_TICKS || tick_max != TIMER_MAX_TICKS || ticks < tick_min || ticks > tick_max ||
-        guest_ticks != ticks || margin != ticks - tick_min || headroom != tick_max - ticks || progress != 8u) {
-        (void)fail("timer record: completion, count or time bound mismatch");
+    if (count != TIMER_MEANINGFUL || reserved != TIMER_RESERVED || extent != RESULT_EXTENT) {
+        (void)fail("timer record: result count drift");
         goto done;
     }
-    if (record_value(paths->record, "oracle_sha256", value, sizeof value) != 0 || strcmp(value, oracle_sha) != 0 ||
-        record_value(paths->record, "bll_sha256", value, sizeof value) != 0 || strcmp(value, bll_sha) != 0 ||
-        record_value(paths->record, "labels_sha256", value, sizeof value) != 0 || strcmp(value, labels_sha) != 0 ||
-        record_value(paths->record, "wrapper_sha256", value, sizeof value) != 0 || strcmp(value, wrapper_sha) != 0 ||
-        record_value(paths->record, "model_probe_source_sha256", value, sizeof value) != 0 || strcmp(value, wrapper_sha) != 0) {
-        (void)fail("timer record: source identity mismatch");
+    if (tick_min != TIMER_MIN_TICKS || tick_max != TIMER_MAX_TICKS) {
+        (void)fail("timer record: completion bound metadata mismatch");
+        goto done;
+    }
+    if (ticks < tick_min || ticks > tick_max) {
+        (void)fail("timer record: ticks outside completion bounds");
+        goto done;
+    }
+    if (guest_ticks != ticks) {
+        (void)fail("timer record: guest tick records disagree");
+        goto done;
+    }
+    if (margin != ticks - tick_min || headroom != tick_max - ticks) {
+        (void)fail("timer record: completion margin mismatch");
+        goto done;
+    }
+    if (progress != 8u) {
+        (void)fail("timer record: guest progress evidence mismatch");
+        goto done;
+    }
+    if (timer_record_field(paths->record, "oracle_sha256", value, sizeof value) != 0 || strcmp(value, oracle_sha) != 0) {
+        (void)fail("timer record: oracle identity mismatch");
+        goto done;
+    }
+    if (timer_record_field(paths->record, "bll_sha256", value, sizeof value) != 0 || strcmp(value, bll_sha) != 0) {
+        (void)fail("timer record: BLL object identity mismatch");
+        goto done;
+    }
+    if (timer_record_field(paths->record, "labels_sha256", value, sizeof value) != 0 || strcmp(value, labels_sha) != 0) {
+        (void)fail("timer record: labels identity mismatch");
+        goto done;
+    }
+    if (timer_record_field(paths->record, "wrapper_sha256", value, sizeof value) != 0 || strcmp(value, wrapper_sha) != 0 ||
+        timer_record_field(paths->record, "model_probe_source_sha256", value, sizeof value) != 0 || strcmp(value, wrapper_sha) != 0) {
+        (void)fail("timer record: wrapper identity mismatch");
         goto done;
     }
     if (checked_join(build_record_path, sizeof build_record_path, directory, "build-record.txt") != 0 ||
@@ -1286,6 +1374,25 @@ done:
     free(bll);
     free(labels);
     return status;
+}
+
+static int validate_timer_comparison_corpus(const char *profile, const char *directory,
+                                            const char *raw_path, const char *comparison_path,
+                                            const char *oracle_path, const char *descriptor_path)
+{
+    suite_oracle oracle;
+    uint8_t results[TIMER_MEANINGFUL];
+    uint32_t agreements;
+    if (pending_descriptor_validate(descriptor_path, directory, oracle_path) != 0 ||
+        parse_oracle(oracle_path, &oracle) != 0 || read_build_identity(directory, &oracle) != 0 ||
+        read_timer_raw(raw_path, profile, results) != 0 ||
+        validate_timer_comparison_file(comparison_path, &oracle, results, &agreements) != 0) return 1;
+    if (results[14] != 0x0Cu || oracle.counts[1][14] != 1u ||
+        oracle.values[1][14][0] != 0x0Du || agreements != 15u) {
+        return fail("timer comparator corpus: alternatives or exact pending row mismatch");
+    }
+    printf("captured comparator corpus: 16 rows, 15 accepted, exact pending index14; not guest execution\n");
+    return 0;
 }
 
 static int bll_byte_at(const uint8_t *bll, size_t length, uint32_t address, uint8_t *out)
@@ -1616,9 +1723,9 @@ static int timer_companion_write(const char *profile, const timer_paths *paths,
         file_sha256(paths->comparison, comparison_sha) != 0 || file_sha256(paths->bll, bll_sha) != 0 ||
         file_sha256(paths->labels, labels_sha) != 0 || file_sha256(paths->proof, proof_sha) != 0 ||
         file_sha256(descriptor_path, descriptor_sha) != 0 ||
-        record_value(paths->record, "oracle_sha256", oracle_sha, sizeof oracle_sha) != 0 ||
-        record_value(paths->record, "detected_model", detected, sizeof detected) != 0 ||
-        record_value(paths->record, "model_probe_bytes", probe_bytes, sizeof probe_bytes) != 0) {
+        timer_record_field(paths->record, "oracle_sha256", oracle_sha, sizeof oracle_sha) != 0 ||
+        timer_record_field(paths->record, "detected_model", detected, sizeof detected) != 0 ||
+        timer_record_field(paths->record, "model_probe_bytes", probe_bytes, sizeof probe_bytes) != 0) {
         return fail("timer companion: source artifact hash or run metadata missing");
     }
     out = fopen(paths->companion, "wb");
@@ -1657,16 +1764,16 @@ static int timer_companion_validate(const char *profile, const char *directory,
     json_object companion;
     int n;
     if (timer_paths_make(&paths, directory, profile) != 0 ||
-        strcmp(paths.raw, raw_path) != 0 || strcmp(paths.record, record_path) != 0 ||
-        validate_timer_observation(profile, directory, oracle_path, descriptor_path, &paths,
+        strcmp(paths.raw, raw_path) != 0 || strcmp(paths.record, record_path) != 0) return 1;
+    if (validate_timer_observation(profile, directory, oracle_path, descriptor_path, &paths,
                                    &oracle, results, bll_sha, labels_sha, oracle_sha,
-                                   &ticks, &agreements) != 0 ||
-        file_sha256(paths.raw, raw_sha) != 0 || file_sha256(paths.record, record_sha) != 0 ||
+                                   &ticks, &agreements) != 0) return 1;
+    if (file_sha256(paths.raw, raw_sha) != 0 || file_sha256(paths.record, record_sha) != 0 ||
         file_sha256(paths.comparison, comparison_sha) != 0 ||
         file_sha256(descriptor_path, descriptor_sha) != 0 ||
         file_sha256(paths.proof, proof_sha) != 0 ||
-        record_value(paths.record, "detected_model", detected, sizeof detected) != 0 ||
-        record_value(paths.record, "model_probe_bytes", probe_bytes, sizeof probe_bytes) != 0) {
+        timer_record_field(paths.record, "detected_model", detected, sizeof detected) != 0 ||
+        timer_record_field(paths.record, "model_probe_bytes", probe_bytes, sizeof probe_bytes) != 0) {
         return fail("timer companion: complete raw, run, comparison or proof inputs missing");
     }
     n = snprintf(temp_proof, sizeof temp_proof, "%s/.cascade-proof-%s.verify.json", directory, profile);
@@ -1685,16 +1792,16 @@ static int timer_companion_validate(const char *profile, const char *directory,
         json_missing_required(&companion, timer_companion_specs,
                               sizeof timer_companion_specs / sizeof timer_companion_specs[0],
                               "timer companion") != 0) return 1;
-#define COMPANION_STRING(key, value) do { if (!json_string_is(&companion, (key), (value))) return fail("timer companion: value mismatch"); } while (0)
-#define COMPANION_NUMBER(key, value) do { if (!json_number_is(&companion, (key), (value))) return fail("timer companion: value mismatch"); } while (0)
-    COMPANION_STRING("schema", "lynxplosion.timer-source-pending-record");
-    COMPANION_NUMBER("version", 1u);
+#define COMPANION_STRING(key, value) do { if (!json_string_is(&companion, (key), (value))) return fail("suite: pending record value mismatch"); } while (0)
+#define COMPANION_NUMBER(key, value) do { if (!json_number_is(&companion, (key), (value))) return fail("suite: pending record value mismatch"); } while (0)
+    if (!json_string_is(&companion, "schema", "lynxplosion.timer-source-pending-record") ||
+        !json_number_is(&companion, "version", 1u)) return fail("suite: pending record unsupported schema/version");
     COMPANION_STRING("profile", profile);
     COMPANION_STRING("decision", "D-10");
     COMPANION_STRING("requirement", "EVD-02");
     COMPANION_NUMBER("source_index", 14u);
     COMPANION_STRING("actual", "0c");
-    if (!json_array_is(&companion, "expected_source_set", expected_values, 1u)) return fail("timer companion: source set mismatch");
+    if (!json_array_is(&companion, "expected_source_set", expected_values, 1u)) return fail("suite: pending record value mismatch");
     COMPANION_NUMBER("source_agreements", 15u);
     COMPANION_NUMBER("meaningful_count", 16u);
     COMPANION_NUMBER("reserved_count", 2u);
@@ -1705,7 +1812,7 @@ static int timer_companion_validate(const char *profile, const char *directory,
     COMPANION_STRING("profile_qualification", "unresolved");
 #undef COMPANION_STRING
 #undef COMPANION_NUMBER
-#define COMPANION_HASH(key, value) do { if (!valid_hex((value), 64u) || !json_string_is(&companion, (key), (value))) return fail("timer companion: artifact identity mismatch"); } while (0)
+#define COMPANION_HASH(key, value) do { if (!valid_hex((value), 64u) || !json_string_is(&companion, (key), (value))) return fail("suite: pending record artifact identity mismatch"); } while (0)
     COMPANION_HASH("raw_sha256", raw_sha);
     COMPANION_HASH("record_sha256", record_sha);
     COMPANION_HASH("comparison_sha256", comparison_sha);
@@ -2825,6 +2932,9 @@ int main(int argc, char **argv)
     }
     if (argc == 7 && strcmp(argv[1], "timer-cascade-model") == 0) {
         return timer_cascade_model_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);
+    }
+    if (argc == 8 && strcmp(argv[1], "validate-timer-comparison") == 0) {
+        return validate_timer_comparison_corpus(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]);
     }
     if (argc == 7 && strcmp(argv[1], "validate-timer-record") == 0) {
         return validate_timer_record_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);

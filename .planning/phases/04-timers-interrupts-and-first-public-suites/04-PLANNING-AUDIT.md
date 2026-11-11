@@ -44,6 +44,10 @@ Cost and sampling are now separate exact inputs: cost_ticks=5 and sample_offset_
 
 Post-correction evidence: all eight task automated commands were extracted from disk and individually passed bash -n. A separate nesting/count/order check confirmed two tasks per plan, one automated check and fails_when inside each verify, done after verify and no task close inside an automated command. All four plans again passed frontmatter schema and plan-structure validation without errors or warnings; git diff --check passed. These are plan checks, not product execution or source-agreement evidence.
 
+### Plan09 test repetition adjustment — 2026-11-11
+
+The first timer result-control run repeated a fresh Lynx1/Lynx2 guest observation for every captured-data mutation and took 188.20 seconds. Root approved a bounded efficiency adjustment for Plan09 data-only controls: each CTest invocation now captures actual observations, proof and companion records for both profiles once, keeps hash-checked immutable baselines, and runs every single data mutation against a private copy. Both baseline record validators run positively before and after every case; each fault still requires its exact named refusal and contributes to a nonzero case count. Each batch finishes with fresh observations for both profiles. Execution/model faults retain fresh guest runs before and after the fault. The first refactored result-control CTest passed in 61.49 seconds (about 3.1× faster). This changes only repeated test setup; it does not reuse evidence across invocations, weaken individual fault coverage, or alter D-10 acceptance.
+
 ### Independent recheck and parent gates
 
 The independent semantic recheck returned VERIFICATION PASSED. It confirmed

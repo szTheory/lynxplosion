@@ -20,6 +20,8 @@ The timer wrapper executes its own A1/A2 model probe. The observed records prese
 
 The timer test IDs `suite.timers.observation.lynx1`, `suite.timers.observation.lynx2`, `suite.timers.strict_comparison_controls`, and `suite.timers.cascade_model` each use invocation-owned scratch. The strict controls require exit1 and the exact source mismatch diagnostic only after valid observations and proof; they also require exactly16 comparison rows,15 accepted rows and the sole index14 mismatch `0c`/`EXPECT(0d)`.
 
+The timer controls `suite.timers.model_controls`, `suite.timers.result_controls`, and `suite.timers.pending_controls` also require exact named refusals. A wrong selected profile is an actual guest execution and is bracketed by fresh observations for both profiles. Captured-result, record, descriptor and companion mutations use private copies of an immutable baseline captured from fresh Lynx1/Lynx2 observations at the start of each control-test invocation; both baseline records are positively revalidated and their hashes checked before and after every individual mutation. Each batch ends with fresh observations for both profiles. The EXPECT alternative-set cases validate a separately labelled captured comparator corpus, not guest execution. These test controls do not accept another mismatch, alter D-10's pending row, or qualify the profiles.
+
 The Timer2 suite is source-only at this stage. Page-mode timing, audio, and the later audio2 suite remain deferred for scoped future work; none of these source or software observations resolves physical, firmware, rights, publication or release stops.
 
 ## Linked symbols and bounded completion
