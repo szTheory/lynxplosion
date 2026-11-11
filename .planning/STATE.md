@@ -3,12 +3,12 @@ gsd_state_version: "1.0"
 current_phase: 4
 current_phase_name: Timers, Interrupts and First Public Suites
 current_plan: 12
-status: Blocked on inconsistent external GitHub Actions state; Plan 12 Task 2 exact-head CI pending
+status: Resuming Plan 12 Task 2 hosted CI after GitHub recovery; source qualification unchanged
 stopped_at: Phase 4 Plan 12 Task 2 blocked on external GitHub Actions state; no source changes needed
-last_updated: "2026-11-11T21:30:15.540Z"
+last_updated: "2026-11-11T21:35:36.317Z"
 last_activity: 2026-11-11
-last_activity_desc: Full macOS and Ubuntu gates passed; reviewed source pushed; hosted CI queued with contradictory cancel/rerun refusals
-state_head: f92084423d16e4d4d3420545d1f5131b47c7e461
+last_activity_desc: Owner requested retry after outage; Actions operational, old run still inconsistent; preparing fresh normal main CI trigger
+state_head: 35b31ba678b5f46fdafd74dc9953373760ec7ed3
 progress:
   total_phases: 6
   completed_phases: 3
@@ -31,8 +31,8 @@ See: .planning/PROJECT.md (updated 2026-11-10)
 Phase: 4 (Timers, Interrupts and First Public Suites) — IN PROGRESS
 Current Plan: 12
 Total Plans in Phase: 12
-Status: Blocked on inconsistent external GitHub Actions state; Plan 12 Task 2 exact-head CI pending
-Last activity: 2026-11-11 - Full macOS and Ubuntu gates passed; reviewed source pushed; hosted CI queued with contradictory cancel/rerun refusals
+Status: Resuming Plan 12 Task 2 hosted CI after GitHub recovery; source qualification unchanged
+Last activity: 2026-11-11 - Owner requested retry after outage; Actions operational, old run still inconsistent; preparing fresh normal main CI trigger
 
 Progress: [█████░░░░░] 50%
 

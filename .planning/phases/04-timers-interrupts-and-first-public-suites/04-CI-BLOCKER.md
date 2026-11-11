@@ -87,3 +87,19 @@ Raw logs and the reversible retained-scratch evidence stay in private temporary
 storage. Source is already pushed; this blocker handoff may be a local
 documentation-only commit ahead of origin/main. Do not confuse it with the
 existing exact-head CI source or rerun local gates for unchanged documentation.
+
+## Owner-requested recovery resume
+
+The owner subsequently reported the outage over and requested another attempt.
+A fresh official status response reports all systems operational, Actions
+operational, and no incidents. Existing run 43096967098 still reports queued,
+attempt 1, zero jobs; a new standard same-run retry is refused as already running.
+
+Root is resuming the original autonomous workflow. The previously committed
+handoff and this recovery record will be published through the same normal
+origin/main channel, creating a fresh CI event with unchanged qualified
+product/script source. This supersedes the earlier hold on using a new event
+while service recovery was uncertain. Preserve the old run and its inconsistent
+state as historical evidence; a fresh successful run must be accounted for
+separately. No empty commit, gate waiver, new distribution channel or source
+change is involved.
