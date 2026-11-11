@@ -180,6 +180,15 @@ CI against the final reviewed head have not yet run.
 
 ## Open evidence and owner gates
 
+The parent review checkpoint is now complete; see
+[04-PARENT-CHECKPOINT.md](04-PARENT-CHECKPOINT.md). All implementation findings
+are repaired, coverage and UI applicability are reconciled, and the independent
+[D-10 verifier](04-PENDING-GATE-VERIFICATION.md) passed. These later records
+supersede Task 1's historical pending-review status above. Final local,
+self-contained Ubuntu and exact-head CI qualification remain pending Plan 12
+Task 2. The live descriptor identity is recorded by that independent verifier;
+the hashes in the Task 1 tables remain historical observations.
+
 - Global EVD-02 remains open. Phase 5 must establish the relevant initial
   state, page-mode and bus/video prerequisites using independent evidence,
   then repeat the unchanged timer comparison. If the evidence does not justify
