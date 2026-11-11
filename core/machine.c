@@ -80,6 +80,21 @@ static bool machine_valid(const lynx_machine *m)
     return m->magic == LYNX__MAGIC;
 }
 
+/* Guest time is monotonic. Once it passes the end of a priced bus cycle,
+   readiness becomes the current tick; ownership hold remains a separate gate. */
+static void machine_set_guest_tick(struct lynx_machine *m, uint64_t tick)
+{
+    m->guest_ticks = tick;
+    if (m->cpu_ready_at < tick) {
+        m->cpu_ready_at = tick;
+    }
+}
+
+static void machine_update_wake_request(struct lynx_machine *m)
+{
+    m->wake_pending = m->timer_bank.pending != 0u ? 1u : 0u;
+}
+
 void lynx__power_on(lynx_machine *m)
 {
     if (m->cfg.ram_policy == LYNX_RAM_POLICY_SPLITMIX64) {
@@ -104,7 +119,8 @@ void lynx__power_on(lynx_machine *m)
     m->object_len = 0u;
     memset(m->content_sha256, 0, sizeof m->content_sha256);
     m->mapctl = 0u;
-    m->cpu_bus_held = 0u;
+    m->bus_hold = 0u;
+    m->wake_pending = 0u;
     m->guest_ticks = 0u;
     m->cpu_ready_at = m->guest_ticks;
     lynx__timer_init(&m->timer_bank);
@@ -324,6 +340,16 @@ lynx_status lynx__machine_set_cost_model(struct lynx_machine *m, uint32_t model)
     return LYNX_OK;
 }
 
+lynx_status lynx__machine_set_bus_hold(struct lynx_machine *m, uint32_t hold)
+{
+    if (m == NULL || !machine_valid(m) || hold > 1u) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    m->bus_hold = (uint8_t)hold;
+    machine_update_wake_request(m);
+    return LYNX_OK;
+}
+
 /* Read the instruction byte after the route precheck has established that the
    CPU sees RAM. This is not a public mapped peek and does not complete a bus
    request. */
@@ -448,7 +474,7 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
             next.sequence = (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE;
             has_event = true;
         }
-        const bool cpu_available = m->cpu_bus_held == 0u;
+        const bool cpu_available = m->bus_hold == 0u;
         const uint64_t cpu_tick = m->cpu_ready_at > m->guest_ticks ?
                                       m->cpu_ready_at : m->guest_ticks;
         if (cpu_available && cpu_tick < target) {
@@ -463,18 +489,19 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
         if (!has_event) {
             /* No eligible work before the exclusive target. This is also the
                bounded idle path while the private CPU grant gate is held. */
-            m->guest_ticks = target;
+            machine_set_guest_tick(m, target);
             break;
         }
         if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_TIMER_PRIORITY) {
-            m->guest_ticks = next.tick;
+            machine_set_guest_tick(m, next.tick);
             /* Drain the timer's bounded owned-link prefix before allowing a
                same-tick CPU bus request to observe the mapped bank. */
             lynx__timer_apply(&m->timer_bank, next.tick);
+            machine_update_wake_request(m);
             continue;
         }
         if (next.tick > m->guest_ticks) {
-            m->guest_ticks = next.tick;
+            machine_set_guest_tick(m, next.tick);
         }
         const uint64_t grant = m->guest_ticks;
         const uint16_t addr = m->cpu.req_addr;
@@ -496,6 +523,7 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
             *stop = LYNX_STOP_UNAVAILABLE;
             break;
         }
+        machine_update_wake_request(m);
         /* The scan has already established that timer work at this exact tick
            is complete. Mark only after a successful bus action so refused
            requests preserve the whole instance byte-for-byte. */
@@ -515,7 +543,7 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
             m->host_observation.watch_event.hit_tick = grant;
             m->host_observation.watch_event.return_tick = grant + 1u;
             m->host_observation.watch_armed = 0u;
-            m->guest_ticks = grant + 1u;
+            machine_set_guest_tick(m, grant + 1u);
             *stop = LYNX_STOP_WATCH;
             break;
         }
@@ -551,13 +579,16 @@ lynx_status lynx_read_register(const lynx_machine *m, uint32_t reg, uint32_t *va
     case LYNX_REG_P:
         *value = (uint32_t)m->cpu.p | 0x30u;
         break;
-    case LYNX_REG_CPU_STATE:
-        /* The delta fits 8 bits: guest_ticks <= cpu_ready_at <= guest_ticks +
-           255 holds because every cycle costs at most 255 ticks. */
+    case LYNX_REG_CPU_STATE: {
+        /* Readiness is normalized when guest time passes the priced-cycle end;
+           keep observation defensive against a stale or forged earlier value. */
+        const uint64_t remaining = m->cpu_ready_at > m->guest_ticks ?
+                                       m->cpu_ready_at - m->guest_ticks : 0u;
         *value = (uint32_t)m->cpu.flags | ((uint32_t)m->cpu.step << 8) |
                  ((uint32_t)m->cpu.opcode << 16) |
-                 ((uint32_t)(m->cpu_ready_at - m->guest_ticks) << 24);
+                 ((uint32_t)(remaining > UINT8_MAX ? UINT8_MAX : remaining) << 24);
         break;
+    }
     case LYNX_REG_CPU_LATCH:
         *value = (uint32_t)m->cpu.ea | ((uint32_t)m->cpu.tmp << 16) |
                  ((uint32_t)m->cost_model << 24);

@@ -71,7 +71,8 @@ enum { LYNX_RAM_POLICY_ZERO = 0, LYNX_RAM_POLICY_SPLITMIX64 = 1 };
      bits 0-7   interrupt and sequence latches
      bits 8-15  index of the pending cycle inside the instruction (0 at a boundary)
      bits 16-23 opcode of the instruction in progress (0 at a boundary)
-     bits 24-31 master ticks until the next bus cycle may start
+     bits 24-31 remaining ticks in the currently priced bus cycle (ownership
+       hold contributes no extra ticks)
    CPU_LATCH packs the CPU's working values:
      bits 0-15  effective-address latch
      bits 16-23 temporary data latch

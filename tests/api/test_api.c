@@ -4294,7 +4294,7 @@ static void run_scheduler_event_prefix(uint8_t chunk_mode, bool reverse_setup,
     CHECK_EQ_U64(load_bll_at(m, scheduler_watch_program, sizeof scheduler_watch_program,
                              0x0200u), LYNX_OK);
     configure_scheduler_timer_set(m, reverse_setup);
-    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
 
     uint64_t consumed = UINT64_MAX;
     lynx_stop_reason stop = LYNX_STOP_HALT;
@@ -4475,7 +4475,7 @@ static void case_scheduler_limits(void)
         return;
     }
     CHECK_EQ_U64(load_bll_at(m, watch_count_program, sizeof watch_count_program, 0x0200u), LYNX_OK);
-    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
     m->timer_bank.timers[0].count = 0u;
     m->timer_bank.timers[0].control_a = 0x88u;
 
@@ -4604,7 +4604,7 @@ static void run_timer_ctlb_boundary_case(uint8_t relation)
         CHECK_EQ_U64(ctlb, 0u);
         CHECK_EQ_U64(m->timer_bank.pending, 0u);
 
-        m->cpu_bus_held = 1u;
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
         const uint64_t now = ticks_of(m);
         CHECK_EQ_U64(lynx_advance(m, event_tick - now + 1u, &consumed, &stop), LYNX_OK);
         CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
@@ -4613,11 +4613,11 @@ static void run_timer_ctlb_boundary_case(uint8_t relation)
         CHECK_EQ_U64(ctlb, 0x0Du);
         CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
     } else if (relation == TIMER_CTLB_CLEAR_ON) {
-        m->cpu_bus_held = 1u;
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
         const uint64_t now = ticks_of(m);
         CHECK_EQ_U64(lynx_advance(m, event_tick - now, &consumed, &stop), LYNX_OK);
         CHECK_EQ_U64(ticks_of(m), event_tick);
-        m->cpu_bus_held = 0u;
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
         CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
         CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
         CHECK_EQ_U64(m->host_observation.watch_event.hit_tick, event_tick);
@@ -4627,7 +4627,7 @@ static void run_timer_ctlb_boundary_case(uint8_t relation)
         CHECK_EQ_U64(ctlb, 0u);
         CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
     } else {
-        m->cpu_bus_held = 1u;
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
         const uint64_t now = ticks_of(m);
         CHECK_EQ_U64(lynx_advance(m, event_tick - now, &consumed, &stop), LYNX_OK);
         CHECK_EQ_U64(ticks_of(m), event_tick);
@@ -4637,7 +4637,7 @@ static void run_timer_ctlb_boundary_case(uint8_t relation)
         CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD03u, &ctlb, 1u), LYNX_OK);
         CHECK_EQ_U64(ctlb, 0x0Du);
         CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
-        m->cpu_bus_held = 0u;
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
         CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
         CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
         CHECK_EQ_U64(m->host_observation.watch_event.hit_tick, event_tick + 1u);
@@ -4709,7 +4709,7 @@ static void case_timer_done_borrow(void)
     CHECK_EQ_U64(timer[1], 0x88u);
     CHECK_EQ_U64(timer[3] & 0x08u, 0u);
 
-    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
     CHECK_EQ_U64(lynx_advance(m, 17u, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(consumed, 17u);
     CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
@@ -4766,12 +4766,12 @@ static void case_timer_link_tracer(void)
 
     /* Leave the mapped T5 CTLB read pending until tick 1024. The source
        timer event and CPU bus action then share a tick, with timer work first. */
-    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
     CHECK_EQ_U64(lynx_advance(m, 1024u - ticks_of(m), &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(ticks_of(m), 1024u);
     CHECK_EQ_U64(m->timer_bank.timers[3].count, 0u);
     CHECK_EQ_U64(m->timer_bank.timers[5].control_b & 0x07u, 0u);
-    m->cpu_bus_held = 0u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
     CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
     CHECK_EQ_U64(m->cpu.a, 0x07u);
@@ -4858,7 +4858,7 @@ static void run_timer_link_scenario(const timer_link_setup *setups, size_t setup
 
     /* Apply exactly the requested number of source events while preserving
        the posted CPU request. Each event drains all links in its prefix. */
-    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
     for (size_t event = 0u; event < event_count; event++) {
         uint64_t event_tick = 0u;
         const uint64_t now = ticks_of(m);
@@ -5268,11 +5268,13 @@ static void case_request_hold(void)
     m->cpu.p = (uint8_t)(m->cpu.p | 0x04u); /* I masks acceptance, not timer wake. */
     const lynx__cpu request_before = m->cpu;
     const uint64_t target = m->guest_ticks + 40u;
-    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
     CHECK_EQ_U64(lynx_advance(m, 40u, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(consumed, 40u);
     CHECK_EQ_U64(ticks_of(m), target);
     CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK_EQ_U64(m->wake_pending, 1u);
+    CHECK_EQ_U64(m->cpu.p & 0x04u, 0x04u);
     CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) == 0);
     CHECK_EQ_U64(m->ram[0x0400u], 0u);
     lynx_watch_event event;
@@ -5282,13 +5284,14 @@ static void case_request_hold(void)
     uint32_t cpu_state = UINT32_MAX;
     CHECK_EQ_U64(lynx_read_register(m, LYNX_REG_CPU_STATE, &cpu_state), LYNX_OK);
     CHECK_EQ_HEX(cpu_state >> 24, 0u);
+    CHECK_EQ_U64(m->cpu_ready_at, m->guest_ticks);
 
     CHECK_EQ_U64(other->guest_ticks, 0u);
     CHECK_EQ_U64(other->timer_bank.pending, 0u);
-    CHECK_EQ_U64(other->cpu_bus_held, 0u);
+    CHECK_EQ_U64(other->bus_hold, 0u);
     CHECK_EQ_U64(other->ram[0x0400u], 0u);
 
-    m->cpu_bus_held = 0u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
     CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
     CHECK_EQ_U64(consumed, 1u);
@@ -5464,7 +5467,7 @@ static void case_timer_phase(void)
     CHECK_EQ_U64(load_bll_at(m, watch_count_program, sizeof watch_count_program,
                              0x0200u), LYNX_OK);
     lynx__cpu request_before = m->cpu;
-    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
     CHECK(timer_write_required(&m->timer_bank, 0xFD00u, 1u));
     CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 1u));
     CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x08u));
@@ -5482,7 +5485,7 @@ static void case_timer_phase(void)
     CHECK_EQ_U64(lynx_advance(m, 23u, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(ticks_of(m), 56u);
     CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) == 0);
-    m->cpu_bus_held = 0u;
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
     CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
     CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) != 0);
     lynx_machine_deinit(m);

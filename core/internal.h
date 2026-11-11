@@ -89,9 +89,10 @@ struct lynx_machine {
     uint32_t content_format, startup_tier, entry_addr, object_len;
     uint8_t content_sha256[32]; /* SHA-256 of the accepted image bytes; zero before a load */
     uint8_t mapctl; /* provisional byte latch; all written bits are retained */
-    uint8_t cpu_bus_held; /* private deterministic grant gate; no public sleep claim */
+    uint8_t bus_hold; /* private deterministic grant gate; no public sleep claim */
+    uint8_t wake_pending; /* pending IRQ requests wake independently of CPU I */
     uint64_t guest_ticks;       /* the only clock */
-    uint64_t cpu_ready_at;      /* guest tick at which the CPU's next cycle may be granted */
+    uint64_t cpu_ready_at;      /* end of the currently priced cycle, not an ownership delay */
     lynx__timer_bank timer_bank;
     lynx__host_observation host_observation;
 };
@@ -106,6 +107,10 @@ void lynx__power_on(lynx_machine *m);
    with LYNX_ERR_ARGUMENT and nothing is written. Reset and load return the
    model to flat5. */
 lynx_status lynx__machine_set_cost_model(struct lynx_machine *m, uint32_t model);
+
+/* Private deterministic ownership seam. Values other than 0 or 1, NULL, and
+   uninitialised instances are refused without changing the machine. */
+lynx_status lynx__machine_set_bus_hold(struct lynx_machine *m, uint32_t hold);
 
 void lynx__timer_init(lynx__timer_bank *bank);
 bool lynx__timer_next(const lynx__timer_bank *bank, uint64_t now, uint64_t *tick);
