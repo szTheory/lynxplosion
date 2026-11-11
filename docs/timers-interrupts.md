@@ -123,12 +123,23 @@ independent boundary checks cover targets 79/80/81 and 96/97.
 `api.timer_done_borrow` checks the pinned CTLB `$0A` borrow/count result and
 held RESET-DONE behavior through guest writes. `api.timer_link_tracer` makes a
 real guest-programmed 3→5 reload edge collide with a mapped CPU read, then
-checks both CTLB observations, pending bits and result RAM. The standalone and
-phase tests cover all eight mapped register blocks, all seven dividers, count
-0/255, reload and one-shot behavior, shared-phase-preserving writes, timer-4's
-UART exception, refused unsupported link selection, reset/load, two instances,
-and bounded CPU-held progress. Broader graph and unavailable-source controls
-are registered by the following timer-edge plan task.
+checks both CTLB observations, pending bits and result RAM. `api.timer_links`
+checks every owned edge, both full chains, simultaneous standalone roots,
+reload boundaries and count 0/255 through guest-programmed timers.
+`api.timer_unavailable` checks enabled timer 0/timer 1 (absent audio 3)/timer 6
+link refusal, later enable refusal after a disabled link selection, arbitrary
+unimplemented Mikey/Suzy guest writes, preserved requests and atomic mapped
+range inspection. The standalone and phase tests also cover all eight mapped
+register blocks, all seven dividers, count 0/255, reload and one-shot behavior,
+shared-phase-preserving writes, timer-4's UART exception, reset/load, two
+instances, and bounded CPU-held progress.
+
+The pinned `timers2` suite is supporting source evidence for phase and enable
+ordering only. Independent project-authored phase/enable cases cover that
+failure class, so `timers2` is explicitly outside this phase's required suite
+set; the required public-suite observations remain `cpu` and `timers`. Source
+agreement is software comparison evidence only while baseline decision O1
+remains open.
 
 The current snapshot format does not contain the timer bank or its event
 cursor. A snapshot taken while timers are active does not restore their state;

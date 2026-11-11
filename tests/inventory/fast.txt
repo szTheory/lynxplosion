@@ -32,9 +32,11 @@ api.snapshot_refusal	api
 api.snapshot_roundtrip	api
 api.timer_done_borrow	api
 api.timer_link_tracer	api
+api.timer_links	api
 api.timer_phase	api
 api.timer_standalone	api
 api.timer_tracer	api
+api.timer_unavailable	api
 api.watch_controls	api
 api.watch_controls.self_test	api
 api.watch_independent	api

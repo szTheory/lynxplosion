@@ -50,6 +50,8 @@ lynx_add_test(NAME api.timer_standalone COMMAND lynx-test-api timer_standalone L
 lynx_add_test(NAME api.timer_tracer COMMAND lynx-test-api timer_tracer LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.timer_done_borrow COMMAND lynx-test-api timer_done_borrow LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.timer_link_tracer COMMAND lynx-test-api timer_link_tracer LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.timer_links COMMAND lynx-test-api timer_links LABELS api TIMEOUT 30)
+lynx_add_test(NAME api.timer_unavailable COMMAND lynx-test-api timer_unavailable LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.watch_controls COMMAND lynx-test-api watch_controls LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.watch_independent COMMAND lynx-test-api watch_independent LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.watch_post_write COMMAND lynx-test-api watch_post_write LABELS api TIMEOUT 30)

@@ -163,6 +163,20 @@ static const uint8_t timer_link_tracer_program[] = {
     0x4Cu, 0x1Du, 0x02u                  /* JMP loop at $021D */
 };
 
+/* Start a zero-count timer-0 one-shot and post a CTLB clear write. The test
+   aligns that guest write before, at, or after the tick-1024 expiry. */
+static const uint8_t timer_ctlb_boundary_program[] = {
+    0x78u,                               /* SEI */
+    0xA9u, 0x00u,                         /* LDA #0 */
+    0x8Du, 0x00u, 0xFDu,                 /* STA timer 0 backup */
+    0x8Du, 0x02u, 0xFDu,                 /* STA timer 0 count */
+    0xA9u, 0x8Eu,                         /* LDA #IRQ|COUNT|source 6 */
+    0x8Du, 0x01u, 0xFDu,                 /* STA timer 0 CTLA */
+    0xA9u, 0x00u,                         /* LDA #0 */
+    0x8Du, 0x03u, 0xFDu,                 /* STA timer 0 CTLB */
+    0x4Cu, 0x13u, 0x02u                  /* JMP to itself */
+};
+
 /* MAPCTL is set by guest code before a watch on the last address. */
 static const uint8_t watch_last_address_program[] = {
     0xA9u, 0x08u, 0x8Du, 0xF9u, 0xFFu, /* LDA #$08; STA $FFF9 */
@@ -3797,6 +3811,106 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+enum {
+    TIMER_CTLB_CLEAR_BEFORE = 0u,
+    TIMER_CTLB_CLEAR_ON = 1u,
+    TIMER_CTLB_CLEAR_AFTER = 2u,
+};
+
+static void run_timer_ctlb_boundary_case(uint8_t relation)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        CHECK(m != NULL);
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, timer_ctlb_boundary_program,
+                             sizeof timer_ctlb_boundary_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0xFD03u, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    bool found_clear = false;
+    for (size_t i = 0u; i < 1024u && ticks_of(m) < 1024u; i++) {
+        if (m->cpu.req_addr == 0xFD03u && m->cpu.req_data == 0u &&
+            m->cpu_ready_at <= 1024u) {
+            found_clear = true;
+            break;
+        }
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        if (stop != LYNX_STOP_BUDGET) {
+            break;
+        }
+    }
+    CHECK(found_clear);
+    if (!found_clear) {
+        goto done;
+    }
+    CHECK_EQ_U64(m->cpu.req_addr, 0xFD03u);
+    CHECK_EQ_U64(m->cpu.req_data, 0u);
+    CHECK_EQ_U64(m->cpu.req_flags & LYNX__CF_WRITE, LYNX__CF_WRITE);
+    uint64_t event_tick = 0u;
+    CHECK(lynx__timer_next(&m->timer_bank, ticks_of(m), &event_tick));
+    CHECK_EQ_U64(event_tick, 1024u);
+
+    if (relation == TIMER_CTLB_CLEAR_BEFORE) {
+        CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+        CHECK(m->host_observation.watch_event.hit_tick < event_tick);
+        uint8_t ctlb = 0xA5u;
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD03u, &ctlb, 1u), LYNX_OK);
+        CHECK_EQ_U64(ctlb, 0u);
+        CHECK_EQ_U64(m->timer_bank.pending, 0u);
+
+        m->cpu_bus_held = 1u;
+        const uint64_t now = ticks_of(m);
+        CHECK_EQ_U64(lynx_advance(m, event_tick - now + 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(ticks_of(m), event_tick + 1u);
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD03u, &ctlb, 1u), LYNX_OK);
+        CHECK_EQ_U64(ctlb, 0x0Du);
+        CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    } else if (relation == TIMER_CTLB_CLEAR_ON) {
+        m->cpu_bus_held = 1u;
+        const uint64_t now = ticks_of(m);
+        CHECK_EQ_U64(lynx_advance(m, event_tick - now, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(ticks_of(m), event_tick);
+        m->cpu_bus_held = 0u;
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+        CHECK_EQ_U64(m->host_observation.watch_event.hit_tick, event_tick);
+        CHECK_EQ_U64(m->host_observation.watch_event.return_tick, event_tick + 1u);
+        uint8_t ctlb = 0xA5u;
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD03u, &ctlb, 1u), LYNX_OK);
+        CHECK_EQ_U64(ctlb, 0u);
+        CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    } else {
+        m->cpu_bus_held = 1u;
+        const uint64_t now = ticks_of(m);
+        CHECK_EQ_U64(lynx_advance(m, event_tick - now, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(ticks_of(m), event_tick);
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(ticks_of(m), event_tick + 1u);
+        uint8_t ctlb = 0xA5u;
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD03u, &ctlb, 1u), LYNX_OK);
+        CHECK_EQ_U64(ctlb, 0x0Du);
+        CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+        m->cpu_bus_held = 0u;
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+        CHECK_EQ_U64(m->host_observation.watch_event.hit_tick, event_tick + 1u);
+        CHECK_EQ_U64(m->host_observation.watch_event.return_tick, event_tick + 2u);
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD03u, &ctlb, 1u), LYNX_OK);
+        CHECK_EQ_U64(ctlb, 0u);
+        CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    }
+
+done:
+    lynx_machine_deinit(m);
+}
+
 static void case_timer_done_borrow(void)
 {
     const int failures_before = check_failures;
@@ -3861,6 +3975,14 @@ static void case_timer_done_borrow(void)
     CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
     CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD0Cu, timer, sizeof timer), LYNX_OK);
     CHECK_EQ_U64(timer[3] & 0x08u, 0x08u);
+
+    /* The same guest CTLB clear is observed immediately before, at, and just
+       after the expiry tick; at-tick timer work precedes the CPU write. */
+    lynx_machine_deinit(m);
+    m = NULL;
+    run_timer_ctlb_boundary_case(TIMER_CTLB_CLEAR_BEFORE);
+    run_timer_ctlb_boundary_case(TIMER_CTLB_CLEAR_ON);
+    run_timer_ctlb_boundary_case(TIMER_CTLB_CLEAR_AFTER);
 
 done:
     if (m != NULL) {
@@ -3928,6 +4050,303 @@ done:
         lynx_machine_deinit(m);
     }
     printf("TAP version 13\n1..1\n%s 1 - api.timer_link_tracer\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+typedef struct timer_link_setup {
+    uint8_t index;
+    uint8_t backup;
+    uint8_t count;
+    uint8_t control_a;
+} timer_link_setup;
+
+static size_t make_timer_link_guest(uint8_t *program, const timer_link_setup *setups,
+                                    size_t setup_count)
+{
+    size_t length = 0u;
+    program[length++] = 0x78u; /* SEI: keep source IRQ latches observable */
+    for (size_t i = 0u; i < setup_count; i++) {
+        const uint16_t base = (uint16_t)(0xFD00u + 4u * setups[i].index);
+        program[length++] = 0xA9u;
+        program[length++] = setups[i].backup;
+        program[length++] = 0x8Du;
+        program[length++] = (uint8_t)base;
+        program[length++] = (uint8_t)(base >> 8);
+        program[length++] = 0xA9u;
+        program[length++] = setups[i].count;
+        program[length++] = 0x8Du;
+        program[length++] = (uint8_t)(base + 2u);
+        program[length++] = (uint8_t)((base + 2u) >> 8);
+        program[length++] = 0xA9u;
+        program[length++] = setups[i].control_a;
+        program[length++] = 0x8Du;
+        program[length++] = (uint8_t)(base + 1u);
+        program[length++] = (uint8_t)((base + 1u) >> 8);
+    }
+    const uint16_t loop = (uint16_t)(0x0200u + (uint16_t)length);
+    program[length++] = 0x4Cu;
+    program[length++] = (uint8_t)loop;
+    program[length++] = (uint8_t)(loop >> 8);
+    return length;
+}
+
+static void run_timer_link_scenario(const timer_link_setup *setups, size_t setup_count,
+                                    uint8_t root, size_t event_count,
+                                    uint8_t expected_mask, const uint8_t expected_counts[8],
+                                    const uint8_t expected_ctlb[8], uint8_t expected_pending)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        CHECK(m != NULL);
+        return;
+    }
+    uint8_t program[160];
+    const size_t program_len = make_timer_link_guest(program, setups, setup_count);
+    const uint16_t root_control = (uint16_t)(0xFD01u + 4u * root);
+    CHECK_EQ_U64(load_bll_at(m, program, program_len, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, root_control, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 2000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop != LYNX_STOP_WATCH) {
+        goto done;
+    }
+
+    /* Apply exactly the requested number of source events while preserving
+       the posted CPU request. Each event drains all links in its prefix. */
+    m->cpu_bus_held = 1u;
+    for (size_t event = 0u; event < event_count; event++) {
+        uint64_t event_tick = 0u;
+        const uint64_t now = ticks_of(m);
+        const bool has_event = lynx__timer_next(&m->timer_bank, now, &event_tick);
+        CHECK(has_event);
+        if (!has_event) {
+            break;
+        }
+        CHECK(event_tick >= now);
+        if (event_tick < now) {
+            break;
+        }
+        const uint64_t budget = event_tick - now + 1u;
+        CHECK_EQ_U64(lynx_advance(m, budget, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, budget);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    }
+
+    uint8_t mapped[LYNX__TIMER_COUNT * 4u];
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD00u, mapped, sizeof mapped), LYNX_OK);
+    for (size_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        if ((expected_mask & (uint8_t)(1u << i)) != 0u) {
+            CHECK_EQ_U64(mapped[i * 4u + 2u], expected_counts[i]);
+            CHECK_EQ_U64(mapped[i * 4u + 3u], expected_ctlb[i]);
+        }
+    }
+    uint8_t pending[2] = {0xA5u, 0x5Au};
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD80u, pending, sizeof pending), LYNX_OK);
+    CHECK_EQ_U64(pending[0], expected_pending);
+    CHECK_EQ_U64(pending[1], expected_pending);
+
+done:
+    lynx_machine_deinit(m);
+}
+
+static void case_timer_links(void)
+{
+    static const timer_link_setup link02[] = {{2u, 0u, 1u, 0x8Fu}, {0u, 1u, 0u, 0x98u}};
+    static const timer_link_setup link24[] = {{4u, 0u, 1u, 0x8Fu}, {2u, 1u, 0u, 0x98u}};
+    static const timer_link_setup chain024[] = {
+        {4u, 0u, 0u, 0x8Fu}, {2u, 1u, 0u, 0x9Fu}, {0u, 1u, 0u, 0x98u}};
+    static const timer_link_setup link13[] = {{3u, 0u, 1u, 0x8Fu}, {1u, 1u, 0u, 0x98u}};
+    static const timer_link_setup link35[] = {{5u, 0u, 1u, 0x8Fu}, {3u, 1u, 0u, 0x98u}};
+    static const timer_link_setup link57[] = {{7u, 0u, 1u, 0x8Fu}, {5u, 1u, 0u, 0x98u}};
+    static const timer_link_setup chain1357[] = {
+        {7u, 0u, 1u, 0x8Fu}, {5u, 1u, 0u, 0x9Fu},
+        {3u, 1u, 0u, 0x9Fu}, {1u, 1u, 0u, 0x98u}};
+    static const timer_link_setup simultaneous[] = {
+        {2u, 0u, 1u, 0x8Fu}, {0u, 1u, 0u, 0x9Eu}, {1u, 0u, 0u, 0x8Eu}};
+    static const timer_link_setup count_255[] = {{0u, 0xFFu, 0xFFu, 0x88u}};
+    static const timer_link_setup reload_0_to_255[] = {{0u, 0xFFu, 0u, 0x98u}};
+    static const uint8_t expected02_count[8] = {1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected02_ctlb[8] = {0x0Du, 0u, 0x06u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected24_count[8] = {0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected24_ctlb[8] = {0u, 0u, 0x0Du, 0u, 0x06u, 0u, 0u, 0u};
+    static const uint8_t expected024_count[8] = {1u, 0u, 1u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected024_ctlb[8] = {0x0Du, 0u, 0x0Fu, 0u, 0x0Fu, 0u, 0u, 0u};
+    static const uint8_t expected13_count[8] = {0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected13_ctlb[8] = {0u, 0x0Du, 0u, 0x06u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected35_count[8] = {0u, 0u, 0u, 1u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected35_ctlb[8] = {0u, 0u, 0u, 0x0Du, 0u, 0x06u, 0u, 0u};
+    static const uint8_t expected57_count[8] = {0u, 0u, 0u, 0u, 0u, 1u, 0u, 0u};
+    static const uint8_t expected57_ctlb[8] = {0u, 0u, 0u, 0u, 0u, 0x0Du, 0u, 0x06u};
+    static const uint8_t expected1357_count[8] = {0u, 1u, 0u, 1u, 0u, 1u, 0u, 0u};
+    static const uint8_t expected1357_ctlb[8] = {0u, 0x0Du, 0u, 0x0Fu, 0u, 0x0Fu, 0u, 0x06u};
+    static const uint8_t expected_simultaneous_count[8] = {1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected_simultaneous_ctlb[8] = {0x0Du, 0x0Du, 0x06u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected255_count[8] = {0xFEu, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected255_ctlb[8] = {0x04u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected_reload_count[8] = {0xFEu, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected_reload_ctlb[8] = {0x0Cu, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    const int failures_before = check_failures;
+    size_t scenarios_run = 0u;
+
+    run_timer_link_scenario(link02, sizeof link02 / sizeof link02[0], 0u, 1u,
+                            0x05u, expected02_count, expected02_ctlb, 0x01u);
+    scenarios_run++;
+    run_timer_link_scenario(link24, sizeof link24 / sizeof link24[0], 2u, 1u,
+                            0x14u, expected24_count, expected24_ctlb, 0x04u);
+    scenarios_run++;
+    run_timer_link_scenario(chain024, sizeof chain024 / sizeof chain024[0], 0u, 1u,
+                            0x15u, expected024_count, expected024_ctlb, 0x05u);
+    scenarios_run++;
+    run_timer_link_scenario(link13, sizeof link13 / sizeof link13[0], 1u, 1u,
+                            0x0Au, expected13_count, expected13_ctlb, 0x02u);
+    scenarios_run++;
+    run_timer_link_scenario(link35, sizeof link35 / sizeof link35[0], 3u, 1u,
+                            0x28u, expected35_count, expected35_ctlb, 0x08u);
+    scenarios_run++;
+    run_timer_link_scenario(link57, sizeof link57 / sizeof link57[0], 5u, 1u,
+                            0xA0u, expected57_count, expected57_ctlb, 0x20u);
+    scenarios_run++;
+    run_timer_link_scenario(chain1357, sizeof chain1357 / sizeof chain1357[0], 1u, 1u,
+                            0xAAu, expected1357_count, expected1357_ctlb, 0x2Au);
+    scenarios_run++;
+    run_timer_link_scenario(simultaneous, sizeof simultaneous / sizeof simultaneous[0],
+                            1u, 1u, 0x07u, expected_simultaneous_count,
+                            expected_simultaneous_ctlb, 0x03u);
+    scenarios_run++;
+    run_timer_link_scenario(count_255, sizeof count_255 / sizeof count_255[0],
+                            0u, 1u, 0x01u, expected255_count, expected255_ctlb, 0u);
+    scenarios_run++;
+    run_timer_link_scenario(reload_0_to_255,
+                            sizeof reload_0_to_255 / sizeof reload_0_to_255[0],
+                            0u, 2u, 0x01u, expected_reload_count, expected_reload_ctlb, 0x01u);
+    scenarios_run++;
+
+    /* timer4 has no timer-expiry IRQ source even when enabled. */
+    CHECK_EQ_U64(scenarios_run, 10u);
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_links\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static size_t make_unavailable_guest(uint8_t *program, uint16_t addr, uint8_t value,
+                                     bool disabled_link_first)
+{
+    size_t length = 0u;
+    program[length++] = 0xA9u;
+    program[length++] = 0xA5u;
+    program[length++] = 0x8Du;
+    program[length++] = 0x00u;
+    program[length++] = 0x04u;
+    if (disabled_link_first) {
+        program[length++] = 0xA9u;
+        program[length++] = 0x07u;
+        program[length++] = 0x8Du;
+        program[length++] = (uint8_t)addr;
+        program[length++] = (uint8_t)(addr >> 8);
+    }
+    program[length++] = 0xA9u;
+    program[length++] = value;
+    program[length++] = 0x8Du;
+    program[length++] = (uint8_t)addr;
+    program[length++] = (uint8_t)(addr >> 8);
+    return length;
+}
+
+static void expect_unavailable_guest_write(uint16_t addr, uint8_t value,
+                                           bool disabled_link_first,
+                                           bool is_timer_control, uint8_t timer_index,
+                                           uint8_t expected_control_a)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        CHECK(m != NULL);
+        return;
+    }
+    uint8_t program[32];
+    const size_t program_len = make_unavailable_guest(program, addr, value,
+                                                      disabled_link_first);
+    CHECK_EQ_U64(load_bll_at(m, program, program_len, 0x0200u), LYNX_OK);
+    /* Poison hidden RAM so a mistaken fallback write is observable. */
+    m->ram[addr] = 0xE7u;
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_EQ_U64(consumed, disabled_link_first ? 85u : 55u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0xA5u);
+    CHECK_EQ_U64(m->ram[addr], 0xE7u);
+    CHECK_EQ_U64(m->cpu.req_addr, addr);
+    CHECK_EQ_U64(m->cpu.req_data, value);
+    CHECK_EQ_U64(m->cpu.req_flags & LYNX__CF_WRITE, LYNX__CF_WRITE);
+    if (is_timer_control) {
+        CHECK_EQ_U64(m->timer_bank.timers[timer_index].control_a, expected_control_a);
+    }
+
+    /* Retrying the refused request consumes no new prefix and leaves the
+       action pending and unapplied. */
+    CHECK_EQ_U64(lynx_advance(m, 10u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_EQ_U64(m->cpu.req_addr, addr);
+    CHECK_EQ_U64(m->cpu.req_data, value);
+    CHECK_EQ_U64(m->ram[addr], 0xE7u);
+    if (is_timer_control) {
+        CHECK_EQ_U64(m->timer_bank.timers[timer_index].control_a, expected_control_a);
+    }
+    lynx_machine_deinit(m);
+}
+
+static void case_timer_unavailable(void)
+{
+    const int failures_before = check_failures;
+    size_t cases_run = 0u;
+
+    /* No documented incoming link exists for timer 0 or 6; timer 1's source
+       would be absent audio 3. Enabled selections refuse before CTLA mutation. */
+    expect_unavailable_guest_write(0xFD01u, 0x0Fu, false, true, 0u, 0u);
+    cases_run++;
+    expect_unavailable_guest_write(0xFD05u, 0x0Fu, false, true, 1u, 0u);
+    cases_run++;
+    expect_unavailable_guest_write(0xFD19u, 0x0Fu, false, true, 6u, 0u);
+    cases_run++;
+
+    /* A disabled selector is retained; enabling COUNT with that selector is
+       still refused before the second write can change the register. */
+    expect_unavailable_guest_write(0xFD01u, 0x0Fu, true, true, 0u, 0x07u);
+    cases_run++;
+    expect_unavailable_guest_write(0xFD19u, 0x0Fu, true, true, 6u, 0x07u);
+    cases_run++;
+
+    /* Unimplemented Mikey audio and Suzy addresses refuse through the guest
+       bus, preserving both the pending store and hidden backing RAM. */
+    expect_unavailable_guest_write(0xFD20u, 0x5Au, false, false, 0u, 0u);
+    cases_run++;
+    expect_unavailable_guest_write(0xFC00u, 0x5Au, false, false, 0u, 0u);
+    cases_run++;
+
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        uint8_t crossing[2] = {0xA5u, 0x5Au};
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD1Fu, crossing, sizeof crossing),
+                     LYNX_ERR_UNAVAILABLE);
+        CHECK_EQ_U64(crossing[0], 0xA5u);
+        CHECK_EQ_U64(crossing[1], 0x5Au);
+        lynx_machine_deinit(m);
+    } else {
+        CHECK(m != NULL);
+    }
+
+    CHECK_EQ_U64(cases_run, 7u);
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_unavailable\n",
            check_failures == failures_before ? "ok" : "not ok");
 }
 
@@ -4285,6 +4704,8 @@ static const struct {
     {"timer_tracer", case_timer_tracer},
     {"timer_done_borrow", case_timer_done_borrow},
     {"timer_link_tracer", case_timer_link_tracer},
+    {"timer_links", case_timer_links},
+    {"timer_unavailable", case_timer_unavailable},
     {"timer_standalone", case_timer_standalone},
     {"timer_phase", case_timer_phase},
     {"watch_controls", case_watch_controls},
