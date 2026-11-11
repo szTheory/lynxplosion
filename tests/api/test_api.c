@@ -124,6 +124,45 @@ static const uint8_t timer_done_borrow_program[] = {
     0x8Du, 0x01u, 0x04u                  /* STA $0401 */
 };
 
+/* RESET-DONE stays asserted across many timer source edges, then the guest
+   releases it. The test watches both CTLA writes and advances the next edge
+   with only the timer bank active. */
+static const uint8_t timer_reset_done_program[] = {
+    0xA9u, 0x00u,                         /* LDA #0 */
+    0x8Du, 0x0Eu, 0xFDu,                 /* STA timer 3 count */
+    0xA9u, 0xC8u,                         /* LDA #IRQ|COUNT|RESET-DONE */
+    0x8Du, 0x0Du, 0xFDu,                 /* STA timer 3 CTLA */
+    0xEAu, 0xEAu, 0xEAu, 0xEAu,
+    0xEAu, 0xEAu, 0xEAu, 0xEAu,
+    0xEAu, 0xEAu, 0xEAu, 0xEAu,
+    0xEAu, 0xEAu, 0xEAu, 0xEAu,
+    0xA9u, 0x88u,                         /* LDA #COUNT */
+    0x8Du, 0x0Du, 0xFDu                  /* STA timer 3 CTLA */
+};
+
+/* T3 reloads at the first shared-divider edge and clocks linked T5. The loop
+   reads T5 CTLB on every pass so the test can hold its mapped read request
+   until the precise timer tick and verify timer-before-CPU ordering. */
+static const uint8_t timer_link_tracer_program[] = {
+    0x78u,                               /* SEI: observe pending without IRQ entry */
+    0xA9u, 0x00u,                         /* LDA #0 */
+    0x8Du, 0x14u, 0xFDu,                 /* STA timer 5 backup */
+    0x8Du, 0x16u, 0xFDu,                 /* STA timer 5 count */
+    0xA9u, 0xCFu,                         /* LDA #IRQ|RESET-DONE|COUNT|LINK */
+    0x8Du, 0x15u, 0xFDu,                 /* STA timer 5 CTLA */
+    0xA9u, 0x01u,                         /* LDA #1 */
+    0x8Du, 0x0Cu, 0xFDu,                 /* STA timer 3 backup */
+    0xA9u, 0x00u,                         /* LDA #0 */
+    0x8Du, 0x0Eu, 0xFDu,                 /* STA timer 3 count */
+    0xA9u, 0x9Eu,                         /* LDA #IRQ|RELOAD|COUNT|source 6 */
+    0x8Du, 0x0Du, 0xFDu,                 /* STA timer 3 CTLA */
+    0xADu, 0x17u, 0xFDu,                 /* loop: LDA timer 5 CTLB */
+    0x8Du, 0x00u, 0x04u,                 /* STA $0400 */
+    0xADu, 0x81u, 0xFDu,                 /* LDA pending status */
+    0x8Du, 0x01u, 0x04u,                 /* STA $0401 */
+    0x4Cu, 0x1Du, 0x02u                  /* JMP loop at $021D */
+};
+
 /* MAPCTL is set by guest code before a watch on the last address. */
 static const uint8_t watch_last_address_program[] = {
     0xA9u, 0x08u, 0x8Du, 0xF9u, 0xFFu, /* LDA #$08; STA $FFF9 */
@@ -3781,12 +3820,114 @@ static void case_timer_done_borrow(void)
     CHECK(consumed != 0u);
     CHECK_EQ_U64(m->ram[0x0400u], 0x7Fu);
     CHECK_EQ_U64(m->ram[0x0401u], 0x08u);
+    if (check_failures != failures_before) {
+        goto done;
+    }
+    lynx_machine_deinit(m);
+    m = init_in(machine_buf, &cfg);
+    CHECK(m != NULL);
+    if (m == NULL) {
+        goto done;
+    }
+
+    CHECK_EQ_U64(load_bll_at(m, timer_reset_done_program,
+                             sizeof timer_reset_done_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0xFD0Du, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop != LYNX_STOP_WATCH) {
+        goto done;
+    }
+    uint8_t timer[4] = {0u, 0u, 0u, 0u};
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD0Cu, timer, sizeof timer), LYNX_OK);
+    CHECK_EQ_U64(timer[1], 0xC8u);
+    CHECK_EQ_U64(timer[3] & 0x08u, 0u);
+
+    /* The same watch now observes RESET-DONE being released after many
+       source edges; DONE must still be clear until a later zero-count edge. */
+    CHECK_EQ_U64(lynx_watch_configure(m, 0xFD0Du, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    if (stop != LYNX_STOP_WATCH) {
+        goto done;
+    }
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD0Cu, timer, sizeof timer), LYNX_OK);
+    CHECK_EQ_U64(timer[1], 0x88u);
+    CHECK_EQ_U64(timer[3] & 0x08u, 0u);
+
+    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx_advance(m, 17u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 17u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD0Cu, timer, sizeof timer), LYNX_OK);
+    CHECK_EQ_U64(timer[3] & 0x08u, 0x08u);
 
 done:
     if (m != NULL) {
         lynx_machine_deinit(m);
     }
     printf("TAP version 13\n1..1\n%s 1 - api.timer_done_borrow\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_timer_link_tracer(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(load_bll_at(m, timer_link_tracer_program,
+                             sizeof timer_link_tracer_program, 0x0200u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    bool found_read = false;
+    for (size_t i = 0u; i < 1024u && ticks_of(m) < 1024u; i++) {
+        if (m->cpu.req_addr == 0xFD17u && m->cpu_ready_at <= 1024u) {
+            found_read = true;
+            break;
+        }
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        if (stop != LYNX_STOP_BUDGET) {
+            break;
+        }
+    }
+    CHECK(found_read);
+    if (!found_read) {
+        goto done;
+    }
+    CHECK_EQ_U64(m->timer_bank.timers[3].count, 0u);
+    CHECK_EQ_U64(m->timer_bank.timers[5].count, 0u);
+
+    /* Leave the mapped T5 CTLB read pending until tick 1024. The source
+       timer event and CPU bus action then share a tick, with timer work first. */
+    m->cpu_bus_held = 1u;
+    CHECK_EQ_U64(lynx_advance(m, 1024u - ticks_of(m), &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(ticks_of(m), 1024u);
+    CHECK_EQ_U64(m->timer_bank.timers[3].count, 0u);
+    CHECK_EQ_U64(m->timer_bank.timers[5].control_b & 0x07u, 0u);
+    m->cpu_bus_held = 0u;
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(m->cpu.a, 0x07u);
+    CHECK_EQ_U64(m->timer_bank.timers[3].count, 1u);
+    CHECK_EQ_U64(m->timer_bank.timers[3].control_b, 0x0Du);
+    CHECK_EQ_U64(m->timer_bank.timers[5].count, 0u);
+    CHECK_EQ_U64(m->timer_bank.timers[5].control_b, 0x07u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x28u);
+
+    CHECK_EQ_U64(lynx_advance(m, 100u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(m->ram[0x0400u], 0x07u);
+    CHECK_EQ_U64(m->ram[0x0401u], 0x28u);
+
+done:
+    if (m != NULL) {
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_link_tracer\n",
            check_failures == failures_before ? "ok" : "not ok");
 }
 
@@ -4143,6 +4284,7 @@ static const struct {
     {"snapshot_continue", case_snapshot_continue},
     {"timer_tracer", case_timer_tracer},
     {"timer_done_borrow", case_timer_done_borrow},
+    {"timer_link_tracer", case_timer_link_tracer},
     {"timer_standalone", case_timer_standalone},
     {"timer_phase", case_timer_phase},
     {"watch_controls", case_watch_controls},

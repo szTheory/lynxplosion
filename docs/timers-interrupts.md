@@ -81,16 +81,23 @@ further counting until cleared. Writing zero to control B clears DONE. Writing
 control A with reset-DONE set clears DONE immediately and holds it clear.
 
 Timer 4 can count and set its DONE status, but it does not synthesize UART
-readiness or the UART pending bit. Selecting link source 7 is currently
-unavailable for every timer; a refused control-A write leaves that timer and
-the CPU request unmodified. The specified timer-to-timer chains are deferred
-to the linked-timer work.
+readiness or the UART pending bit. The owned link sources 0→2→4 and
+1→3→5→7 are implemented as bounded same-tick borrow propagation. A link-mode
+timer is advanced only by its declared predecessor's reload event; it is not
+scheduled from the shared base divider. Enabled link selections for timer 0,
+timer 1 (whose documented predecessor is absent audio 3), and timer 6 are
+refused before CTLA changes. A disabled unsupported selection can be written,
+but enabling COUNT with that selection is refused. Other Mikey and Suzy bytes
+remain unavailable.
 
-Control-B bits 2–0 (last-clock and borrow observations) are not modeled yet and
-read as zero. Writes to those bits have no effect. Other Mikey and Suzy bytes
-remain unavailable. `lynx_read_cpu_memory` preflights the whole range and peeks
-the timer bank without advancing it; `lynx_read_memory` continues to expose
-raw backing RAM separately.
+The CTLB LAST CLOCK/BORROW IN/BORROW OUT bits report the most recent scheduled
+timer input event and remain until the next timer-bank event. Their names are
+source-backed, but their stable read lifetime is an explicit software policy
+because the reviewed primary notes do not define it. A direct CTLB borrow-in
+write is a one-event strobe and does not latch those low status bits, matching
+the pinned timer test's `$0A`→`$08` read. `lynx_read_cpu_memory` preflights the
+whole range and peeks the timer bank without advancing it;
+`lynx_read_memory` continues to expose raw backing RAM separately.
 
 ## Bounded scheduler and ownership
 
@@ -112,11 +119,16 @@ dispatched twice after a stop at that timestamp.
 
 `api.timer_tracer` runs a project-authored strict BLL guest through timer-0
 register writes, expiry, mapped DONE/pending reads, and RAM result stores. Its
-independent boundary checks cover targets 79/80/81 and 96/97. The standalone
-and phase tests cover all eight mapped register blocks, all seven dividers,
-count 0/255, reload and one-shot behavior, shared-phase-preserving writes,
-timer-4's UART exception, refused link selection, reset/load, two instances,
-and bounded CPU-held progress.
+independent boundary checks cover targets 79/80/81 and 96/97.
+`api.timer_done_borrow` checks the pinned CTLB `$0A` borrow/count result and
+held RESET-DONE behavior through guest writes. `api.timer_link_tracer` makes a
+real guest-programmed 3→5 reload edge collide with a mapped CPU read, then
+checks both CTLB observations, pending bits and result RAM. The standalone and
+phase tests cover all eight mapped register blocks, all seven dividers, count
+0/255, reload and one-shot behavior, shared-phase-preserving writes, timer-4's
+UART exception, refused unsupported link selection, reset/load, two instances,
+and bounded CPU-held progress. Broader graph and unavailable-source controls
+are registered by the following timer-edge plan task.
 
 The current snapshot format does not contain the timer bank or its event
 cursor. A snapshot taken while timers are active does not restore their state;

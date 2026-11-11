@@ -3,5 +3,5 @@ profile = none
 content_sha256 = dcee7216a88ff2ffaf3e4a2794c3369676fc47493d710f26cd8bbadd19745b77
 startup_tier = A
 evidence_tier = R
-inventory_sha256 = 2df8783816c74c1a3d02f96055a9463ebbe4d86ec7f54be76c3d6b4483efcf6d
+inventory_sha256 = 61bc8a6a52b262e6aeca6386cfaed1d0def9b8563fedb1f67f2e5b0b5484407e
 evidence = det.two_runs det.two_instances det.golden tests/golden/skeleton.digest

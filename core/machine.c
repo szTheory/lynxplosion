@@ -480,6 +480,8 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
         }
         if (next.priority == (uint8_t)MACHINE_EVENT_TIMER_PRIORITY) {
             m->guest_ticks = next.tick;
+            /* Drain the timer's bounded owned-link prefix before allowing a
+               same-tick CPU bus request to observe the mapped bank. */
             lynx__timer_apply(&m->timer_bank, next.tick);
             continue;
         }
