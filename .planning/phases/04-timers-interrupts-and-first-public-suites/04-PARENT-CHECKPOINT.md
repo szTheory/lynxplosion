@@ -48,3 +48,14 @@ refusal status, and fresh build/oracle controls plus both timer observations
 pass. Only recipe identity fields/negative-control anchors change in the D-10
 binding; source oracle bytes and admission/proof logic remain unchanged. Renew
 Task12T2 qualification on the new committed source.
+
+## Final pre-push review accepted
+
+Root reviewed the final ledger and docs-only adc5247 delta against source
+7616f6d. Full macOS and self-contained Ubuntu gates pass with complete163-test
+accounting/no skips, artifacts and history hygiene. Root inspected the Linux
+raw log's final exit evidence. Product/script source is unchanged by the
+ledger commit. The current descriptor identity and the independent report's
+dated identity are distinguished explicitly. The existing origin/main push
+and exact-head CI may now proceed under the already authorized channel.
+No source changes, new publication channel or release are authorized here.

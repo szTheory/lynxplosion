@@ -51,7 +51,7 @@ Fresh artifacts are in `build/check/scratch/suites/suite.timers.observation.lynx
 
 Both fresh run records show progress `8`, completion sentinel `a5`, 16 meaningful results plus 2 reserved result bytes, a 256–50,000,000 tick window, `flat5` at 5 ticks, sample offset 0, fixed-zero phase, and page-mode/video and refresh DMA disabled. They state `source_comparison=separate-record`, `hardware_accuracy=unverified`, and `profile_qualification=unresolved`.
 
-The unchanged pinned `timers/main.c` expects `0d` at index 14. The generated comparisons retain all 16 source rows; row 14 is exactly `0c / EXPECT(0d) / source-mismatch`, with all others accepted. Current live descriptor SHA-256 is `6ff40ce64e426f9d66a9aec5633b98dc2353c9b127753ab7cc1be5d2c96d628c`; the fresh companions reference that digest. The `67e5614a...` descriptor digest in `04-QUALIFICATION.md` is a Task 12 Task 1 historical observation, not the current descriptor identity.
+The unchanged pinned `timers/main.c` expects `0d` at index 14. The generated comparisons retain all 16 source rows; row 14 is exactly `0c / EXPECT(0d) / source-mismatch`, with all others accepted. At the reviewed head `ae353db`, the descriptor SHA-256 was `6ff40ce64e426f9d66a9aec5633b98dc2353c9b127753ab7cc1be5d2c96d628c`; the fresh companions reference that digest. The `67e5614a...` descriptor digest in `04-QUALIFICATION.md` is a Task 12 Task 1 historical observation, not the current descriptor identity.
 
 ## Independent timing proof
 
@@ -64,3 +64,16 @@ The source/linked-code proof derives a 20-tick first poll, 14-cycle/70-tick no-I
 ## Remaining phase boundary
 
 Plan 12 Task 2 macOS/Linux/exact-head CI qualification remains pending; it is neither missing implementation nor passed qualification in this review. `04-SECURITY.md` keeps final qualification threat T-04-32 open. Global EVD-02 remains open for Phase 5 bus/video prerequisites, recurring EVD-05 remains open, and O1/hardware profile qualification remain unresolved. The strict source mismatch remains visible. No phase-completion or hardware-accuracy claim follows from this bounded D-10 pass.
+
+## Later qualification rebinding (root annotation)
+
+The report above is dated independent acceptance evidence for its recorded
+head/source. Later cleanup-only and portable shell-conditional fixes preserved
+D-10 admission and timing-proof behavior. The two script hashes were rebound
+explicitly; the final descriptor at source7616f6d is
+`676b711e3e6cd4258fafb9191473cc531b8daee659dc10ee3a0767429764dacd`.
+The source oracle bytes, expected timer row, linked suite/proof geometry and
+guest environment are unchanged. Both full local qualification gates pass on
+that final source, including all exact descriptor/companion controls; see
+04-QUALIFICATION.md. This annotation does not backdate the independent review
+or imply hardware/source-suite agreement.
