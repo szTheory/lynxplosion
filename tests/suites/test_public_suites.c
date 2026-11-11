@@ -1986,6 +1986,7 @@ static int probe_model(const uint8_t probe, const uint8_t marker)
 }
 
 static int validate_guest_completion(machine_instance *instance, const suite_symbols *symbols,
+                                     const char *suite,
                                      int execution_started, int complete,
                                      int initial_done_clear_seen, uint64_t guest_ticks,
                                      uint64_t total_consumed, uint32_t minimum_ticks,
@@ -2000,10 +2001,21 @@ static int validate_guest_completion(machine_instance *instance, const suite_sym
         (void)fail("completion: guest completion bytes could not be read");
         return 2;
     }
+    fprintf(stderr,
+            "completion state: suite=%s execution_started=%s progress=%u sentinel=%02x ticks=%" PRIu64
+            " maximum=%u post_return_watch=%s\n",
+            suite, execution_started != 0 ? "true" : "false", (unsigned)*progress, (unsigned)*done,
+            guest_ticks, maximum_ticks, complete != 0 ? "hit" : "absent");
     if (execution_started == 0) {
         return fail("completion: guest execution absent; post-return sentinel was not written");
     }
     if (complete == 0 || initial_done_clear_seen == 0 || *done != 0xA5u) {
+        if (guest_ticks >= maximum_ticks && *progress != 8u) {
+            return fail("completion: guest-time limit reached before the suite returned");
+        }
+        if (*progress == 8u) {
+            return fail("completion: post-return sentinel absent after the suite returned");
+        }
         return fail("completion: post-return sentinel absent or invalid");
     }
     if (guest_ticks < minimum_ticks || guest_ticks > maximum_ticks ||
@@ -2154,7 +2166,7 @@ static int write_run_record(const char *path, const char *machine_profile,
 
 static int run_cpu(const char *machine_profile_name, const char *selected_profile_name,
                    const char *directory, const char *oracle_path, const char *case_name,
-                   int no_run)
+                   int no_run, uint32_t maximum_ticks)
 {
     uint8_t *bll = NULL;
     size_t bll_length = 0u;
@@ -2201,6 +2213,9 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
     if (profile_index(machine_profile_name, &machine_profile_index) != 0 ||
         profile_index(selected_profile_name, &selected_profile) != 0) {
         return fail("explicit lynx1 or lynx2 profile input required");
+    }
+    if (maximum_ticks < CPU_MIN_TICKS || maximum_ticks > CPU_MAX_TICKS) {
+        return fail("time: guest ticks outside bounded completion window");
     }
     machine_profile = machine_profile_index == 0u ? LYNX_PROFILE_LYNX1 : LYNX_PROFILE_LYNX2;
     if (strcmp(case_name, "zero") != 0 && strcmp(case_name, "seeded") != 0) {
@@ -2263,7 +2278,7 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
         int completion_result;
         if (prove_held_no_run(&instance, &symbols, CPU_MIN_TICKS, &guest_ticks) != 0) goto done;
         total_consumed = guest_ticks;
-        completion_result = validate_guest_completion(&instance, &symbols, 0, 0, 0,
+        completion_result = validate_guest_completion(&instance, &symbols, "cpu", 0, 0, 0,
                                                       guest_ticks, total_consumed,
                                                       CPU_MIN_TICKS, CPU_MAX_TICKS,
                                                       &done, &progress, &model, &probe);
@@ -2278,8 +2293,8 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
         }
         puts("no-run control: exact absent-execution refusal observed after minimum held guest time; hold released");
     }
-    while (total_consumed < CPU_MAX_TICKS) {
-        uint64_t budget = CPU_MAX_TICKS - total_consumed;
+    while (total_consumed < maximum_ticks) {
+        uint64_t budget = maximum_ticks - total_consumed;
         uint64_t used = 0u;
         uint64_t before = 0u;
         uint64_t after = 0u;
@@ -2291,7 +2306,7 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
             goto done;
         }
         total_consumed += used;
-        if (after < before || after - before != used || after > CPU_MAX_TICKS) {
+        if (after < before || after - before != used || after > maximum_ticks) {
             (void)fail("guest tick accounting exceeded the bounded budget");
             goto done;
         }
@@ -2337,9 +2352,9 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
     {
         const int execution_started = memcmp(&initial_cpu, &instance.machine->cpu,
                                              sizeof initial_cpu) != 0;
-        if (validate_guest_completion(&instance, &symbols, execution_started, complete,
+        if (validate_guest_completion(&instance, &symbols, "cpu", execution_started, complete,
                                       initial_done_clear_seen, guest_ticks, total_consumed,
-                                      CPU_MIN_TICKS, CPU_MAX_TICKS,
+                                      CPU_MIN_TICKS, maximum_ticks,
                                       &done, &progress, &model, &probe) != 0) {
             goto done;
         }
@@ -2449,7 +2464,8 @@ static int write_timer_run_record(const char *path, const char *machine_profile,
 
 static int run_timers(const char *machine_profile_name, const char *selected_profile_name,
                       const char *directory, const char *oracle_path,
-                      const char *pending_descriptor_path, int no_run)
+                      const char *pending_descriptor_path, int no_run,
+                      uint32_t maximum_ticks)
 {
     uint8_t *bll = NULL;
     size_t bll_length = 0u;
@@ -2493,6 +2509,9 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
     if (profile_index(machine_profile_name, &machine_profile) != 0 ||
         profile_index(selected_profile_name, &selected_profile) != 0) {
         return fail("explicit lynx1 or lynx2 timer profile input required");
+    }
+    if (maximum_ticks < TIMER_MIN_TICKS || maximum_ticks > TIMER_MAX_TICKS) {
+        return fail("time: guest ticks outside bounded completion window");
     }
     machine_profile = machine_profile == 0u ? LYNX_PROFILE_LYNX1 : LYNX_PROFILE_LYNX2;
     if (clear_old_outputs(directory, machine_profile_name) != 0) return 1;
@@ -2572,7 +2591,7 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         int completion_result;
         if (prove_held_no_run(&instance, &symbols, TIMER_MIN_TICKS, &guest_ticks) != 0) goto done;
         total_consumed = guest_ticks;
-        completion_result = validate_guest_completion(&instance, &symbols, 0, 0, 0,
+        completion_result = validate_guest_completion(&instance, &symbols, "timers", 0, 0, 0,
                                                       guest_ticks, total_consumed,
                                                       TIMER_MIN_TICKS, TIMER_MAX_TICKS,
                                                       &done, &progress, &model, &probe);
@@ -2587,8 +2606,8 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         }
         puts("no-run control: exact absent-execution refusal observed after minimum held guest time; hold released");
     }
-    while (total_consumed < TIMER_MAX_TICKS) {
-        uint64_t budget = TIMER_MAX_TICKS - total_consumed;
+    while (total_consumed < maximum_ticks) {
+        uint64_t budget = maximum_ticks - total_consumed;
         uint64_t used = 0u;
         uint64_t before = 0u;
         uint64_t after = 0u;
@@ -2600,7 +2619,7 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
             goto done;
         }
         total_consumed += used;
-        if (after < before || after - before != used || after > TIMER_MAX_TICKS) {
+        if (after < before || after - before != used || after > maximum_ticks) {
             (void)fail("timer guest tick accounting exceeded the bounded budget");
             goto done;
         }
@@ -2664,9 +2683,9 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
     {
         const int execution_started = memcmp(&initial_cpu, &instance.machine->cpu,
                                              sizeof initial_cpu) != 0;
-        if (validate_guest_completion(&instance, &symbols, execution_started, complete,
+        if (validate_guest_completion(&instance, &symbols, "timers", execution_started, complete,
                                       initial_done_clear_seen, guest_ticks, total_consumed,
-                                      TIMER_MIN_TICKS, TIMER_MAX_TICKS,
+                                      TIMER_MIN_TICKS, maximum_ticks,
                                       &done, &progress, &model, &probe) != 0) {
             goto done;
         }
@@ -2807,6 +2826,82 @@ static int validate_time_mode(const char *text)
     return 0;
 }
 
+static int validate_selection_list(const char *text, const char *kind,
+                                   const char *const *allowed, size_t allowed_count)
+{
+    unsigned char seen[8] = {0u};
+    char buffer[1024];
+    char *cursor;
+    size_t length;
+    if (text == NULL || text[0] == '\0') {
+        char message[128];
+        (void)snprintf(message, sizeof message, "selection: %s selection is empty", kind);
+        return fail(message);
+    }
+    length = strlen(text);
+    if (length >= sizeof buffer || allowed_count > sizeof seen) {
+        return fail("selection: case selection is too large");
+    }
+    memcpy(buffer, text, length + 1u);
+    cursor = buffer;
+    for (;;) {
+        char *comma = strchr(cursor, ',');
+        size_t i;
+        int found = -1;
+        if (comma != NULL) *comma = '\0';
+        if (cursor[0] == '\0') return fail("selection: empty case ID");
+        for (i = 0u; i < allowed_count; i++) {
+            if (strcmp(cursor, allowed[i]) == 0) {
+                found = (int)i;
+                break;
+            }
+        }
+        if (found < 0) {
+            char message[160];
+            (void)snprintf(message, sizeof message, "selection: unknown %s case ID", kind);
+            return fail(message);
+        }
+        if (seen[(size_t)found] != 0u) {
+            char message[160];
+            (void)snprintf(message, sizeof message, "selection: duplicate %s case ID", kind);
+            return fail(message);
+        }
+        seen[(size_t)found] = 1u;
+        if (comma == NULL) break;
+        cursor = comma + 1;
+        if (cursor[0] == '\0') return fail("selection: empty case ID");
+    }
+    {
+        size_t i;
+        for (i = 0u; i < allowed_count; i++) {
+            if (seen[i] == 0u) {
+                char message[160];
+                (void)snprintf(message, sizeof message, "selection: incomplete %s inventory", kind);
+                return fail(message);
+            }
+        }
+    }
+    return 0;
+}
+
+static int validate_selection_mode(const char *required, const char *controls)
+{
+    static const char *const required_ids[] = {
+        "suite.cpu.lynx1", "suite.cpu.lynx2",
+        "suite.timers.observation.lynx1", "suite.timers.observation.lynx2"
+    };
+    static const char *const control_ids[] = {
+        "suite.cpu.no_run", "suite.timers.no_run",
+        "suite.completion_controls", "suite.selection_controls"
+    };
+    if (validate_selection_list(required, "required-suite", required_ids,
+                                sizeof required_ids / sizeof required_ids[0]) != 0 ||
+        validate_selection_list(controls, "control", control_ids,
+                                sizeof control_ids / sizeof control_ids[0]) != 0) return 1;
+    puts("suite selection: required=4 controls=4 inventory complete");
+    return 0;
+}
+
 static int cpu_record_field(const char *path, const char *key,
                            char *value, size_t capacity)
 {
@@ -2905,7 +3000,7 @@ static int read_cpu_raw(const char *path, const char *machine_profile,
 
 static int validate_cpu_record_mode(const char *selected_profile,
                                     const char *raw_path, const char *record_path,
-                                    const char *oracle_path)
+                                    const char *oracle_path, const char *artifact_directory)
 {
     char suite[32];
     char machine_profile[32];
@@ -2917,6 +3012,12 @@ static int validate_cpu_record_mode(const char *selected_profile,
     char value[64];
     char oracle_sha[65];
     char actual_oracle_sha[65];
+    char bll_sha[65];
+    char labels_sha[65];
+    char actual_bll_sha[65];
+    char actual_labels_sha[65];
+    char bll_path[4096];
+    char labels_path[4096];
     char *comma;
     unsigned selected_index;
     unsigned machine_index;
@@ -2940,7 +3041,12 @@ static int validate_cpu_record_mode(const char *selected_profile,
     if (profile_index(selected_profile, &selected_index) != 0) {
         return fail("cpu record: explicit lynx1 or lynx2 profile input required");
     }
-    if (parse_oracle(oracle_path, &oracle) != 0 || file_sha256(oracle_path, actual_oracle_sha) != 0) return 1;
+    if (parse_oracle(oracle_path, &oracle) != 0 || file_sha256(oracle_path, actual_oracle_sha) != 0 ||
+        checked_join(bll_path, sizeof bll_path, artifact_directory, "cpu.bll") != 0 ||
+        checked_join(labels_path, sizeof labels_path, artifact_directory, "cpu.lbl") != 0 ||
+        file_sha256(bll_path, actual_bll_sha) != 0 || file_sha256(labels_path, actual_labels_sha) != 0) {
+        return fail("cpu record: identity artifacts missing");
+    }
 #define READ_CPU_FIELD(key, target, target_size) \
     do { if (cpu_record_field(record_path, (key), (target), (target_size)) != 0) return 1; } while (0)
     READ_CPU_FIELD("suite", suite, sizeof suite);
@@ -2972,11 +3078,20 @@ static int validate_cpu_record_mode(const char *selected_profile,
     if (parse_decimal(value, &progress) != 0 || progress != 8u) return fail("cpu record: guest progress evidence mismatch");
     READ_CPU_FIELD("completion_sentinel", value, sizeof value);
     if (strcmp(value, "a5") != 0) return fail("cpu record: completion sentinel mismatch");
+    READ_CPU_FIELD("bll_sha256", bll_sha, sizeof bll_sha);
+    if (!valid_hex(bll_sha, 64u) || strcmp(bll_sha, actual_bll_sha) != 0) {
+        return fail("cpu record: BLL object identity mismatch");
+    }
+    READ_CPU_FIELD("labels_sha256", labels_sha, sizeof labels_sha);
+    if (!valid_hex(labels_sha, 64u) || strcmp(labels_sha, actual_labels_sha) != 0) {
+        return fail("cpu record: labels identity mismatch");
+    }
     READ_CPU_FIELD("oracle_sha256", oracle_sha, sizeof oracle_sha);
     if (strcmp(oracle_sha, actual_oracle_sha) != 0) return fail("cpu record: source identity mismatch");
 #undef READ_CPU_FIELD
 
     if (strcmp(suite, "cpu") != 0 || profile_index(machine_profile, &machine_index) != 0 ||
+        strcmp(machine_profile, selected_profile) != 0 ||
         strcmp(record_selected_profile, selected_profile) != 0 ||
         (strcmp(case_name, "zero") != 0 && strcmp(case_name, "seeded") != 0)) {
         return fail("cpu record: run identity mismatch");
@@ -3026,28 +3141,38 @@ static int validate_cpu_record_mode(const char *selected_profile,
 int main(int argc, char **argv)
 {
     if (argc == 6 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu") == 0) {
-        return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero", 0);
+        return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero", 0, CPU_MAX_TICKS);
     }
     if (argc == 7 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu") == 0) {
-        return run_cpu(argv[3], argv[3], argv[4], argv[5], argv[6], 0);
+        return run_cpu(argv[3], argv[3], argv[4], argv[5], argv[6], 0, CPU_MAX_TICKS);
     }
     if (argc == 8 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu-selected") == 0) {
-        return run_cpu(argv[3], argv[4], argv[5], argv[6], argv[7], 0);
+        return run_cpu(argv[3], argv[4], argv[5], argv[6], argv[7], 0, CPU_MAX_TICKS);
     }
     if (argc == 6 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "timers") == 0) {
-        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL, 0);
+        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL, 0, TIMER_MAX_TICKS);
     }
     if (argc == 7 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "timers-selected") == 0) {
-        return run_timers(argv[3], argv[4], argv[5], argv[6], NULL, 0);
+        return run_timers(argv[3], argv[4], argv[5], argv[6], NULL, 0, TIMER_MAX_TICKS);
     }
     if (argc == 7 && strcmp(argv[1], "observe") == 0 && strcmp(argv[2], "timers") == 0) {
-        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 0);
+        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 0, TIMER_MAX_TICKS);
     }
     if (argc == 6 && strcmp(argv[1], "no-run") == 0 && strcmp(argv[2], "cpu") == 0) {
-        return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero", 1);
+        return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero", 1, CPU_MAX_TICKS);
     }
     if (argc == 7 && strcmp(argv[1], "no-run") == 0 && strcmp(argv[2], "timers") == 0) {
-        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 1);
+        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 1, TIMER_MAX_TICKS);
+    }
+    if (argc == 7 && strcmp(argv[1], "run-bounded") == 0 && strcmp(argv[2], "cpu") == 0) {
+        uint32_t maximum_ticks;
+        if (parse_decimal(argv[6], &maximum_ticks) != 0) return fail("time: invalid guest tick integer");
+        return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero", 0, maximum_ticks);
+    }
+    if (argc == 7 && strcmp(argv[1], "run-bounded") == 0 && strcmp(argv[2], "timers") == 0) {
+        uint32_t maximum_ticks;
+        if (parse_decimal(argv[6], &maximum_ticks) != 0) return fail("time: invalid guest tick integer");
+        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL, 0, maximum_ticks);
     }
     if (argc == 7 && strcmp(argv[1], "timer-cascade-model") == 0) {
         return timer_cascade_model_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);
@@ -3061,8 +3186,11 @@ int main(int argc, char **argv)
     if (argc == 3 && strcmp(argv[1], "validate-oracle") == 0) return validate_oracle_mode(argv[2]);
     if (argc == 3 && strcmp(argv[1], "validate-symbols") == 0) return validate_symbols_mode(argv[2]);
     if (argc == 3 && strcmp(argv[1], "validate-time") == 0) return validate_time_mode(argv[2]);
-    if (argc == 6 && strcmp(argv[1], "validate-cpu-record") == 0) {
-        return validate_cpu_record_mode(argv[2], argv[3], argv[4], argv[5]);
+    if (argc == 4 && strcmp(argv[1], "validate-selection") == 0) {
+        return validate_selection_mode(argv[2], argv[3]);
+    }
+    if (argc == 7 && strcmp(argv[1], "validate-cpu-record") == 0) {
+        return validate_cpu_record_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);
     }
     if (argc == 5 && strcmp(argv[1], "validate-pending-descriptor") == 0) {
         if (pending_descriptor_validate(argv[2], argv[3], argv[4]) != 0) return 1;

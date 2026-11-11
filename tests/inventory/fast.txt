@@ -138,6 +138,7 @@ policy.vectors_pin.self_test	policy
 runner.cli	runner
 suite.build	suite
 suite.build_controls	suite
+suite.completion_controls	suite
 suite.cpu.bound_controls	suite
 suite.cpu.lynx1	suite
 suite.cpu.lynx2	suite
@@ -145,6 +146,7 @@ suite.cpu.model_controls	suite
 suite.cpu.no_run	suite
 suite.oracle_controls	suite
 suite.oracle_tracer	suite
+suite.selection_controls	suite
 suite.symbol_controls	suite
 suite.timers.cascade_model	suite
 suite.timers.model_controls	suite
