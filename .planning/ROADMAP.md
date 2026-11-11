@@ -176,7 +176,7 @@ Plans:
 - [x] 03-09-PLAN.md — Atomic consumer artifacts and exact-head qualification
 
 ### Phase 4: Timers, Interrupts and First Public Suites
-**Goal**: Mikey timers and interrupts drive the machine from one master-tick scheduler, and the first public lynx-tests suites run headlessly with machine-read, inventoried and controlled results.
+**Goal**: As a developer, I want to advance Mikey timers and interrupts on one master-tick scheduler and run the pinned cpu and timers suites headlessly, so that I can inspect bounded, reproducible per-profile guest results without firmware.
 **Mode:** mvp
 **Depends on**: Phase 3
 **Requirements**: TIM-01, TIM-02, TIM-03, TIM-04, EVD-02, EVD-03, EVD-04, EVD-05
