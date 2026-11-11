@@ -12,8 +12,8 @@ usage() {
 }
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --source) [ "$#" -ge 2 ] && [ -z "$SOURCE_ARG" ] || usage; SOURCE_ARG=$2; shift 2 ;;
-    --out) [ "$#" -ge 2 ] && [ -z "$OUT_ARG" ] || usage; OUT_ARG=$2; shift 2 ;;
+    --source) if [ "$#" -lt 2 ] || [ -n "$SOURCE_ARG" ]; then usage; fi; SOURCE_ARG=$2; shift 2 ;;
+    --out) if [ "$#" -lt 2 ] || [ -n "$OUT_ARG" ]; then usage; fi; OUT_ARG=$2; shift 2 ;;
     --test-source-shape-only) [ "$SHAPE_ONLY" -eq 0 ] || usage; SHAPE_ONLY=1; shift ;;
     *) usage ;;
   esac
@@ -245,7 +245,7 @@ done
 
 case "$OUT_ARG" in /*) OUT=$OUT_ARG ;; *) OUT=$ROOT/$OUT_ARG ;; esac
 OUT_PARENT=$(dirname -- "$OUT")
-[ -d "$OUT_PARENT" ] && [ ! -L "$OUT_PARENT" ] || { printf 'suite oracle: output parent missing or symlinked\n' >&2; exit 1; }
+if [ ! -d "$OUT_PARENT" ] || [ -L "$OUT_PARENT" ]; then printf 'suite oracle: output parent missing or symlinked\n' >&2; exit 1; fi
 PARENT_REAL=$(CDPATH='' cd -P -- "$OUT_PARENT" && pwd -P)
 SCRATCH_ROOT=$ROOT/build/check/scratch
 [ -d "$SCRATCH_ROOT" ] || { printf 'suite oracle: owned output root missing\n' >&2; exit 1; }
@@ -263,7 +263,7 @@ cleanup_temp() {
   if [ -n "${TEMP:-}" ]; then rm -f -- "$TEMP"; fi
 }
 trap 'cleanup_temp' EXIT HUP INT TERM
-[ -f "$TEMP" ] && [ ! -L "$TEMP" ] || { printf 'suite oracle: temporary output is not a regular file\n' >&2; exit 1; }
+if [ ! -f "$TEMP" ] || [ -L "$TEMP" ]; then printf 'suite oracle: temporary output is not a regular file\n' >&2; exit 1; fi
 chmod 600 "$TEMP"
 
 {
@@ -278,5 +278,5 @@ chmod 600 "$TEMP"
 mv -f -- "$TEMP" "$OUT"
 TEMP=
 trap - EXIT HUP INT TERM
-[ -f "$OUT" ] && [ ! -L "$OUT" ] || { printf 'suite oracle: published output is not a regular file\n' >&2; exit 1; }
+if [ ! -f "$OUT" ] || [ -L "$OUT" ]; then printf 'suite oracle: published output is not a regular file\n' >&2; exit 1; fi
 printf 'suite oracle generated: %s\n' "$OUT"

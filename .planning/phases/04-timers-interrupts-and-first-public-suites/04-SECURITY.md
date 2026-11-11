@@ -157,3 +157,9 @@ The affected four-test selection passed in 4.12s and left zero suite files.
 Root moved the existing generated scratch tree reversibly to private temporary
 evidence before retesting; no scan exemption or broad cleanup was added to the
 canonical command. Final qualification remains open until renewed evidence.
+
+The later Ubuntu lint refusal is repaired with explicit shell conditionals;
+source/tool/path refusal logic is preserved and exact descriptor script hashes
+are rebound. Build/oracle controls and both profile observations pass. T-04-32
+remains open for final exact-source qualification; no lint severity exemption
+or risk acceptance was introduced.

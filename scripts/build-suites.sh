@@ -100,14 +100,14 @@ LYNX_SOURCE_URL=$(pin_url lynx-tests)
 LYNX_REVISION=$(printf '%s\n' "$LYNX_SOURCE_URL" | sed 's#.*/archive/##; s/\.tar\.gz$//')
 [ "$(cat "$SUITES_DIR/.lynx-pin")" = "$LYNX_PIN" ] || { printf 'build-suites: lynx-tests pin marker mismatch\n' >&2; exit 1; }
 [ "$(cat "$CC65_DIR/.lynx-pin")" = "$CC65_PIN" ] || { printf 'build-suites: cc65 pin marker mismatch\n' >&2; exit 1; }
-[ -x "$CC65_DIR/bin/ca65" ] && [ -x "$CC65_DIR/bin/ld65" ] || {
+if [ ! -x "$CC65_DIR/bin/ca65" ] || [ ! -x "$CC65_DIR/bin/ld65" ]; then
   printf 'build-suites: pinned ca65/ld65 are missing; scripts/check.sh owns preparation\n' >&2
   exit 1
-}
-[ -f "$CC65_DIR/.lynx-build" ] && [ -f "$CC65_DIR/.lynx-build-files" ] || {
+fi
+if [ ! -f "$CC65_DIR/.lynx-build" ] || [ ! -f "$CC65_DIR/.lynx-build-files" ]; then
   printf 'build-suites: verified cc65 build records are missing\n' >&2
   exit 1
-}
+fi
 verify_tool bin/ca65
 verify_tool bin/ld65
 
@@ -140,10 +140,10 @@ build_suite() {
   env -i PATH=/usr/bin:/bin LC_ALL=C CC65_HOME="$CC65_DIR" \
     "$CC65_DIR/bin/ld65" -C "$ROOT/fixtures/suites/bll.cfg" \
     -Ln "$OUT/$suite.lbl" -o "$OUT/$suite.bll" "$OUT/$suite.o"
-  [ -s "$OUT/$suite.bll" ] && [ -s "$OUT/$suite.lbl" ] || {
+  if [ ! -s "$OUT/$suite.bll" ] || [ ! -s "$OUT/$suite.lbl" ]; then
     printf 'build-suites: missing linked output for %s\n' "$suite" >&2
     return 1
-  }
+  fi
 }
 
 build_suite cpu
@@ -152,12 +152,12 @@ CPU_AFTER=$(verify_pinned_file cpu/tests.s)
 TIMERS_AFTER=$(verify_pinned_file timers/tests.s)
 CPU_MAIN_AFTER=$(verify_pinned_file cpu/main.c)
 TIMERS_MAIN_AFTER=$(verify_pinned_file timers/main.c)
-[ "$CPU_BEFORE" = "$CPU_AFTER" ] && [ "$TIMERS_BEFORE" = "$TIMERS_AFTER" ] &&
-  [ "$CPU_MAIN_BEFORE" = "$CPU_MAIN_AFTER" ] &&
-  [ "$TIMERS_MAIN_BEFORE" = "$TIMERS_MAIN_AFTER" ] || {
+if [ "$CPU_BEFORE" != "$CPU_AFTER" ] || [ "$TIMERS_BEFORE" != "$TIMERS_AFTER" ] ||
+  [ "$CPU_MAIN_BEFORE" != "$CPU_MAIN_AFTER" ] ||
+  [ "$TIMERS_MAIN_BEFORE" != "$TIMERS_MAIN_AFTER" ]; then
   printf 'build-suites: pinned upstream assembly changed during build\n' >&2
   exit 1
-}
+fi
 
 {
   printf 'lynx_tests_revision=%s\n' "$LYNX_REVISION"

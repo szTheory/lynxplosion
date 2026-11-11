@@ -39,3 +39,12 @@ suite files. The unchanged strict artifact scanner then passes. See the
 qualification ledger and security record for the failed attempt and repair.
 Pending-gate admission logic and linked timing proof are unchanged. Resume
 Plan12Task2 on the committed repair; renew local/Linux/CI evidence.
+
+## Cross-platform conditional review
+
+Root reviewed the portable conditional rewrite after Ubuntu ShellCheck0.9.0
+refused the earlier expressions. Both operand truth cases retain the same
+refusal status, and fresh build/oracle controls plus both timer observations
+pass. Only recipe identity fields/negative-control anchors change in the D-10
+binding; source oracle bytes and admission/proof logic remain unchanged. Renew
+Task12T2 qualification on the new committed source.

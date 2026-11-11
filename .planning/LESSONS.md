@@ -150,3 +150,10 @@ diagnosis. Prove missing/stale marker and symlink boundaries with outside-target
 controls; keep the artifact policy unchanged. Existing leftovers can be moved
 reversibly to private temporary evidence. Run pure manifest self-controls
 directly while fixing their assertions before repeating an expensive batch.
+
+
+Ubuntu ShellCheck0.9.0 rejected compound `A && B || refusal` expressions that
+the local newer version accepted. Use explicit conditional refusals in portable
+scripts and keep lint severity intact. When script bytes are evidence-bound,
+update their exact descriptor and mutation-control hashes together, preserving
+source oracle content and guest behavior.

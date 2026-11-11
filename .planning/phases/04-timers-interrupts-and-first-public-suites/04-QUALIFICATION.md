@@ -222,3 +222,24 @@ CTest checks pass and leave no suite files; prior generated scratch was moved
 reversibly to private temporary evidence. The artifact policy remains intact.
 Renew final source qualification after this repair; do not reuse the failed
 attempt as successful local evidence.
+
+## Cross-platform shell portability repair
+
+The renewed macOS gate at `5719e3a` passed completely:163 tests, exact JUnit,
+no skips, artifact scan5s, history47s, total125s. This remains successful
+historical evidence for that source. The self-contained Ubuntu24.04.5 arm64
+checkout had266 commits, no shallow boundary or alternates, GCC13.3 and
+ShellCheck0.9.0. Its gate stopped at ShellCheck before the suite workflow:
+SC2015 rejected compound `A && B || refusal` shell expressions. The initial
+container wrapper attempt stopped before clone/check due to a reporting-line
+expansion error and is not a project qualification attempt.
+
+Root replaced the nine compound expressions with explicit conditional
+refusals, preserving their conditions/statuses and the strict lint gate.
+Recipe/generator hashes in the pending descriptor and corresponding exact
+mutation anchors are rebound to the changed script bytes. The oracle contents,
+source pin, wrapper, source expectations, cost/phase/counter environment and
+linked-code timing proof are unchanged. Syntax checks, local ShellCheck and
+four affected build/oracle/both-profile tests pass in4.91s. Renew full local
+and Linux qualification on this committed source; prior macOS success does not
+substitute for the final exact-source run.
