@@ -1564,6 +1564,17 @@ if(MODE STREQUAL "oracle_controls" AND FAILURE STREQUAL "")
     expect_failure("suite: oracle: source identity mismatch" "${TEST_BINARY}" run cpu lynx1 "${SUITE_BUILD}" "${WORK}/oracle-stale-identity.tsv")
   endif()
 
+  string(REGEX MATCH "revision\t[0-9a-f]+" revision_row "${oracle_text}")
+  if(revision_row STREQUAL "")
+    set(FAILURE "oracle revision control could not locate the source revision")
+  else()
+    string(REPEAT "f" 64 oversized_revision)
+    string(REPLACE "${revision_row}" "revision\t${oversized_revision}" changed "${oracle_text}")
+    file(WRITE "${WORK}/oracle-overlong-revision.tsv" "${changed}")
+    expect_failure("suite: oracle: malformed source identity record"
+      "${TEST_BINARY}" validate-oracle "${WORK}/oracle-overlong-revision.tsv")
+  endif()
+
   expect_failure("suite: time: guest ticks outside bounded completion window" "${TEST_BINARY}" validate-time 255)
   expect_success("suite time: accepted guest ticks=256" "${TEST_BINARY}" validate-time 256)
   expect_success("suite time: accepted guest ticks=257" "${TEST_BINARY}" validate-time 257)

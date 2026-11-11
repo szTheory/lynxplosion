@@ -243,6 +243,7 @@ static int parse_oracle(const char *path, suite_oracle *out)
         "archive", "revision", "cpu_main", "cpu_asm",
         "timers_main", "timers_asm", "license"
     };
+    static const size_t metadata_lengths[7] = {64u, 40u, 64u, 64u, 64u, 64u, 64u};
     uint8_t metadata_seen[7] = {0u};
     uint8_t tuple_seen[2] = {0u, 0u};
     uint8_t suite_seen[2] = {0u, 0u};
@@ -257,7 +258,8 @@ static int parse_oracle(const char *path, suite_oracle *out)
     char line[ORACLE_LINE_MAX + 1u];
     char *fields[12];
     size_t count;
-    const char *destinations[7];
+    char *destinations[7];
+    size_t capacities[7];
 
     memset(out, 0, sizeof *out);
     destinations[0] = out->archive;
@@ -267,6 +269,13 @@ static int parse_oracle(const char *path, suite_oracle *out)
     destinations[4] = out->timers_main;
     destinations[5] = out->timers_asm;
     destinations[6] = out->license;
+    capacities[0] = sizeof out->archive;
+    capacities[1] = sizeof out->revision;
+    capacities[2] = sizeof out->cpu_main;
+    capacities[3] = sizeof out->cpu_asm;
+    capacities[4] = sizeof out->timers_main;
+    capacities[5] = sizeof out->timers_asm;
+    capacities[6] = sizeof out->license;
     if (read_file(path, &bytes, &length, 16384u) != 0) return 1;
     if (memchr(bytes, '\0', length) != NULL) {
         free(bytes);
@@ -281,7 +290,9 @@ static int parse_oracle(const char *path, suite_oracle *out)
     for (i = 0u; i < 7u; i++) {
         if (oracle_line((char *)bytes, length, &offset, line, fields, &count) != 0 ||
             count != 2u || strcmp(fields[0], metadata_names[i]) != 0 ||
-            copy_field((char *)destinations[i], 65u, fields[1]) != 0) {
+            strlen(fields[1]) != metadata_lengths[i] ||
+            capacities[i] < metadata_lengths[i] + 1u ||
+            copy_field(destinations[i], capacities[i], fields[1]) != 0) {
             free(bytes);
             return fail("oracle: malformed source identity record");
         }
