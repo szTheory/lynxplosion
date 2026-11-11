@@ -4,7 +4,7 @@ The `suite.cpu.lynx1` and `suite.cpu.lynx2` tests build the pinned `lynx-tests` 
 
 ## Source oracle
 
-`scripts/generate-suite-oracle.sh --source build/pins/lynx-tests --out build/check/scratch/<owned-run>/oracle.tsv` accepts only the exact extracted pin, archive marker, and per-file source manifest. The generator records the archive and revision identities, SHA-256 values for CPU and timer source/assembly and the license, suite result count, assembly extent, meaningful result count, model tuples, result offsets and accepted byte sets. Production mode refuses a changed identity or source shape and removes any prior output before generating; it has no cached or stale-oracle fallback.
+`scripts/generate-suite-oracle.sh --source build/pins/lynx-tests --out build/check/scratch/<owned-run>/oracle.tsv` accepts only the exact extracted pin, archive marker, and per-file source manifest. The generator records the archive and revision identities, SHA-256 values for CPU and timer source/assembly and the license, suite result count, assembly extent, meaningful result count, model tuples, result offsets and accepted byte sets. Production mode refuses a changed identity or source shape, writes through an exclusively created mode-restricted temporary file in the validated output parent, and atomically publishes a regular output file; it has no cached or stale-oracle fallback.
 
 The oracle uses a strict versioned TSV grammar. CPU expectations contain 18 meaningful bytes and both Lynx model tuples. Timer expectations contain 16 meaningful bytes in the pinned 18-byte result extent; the two reserved bytes remain outside the meaningful range. Accepted alternatives are sets, and the timer source's two and three value alternatives are preserved exactly. The C reader checks the complete row inventory, ordering, byte values, alternatives and source identity against the fresh build record before the harness can compare guest results.
 
@@ -26,7 +26,7 @@ The private `--test-source-shape-only` option is used only by negative controls 
 
 ## Timer observations and the pending source row
 
-`observe timers lynx1|lynx2 BUILDDIR ORACLE PENDING_DESCRIPTOR` executes a fresh guest for the requested profile, retains all 16 meaningful raw bytes and source comparisons, and writes a hash-bound pending record. Its successful observation is deliberately limited to 15 source agreements plus the exact D-10 pending row: result index 14 is `0c` while the unchanged pinned source expects `0d`. The strict `run timers PROFILE BUILDDIR ORACLE` command keeps that disagreement visible and exits 1 with `suite: timer source oracle comparison mismatch`; no accepted-value set or upstream source expectation is changed.
+`observe timers PROFILE BUILDDIR ORACLE PENDING_DESCRIPTOR` executes a fresh guest for the requested profile, retains all 16 meaningful raw bytes and source comparisons, and writes a hash-bound pending record. `PROFILE` is exactly `lynx1` or `lynx2`; pass it as one argument without a shell pipe. Its successful observation is deliberately limited to 15 source agreements plus the exact D-10 pending row: result index 14 is `0c` while the unchanged pinned source expects `0d`. The strict `run timers PROFILE BUILDDIR ORACLE` command keeps that disagreement visible and exits 1 with `suite: timer source oracle comparison mismatch`; no accepted-value set or upstream source expectation is changed.
 
 The timer wrapper executes its own A1/A2 model probe. The observed records preserve profile, probe and marker bytes, 16 meaningful results in the 18-byte extent, guest progress and sentinel, tick bounds, fixed phase, flat five-tick CPU cost, grant-time sampling, disabled page-mode/video and refresh DMA, and zero-initialized timer counter. A matching software observation does not establish hardware accuracy or profile qualification; the default profile remains `none` and O1 remains open.
 
@@ -42,7 +42,14 @@ identities are recorded in the [Phase 4 qualification ledger](../.planning/phase
 
 The exact fast inventory contains these eight timer tests. The two observation
 tests are the positive guest runs; the other six are strict, proof, model,
-record, descriptor or no-run controls. They are not suite-pass claims.
+record, descriptor or no-run controls. They are not suite-pass claims. The
+data-only `result_controls` batch emits exactly 49 unique named subcases. This
+preserves the pre-fix inventory count; Plan 09 recorded 48 before Plan 10 added
+the copied Lynx II profile case. The pending-controls batch now emits exactly
+61 unique names: its prior 55 data-only cases plus one symlink-publication
+control and five distinct source/object/label identity controls. Both batches
+reject a missing name and a duplicate name through explicit manifest
+self-controls; these mutations are not counted as guest executions.
 
 | CTest ID | Role |
 | --- | --- |
@@ -81,7 +88,7 @@ The minimum is 256 master ticks: the wrapper clears a full 256-byte zero-page ra
 
 ## Controls and execution
 
-The registered tests run from isolated `build/check/scratch/suites/<test-id>` directories so parallel tests cannot share invocation output. The driver removes each invocation-owned directory after the run. CPU model controls execute both real profiles, verify a real Lynx I guest against an intentionally opposite selected expectation, then mutate private records for probe, progress, sentinel, tuple, count, zero-result and identity checks. CPU bound controls mutate captured guest-time records at and around the accepted integer bounds; they do not manufacture guest-time progress. Timer result and pending controls use the same invocation-owned positive batching and retain D-10's exact pending descriptor. Oracle controls exercise malformed bytes, count and extent drift, lost alternatives, and stale source identity. Source-shape controls exercise CPU count drift, malformed and nonbyte tokens, timer alternative loss, overlapping offsets, extent confusion, and empty source. Symbol controls exercise missing, duplicate and malformed labels, empty input, completion/result overlap, and 16-bit extent overflow. Each negative control requires exit status 1 and its intended assertion or parser diagnostic; a generic timeout, compile error or other failure does not pass.
+The registered tests run from isolated `build/check/scratch/suites/<test-id>` directories so parallel tests cannot share invocation output. The CMake driver creates a unique run directory with an owner marker and leaves it in scratch; it performs no recursive deletion. Harness output cleanup first validates the canonical owned directory and marker, then removes only known direct regular-file outputs. CPU model controls execute both real profiles, verify a real Lynx I guest against an intentionally opposite selected expectation, then mutate private records for probe, progress, sentinel, tuple, count, zero-result and identity checks. CPU bound controls mutate captured guest-time records at and around the accepted integer bounds; they do not manufacture guest-time progress. Timer result and pending controls use the same invocation-owned positive batching and retain D-10's exact pending descriptor. Oracle controls exercise malformed bytes, count and extent drift, lost alternatives, and stale source identity. Source-shape controls exercise CPU count drift, malformed and nonbyte tokens, timer alternative loss, overlapping offsets, extent confusion, and empty source. Symbol controls exercise missing, duplicate and malformed labels, empty input, completion/result overlap, and 16-bit extent overflow. Each negative control requires exit status 1 and its intended assertion or parser diagnostic; a generic timeout, compile error or other failure does not pass.
 
 Run the focused evidence with:
 

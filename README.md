@@ -1,8 +1,10 @@
 # Lynxplosion
 
 Lynxplosion is an Atari Lynx emulator core in early development. The current
-slice covers the CPU profiles, CPU memory map, direct-load startup tier A and an
-original diagnostic that reports results and packed pixels in guest RAM.
+slice covers explicit CPU profiles, the CPU memory map, direct-load startup
+tier A, an original guest-RAM diagnostic, and headless public CPU/timer suite
+observations. The timer suite retains one source disagreement as pending
+evidence; its strict comparison still fails on that row.
 
 ## Current scope and claims
 
