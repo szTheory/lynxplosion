@@ -62,6 +62,7 @@ endfunction()
 
 function(run_ok)
   execute_process(COMMAND "${TEST_BINARY}" ${ARGN}
+    TIMEOUT 30
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT rc STREQUAL "0")
     message(FATAL_ERROR "runner_diagnostic: expected accepted test, got ${rc}\n${out}${err}")
@@ -71,12 +72,73 @@ endfunction()
 
 function(run_fail expected)
   execute_process(COMMAND "${TEST_BINARY}" ${ARGN}
+    TIMEOUT 30
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   set(all_output "${out}${err}")
   if(NOT rc STREQUAL "1" OR NOT all_output MATCHES "${expected}")
     message(FATAL_ERROR "runner_diagnostic: expected exit 1 matching '${expected}', got ${rc}\n${all_output}")
   endif()
   message(STATUS "runner_diagnostic: rejected as intended: ${expected}")
+endfunction()
+
+function(suite_positive root output)
+  file(REMOVE_RECURSE "${output}")
+  file(MAKE_DIRECTORY "${WORK}/tmp")
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "TMPDIR=${WORK}/tmp" sh "${root}/scripts/build-suites.sh" --out "${output}"
+    TIMEOUT 20 RESULT_VARIABLE build_rc OUTPUT_VARIABLE build_out ERROR_VARIABLE build_err)
+  if(NOT build_rc STREQUAL "0" OR
+     NOT build_out MATCHES "lynx_tests_pin=a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e")
+    message(FATAL_ERROR "runner_diagnostic: fresh positive suite build failed (${build_rc})\n${build_out}${build_err}")
+  endif()
+  run_ok(suite_build "${output}" cpu lynx1)
+endfunction()
+
+function(suite_builder_refusal root output expected)
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "TMPDIR=${WORK}/tmp" sh "${root}/scripts/build-suites.sh" --out "${output}"
+    TIMEOUT 20 RESULT_VARIABLE build_rc OUTPUT_VARIABLE build_out ERROR_VARIABLE build_err)
+  set(all_output "${build_out}${build_err}")
+  if(NOT build_rc STREQUAL "1" OR NOT all_output MATCHES "${expected}")
+    message(FATAL_ERROR "runner_diagnostic: suite builder expected exit 1 matching '${expected}', got ${build_rc}\n${all_output}")
+  endif()
+  message(STATUS "runner_diagnostic: suite builder rejected as intended: ${expected}")
+endfunction()
+
+function(seed_suite_root name)
+  set(dst "${WORK}/roots/${name}")
+  file(MAKE_DIRECTORY
+    "${dst}/scripts"
+    "${dst}/fixtures/suites"
+    "${dst}/build/pins/cc65/bin"
+    "${dst}/build/pins/lynx-tests/cpu"
+    "${dst}/build/pins/lynx-tests/timers"
+    "${dst}/build/check/scratch")
+  file(COPY_FILE "${ROOT}/scripts/build-suites.sh" "${dst}/scripts/build-suites.sh")
+  file(COPY_FILE "${ROOT}/pins.txt" "${dst}/pins.txt")
+  foreach(file cpu-wrapper.s timers-wrapper.s bll.cfg)
+    file(COPY_FILE "${ROOT}/fixtures/suites/${file}" "${dst}/fixtures/suites/${file}")
+  endforeach()
+  foreach(file .lynx-pin .lynx-pin-files LICENSE)
+    file(COPY_FILE "${ROOT}/build/pins/lynx-tests/${file}" "${dst}/build/pins/lynx-tests/${file}")
+  endforeach()
+  foreach(file cpu/tests.s timers/tests.s)
+    file(COPY_FILE "${ROOT}/build/pins/lynx-tests/${file}" "${dst}/build/pins/lynx-tests/${file}")
+  endforeach()
+  foreach(file .lynx-pin .lynx-build .lynx-build-files)
+    file(COPY_FILE "${ROOT}/build/pins/cc65/${file}" "${dst}/build/pins/cc65/${file}")
+  endforeach()
+  file(CREATE_LINK "${ROOT}/build/pins/cc65/bin/ca65"
+    "${dst}/build/pins/cc65/bin/ca65" SYMBOLIC RESULT ca65_link)
+  file(CREATE_LINK "${ROOT}/build/pins/cc65/bin/ld65"
+    "${dst}/build/pins/cc65/bin/ld65" SYMBOLIC RESULT ld65_link)
+  file(CREATE_LINK "${ROOT}/build/pins/cc65/asminc"
+    "${dst}/build/pins/cc65/asminc" SYMBOLIC RESULT include_link)
+  if(NOT ca65_link STREQUAL "0" OR NOT ld65_link STREQUAL "0" OR
+     NOT include_link STREQUAL "0")
+    message(FATAL_ERROR "runner_diagnostic: could not seed isolated pinned tool links")
+  endif()
+  set(SUITE_ROOT "${dst}" PARENT_SCOPE)
 endfunction()
 
 function(consumer_success profile)
@@ -162,6 +224,84 @@ if(MODE STREQUAL "suite_build")
   run_ok(suite_build "${SUITES_OUT}" cpu lynx2)
   run_ok(suite_build "${SUITES_OUT}" timers lynx1)
   run_ok(suite_build "${SUITES_OUT}" timers lynx2)
+elseif(MODE STREQUAL "suite_build_controls")
+  file(MAKE_DIRECTORY "${WORK}/tmp" "${WORK}/roots")
+  set(SUITES_OUT "${WORK}/suites")
+  suite_positive("${ROOT}" "${SUITES_OUT}")
+
+  # Missing label and malformed BLL length are parser-level refusals against a
+  # freshly built positive object, with the target diagnostic asserted exactly.
+  file(READ "${SUITES_OUT}/cpu.lbl" cpu_labels)
+  string(REPLACE ".suite_entry" ".suite_entry_missing" bad_labels "${cpu_labels}")
+  if(bad_labels STREQUAL cpu_labels)
+    message(FATAL_ERROR "runner_diagnostic: could not seed missing suite label")
+  endif()
+  file(WRITE "${SUITES_OUT}/cpu.lbl" "${bad_labels}")
+  run_fail("suite symbol missing or duplicate: suite_entry" suite_build
+    "${SUITES_OUT}" cpu lynx1)
+  suite_positive("${ROOT}" "${SUITES_OUT}")
+
+  execute_process(COMMAND "${TEST_BINARY}" corrupt-suite-length
+      "${SUITES_OUT}/cpu.bll" "${WORK}/bad-suite-length.bll"
+    RESULT_VARIABLE length_seed_rc OUTPUT_VARIABLE length_seed_out
+    ERROR_VARIABLE length_seed_err)
+  if(NOT length_seed_rc STREQUAL "0")
+    message(FATAL_ERROR "runner_diagnostic: could not seed malformed suite length\n${length_seed_out}${length_seed_err}")
+  endif()
+  file(COPY_FILE "${WORK}/bad-suite-length.bll" "${SUITES_OUT}/cpu.bll")
+  run_fail("bll header: declared length differs from object length" suite_build
+    "${SUITES_OUT}" cpu lynx1)
+  suite_positive("${ROOT}" "${SUITES_OUT}")
+
+  # Each build-input mutation is isolated under this test's owned work tree.
+  seed_suite_root(missing-tool)
+  set(fake_out "${SUITE_ROOT}/build/check/scratch/positive")
+  suite_positive("${SUITE_ROOT}" "${fake_out}")
+  file(REMOVE "${SUITE_ROOT}/build/pins/cc65/bin/ca65")
+  suite_builder_refusal("${SUITE_ROOT}" "${SUITE_ROOT}/build/check/scratch/missing-tool"
+    "pinned ca65/ld65 are missing")
+  file(CREATE_LINK "${ROOT}/build/pins/cc65/bin/ca65"
+    "${SUITE_ROOT}/build/pins/cc65/bin/ca65" SYMBOLIC RESULT ca65_restore)
+  if(NOT ca65_restore STREQUAL "0")
+    message(FATAL_ERROR "runner_diagnostic: could not restore isolated ca65 link")
+  endif()
+  suite_positive("${SUITE_ROOT}" "${fake_out}")
+
+  seed_suite_root(missing-source)
+  set(fake_out "${SUITE_ROOT}/build/check/scratch/positive")
+  suite_positive("${SUITE_ROOT}" "${fake_out}")
+  file(REMOVE "${SUITE_ROOT}/build/pins/lynx-tests/cpu/tests.s")
+  suite_builder_refusal("${SUITE_ROOT}" "${SUITE_ROOT}/build/check/scratch/missing-source"
+    "pinned source missing: cpu/tests.s")
+  file(COPY_FILE "${ROOT}/build/pins/lynx-tests/cpu/tests.s"
+    "${SUITE_ROOT}/build/pins/lynx-tests/cpu/tests.s")
+  suite_positive("${SUITE_ROOT}" "${fake_out}")
+
+  seed_suite_root(changed-source)
+  set(fake_out "${SUITE_ROOT}/build/check/scratch/positive")
+  suite_positive("${SUITE_ROOT}" "${fake_out}")
+  file(APPEND "${SUITE_ROOT}/build/pins/lynx-tests/cpu/tests.s" "\n; changed identity control\n")
+  suite_builder_refusal("${SUITE_ROOT}" "${SUITE_ROOT}/build/check/scratch/changed-source"
+    "pinned source hash mismatch: cpu/tests.s")
+  file(COPY_FILE "${ROOT}/build/pins/lynx-tests/cpu/tests.s"
+    "${SUITE_ROOT}/build/pins/lynx-tests/cpu/tests.s")
+  suite_positive("${SUITE_ROOT}" "${fake_out}")
+
+  suite_positive("${ROOT}" "${SUITES_OUT}")
+  file(MAKE_DIRECTORY "${WORK}/outside-target")
+  file(WRITE "${WORK}/outside-target/owner.marker" "preserve me\n")
+  file(CREATE_LINK "${WORK}/outside-target" "${WORK}/unsafe-output" SYMBOLIC RESULT unsafe_link)
+  if(NOT unsafe_link STREQUAL "0")
+    message(FATAL_ERROR "runner_diagnostic: could not create bounded symlink output control")
+  endif()
+  suite_builder_refusal("${ROOT}" "${WORK}/unsafe-output" "refusing symlink output directory")
+  file(READ "${WORK}/outside-target/owner.marker" owner_marker)
+  if(NOT owner_marker STREQUAL "preserve me\n" OR NOT IS_SYMLINK "${WORK}/unsafe-output")
+    message(FATAL_ERROR "runner_diagnostic: unsafe output refusal changed its target or link")
+  endif()
+  file(REMOVE "${WORK}/unsafe-output")
+  suite_positive("${ROOT}" "${SUITES_OUT}")
+  message(STATUS "suite_build_controls: verified fresh positives around six exact build/input refusals")
 elseif(MODE STREQUAL "header" OR MODE STREQUAL "header_self_test")
   assemble_fixture(first 0)
   run_ok(header "${WORK}/first.bll" "${WORK}/first.lbl" "${HEX}")
@@ -366,3 +506,4 @@ lynx_diag_test(diag.result_controls controls 60)
 lynx_diag_test(det.diagnostic_restore restore 60)
 lynx_diag_test(det.diagnostic_restore.self_test restore_self_test 60)
 lynx_diag_test(suite.build suite_build 60)
+lynx_diag_test(suite.build_controls suite_build_controls 90)

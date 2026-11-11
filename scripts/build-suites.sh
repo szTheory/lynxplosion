@@ -71,6 +71,10 @@ pin_url() {
 
 verify_pinned_file() {
   relative=$1
+  [ -f "$SUITES_DIR/$relative" ] || {
+    printf 'build-suites: pinned source missing: %s\n' "$relative" >&2
+    return 1
+  }
   actual=$(sha256 "$SUITES_DIR/$relative")
   expected=$(awk -v path="$relative" '$2 == path { print $1; found++ } END { if (found != 1) exit 1 }' "$SUITES_DIR/.lynx-pin-files")
   [ "$actual" = "$expected" ] || {

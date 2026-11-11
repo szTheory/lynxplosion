@@ -119,5 +119,6 @@ policy.vectors_pin	policy
 policy.vectors_pin.self_test	policy
 runner.cli	runner
 suite.build	suite
+suite.build_controls	suite
 toolchain.probe	toolchain
 toolchain.probe.self_test	toolchain

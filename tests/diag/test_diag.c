@@ -2127,6 +2127,36 @@ int main(int argc, char **argv)
         free(bytes);
         return result;
     }
+    if (argc == 4 && strcmp(argv[1], "corrupt-suite-length") == 0) {
+        uint8_t *bytes = NULL;
+        size_t length = 0u;
+        FILE *out;
+        int result = 1;
+        if (read_bll_file(argv[2], &bytes, &length) != 0 ||
+            check_header(bytes, length, NULL) != 0 || length < BLL_HEADER_SIZE) {
+            free(bytes);
+            return fail("suite length fault control lacks a valid positive fixture");
+        }
+        bytes[4] = 0u;
+        bytes[5] = 0u;
+        out = fopen(argv[3], "wb");
+        if (out == NULL) {
+            free(bytes);
+            return fail("cannot write corrupted suite length control");
+        }
+        if (fwrite(bytes, 1u, length, out) == length) {
+            if (fclose(out) == 0) {
+                result = 0;
+            } else {
+                result = fail("cannot complete corrupted suite length control");
+            }
+        } else {
+            (void)fclose(out);
+            result = fail("cannot complete corrupted suite length control");
+        }
+        free(bytes);
+        return result;
+    }
     if (argc == 5 && strcmp(argv[1], "corrupt-map") == 0) {
         return corrupt_map_mode(argv[2], argv[3], argv[4]);
     }
