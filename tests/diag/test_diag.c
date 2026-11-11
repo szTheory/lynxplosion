@@ -33,6 +33,19 @@ typedef struct diag_symbols {
     uint32_t pixels_end;
 } diag_symbols;
 
+typedef struct suite_symbols {
+    uint32_t entry;
+    uint32_t test_entry;
+    uint32_t results;
+    uint32_t result_end;
+    uint32_t progress;
+    uint32_t model;
+    uint32_t done;
+    uint32_t end;
+    uint32_t first_test;
+    uint32_t first_mapped;
+} suite_symbols;
+
 typedef struct machine_instance {
     void *storage;
     lynx_machine *machine;
@@ -236,6 +249,120 @@ static int parse_symbols(const char *text, size_t length, diag_symbols *out,
     out->result = (uint32_t)positions[0];
     out->pixels = (uint32_t)positions[1];
     out->pixels_end = (uint32_t)positions[2];
+    reason[0] = '\0';
+    return 0;
+}
+
+static int suite_target_name(const char *begin, size_t length, size_t *target)
+{
+    static const char *const names[] = {
+        "suite_entry", "suite_test_entry", "_g_results", "suite_result_end",
+        "suite_progress", "suite_model", "suite_done", "suite_end", "_run_tests",
+        "suite_first_test", "suite_first_mapped"
+    };
+    size_t index;
+    if (length > 0u && begin[0] == '.') {
+        begin++;
+        length--;
+    }
+    for (index = 0u; index < sizeof names / sizeof names[0]; index++) {
+        if (strlen(names[index]) == length && memcmp(begin, names[index], length) == 0) {
+            *target = index;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int parse_suite_symbols(const char *text, size_t length, suite_symbols *out,
+                               char *reason, size_t reason_cap)
+{
+    uint32_t positions[11] = {0u};
+    unsigned found[11] = {0u};
+    size_t offset = 0u;
+    while (offset < length) {
+        char line[SYMBOL_LINE_MAX + 1];
+        size_t line_len = 0u;
+        size_t starts[3] = {0u, 0u, 0u};
+        size_t lens[3] = {0u, 0u, 0u};
+        size_t count = 0u;
+        size_t cursor = 0u;
+        size_t target = 0u;
+        int relevant;
+        uint32_t address = 0u;
+        while (offset + line_len < length && text[offset + line_len] != '\n') {
+            line_len++;
+        }
+        if (line_len > SYMBOL_LINE_MAX) {
+            (void)snprintf(reason, reason_cap, "symbol line too long");
+            return 1;
+        }
+        memcpy(line, text + offset, line_len);
+        line[line_len] = '\0';
+        offset += line_len + (offset + line_len < length ? 1u : 0u);
+        while (cursor < line_len) {
+            size_t start;
+            while (cursor < line_len && isspace((unsigned char)line[cursor]) != 0) {
+                cursor++;
+            }
+            if (cursor == line_len) {
+                break;
+            }
+            start = cursor;
+            while (cursor < line_len && isspace((unsigned char)line[cursor]) == 0) {
+                cursor++;
+            }
+            if (count < 3u) {
+                starts[count] = start;
+                lens[count] = cursor - start;
+            }
+            count++;
+        }
+        relevant = count == 3u && suite_target_name(line + starts[2], lens[2], &target);
+        if (relevant != 0) {
+            if (count != 3u || parse_hex_address(line + starts[1], lens[1], &address) != 0) {
+                (void)snprintf(reason, reason_cap, "suite symbol malformed");
+                return 1;
+            }
+            found[target]++;
+            positions[target] = address;
+        }
+    }
+    for (size_t index = 0u; index < 11u; index++) {
+        if (found[index] != 1u) {
+            static const char *const names[] = {
+                "suite_entry", "suite_test_entry", "_g_results", "suite_result_end",
+                "suite_progress", "suite_model", "suite_done", "suite_end", "_run_tests",
+                "suite_first_test", "suite_first_mapped"
+            };
+            (void)snprintf(reason, reason_cap, "suite symbol missing or duplicate: %s", names[index]);
+            return 1;
+        }
+    }
+    if (positions[0] != 0x0200u || positions[1] != positions[8] ||
+        positions[1] < positions[0] || positions[1] >= positions[7] ||
+        positions[9] < positions[0] || positions[9] >= positions[7] ||
+        positions[10] < positions[0] || positions[10] >= positions[7] ||
+        positions[2] < 0x8000u || positions[2] > 0xC000u - 18u ||
+        positions[3] != positions[2] + 18u ||
+        positions[4] >= 0xFC00u || positions[6] >= 0xFC00u || positions[7] > 0xFC00u ||
+        positions[4] < positions[3] || positions[6] < positions[3] ||
+        positions[4] == positions[5] || positions[4] == positions[6] ||
+        positions[5] < positions[3] || positions[5] >= 0xC000u ||
+        positions[5] == positions[6]) {
+        (void)snprintf(reason, reason_cap, "suite symbol extent or overlap");
+        return 1;
+    }
+    out->entry = positions[0];
+    out->test_entry = positions[1];
+    out->results = positions[2];
+    out->result_end = positions[3];
+    out->progress = positions[4];
+    out->model = positions[5];
+    out->done = positions[6];
+    out->end = positions[7];
+    out->first_test = positions[9];
+    out->first_mapped = positions[10];
     reason[0] = '\0';
     return 0;
 }
@@ -446,7 +573,8 @@ static int symbol_controls(const char *valid, size_t length)
     return 0;
 }
 
-static int machine_create(machine_instance *instance, const uint8_t *bll, size_t bll_len)
+static int machine_create_profile(machine_instance *instance, const uint8_t *bll,
+                                  size_t bll_len, uint32_t profile)
 {
     lynx_config config;
     lynx_identity identity;
@@ -459,6 +587,7 @@ static int machine_create(machine_instance *instance, const uint8_t *bll, size_t
         return fail("machine storage allocation or alignment failed");
     }
     lynx_config_default(&config);
+    config.profile = profile;
     if (lynx_machine_init(instance->storage, lynx_machine_size(), &config,
                           &instance->machine) != LYNX_OK) {
         free(instance->storage);
@@ -480,6 +609,11 @@ static int machine_create(machine_instance *instance, const uint8_t *bll, size_t
         return fail("public identity is not the declared BS93 tier-A entry");
     }
     return 0;
+}
+
+static int machine_create(machine_instance *instance, const uint8_t *bll, size_t bll_len)
+{
+    return machine_create_profile(instance, bll, bll_len, LYNX_PROFILE_NONE);
 }
 
 static void machine_destroy(machine_instance *instance)
@@ -1820,6 +1954,132 @@ done:
     return result;
 }
 
+static int suite_build_mode(const char *directory, const char *suite,
+                            const char *profile_name)
+{
+    uint8_t *bll = NULL;
+    size_t bll_len = 0u;
+    char *labels = NULL;
+    size_t labels_len = 0u;
+    char bll_path[4096];
+    char labels_path[4096];
+    char reason[256] = "";
+    suite_symbols symbols;
+    machine_instance instance = {0};
+    lynx_identity identity;
+    uint32_t profile;
+    uint32_t expected_request;
+    uint32_t pc = 0u;
+    uint32_t cpu_latch = 0u;
+    uint8_t progress = 0u;
+    uint8_t model = 0u;
+    uint8_t done = 0u;
+    uint64_t used = 0u;
+    uint64_t ticks = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    lynx_watch_event watch_event = {0};
+    char digest[65];
+    const char *stop_name;
+    uint32_t observed_request = 0u;
+    uint32_t observed_value = 0u;
+    int stop_valid = 0;
+    int result = 1;
+
+    if (strcmp(suite, "cpu") == 0) {
+        expected_request = 0xFD19u; /* unchanged cpu/tests.s begins with ResetTimer6 */
+    } else if (strcmp(suite, "timers") == 0) {
+        expected_request = 0xFD0Du; /* unchanged timers/tests.s begins with ResetTimers */
+    } else {
+        return fail("suite build: unknown source suite");
+    }
+    if (strcmp(profile_name, "lynx1") == 0) {
+        profile = LYNX_PROFILE_LYNX1;
+    } else if (strcmp(profile_name, "lynx2") == 0) {
+        profile = LYNX_PROFILE_LYNX2;
+    } else {
+        return fail("suite build: explicit lynx1 or lynx2 profile required");
+    }
+    if (snprintf(bll_path, sizeof bll_path, "%s/%s.bll", directory, suite) >=
+            (int)sizeof bll_path ||
+        snprintf(labels_path, sizeof labels_path, "%s/%s.lbl", directory, suite) >=
+            (int)sizeof labels_path) {
+        return fail("suite build: path too long");
+    }
+    if (read_bll_file(bll_path, &bll, &bll_len) != 0 ||
+        check_header(bll, bll_len, NULL) != 0 ||
+        read_text(labels_path, &labels, &labels_len) != 0 ||
+        parse_suite_symbols(labels, labels_len, &symbols, reason, sizeof reason) != 0) {
+        fprintf(stderr, "diag suite: %s\n",
+                reason[0] == '\0' ? "fixture or labels invalid" : reason);
+        goto done;
+    }
+    if (machine_create_profile(&instance, bll, bll_len, profile) != 0 ||
+        lynx_get_identity(instance.machine, &identity) != LYNX_OK ||
+        identity.has_content != 1u || identity.content_format != LYNX_CONTENT_BS93 ||
+        identity.startup_tier != LYNX_STARTUP_A || identity.entry_addr != symbols.entry ||
+        identity.object_len != bll_len || symbols.end < 0x01F6u ||
+        symbols.end - 0x01F6u != bll_len) {
+        (void)fail("suite build: strict public BLL identity or linked extent mismatch");
+        goto done;
+    }
+    if (lynx_watch_configure(instance.machine, expected_request, 1u) != LYNX_OK ||
+        lynx_advance(instance.machine, 100000u, &used, &stop) != LYNX_OK || used > 100000u ||
+        read_ticks(instance.machine, &ticks) != 0 || ticks != used ||
+        lynx_read_register(instance.machine, LYNX_REG_PC, &pc) != LYNX_OK ||
+        lynx_read_register(instance.machine, LYNX_REG_CPU_LATCH, &cpu_latch) != LYNX_OK ||
+        lynx_watch_get(instance.machine, &watch_event) != LYNX_OK ||
+        lynx_read_memory(instance.machine, symbols.progress, &progress, 1u) != LYNX_OK ||
+        lynx_read_memory(instance.machine, symbols.done, &done, 1u) != LYNX_OK ||
+        lynx_read_memory(instance.machine, symbols.model, &model, 1u) != LYNX_OK) {
+        (void)fail("suite build: bounded public prefix observation failed");
+        goto done;
+    }
+    identity_hex(identity.content_sha256, digest);
+    stop_name = stop == LYNX_STOP_UNAVAILABLE ? "unavailable" :
+                stop == LYNX_STOP_WATCH ? "watch" :
+                stop == LYNX_STOP_UNDEFINED ? "undefined" :
+                stop == LYNX_STOP_BUDGET ? "budget" : "other";
+    if (stop == LYNX_STOP_UNAVAILABLE) {
+        observed_request = cpu_latch & 0xFFFFu;
+        stop_valid = used != 0u && watch_event.hit == 0u &&
+                     observed_request == expected_request;
+    } else if (stop == LYNX_STOP_WATCH) {
+        observed_request = watch_event.address;
+        observed_value = watch_event.value;
+        stop_valid = watch_event.hit == 1u && observed_request == expected_request &&
+                     observed_value == 0u && watch_event.return_tick == ticks &&
+                     watch_event.return_tick == watch_event.hit_tick + 1u;
+    }
+    printf("suite_build: suite=%s profile=%s bll_sha256=%s entry=0x%04" PRIx32
+           " test_entry=0x%04" PRIx32 " first_test=0x%04" PRIx32
+           " first_mapped=0x%04" PRIx32 " results=[0x%04" PRIx32 ",0x%04" PRIx32
+           ") stop=%s ticks=%" PRIu64 " pc=0x%04" PRIx32 " request=0x%04" PRIx32
+           " write_value=%u watch_hit=%u"
+           " progress=%u model_byte=%u done=%u\n",
+           suite, profile_name, digest, symbols.entry, symbols.test_entry,
+           symbols.first_test, symbols.first_mapped, symbols.results, symbols.result_end,
+           stop_name, ticks, pc,
+           observed_request, observed_value, watch_event.hit, progress, model, done);
+
+    /* Source-derived, not core-derived: CPU Test1 calls ResetTimer6 (FD19);
+       Timer Test1 calls ResetTimers (FD0D). Preserve the current unavailable
+       observation, but remain valid when that exact STZ becomes implemented:
+       then the one-shot watch must stop after the write and CPU completion. */
+    /* The source-derived STZ absolute at first_mapped is three bytes, so PC
+       after its operands have been fetched is exactly first_mapped + 3. */
+    if (stop_valid == 0 || pc != symbols.first_mapped + 3u ||
+        progress != 1u || done != 0u || model != 0u) {
+        (void)fail("suite build: source-derived first write or guest progress mismatch");
+        goto done;
+    }
+    result = 0;
+done:
+    machine_destroy(&instance);
+    free(labels);
+    free(bll);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 5 && strcmp(argv[1], "header") == 0) {
@@ -1875,6 +2135,9 @@ int main(int argc, char **argv)
     }
     if (argc == 6 && strcmp(argv[1], "bundle") == 0) {
         return bundle_mode(argv[2], argv[3], argv[4], argv[5]);
+    }
+    if (argc == 5 && strcmp(argv[1], "suite_build") == 0) {
+        return suite_build_mode(argv[2], argv[3], argv[4]);
     }
     fprintf(stderr, "diag: invalid command line\n");
     return 2;

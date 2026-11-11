@@ -118,5 +118,6 @@ policy.pins.self_test	policy
 policy.vectors_pin	policy
 policy.vectors_pin.self_test	policy
 runner.cli	runner
+suite.build	suite
 toolchain.probe	toolchain
 toolchain.probe.self_test	toolchain
