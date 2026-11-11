@@ -1,0 +1,11 @@
+{
+  "command": "build/check/tests/lynx-test-api timer_phase",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.timer_phase\n",
+  "consoleOutput": "timer bank rejected supported write at $FD04\ntests/api/test_api.c:3857: CHECK(timer_write_required(&bank, backup_addr, 1u)) failed\n",
+  "targetTest": "api.timer_phase",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "The timer bank accepts standalone mapped counter state for timer 1 so the shared-phase and divider checks can cover every index.",
+  "actual": "The direct timer-bank write for timer 1 backup at FD04 is rejected because only timer 0 is implemented.",
+  "semanticAssessment": "The named TAP case executed and stopped on the planned all-counter state assertion; the failure is the missing timer 1–7 implementation, not a build, discovery, parser, fixture, or unrelated assertion failure."
+}

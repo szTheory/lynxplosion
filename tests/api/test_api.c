@@ -3829,6 +3829,163 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static uint16_t timer_register_addr(size_t timer_index, uint8_t reg)
+{
+    return (uint16_t)(0xFD00u + 4u * (uint16_t)timer_index + reg);
+}
+
+static bool timer_write_required(lynx__timer_bank *bank, uint16_t addr, uint8_t value)
+{
+    if (lynx__timer_write(bank, addr, value)) {
+        return true;
+    }
+    fprintf(stderr, "timer bank rejected supported write at $%04X\n", (unsigned)addr);
+    check_failures++;
+    return false;
+}
+
+static void case_timer_phase(void)
+{
+    const int failures_before = check_failures;
+    lynx__timer_bank bank;
+    for (size_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        for (uint8_t source = 0u; source <= 6u; source++) {
+            lynx__timer_init(&bank);
+            const uint16_t backup_addr = timer_register_addr(i, 0u);
+            const uint16_t control_addr = timer_register_addr(i, 1u);
+            const uint16_t count_addr = timer_register_addr(i, 2u);
+            CHECK(timer_write_required(&bank, backup_addr, 1u));
+            if (check_failures != failures_before) {
+                goto done;
+            }
+            CHECK(timer_write_required(&bank, count_addr, 1u));
+            if (check_failures != failures_before) {
+                goto done;
+            }
+            CHECK(timer_write_required(&bank, control_addr,
+                                       (uint8_t)(0x88u | source)));
+            if (check_failures != failures_before) {
+                goto done;
+            }
+            const uint64_t period = UINT64_C(16) << source;
+            uint64_t next = 0u;
+            CHECK(lynx__timer_next(&bank, period - 1u, &next));
+            CHECK_EQ_U64(next, period);
+            lynx__timer_apply(&bank, period);
+            CHECK_EQ_U64(bank.timers[i].count, 0u);
+            CHECK_EQ_U64(bank.timers[i].control_b & 0x08u, 0u);
+            CHECK_EQ_U64(bank.pending, 0u);
+            CHECK(lynx__timer_next(&bank, period, &next));
+            CHECK_EQ_U64(next, period * 2u);
+            lynx__timer_apply(&bank, period * 2u);
+            CHECK_EQ_U64(bank.timers[i].count, 0u);
+            CHECK_EQ_U64(bank.timers[i].control_b & 0x08u, 0x08u);
+            CHECK_EQ_U64(bank.pending, i == 4u ? 0u : (uint8_t)(1u << i));
+            CHECK(!lynx__timer_next(&bank, period * 2u, &next));
+        }
+    }
+
+    /* A reload interval uses backup + 1 source edges, and the shared divider
+       remains aligned after count/source/enable writes at a nonzero phase. */
+    lynx__timer_init(&bank);
+    CHECK(timer_write_required(&bank, 0xFD00u, 2u));
+    CHECK(timer_write_required(&bank, 0xFD02u, 0u));
+    CHECK(timer_write_required(&bank, 0xFD01u, 0x98u));
+    uint64_t next = 0u;
+    CHECK(lynx__timer_next(&bank, 0u, &next));
+    CHECK_EQ_U64(next, 16u);
+    lynx__timer_apply(&bank, 16u);
+    CHECK_EQ_U64(bank.timers[0].count, 2u);
+    lynx__timer_apply(&bank, 32u);
+    CHECK_EQ_U64(bank.timers[0].count, 1u);
+    lynx__timer_apply(&bank, 48u);
+    CHECK_EQ_U64(bank.timers[0].count, 0u);
+    lynx__timer_apply(&bank, 64u);
+    CHECK_EQ_U64(bank.timers[0].count, 2u);
+
+    for (size_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        lynx__timer_init(&bank);
+        const uint16_t base = timer_register_addr(i, 0u);
+        CHECK(timer_write_required(&bank, base, 3u));
+        CHECK(timer_write_required(&bank, (uint16_t)(base + 2u), 3u));
+        CHECK(timer_write_required(&bank, (uint16_t)(base + 1u), 0x0Eu));
+        lynx__timer_mark_tick(&bank, 37u);
+        CHECK(lynx__timer_next(&bank, 37u, &next));
+        CHECK_EQ_U64(next, 1024u);
+        CHECK(timer_write_required(&bank, (uint16_t)(base + 2u), 2u));
+        CHECK(lynx__timer_next(&bank, 37u, &next));
+        CHECK_EQ_U64(next, 1024u);
+        CHECK(timer_write_required(&bank, (uint16_t)(base + 1u), 0x08u));
+        CHECK(lynx__timer_next(&bank, 37u, &next));
+        CHECK_EQ_U64(next, 48u);
+        CHECK(timer_write_required(&bank, (uint16_t)(base + 1u), 0x00u));
+        CHECK(!lynx__timer_next(&bank, 37u, &next));
+        CHECK(timer_write_required(&bank, (uint16_t)(base + 1u), 0x08u));
+        CHECK(lynx__timer_next(&bank, 37u, &next));
+        CHECK_EQ_U64(next, 48u);
+    }
+
+    /* Link mode is refused atomically; pending set/reset is write-one. */
+    lynx__timer_init(&bank);
+    CHECK(timer_write_required(&bank, 0xFD01u, 0x08u));
+    lynx__timer_bank before_link;
+    memcpy(&before_link, &bank, sizeof bank);
+    CHECK(!lynx__timer_write(&bank, 0xFD01u, 0x0Fu));
+    CHECK(memcmp(&before_link, &bank, sizeof bank) == 0);
+    CHECK(timer_write_required(&bank, 0xFD81u, 0x21u));
+    CHECK_EQ_U64(bank.pending, 0x21u);
+    CHECK_EQ_U64(lynx__timer_peek(&bank, 0xFD80u), 0x21u);
+    CHECK(timer_write_required(&bank, 0xFD80u, 0x01u));
+    CHECK_EQ_U64(bank.pending, 0x20u);
+
+    /* Timer 4 expiry belongs to UART; it never fabricates pending bit 4. */
+    lynx__timer_init(&bank);
+    CHECK(timer_write_required(&bank, 0xFD10u, 0u));
+    CHECK(timer_write_required(&bank, 0xFD12u, 0u));
+    CHECK(timer_write_required(&bank, 0xFD11u, 0x88u));
+    lynx__timer_apply(&bank, 16u);
+    CHECK_EQ_U64(bank.timers[4].control_b & 0x08u, 0x08u);
+    CHECK_EQ_U64(bank.pending & 0x10u, 0u);
+
+    /* A held CPU keeps its request while timers run, then the no-event tail
+       jumps to the caller's target. Releasing the gate resumes that request. */
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    CHECK_EQ_U64(load_bll_at(m, watch_count_program, sizeof watch_count_program,
+                             0x0200u), LYNX_OK);
+    lynx__cpu request_before = m->cpu;
+    m->cpu_bus_held = 1u;
+    CHECK(timer_write_required(&m->timer_bank, 0xFD00u, 1u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 1u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x08u));
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 32u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 32u);
+    CHECK_EQ_U64(ticks_of(m), 32u);
+    CHECK_EQ_U64(m->timer_bank.timers[0].count, 0u);
+    CHECK_EQ_U64(m->timer_bank.timers[0].control_b & 0x08u, 0u);
+    CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) == 0);
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(ticks_of(m), 33u);
+    CHECK_EQ_U64(m->timer_bank.timers[0].control_b & 0x08u, 0x08u);
+    CHECK_EQ_U64(lynx_advance(m, 23u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(ticks_of(m), 56u);
+    CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) == 0);
+    m->cpu_bus_held = 0u;
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK(memcmp(&request_before, &m->cpu, sizeof request_before) != 0);
+    lynx_machine_deinit(m);
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.timer_phase\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -3859,6 +4016,7 @@ static const struct {
     {"snapshot_continue", case_snapshot_continue},
     {"timer_tracer", case_timer_tracer},
     {"timer_standalone", case_timer_standalone},
+    {"timer_phase", case_timer_phase},
     {"watch_controls", case_watch_controls},
     {"watch_independent", case_watch_independent},
     {"watch_post_write", case_watch_post_write},
