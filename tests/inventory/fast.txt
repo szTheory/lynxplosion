@@ -138,5 +138,7 @@ policy.vectors_pin.self_test	policy
 runner.cli	runner
 suite.build	suite
 suite.build_controls	suite
+suite.cpu.lynx1	suite
+suite.oracle_tracer	suite
 toolchain.probe	toolchain
 toolchain.probe.self_test	toolchain

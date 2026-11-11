@@ -2,6 +2,9 @@
         .setcpu "65C02"
         .include "tests.s"
 
+        .segment "ZEROPAGE"
+suite_probe_result: .res 1
+
         .segment "BLL"
         .export suite_end
 bll_header:
@@ -12,6 +15,7 @@ bll_header:
         .export suite_entry, suite_test_entry, suite_result_end
         .export suite_progress, suite_model, suite_done
         .export suite_first_test, suite_first_mapped
+        .export suite_probe_result
         suite_test_entry = _run_tests
         suite_result_end = _g_results + 18
         suite_first_test = Test1
@@ -48,10 +52,27 @@ suite_entry:
         lda #>suite_default_irq
         sta INTVECTH
 
+        ; Observe the CPU's own bit-op behavior. Lynx I leaves the seeded
+        ; zero-page byte unchanged; Lynx II executes RMB0 and clears it. The
+        ; selected profile never supplies the value written to suite_model.
+        lda #$01
+        sta suite_probe_result
+        .byte $07, <suite_probe_result ; RMB0 zp on Lynx II, NOP zp on Lynx I
+        lda suite_probe_result
+        bne @probe_lynx1
+        lda #$A2
+        bra @store_model
+@probe_lynx1:
+        lda #$A1
+@store_model:
+        sta suite_model
+
         ; Nonzero progress is guest-written before the untouched test entry.
         lda #$01
         sta suite_progress
         jsr _run_tests
+        lda #$08
+        sta suite_progress
         lda #$A5
         sta suite_done
 suite_idle:

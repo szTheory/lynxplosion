@@ -1983,10 +1983,12 @@ static int suite_build_mode(const char *directory, const char *suite,
     uint32_t observed_request = 0u;
     uint32_t observed_value = 0u;
     int stop_valid = 0;
+    uint8_t expected_model = 0u;
     int result = 1;
 
     if (strcmp(suite, "cpu") == 0) {
         expected_request = 0xFD19u; /* unchanged cpu/tests.s begins with ResetTimer6 */
+        expected_model = strcmp(profile_name, "lynx1") == 0 ? 0xA1u : 0xA2u;
     } else if (strcmp(suite, "timers") == 0) {
         expected_request = 0xFD0Du; /* unchanged timers/tests.s begins with ResetTimers */
     } else {
@@ -2062,13 +2064,14 @@ static int suite_build_mode(const char *directory, const char *suite,
            observed_request, observed_value, watch_event.hit, progress, model, done);
 
     /* Source-derived, not core-derived: CPU Test1 calls ResetTimer6 (FD19);
-       Timer Test1 calls ResetTimers (FD0D). Preserve the current unavailable
-       observation, but remain valid when that exact STZ becomes implemented:
-       then the one-shot watch must stop after the write and CPU completion. */
+       Timer Test1 calls ResetTimers (FD0D). The CPU model marker comes from
+       the wrapper's guest RMB0/NOP observation before _run_tests. Preserve the
+       first-write observation, but remain valid when that STZ becomes
+       implemented: then the watch stops after the write and CPU completion. */
     /* The source-derived STZ absolute at first_mapped is three bytes, so PC
        after its operands have been fetched is exactly first_mapped + 3. */
     if (stop_valid == 0 || pc != symbols.first_mapped + 3u ||
-        progress != 1u || done != 0u || model != 0u) {
+        progress != 1u || done != 0u || model != expected_model) {
         (void)fail("suite build: source-derived first write or guest progress mismatch");
         goto done;
     }

@@ -113,6 +113,8 @@ verify_tool bin/ld65
 
 CPU_BEFORE=$(verify_pinned_file cpu/tests.s)
 TIMERS_BEFORE=$(verify_pinned_file timers/tests.s)
+CPU_MAIN_BEFORE=$(verify_pinned_file cpu/main.c)
+TIMERS_MAIN_BEFORE=$(verify_pinned_file timers/main.c)
 LICENSE_SHA=$(verify_pinned_file LICENSE)
 rm -f "$OUT/cpu.bll" "$OUT/cpu.lbl" "$OUT/cpu.o" \
   "$OUT/timers.bll" "$OUT/timers.lbl" "$OUT/timers.o" \
@@ -145,7 +147,11 @@ build_suite cpu
 build_suite timers
 CPU_AFTER=$(verify_pinned_file cpu/tests.s)
 TIMERS_AFTER=$(verify_pinned_file timers/tests.s)
-[ "$CPU_BEFORE" = "$CPU_AFTER" ] && [ "$TIMERS_BEFORE" = "$TIMERS_AFTER" ] || {
+CPU_MAIN_AFTER=$(verify_pinned_file cpu/main.c)
+TIMERS_MAIN_AFTER=$(verify_pinned_file timers/main.c)
+[ "$CPU_BEFORE" = "$CPU_AFTER" ] && [ "$TIMERS_BEFORE" = "$TIMERS_AFTER" ] &&
+  [ "$CPU_MAIN_BEFORE" = "$CPU_MAIN_AFTER" ] &&
+  [ "$TIMERS_MAIN_BEFORE" = "$TIMERS_MAIN_AFTER" ] || {
   printf 'build-suites: pinned upstream assembly changed during build\n' >&2
   exit 1
 }
@@ -154,6 +160,8 @@ TIMERS_AFTER=$(verify_pinned_file timers/tests.s)
   printf 'lynx_tests_revision=%s\n' "$LYNX_REVISION"
   printf 'lynx_tests_pin=%s\n' "$LYNX_PIN"
   printf 'cc65_pin=%s\n' "$CC65_PIN"
+  printf 'cpu_main_sha256=%s\n' "$CPU_MAIN_AFTER"
+  printf 'timers_main_sha256=%s\n' "$TIMERS_MAIN_AFTER"
   printf 'cpu_source_sha256=%s\n' "$CPU_AFTER"
   printf 'timers_source_sha256=%s\n' "$TIMERS_AFTER"
   printf 'license_sha256=%s\n' "$LICENSE_SHA"
