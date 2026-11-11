@@ -205,6 +205,18 @@ static const uint8_t irq_poll_ack_program[] = {
     0x4Cu, 0x0Bu, 0x02u                  /* JMP $020B if no IRQ */
 };
 
+/* The store's final poll is exactly at tick 80, colliding with T0/T1 expiry
+   and the linked T2 borrow. A watch returns only after the whole prefix and
+   CPU completion have become observable. */
+static const uint8_t scheduler_watch_program[] = {
+    0x58u,                               /* CLI: allow the event to be sampled */
+    0xE6u, 0x10u,                         /* INC $10: five cycles */
+    0xADu, 0x00u, 0x04u,                 /* LDA $0400: four cycles */
+    0xA9u, 0xA5u,                         /* LDA #$A5: two cycles */
+    0x8Du, 0x00u, 0x04u,                 /* STA $0400 at tick 80 */
+    0x4Cu, 0x0Bu, 0x02u                  /* JMP $020B if no watch */
+};
+
 /* Project-authored guest reproducing pinned lynx-tests/timers Test 1's
    CTLB borrow input: count $80, write DONE+borrow-in ($0A), then record the
    mapped count and CTLB value. */
@@ -583,7 +595,8 @@ static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t p
 
 /* CPU-only reads and writes use a BLL program that selects MAPCTL through the
    guest bus before touching one address. The oracle below is hand-derived
-   from the four independent Epyx overlay windows; unmapped targets must stop
+   from the four independent Epyx overlay windows, with the implemented Mikey
+   timer registers checked as device routes and unimplemented targets stopping
    before the CPU request completes. */
 static int map_target_is_ram(uint8_t mapctl, uint16_t addr)
 {
@@ -613,6 +626,11 @@ static int map_target_is_ram(uint8_t mapctl, uint16_t addr)
     return (mapctl & 0x08u) != 0u;
 }
 
+static int map_target_is_mikey(uint8_t mapctl, uint16_t addr)
+{
+    return (mapctl & 0x02u) == 0u && lynx__timer_available(addr);
+}
+
 static void map_read_one(uint8_t mapctl, uint16_t addr)
 {
     const uint8_t program[] = {
@@ -638,6 +656,12 @@ static void map_read_one(uint8_t mapctl, uint16_t addr)
         CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
         CHECK_EQ_U64(consumed, 512u);
         CHECK_EQ_U64(m->ram[0x0300u], sentinel);
+        return;
+    }
+    if (map_target_is_mikey(mapctl, addr)) {
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 512u);
+        CHECK_EQ_U64(m->ram[0x0300u], lynx__timer_peek(&m->timer_bank, addr));
         return;
     }
 
@@ -681,6 +705,16 @@ static void map_write_one(uint8_t mapctl, uint16_t addr)
         CHECK_EQ_U64(m->ram[addr], value);
         return;
     }
+    if (map_target_is_mikey(mapctl, addr)) {
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 512u);
+        CHECK_EQ_U64(m->ram[addr], sentinel);
+        if (addr == 0xFD00u || addr == 0xFD80u || addr == 0xFD81u) {
+            CHECK_EQ_U64(lynx__timer_peek(&m->timer_bank, addr),
+                         addr == 0xFD80u ? 0u : value);
+        }
+        return;
+    }
 
     CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
     CHECK(consumed < 512u);
@@ -717,12 +751,14 @@ static void map_latch_one(uint8_t value)
 static void case_map_matrix(void)
 {
     static const uint16_t boundaries[] = {
-        0xFBFFu, 0xFC00u, 0xFCFFu, 0xFD00u, 0xFDFFu, 0xFE00u,
+        0xFBFFu, 0xFC00u, 0xFCFFu, 0xFD00u, 0xFD1Fu, 0xFD20u,
+        0xFD7Fu, 0xFD80u, 0xFD81u, 0xFD82u, 0xFDFFu, 0xFE00u,
         0xFFF7u, 0xFFF8u, 0xFFF9u, 0xFFFAu, 0xFFFFu
     };
     static const uint16_t window_writes[] = {
-        0xFC00u, 0xFCFFu, 0xFD00u, 0xFDFFu, 0xFE00u,
-        0xFFF7u, 0xFFF8u, 0xFFFAu, 0xFFFFu
+        0xFC00u, 0xFCFFu, 0xFD00u, 0xFD1Fu, 0xFD20u, 0xFD7Fu,
+        0xFD80u, 0xFD81u, 0xFD82u, 0xFDFFu, 0xFE00u, 0xFFF7u,
+        0xFFF8u, 0xFFFAu, 0xFFFFu
     };
     for (uint32_t mapctl = 0u; mapctl < 16u; mapctl++) {
         for (size_t i = 0u; i < sizeof boundaries / sizeof boundaries[0]; i++) {
@@ -4158,6 +4194,363 @@ static void case_irq_poll(void)
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+enum { SCHEDULER_EVENT_COUNT = 5, SCHEDULER_TIMER_SET_COUNT = 3 };
+
+typedef struct scheduler_event_observation {
+    uint64_t event_tick;
+    uint8_t pending;
+    uint8_t counts[SCHEDULER_TIMER_SET_COUNT];
+    uint8_t ctlb[SCHEDULER_TIMER_SET_COUNT];
+    uint8_t last_clock_mask;
+} scheduler_event_observation;
+
+typedef struct scheduler_test_candidate {
+    lynx__machine_event event;
+    uint8_t source;
+} scheduler_test_candidate;
+
+static void check_event_candidate_permutation(const uint8_t order[9])
+{
+    scheduler_test_candidate candidates[9];
+    uint8_t remaining[9];
+    for (uint8_t timer = 0u; timer < LYNX__TIMER_COUNT; timer++) {
+        candidates[timer].event.tick = 80u;
+        candidates[timer].event.priority = (uint8_t)LYNX__MACHINE_EVENT_TIMER_PRIORITY;
+        candidates[timer].event.sequence = timer;
+        candidates[timer].source = timer;
+    }
+    candidates[8].event.tick = 80u;
+    candidates[8].event.priority = (uint8_t)LYNX__MACHINE_EVENT_CPU_PRIORITY;
+    candidates[8].event.sequence = (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE;
+    candidates[8].source = 8u;
+    memcpy(remaining, order, sizeof remaining);
+
+    for (size_t expected = 0u; expected < 9u; expected++) {
+        size_t best = 0u;
+        const size_t remaining_count = 9u - expected;
+        for (size_t i = 1u; i < remaining_count; i++) {
+            if (lynx__machine_event_before(candidates[remaining[i]].event,
+                                           candidates[remaining[best]].event)) {
+                best = i;
+            }
+        }
+        const uint8_t selected = remaining[best];
+        CHECK_EQ_U64(candidates[selected].source, expected);
+        CHECK_EQ_U64(candidates[selected].event.tick, 80u);
+        if (expected < LYNX__TIMER_COUNT) {
+            CHECK_EQ_U64(candidates[selected].event.priority,
+                         LYNX__MACHINE_EVENT_TIMER_PRIORITY);
+            CHECK_EQ_U64(candidates[selected].event.sequence, expected);
+        } else {
+            CHECK_EQ_U64(candidates[selected].event.priority,
+                         LYNX__MACHINE_EVENT_CPU_PRIORITY);
+        }
+        memmove(&remaining[best], &remaining[best + 1u],
+                (remaining_count - best - 1u) * sizeof remaining[0]);
+    }
+}
+
+static void configure_scheduler_timer_set(lynx_machine *m, bool reverse)
+{
+    static const lynx__timer timers[SCHEDULER_TIMER_SET_COUNT] = {
+        {0u, 4u, 0x98u, 0u}, /* T0: IRQ, reload, count, source 0. */
+        {0u, 4u, 0x88u, 0u}, /* T1: IRQ, count, source 0. */
+        {0u, 0u, 0x8Fu, 0u}, /* T2: IRQ, count, T0 link input. */
+    };
+    for (size_t n = 0u; n < SCHEDULER_TIMER_SET_COUNT; n++) {
+        const size_t index = reverse ? SCHEDULER_TIMER_SET_COUNT - 1u - n : n;
+        m->timer_bank.timers[index] = timers[index];
+    }
+}
+
+static void read_scheduler_event_observation(const lynx_machine *m,
+                                              scheduler_event_observation *observation,
+                                              uint64_t event_tick)
+{
+    memset(observation, 0, sizeof *observation);
+    observation->event_tick = event_tick;
+    observation->pending = m->timer_bank.pending;
+    for (size_t i = 0u; i < SCHEDULER_TIMER_SET_COUNT; i++) {
+        observation->counts[i] = m->timer_bank.timers[i].count;
+        observation->ctlb[i] = m->timer_bank.timers[i].control_b;
+        if ((observation->ctlb[i] & 0x04u) != 0u) {
+            observation->last_clock_mask =
+                (uint8_t)(observation->last_clock_mask | (uint8_t)(1u << i));
+        }
+    }
+}
+
+static void run_scheduler_event_prefix(uint8_t chunk_mode, bool reverse_setup,
+                                       scheduler_event_observation observations[SCHEDULER_EVENT_COUNT])
+{
+    static const uint8_t irregular_chunks[] = {3u, 1u, 7u, 2u, 5u};
+    static const uint64_t event_ticks[SCHEDULER_EVENT_COUNT] = {16u, 32u, 48u, 64u, 80u};
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, scheduler_watch_program, sizeof scheduler_watch_program,
+                             0x0200u), LYNX_OK);
+    configure_scheduler_timer_set(m, reverse_setup);
+    m->cpu_bus_held = 1u;
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    size_t irregular_at = 0u;
+    for (size_t i = 0u; i < SCHEDULER_EVENT_COUNT; i++) {
+        const uint64_t target = event_ticks[i] + 1u;
+        while (ticks_of(m) < target) {
+            const uint64_t remaining = target - ticks_of(m);
+            uint64_t budget = remaining;
+            if (chunk_mode == 1u) {
+                budget = 1u;
+            } else if (chunk_mode == 2u) {
+                budget = irregular_chunks[irregular_at++ %
+                                          (sizeof irregular_chunks / sizeof irregular_chunks[0])];
+                if (budget > remaining) {
+                    budget = remaining;
+                }
+            }
+            CHECK_EQ_U64(lynx_advance(m, budget, &consumed, &stop), LYNX_OK);
+            CHECK_EQ_U64(consumed, budget);
+            CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        }
+        CHECK_EQ_U64(ticks_of(m), target);
+        read_scheduler_event_observation(m, &observations[i], event_ticks[i]);
+    }
+    lynx_machine_deinit(m);
+}
+
+static void case_scheduler_order(void)
+{
+    static const uint8_t permutations[4][9] = {
+        {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u},
+        {8u, 7u, 6u, 5u, 4u, 3u, 2u, 1u, 0u},
+        {7u, 5u, 3u, 1u, 0u, 2u, 4u, 6u, 8u},
+        {3u, 4u, 5u, 6u, 7u, 8u, 0u, 1u, 2u},
+    };
+    static const scheduler_event_observation expected[SCHEDULER_EVENT_COUNT] = {
+        {16u, 0u, {3u, 3u, 0u}, {0x04u, 0x04u, 0u}, 0x03u},
+        {32u, 0u, {2u, 2u, 0u}, {0x04u, 0x04u, 0u}, 0x03u},
+        {48u, 0u, {1u, 1u, 0u}, {0x04u, 0x04u, 0u}, 0x03u},
+        {64u, 0u, {0u, 0u, 0u}, {0x04u, 0x04u, 0u}, 0x03u},
+        {80u, 0x07u, {0u, 0u, 0u}, {0x0Du, 0x0Du, 0x0Fu}, 0x07u},
+    };
+    const int failures_before = check_failures;
+    scheduler_event_observation coarse[SCHEDULER_EVENT_COUNT];
+    scheduler_event_observation one_tick[SCHEDULER_EVENT_COUNT];
+    scheduler_event_observation irregular[SCHEDULER_EVENT_COUNT];
+
+    for (size_t i = 0u; i < sizeof permutations / sizeof permutations[0]; i++) {
+        check_event_candidate_permutation(permutations[i]);
+    }
+    run_scheduler_event_prefix(0u, false, coarse);
+    run_scheduler_event_prefix(1u, true, one_tick);
+    run_scheduler_event_prefix(2u, false, irregular);
+    CHECK(memcmp(coarse, expected, sizeof expected) == 0);
+    CHECK(memcmp(one_tick, expected, sizeof expected) == 0);
+    CHECK(memcmp(irregular, expected, sizeof expected) == 0);
+    CHECK(memcmp(coarse, one_tick, sizeof coarse) == 0);
+    CHECK(memcmp(coarse, irregular, sizeof coarse) == 0);
+    CHECK_EQ_U64(SCHEDULER_EVENT_COUNT, 5u);
+    printf("TAP version 13\n1..1\n%s 1 - api.scheduler_order\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+typedef struct scheduler_watch_observation {
+    uint64_t hit_tick;
+    uint64_t return_tick;
+    uint64_t guest_ticks;
+    uint64_t cpu_ready_at;
+    uint32_t watch_addr;
+    uint32_t watch_value;
+    uint16_t cpu_pc;
+    uint16_t cpu_req_addr;
+    uint8_t cpu_req_kind;
+    uint8_t cpu_s;
+    uint8_t cpu_p;
+    uint8_t pending;
+    uint8_t ram_value;
+    uint8_t counts[SCHEDULER_TIMER_SET_COUNT];
+    uint8_t ctlb[SCHEDULER_TIMER_SET_COUNT];
+    uint8_t last_clock_mask;
+} scheduler_watch_observation;
+
+static void run_scheduler_watch(uint8_t chunk_mode, scheduler_watch_observation *observation)
+{
+    static const uint8_t irregular_chunks[] = {3u, 7u, 1u, 11u, 2u, 5u};
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, scheduler_watch_program, sizeof scheduler_watch_program,
+                             0x0200u), LYNX_OK);
+    configure_scheduler_timer_set(m, false);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    size_t irregular_at = 0u;
+    for (size_t call = 0u; call < 200u && stop != LYNX_STOP_WATCH; call++) {
+        uint64_t budget = chunk_mode == 0u ? 200u : 1u;
+        if (chunk_mode == 2u) {
+            budget = irregular_chunks[irregular_at++ %
+                                      (sizeof irregular_chunks / sizeof irregular_chunks[0])];
+        }
+        CHECK_EQ_U64(lynx_advance(m, budget, &consumed, &stop), LYNX_OK);
+        CHECK(consumed != 0u && consumed <= budget);
+    }
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    memset(observation, 0, sizeof *observation);
+    observation->hit_tick = m->host_observation.watch_event.hit_tick;
+    observation->return_tick = m->host_observation.watch_event.return_tick;
+    observation->guest_ticks = ticks_of(m);
+    observation->cpu_ready_at = m->cpu_ready_at;
+    observation->watch_addr = m->host_observation.watch_event.address;
+    observation->watch_value = m->host_observation.watch_event.value;
+    observation->cpu_pc = m->cpu.pc;
+    observation->cpu_req_addr = m->cpu.req_addr;
+    observation->cpu_req_kind = m->cpu.req_kind;
+    observation->cpu_s = m->cpu.s;
+    observation->cpu_p = m->cpu.p;
+    observation->pending = m->timer_bank.pending;
+    observation->ram_value = m->ram[0x0400u];
+    for (size_t i = 0u; i < SCHEDULER_TIMER_SET_COUNT; i++) {
+        observation->counts[i] = m->timer_bank.timers[i].count;
+        observation->ctlb[i] = m->timer_bank.timers[i].control_b;
+        if ((observation->ctlb[i] & 0x04u) != 0u) {
+            observation->last_clock_mask =
+                (uint8_t)(observation->last_clock_mask | (uint8_t)(1u << i));
+        }
+    }
+
+    CHECK_EQ_U64(observation->hit_tick, 80u);
+    CHECK_EQ_U64(observation->return_tick, 81u);
+    CHECK_EQ_U64(observation->guest_ticks, 81u);
+    CHECK_EQ_U64(observation->cpu_ready_at, 85u);
+    CHECK_EQ_U64(observation->watch_addr, 0x0400u);
+    CHECK_EQ_U64(observation->watch_value, 0xA5u);
+    CHECK_EQ_U64(observation->cpu_pc, 0x020Bu);
+    CHECK_EQ_U64(observation->cpu_req_addr, 0x020Bu);
+    CHECK_EQ_U64(observation->cpu_req_kind, LYNX__CK_DUMMY_STREAM);
+    CHECK_EQ_U64(observation->cpu_s, 0xFDu);
+    CHECK_EQ_U64(observation->cpu_p & 0x04u, 0u);
+    CHECK_EQ_U64(observation->pending, 0x07u);
+    CHECK_EQ_U64(observation->ram_value, 0xA5u);
+    CHECK_EQ_U64(observation->counts[0], 0u);
+    CHECK_EQ_U64(observation->counts[1], 0u);
+    CHECK_EQ_U64(observation->counts[2], 0u);
+    CHECK_EQ_U64(observation->ctlb[0], 0x0Du);
+    CHECK_EQ_U64(observation->ctlb[1], 0x0Du);
+    CHECK_EQ_U64(observation->ctlb[2], 0x0Fu);
+    CHECK_EQ_U64(observation->last_clock_mask, 0x07u);
+    lynx_machine_deinit(m);
+}
+
+static void case_scheduler_watch(void)
+{
+    const int failures_before = check_failures;
+    scheduler_watch_observation coarse;
+    scheduler_watch_observation one_tick;
+    scheduler_watch_observation irregular;
+    run_scheduler_watch(0u, &coarse);
+    run_scheduler_watch(1u, &one_tick);
+    run_scheduler_watch(2u, &irregular);
+    CHECK(memcmp(&coarse, &one_tick, sizeof coarse) == 0);
+    CHECK(memcmp(&coarse, &irregular, sizeof coarse) == 0);
+    printf("TAP version 13\n1..1\n%s 1 - api.scheduler_watch\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_scheduler_limits(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, watch_count_program, sizeof watch_count_program, 0x0200u), LYNX_OK);
+    m->cpu_bus_held = 1u;
+    m->timer_bank.timers[0].count = 0u;
+    m->timer_bank.timers[0].control_a = 0x88u;
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 15u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 15u);
+    CHECK_EQ_U64(ticks_of(m), 15u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u);
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_advance(m, 0u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_UNCHANGED(m, snap_a);
+
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(ticks_of(m), 16u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0u); /* event exactly at target is exclusive */
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(ticks_of(m), 17u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u); /* target + 1 includes tick 16 */
+    CHECK_EQ_U64(m->timer_bank.timers[0].control_b, 0x0Du);
+
+    const uint64_t idle_budget = UINT64_C(1) << 40;
+    CHECK_EQ_U64(lynx_advance(m, idle_budget, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, idle_budget);
+    CHECK_EQ_U64(ticks_of(m), idle_budget + 17u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+
+    const uint64_t limit = UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM;
+    m->guest_ticks = limit - 7u;
+    m->cpu_ready_at = m->guest_ticks;
+    CHECK_EQ_U64(lynx_advance(m, UINT64_MAX, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 7u);
+    CHECK_EQ_U64(ticks_of(m), limit);
+    CHECK_EQ_U64(lynx_advance(m, UINT64_MAX, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(ticks_of(m), limit);
+    lynx_machine_deinit(m);
+
+    /* A real posted guest store is positioned at a near-limit grant. The
+       timer edge is due at that grant; the watch returns at grant+1 without
+       crossing the guest-time cap or overflowing the CPU-ready value. */
+    m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, watch_program, sizeof watch_program, 0x0200u), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(m, 25u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 25u);
+    CHECK_EQ_U64(m->cpu.req_addr, 0x0400u);
+    CHECK_EQ_U64(m->cpu.req_flags & LYNX__CF_WRITE, LYNX__CF_WRITE);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    const uint64_t grant = limit - 15u; /* limit is 15 mod the 16-tick period. */
+    m->guest_ticks = grant;
+    m->cpu_ready_at = grant;
+    m->timer_bank.timers[0].count = 0u;
+    m->timer_bank.timers[0].control_a = 0x88u;
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(m->host_observation.watch_event.hit_tick, grant);
+    CHECK_EQ_U64(m->host_observation.watch_event.return_tick, grant + 1u);
+    CHECK_EQ_U64(ticks_of(m), grant + 1u);
+    CHECK(ticks_of(m) <= limit);
+    CHECK_EQ_U64(m->cpu_ready_at, grant + 5u);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0x5Au);
+    lynx_machine_deinit(m);
+
+    printf("TAP version 13\n1..1\n%s 1 - api.scheduler_limits\n",
+           check_failures == 0 ? "ok" : "not ok");
+}
+
 enum {
     TIMER_CTLB_CLEAR_BEFORE = 0u,
     TIMER_CTLB_CLEAR_ON = 1u,
@@ -5040,7 +5433,9 @@ static const struct {
     {"instances_independent", case_instances_independent},
     {"map_matrix", case_map_matrix},
     {"irq_poll", case_irq_poll},
-    {"irq_pending", case_irq_pending},
+    {"scheduler_limits", case_scheduler_limits},
+    {"scheduler_order", case_scheduler_order},
+    {"scheduler_watch", case_scheduler_watch},
     {"memory_peek_pure", case_memory_peek_pure},
     {"load_refusal_unchanged", case_load_refusal_unchanged},
     {"profile_divergence", case_profile_divergence},

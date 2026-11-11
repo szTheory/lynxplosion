@@ -157,6 +157,23 @@ project's `timer-cpu-poll-order-1` policy. The exact tick values depend on the
 named software phase and placeholder bus costs; they are not hardware timing
 measurements.
 
+`api.scheduler_order` captures an independent timer-bank event prefix at ticks
+16/32/48/64/80, including counter values, CTLB status, pending bits, and
+LAST CLOCK mask. It compares coarse, one-tick, and irregular `lynx_advance` calls
+under both CPU profiles. Its permutation check feeds all eight stable timer
+source ordinals and the CPU candidate through the same private comparator used
+by `lynx_advance`, in four traversal orders. The current scheduler coalesces
+each timer-bank tick into one candidate and has one CPU candidate; timer
+ordinals are fixed in the bounded range 0–7, with no dynamic sequence counter
+or sequence-exhaustion state. Timer-before-CPU is the explicit software tie
+policy, not a hardware observation. `api.scheduler_watch` checks a separately
+captured CPU write/IRQ watch prefix at grant tick 80 and return tick 81 across
+the same three slicing patterns. `api.scheduler_limits` covers exclusive
+targets 15/16/17, zero-budget identity, immediate long idle, guest-time
+headroom, and a posted bus request completed at the arithmetic limit. These
+tests establish deterministic software scheduler behavior and arithmetic
+bounds; they do not establish Lynx I/II timing compatibility.
+
 The pinned `timers2` suite is supporting source evidence for phase and enable
 ordering only. Independent project-authored phase/enable cases cover that
 failure class, so `timers2` is explicitly outside this phase's required suite

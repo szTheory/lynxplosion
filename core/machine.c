@@ -404,19 +404,7 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
     return false;
 }
 
-typedef struct lynx__machine_event {
-    uint64_t tick;
-    uint8_t priority;
-    uint8_t sequence;
-} lynx__machine_event;
-
-enum {
-    MACHINE_EVENT_TIMER_PRIORITY = 0u,
-    MACHINE_EVENT_CPU_PRIORITY = 1u,
-    MACHINE_EVENT_SEQUENCE = 0u,
-};
-
-static bool machine_event_before(lynx__machine_event a, lynx__machine_event b)
+bool lynx__machine_event_before(lynx__machine_event a, lynx__machine_event b)
 {
     if (a.tick != b.tick) {
         return a.tick < b.tick;
@@ -456,8 +444,8 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
         if (lynx__timer_next(&m->timer_bank, m->guest_ticks, &timer_tick) &&
             timer_tick < target) {
             next.tick = timer_tick;
-            next.priority = (uint8_t)MACHINE_EVENT_TIMER_PRIORITY;
-            next.sequence = (uint8_t)MACHINE_EVENT_SEQUENCE;
+            next.priority = (uint8_t)LYNX__MACHINE_EVENT_TIMER_PRIORITY;
+            next.sequence = (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE;
             has_event = true;
         }
         const bool cpu_available = m->cpu_bus_held == 0u;
@@ -465,9 +453,9 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
                                       m->cpu_ready_at : m->guest_ticks;
         if (cpu_available && cpu_tick < target) {
             const lynx__machine_event cpu_event = {
-                cpu_tick, (uint8_t)MACHINE_EVENT_CPU_PRIORITY,
-                (uint8_t)MACHINE_EVENT_SEQUENCE};
-            if (!has_event || machine_event_before(cpu_event, next)) {
+                cpu_tick, (uint8_t)LYNX__MACHINE_EVENT_CPU_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
+            if (!has_event || lynx__machine_event_before(cpu_event, next)) {
                 next = cpu_event;
                 has_event = true;
             }
@@ -478,7 +466,7 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
             m->guest_ticks = target;
             break;
         }
-        if (next.priority == (uint8_t)MACHINE_EVENT_TIMER_PRIORITY) {
+        if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_TIMER_PRIORITY) {
             m->guest_ticks = next.tick;
             /* Drain the timer's bounded owned-link prefix before allowing a
                same-tick CPU bus request to observe the mapped bank. */

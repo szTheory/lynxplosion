@@ -25,6 +25,9 @@ api.memory_peek_pure	api
 api.memory_peek_pure.self_test	api
 api.profile_select	api
 api.reset_power_on	api
+api.scheduler_limits	api
+api.scheduler_order	api
+api.scheduler_watch	api
 api.seam_agreement.lynx1	api
 api.seam_agreement.lynx2	api
 api.seam_agreement.none	api

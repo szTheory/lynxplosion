@@ -54,6 +54,20 @@ typedef struct lynx__timer_bank {
     uint64_t last_event_tick;
 } lynx__timer_bank;
 
+/* Private scheduler ordering contract. The comparator is shared with the
+   scheduler-order test so traversal permutations exercise production logic. */
+typedef struct lynx__machine_event {
+    uint64_t tick;
+    uint8_t priority;
+    uint8_t sequence;
+} lynx__machine_event;
+
+enum {
+    LYNX__MACHINE_EVENT_TIMER_PRIORITY = 0u,
+    LYNX__MACHINE_EVENT_CPU_PRIORITY = 1u,
+    LYNX__MACHINE_EVENT_SEQUENCE = 0u,
+};
+
 /* Host-side debugger observations are deliberately separate from guest
    machine state. Snapshot serialization and guest digests omit this object. */
 typedef struct lynx__host_observation {
@@ -100,5 +114,6 @@ void lynx__timer_mark_tick(lynx__timer_bank *bank, uint64_t tick);
 bool lynx__timer_available(uint16_t addr);
 uint8_t lynx__timer_peek(const lynx__timer_bank *bank, uint16_t addr);
 bool lynx__timer_write(lynx__timer_bank *bank, uint16_t addr, uint8_t value);
+bool lynx__machine_event_before(lynx__machine_event a, lynx__machine_event b);
 
 #endif /* LYNX_INTERNAL_H */
