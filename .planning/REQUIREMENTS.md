@@ -43,13 +43,13 @@ sequence, not a ceiling on the project goal.
 - [x] **API-05**: Host can inspect registers and memory through a side-effect-free path that never changes machine state or guest time
 - [ ] **API-06**: Host supplies logical input as a timeline sampled at defined guest-time boundaries; no physical controller discovery happens in the core
 - [x] **API-07**: Host can capture a snapshot and restore it in the same build; restore validates identity before replacing state and refuses mismatches
-- [ ] **API-08**: Host can register a memory watch that stops advancement on write without altering machine behavior
+- [x] **API-08**: Host can register a memory watch that stops advancement on write without altering machine behavior
 
 ### Determinism and observation
 
 - [x] **DET-01**: Two runs from fresh state with the same content, profile, input timeline and tick budget produce identical artifact-bundle digests
 - [x] **DET-02**: Two instances run in the same process produce the same digests as separate runs
-- [ ] **DET-03**: A run that captures a snapshot mid-way, restores it and continues produces the same digests as an uninterrupted run
+- [x] **DET-03**: A run that captures a snapshot mid-way, restores it and continues produces the same digests as an uninterrupted run
 - [x] **DET-04**: Every run writes a manifest recording profile, startup tier, content identity, input digest, tick count and core build identity
 - [ ] **DET-05**: Machine progress, logical input, raw video and raw audio are recorded as separate streams on one guest-tick timeline; same-core digests are labelled repeatability, not accuracy
 
@@ -63,10 +63,10 @@ sequence, not a ceiling on the project goal.
 
 ### Memory map and startup
 
-- [ ] **MEM-01**: The 64 KB memory map decodes Suzy, Mikey, ROM overlay and vector space under MAPCTL, with a CPU-mapped view and a separate raw RAM view
-- [ ] **MEM-02**: Content can start through startup tier A: a direct-load image placed in RAM with a preset state in which every preset value cites its source or is left at power-on reset
-- [ ] **MEM-03**: Every run is tagged with its startup strategy (`startup=A` for v1) in its manifest and in any claim
-- [ ] **MEM-04**: The core accepts no firmware in v1; any firmware input path stays absent or disabled until owner decision O3
+- [x] **MEM-01**: The 64 KB memory map decodes Suzy, Mikey, ROM overlay and vector space under MAPCTL, with a CPU-mapped view and a separate raw RAM view
+- [x] **MEM-02**: Content can start through startup tier A: a direct-load image placed in RAM with a preset state in which every preset value cites its source or is left at power-on reset
+- [x] **MEM-03**: Every run is tagged with its startup strategy (`startup=A` for v1) in its manifest and in any claim
+- [x] **MEM-04**: The core accepts no firmware in v1; any firmware input path stays absent or disabled until owner decision O3
 
 ### Timers, interrupts and scheduling
 
@@ -91,7 +91,7 @@ sequence, not a ceiling on the project goal.
 
 ### Test fixtures and evidence
 
-- [ ] **EVD-01**: An original, project-authored diagnostic built with the pinned cc65 reports progress and pass/fail through a RAM result block (magic, schema, progress, error, done) read by symbol
+- [x] **EVD-01**: An original, project-authored diagnostic built with the pinned cc65 reports progress and pass/fail through a RAM result block (magic, schema, progress, error, done) read by symbol
 - [ ] **EVD-02**: A lynx-tests harness reads `g_results` by symbol from the build's label file, requires a completion sentinel and a guest-time minimum and bound, and compares against expectations generated from the pinned source with a count check
 - [ ] **EVD-03**: A no-run negative control (CPU halted before tests start) makes every suite fail in the harness
 - [ ] **EVD-04**: The harness asserts which model a suite detected and fails when it does not match the selected profile
@@ -100,7 +100,7 @@ sequence, not a ceiling on the project goal.
 
 ### Playable scenario and consumer
 
-- [ ] **HB-01**: A tick-stamped framebuffer snapshot from an original diagnostic is rendered to a viewable image early, labelled as a snapshot, not a frame
+- [x] **HB-01**: A tick-stamped framebuffer snapshot from an original diagnostic is rendered to a viewable image early, labelled as a snapshot, not a frame
 - [ ] **HB-02**: An original homebrew direct-load image shows input-responsive frames when driven by a recorded input timeline
 - [ ] **HB-03**: The homebrew plays sound in response to input (the v1 playable checkpoint)
 - [ ] **CON-01**: An independent consumer program, using only the public C API, drives the core and writes raw frames as PNG or PPM and audio as WAV
@@ -191,10 +191,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-05 | Phase 1 | Complete |
 | API-06 | Phase 5 | Pending |
 | API-07 | Phase 1 | Complete |
-| API-08 | Phase 3 | Pending |
+| API-08 | Phase 3 | Complete |
 | DET-01 | Phase 1 | Complete |
 | DET-02 | Phase 1 | Complete |
-| DET-03 | Phase 3 | Pending |
+| DET-03 | Phase 3 | Complete |
 | DET-04 | Phase 1 | Complete |
 | DET-05 | Phase 6 | Pending |
 | CPU-01 | Phase 2 | Complete |
@@ -202,10 +202,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CPU-03 | Phase 2 | Complete |
 | CPU-04 | Phase 2 | Complete |
 | CPU-05 | Phase 2 | Complete |
-| MEM-01 | Phase 3 | Pending |
-| MEM-02 | Phase 3 | Pending |
-| MEM-03 | Phase 3 | Pending |
-| MEM-04 | Phase 3 | Pending |
+| MEM-01 | Phase 3 | Complete |
+| MEM-02 | Phase 3 | Complete |
+| MEM-03 | Phase 3 | Complete |
+| MEM-04 | Phase 3 | Complete |
 | TIM-01 | Phase 4 | Pending |
 | TIM-02 | Phase 4 | Pending |
 | TIM-03 | Phase 4 | Pending |
@@ -218,16 +218,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INP-01 | Phase 5 | Pending |
 | AUD-01 | Phase 6 | Pending |
 | AUD-02 | Phase 6 | Pending |
-| EVD-01 | Phase 3 | Pending |
+| EVD-01 | Phase 3 | Complete |
 | EVD-02 | Phase 4 | Pending |
 | EVD-03 | Phase 4 | Pending |
 | EVD-04 | Phase 4 | Pending |
 | EVD-05 | Phase 4 | Pending |
 | EVD-06 | Phase 6 | Pending |
-| HB-01 | Phase 3 | Pending |
+| HB-01 | Phase 3 | Complete |
 | HB-02 | Phase 5 | Pending |
 | HB-03 | Phase 6 | Pending |
-| CON-01 | Phase 3 | Pending |
+| CON-01 | Phases 3, 5, 6 | Phase 3 snapshot/silence slice complete; actual frames/audio pending |
 | PERF-01 | Phase 6 | Pending |
 
 **Coverage:**

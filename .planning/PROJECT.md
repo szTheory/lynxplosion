@@ -27,6 +27,10 @@ everything else fails, that link between claim, profile and evidence must hold.
 - ✓ A 65C02-class CPU as data-defined Lynx I and Lynx II profiles (plus the default `none` = what both agree on), selectable per instance, every memory access a tick-stamped bus cycle with a variable cost model, proven by 7.3 million pinned per-opcode vectors (0 failed), exact per-profile inventories and named-fault controls; Lynx-specific cycle counts stay labelled unverified (Epyx's VTI spec is not public) and no baseline is adopted — Phase 2
 - ✓ Repeatable runs: two fresh runs and two in-process instances give identical artifact-bundle digests, labelled repeatability, not accuracy — Phase 1
 
+- ✓ Strict BS93/BLL startup tier A on the MAPCTL decoder, full-object identity, pure raw/mapped inspection and explicit unavailable firmware/device routes — Phase 3; timing/readback policies remain labelled unverified.
+- ✓ Original source-built diagnostic reports semantic progress/pass/fail through linked-symbol RAM results; post-write watches and snapshot continuation preserve common-tick repeatability — Phase 3.
+- ✓ Independent public-API consumer produces the labelled 8x8 diagnostic RAM snapshot and valid placeholder-silence WAV with exclusive whole-directory publication and interruption controls — Phase 3 slice; real frames/audio remain Phases 5–6.
+
 ### Active
 
 All items are hypotheses until shipped and verified. Formal, numbered
@@ -37,9 +41,7 @@ requirements live in `.planning/REQUIREMENTS.md`.
       `src/common/target.c` maps lynx to CPU_65SC02 — its Lynx doc page names
       no CPU; the lynx-tests `cpu` suite expects RMB/SMB/BBx to be NOPs on
       Lynx I and implemented on Lynx II)
-- [ ] A rights-clean, repeatable startup path that runs unattended in CI
-      without copyrighted firmware, plus a separately evaluated route for
-      owner-supplied firmware kept outside source control
+- [ ] A separately evaluated owner-supplied firmware route outside source control, only after owner authority; the firmware-free tier-A path is validated in Phase 3
 - [ ] One named cartridge path (container format, loader, banking/addressing
       behavior) with explicit content identity
 - [ ] A canonical machine core with defined instance ownership, content
@@ -212,4 +214,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-10 after Phase 2*
+*Last updated: 2026-11-10 after Phase 3*

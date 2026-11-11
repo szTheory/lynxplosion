@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Evidence Harness and Walking Skeleton** - One check command, pinned and manifested fixtures, fail-closed rights and core-boundary checks, and a repeatable skeleton machine behind the host API (completed 2026-11-09)
 - [x] **Phase 2: CPU Profiles and Per-Opcode Vectors** - 65C02-class CPU with Lynx I and Lynx II profiles as data, tick-stamped bus cycles, proven by pinned vectors (completed 2026-11-10)
-- [ ] **Phase 3: Memory Map, Direct-Load Startup and First Diagnostic** - MAPCTL memory map, startup tier A, original diagnostic reporting through a RAM result block, first labelled snapshot via an independent consumer
+- [x] **Phase 3: Memory Map, Direct-Load Startup and First Diagnostic** - MAPCTL memory map, startup tier A, original diagnostic reporting through a RAM result block, first labelled snapshot via an independent consumer (completed 2026-11-10)
 - [ ] **Phase 4: Timers, Interrupts and First Public Suites** - Master-tick scheduler, Mikey timer bank, IRQ and minimal sleep; `timers` and `cpu` suites read from guest RAM with controls
 - [ ] **Phase 5: Display, Raw Video and Input** - Timer-driven frames, display DMA, per-line palette, raw video and logical input; live input-responsive homebrew frame
 - [ ] **Phase 6: Audio and Playable Checkpoint** - Four audio channels and integer PCM; homebrew with sound; v1 suite inventory and throughput baseline
@@ -162,7 +162,7 @@ Plans:
   5. An independent consumer built only against the public API drives the core and renders a tick-stamped framebuffer snapshot to a viewable PNG or PPM labelled as a snapshot, not a frame. Its WAV writer is in place; the core produces silence until Phase 6.
 **Owner gates**: None for tier A. O8 is inherited (public C API). O2, O3 and O4 are not scheduled: no BIOS, boot ROM, boot shim or HLE decrypt. Tier A results are never boot, cartridge or loader evidence.
 **Research flag**: Deeper research needed before planning: per-register preset provenance (the DISPCTL sources disagree; cite Epyx or test values, never another emulator's); spike whether `lynx-bll.cfg` output equals the BS93 `.o` container (Disagreement 12). The fallback is `ca65`/`ld65` with a project config and packer.
-**Plans:** 9/9 plans executed; goal verification pending
+**Plans:** 9/9 plans complete; goal verification pending
 
 Plans:
 - [x] 03-01-PLAN.md — Strict BLL tracer and versioned guest identity
@@ -194,7 +194,7 @@ Plans:
 **Goal**: An original homebrew drives timer-generated frames that the host receives as raw video and that respond to a recorded logical input timeline.
 **Mode:** mvp
 **Depends on**: Phase 4
-**Requirements**: VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02
+**Requirements**: VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01 (real-frame consumer slice)
 **Success Criteria** (what must be TRUE):
   1. Changing the Timer 0 and Timer 2 settings changes line and frame timing as measured in guest ticks (no fixed 60 Hz). The host can stop advancement on a frame-complete event whose definition is documented.
   2. Display DMA appears as a bus requestor that costs ticks and closes page-mode streams. The lynx-tests `page-mode` suite runs with results captured and inventoried, or appears as a visible, documented skip. A named-fault control on DMA cost fails its intended test.
@@ -209,7 +209,7 @@ Plans:
 **Goal**: The homebrew plays sound in response to input, and progress, input, video and audio line up on one guest-tick timeline. The v1 public-suite inventory and a throughput baseline are recorded.
 **Mode:** mvp
 **Depends on**: Phase 4 (timers), Phase 5 (homebrew and input)
-**Requirements**: AUD-01, AUD-02, HB-03, DET-05, EVD-06, PERF-01
+**Requirements**: AUD-01, AUD-02, HB-03, DET-05, EVD-06, PERF-01, CON-01 (final real-audio/video consumer closure)
 **Success Criteria** (what must be TRUE):
   1. Four audio channels (LFSR, integrator, reload, volume, timer links) and stereo muting are emulated. Original tests cover channels 1 to 3 and the stereo bits. Results from the `audio` and `audio2` suites are captured, and a named-fault control fails its intended test.
   2. The host receives integer PCM at an exact rational rate derived from the 16 MHz clock, plus tick-stamped channel events. The forbidden-import check still shows no float, filter or resampler in the core.
@@ -244,7 +244,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Evidence Harness and Walking Skeleton | 13/13 | Complete    | 2026-11-09 |
 | 2. CPU Profiles and Per-Opcode Vectors | 11/11 | Complete    | 2026-11-10 |
-| 3. Memory Map, Direct-Load Startup and First Diagnostic | 9/9 | Verifying | - |
+| 3. Memory Map, Direct-Load Startup and First Diagnostic | 9/9 | Complete    | 2026-11-10 |
 | 4. Timers, Interrupts and First Public Suites | 0/TBD | Not started | - |
 | 5. Display, Raw Video and Input | 0/TBD | Not started | - |
 | 6. Audio and Playable Checkpoint | 0/TBD | Not started | - |
