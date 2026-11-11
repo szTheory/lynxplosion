@@ -1985,6 +1985,78 @@ static int probe_model(const uint8_t probe, const uint8_t marker)
     return -1;
 }
 
+static int validate_guest_completion(machine_instance *instance, const suite_symbols *symbols,
+                                     int execution_started, int complete,
+                                     int initial_done_clear_seen, uint64_t guest_ticks,
+                                     uint64_t total_consumed, uint32_t minimum_ticks,
+                                     uint32_t maximum_ticks, uint8_t *done,
+                                     uint8_t *progress, uint8_t *model, uint8_t *probe)
+{
+    lynx_machine *machine = instance->machine;
+    if (lynx_read_memory(machine, symbols->value[6], done, 1u) != LYNX_OK ||
+        lynx_read_memory(machine, symbols->value[4], progress, 1u) != LYNX_OK ||
+        lynx_read_memory(machine, symbols->value[5], model, 1u) != LYNX_OK ||
+        lynx_read_memory(machine, symbols->value[11], probe, 1u) != LYNX_OK) {
+        (void)fail("completion: guest completion bytes could not be read");
+        return 2;
+    }
+    if (execution_started == 0) {
+        return fail("completion: guest execution absent; post-return sentinel was not written");
+    }
+    if (complete == 0 || initial_done_clear_seen == 0 || *done != 0xA5u) {
+        return fail("completion: post-return sentinel absent or invalid");
+    }
+    if (guest_ticks < minimum_ticks || guest_ticks > maximum_ticks ||
+        total_consumed == 0u || *progress != 8u) {
+        return fail("completion: semantic progress or guest-time bound mismatch");
+    }
+    return 0;
+}
+
+/* Prove a negative run was held before the first guest instruction.  The
+   private hold is installed only after the fresh BLL has been loaded and
+   before any advance; unchanged CPU/request and RAM state prove no grant or
+   guest write occurred while independent guest time reached the suite floor. */
+static int prove_held_no_run(machine_instance *instance, const suite_symbols *symbols,
+                             uint32_t minimum_ticks, uint64_t *ticks_out)
+{
+    lynx_machine *machine = instance->machine;
+    lynx__cpu cpu_before;
+    uint8_t *ram_before;
+    uint64_t before = 0u;
+    uint64_t after = 0u;
+    uint64_t used = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+
+    if (machine == NULL || minimum_ticks == 0u) return fail("no-run: invalid held instance");
+    if (machine->guest_ticks != 0u || machine->cpu.pc != symbols->value[0]) {
+        return fail("no-run: guest advanced before hold was armed");
+    }
+    cpu_before = machine->cpu;
+    ram_before = malloc(sizeof machine->ram);
+    if (ram_before == NULL) return fail("no-run: cannot snapshot guest RAM");
+    memcpy(ram_before, machine->ram, sizeof machine->ram);
+    if (lynx__machine_set_bus_hold(machine, 1u) != LYNX_OK || machine->bus_hold != 1u) {
+        free(ram_before);
+        return fail("no-run: private bus hold was not armed");
+    }
+    if (lynx_guest_ticks(machine, &before) != LYNX_OK ||
+        lynx_advance(machine, minimum_ticks, &used, &stop) != LYNX_OK ||
+        lynx_guest_ticks(machine, &after) != LYNX_OK) {
+        free(ram_before);
+        return fail("no-run: bounded held guest advance failed");
+    }
+    if (stop != LYNX_STOP_BUDGET || used != minimum_ticks || after < minimum_ticks ||
+        after < before || after - before != used || memcmp(&cpu_before, &machine->cpu, sizeof cpu_before) != 0 ||
+        memcmp(ram_before, machine->ram, sizeof machine->ram) != 0 || machine->bus_hold != 1u) {
+        free(ram_before);
+        return fail("no-run: held CPU/request or guest RAM changed before completion");
+    }
+    free(ram_before);
+    *ticks_out = after;
+    return 0;
+}
+
 static int tuple_model(const suite_oracle *oracle, const uint8_t *results)
 {
     unsigned model;
@@ -2081,7 +2153,8 @@ static int write_run_record(const char *path, const char *machine_profile,
 }
 
 static int run_cpu(const char *machine_profile_name, const char *selected_profile_name,
-                   const char *directory, const char *oracle_path, const char *case_name)
+                   const char *directory, const char *oracle_path, const char *case_name,
+                   int no_run)
 {
     uint8_t *bll = NULL;
     size_t bll_length = 0u;
@@ -2114,6 +2187,7 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
     lynx_stop_reason stop = LYNX_STOP_BUDGET;
     lynx_watch_event event;
     lynx_identity identity;
+    lynx__cpu initial_cpu;
     machine_instance instance = {0};
     suite_symbols symbols;
     suite_oracle oracle;
@@ -2184,6 +2258,26 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
         (void)fail("could not arm post-test sentinel watch");
         goto done;
     }
+    initial_cpu = instance.machine->cpu;
+    if (no_run != 0) {
+        int completion_result;
+        if (prove_held_no_run(&instance, &symbols, CPU_MIN_TICKS, &guest_ticks) != 0) goto done;
+        total_consumed = guest_ticks;
+        completion_result = validate_guest_completion(&instance, &symbols, 0, 0, 0,
+                                                      guest_ticks, total_consumed,
+                                                      CPU_MIN_TICKS, CPU_MAX_TICKS,
+                                                      &done, &progress, &model, &probe);
+        if (completion_result != 1) {
+            if (completion_result == 0) (void)fail("no-run: completion validator accepted a held suite");
+            goto done;
+        }
+        if (lynx__machine_set_bus_hold(instance.machine, 0u) != LYNX_OK ||
+            instance.machine->bus_hold != 0u) {
+            (void)fail("no-run: private bus hold could not be released");
+            goto done;
+        }
+        puts("no-run control: exact absent-execution refusal observed after minimum held guest time; hold released");
+    }
     while (total_consumed < CPU_MAX_TICKS) {
         uint64_t budget = CPU_MAX_TICKS - total_consumed;
         uint64_t used = 0u;
@@ -2240,20 +2334,18 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
             goto done;
         }
     }
-    if (complete == 0 || initial_done_clear_seen == 0) {
-        (void)fail("guest did not reach completion before maximum ticks");
-        goto done;
+    {
+        const int execution_started = memcmp(&initial_cpu, &instance.machine->cpu,
+                                             sizeof initial_cpu) != 0;
+        if (validate_guest_completion(&instance, &symbols, execution_started, complete,
+                                      initial_done_clear_seen, guest_ticks, total_consumed,
+                                      CPU_MIN_TICKS, CPU_MAX_TICKS,
+                                      &done, &progress, &model, &probe) != 0) {
+            goto done;
+        }
     }
-    if (lynx_read_memory(instance.machine, symbols.value[6], &done, 1u) != LYNX_OK ||
-        lynx_read_memory(instance.machine, symbols.value[4], &progress, 1u) != LYNX_OK ||
-        lynx_read_memory(instance.machine, symbols.value[5], &model, 1u) != LYNX_OK ||
-        lynx_read_memory(instance.machine, symbols.value[11], &probe, 1u) != LYNX_OK) {
-        (void)fail("completion observation could not read validated guest bytes");
-        goto done;
-    }
-    if (guest_ticks < CPU_MIN_TICKS || guest_ticks > CPU_MAX_TICKS ||
-        total_consumed == 0u || done != 0xA5u || progress != 8u) {
-        (void)fail("completion, progress, or source-work bound mismatch");
+    if (done != 0xA5u || progress != 8u) {
+        (void)fail("completion: validated CPU completion bytes changed unexpectedly");
         goto done;
     }
     if (lynx_read_memory(instance.machine, symbols.value[2], results, CPU_MEANINGFUL) != LYNX_OK) {
@@ -2357,7 +2449,7 @@ static int write_timer_run_record(const char *path, const char *machine_profile,
 
 static int run_timers(const char *machine_profile_name, const char *selected_profile_name,
                       const char *directory, const char *oracle_path,
-                      const char *pending_descriptor_path)
+                      const char *pending_descriptor_path, int no_run)
 {
     uint8_t *bll = NULL;
     size_t bll_length = 0u;
@@ -2388,6 +2480,7 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
     lynx_stop_reason stop = LYNX_STOP_BUDGET;
     lynx_watch_event event;
     lynx_identity identity;
+    lynx__cpu initial_cpu;
     machine_instance instance = {0};
     suite_symbols symbols;
     suite_oracle oracle;
@@ -2474,6 +2567,26 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         (void)fail("could not arm timer post-test sentinel watch");
         goto done;
     }
+    initial_cpu = instance.machine->cpu;
+    if (no_run != 0) {
+        int completion_result;
+        if (prove_held_no_run(&instance, &symbols, TIMER_MIN_TICKS, &guest_ticks) != 0) goto done;
+        total_consumed = guest_ticks;
+        completion_result = validate_guest_completion(&instance, &symbols, 0, 0, 0,
+                                                      guest_ticks, total_consumed,
+                                                      TIMER_MIN_TICKS, TIMER_MAX_TICKS,
+                                                      &done, &progress, &model, &probe);
+        if (completion_result != 1) {
+            if (completion_result == 0) (void)fail("no-run: completion validator accepted a held timer suite");
+            goto done;
+        }
+        if (lynx__machine_set_bus_hold(instance.machine, 0u) != LYNX_OK ||
+            instance.machine->bus_hold != 0u) {
+            (void)fail("no-run: private bus hold could not be released");
+            goto done;
+        }
+        puts("no-run control: exact absent-execution refusal observed after minimum held guest time; hold released");
+    }
     while (total_consumed < TIMER_MAX_TICKS) {
         uint64_t budget = TIMER_MAX_TICKS - total_consumed;
         uint64_t used = 0u;
@@ -2547,19 +2660,19 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
                 instance.machine->ram[symbols.value[4]], instance.machine->ram[symbols.value[5]], timer3->backup, timer3->count,
                 timer3->control_a, timer3->control_b, timer5->backup, timer5->count,
                 timer5->control_a, timer5->control_b, instance.machine->timer_bank.pending);
-        (void)fail("timer guest did not reach completion before maximum ticks");
-        goto done;
     }
-    if (lynx_read_memory(instance.machine, symbols.value[6], &done, 1u) != LYNX_OK ||
-        lynx_read_memory(instance.machine, symbols.value[4], &progress, 1u) != LYNX_OK ||
-        lynx_read_memory(instance.machine, symbols.value[5], &model, 1u) != LYNX_OK ||
-        lynx_read_memory(instance.machine, symbols.value[11], &probe, 1u) != LYNX_OK) {
-        (void)fail("timer completion observation could not read validated guest bytes");
-        goto done;
+    {
+        const int execution_started = memcmp(&initial_cpu, &instance.machine->cpu,
+                                             sizeof initial_cpu) != 0;
+        if (validate_guest_completion(&instance, &symbols, execution_started, complete,
+                                      initial_done_clear_seen, guest_ticks, total_consumed,
+                                      TIMER_MIN_TICKS, TIMER_MAX_TICKS,
+                                      &done, &progress, &model, &probe) != 0) {
+            goto done;
+        }
     }
-    if (guest_ticks < TIMER_MIN_TICKS || guest_ticks > TIMER_MAX_TICKS || total_consumed == 0u ||
-        done != 0xA5u || progress != 8u) {
-        (void)fail("timer completion, progress, or source-work bound mismatch");
+    if (done != 0xA5u || progress != 8u) {
+        (void)fail("completion: validated timer completion bytes changed unexpectedly");
         goto done;
     }
     if (lynx_read_memory(instance.machine, symbols.value[2], results, TIMER_MEANINGFUL) != LYNX_OK) {
@@ -2913,22 +3026,28 @@ static int validate_cpu_record_mode(const char *selected_profile,
 int main(int argc, char **argv)
 {
     if (argc == 6 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu") == 0) {
-        return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero");
+        return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero", 0);
     }
     if (argc == 7 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu") == 0) {
-        return run_cpu(argv[3], argv[3], argv[4], argv[5], argv[6]);
+        return run_cpu(argv[3], argv[3], argv[4], argv[5], argv[6], 0);
     }
     if (argc == 8 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu-selected") == 0) {
-        return run_cpu(argv[3], argv[4], argv[5], argv[6], argv[7]);
+        return run_cpu(argv[3], argv[4], argv[5], argv[6], argv[7], 0);
     }
     if (argc == 6 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "timers") == 0) {
-        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL);
+        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL, 0);
     }
     if (argc == 7 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "timers-selected") == 0) {
-        return run_timers(argv[3], argv[4], argv[5], argv[6], NULL);
+        return run_timers(argv[3], argv[4], argv[5], argv[6], NULL, 0);
     }
     if (argc == 7 && strcmp(argv[1], "observe") == 0 && strcmp(argv[2], "timers") == 0) {
-        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6]);
+        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 0);
+    }
+    if (argc == 6 && strcmp(argv[1], "no-run") == 0 && strcmp(argv[2], "cpu") == 0) {
+        return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero", 1);
+    }
+    if (argc == 7 && strcmp(argv[1], "no-run") == 0 && strcmp(argv[2], "timers") == 0) {
+        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 1);
     }
     if (argc == 7 && strcmp(argv[1], "timer-cascade-model") == 0) {
         return timer_cascade_model_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);

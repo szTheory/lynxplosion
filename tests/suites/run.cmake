@@ -9,7 +9,7 @@ cmake_path(IS_PREFIX SCRATCH_ROOT "${WORK}" NORMALIZE work_is_owned)
 if(NOT work_is_owned OR "${WORK}" STREQUAL "${SCRATCH_ROOT}")
   message(FATAL_ERROR "suite_driver: refusing output outside invocation-owned scratch")
 endif()
-if(NOT MODE MATCHES "^(cpu|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls|timer_observation|timer_strict_controls|timer_cascade_model|timer_model_controls|timer_result_controls|timer_pending_controls)$")
+if(NOT MODE MATCHES "^(cpu|cpu_no_run|timers_no_run|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls|timer_observation|timer_strict_controls|timer_cascade_model|timer_model_controls|timer_result_controls|timer_pending_controls)$")
   message(FATAL_ERROR "suite_driver: unknown mode")
 endif()
 if(MODE STREQUAL "cpu" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
@@ -37,6 +37,16 @@ function(expect_success expected)
   string(FIND "${combined}" "${expected}" found)
   if(NOT "${rc}" STREQUAL "0" OR found EQUAL -1)
     message(FATAL_ERROR "suite_driver: control expected success and '${expected}', got ${rc}: ${combined}")
+  endif()
+endfunction()
+
+function(expect_success_timeout expected timeout)
+  execute_process(COMMAND ${ARGN} TIMEOUT ${timeout}
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  set(combined "${out}${err}")
+  string(FIND "${combined}" "${expected}" found)
+  if(NOT "${rc}" STREQUAL "0" OR found EQUAL -1)
+    message(FATAL_ERROR "suite_driver: control expected success within ${timeout}s and '${expected}', got ${rc}: ${combined}")
   endif()
 endfunction()
 
@@ -117,6 +127,40 @@ endfunction()
 function(run_timer_pair)
   run_timer_observation(lynx1)
   run_timer_observation(lynx2)
+endfunction()
+
+function(run_cpu_no_run_control profile)
+  expect_success_timeout("suite raw source comparison: match; suite=cpu machine_profile=${profile}"
+    60 "${TEST_BINARY}" run cpu "${profile}" "${SUITE_BUILD}" "${ORACLE}" zero)
+  execute_process(COMMAND "${TEST_BINARY}" no-run cpu "${profile}" "${SUITE_BUILD}" "${ORACLE}"
+    TIMEOUT 90 RESULT_VARIABLE no_run_rc OUTPUT_VARIABLE no_run_out ERROR_VARIABLE no_run_err)
+  set(no_run_text "${no_run_out}${no_run_err}")
+  if(NOT no_run_rc STREQUAL "0" OR
+     NOT no_run_text MATCHES "suite: completion: guest execution absent; post-return sentinel was not written" OR
+     NOT no_run_out MATCHES "no-run control: exact absent-execution refusal observed after minimum held guest time; hold released" OR
+     NOT no_run_out MATCHES "suite raw source comparison: match; suite=cpu machine_profile=${profile}")
+    message(FATAL_ERROR "suite_driver: CPU ${profile} no-run did not prove exact refusal and a resumed positive: ${no_run_rc} ${no_run_out} ${no_run_err}")
+  endif()
+  expect_success("cpu record: 18 raw results, completion and model evidence valid for ${profile}"
+    "${TEST_BINARY}" validate-cpu-record "${profile}" "${SUITE_BUILD}/raw-results-zero.tsv"
+    "${SUITE_BUILD}/run-record-zero.txt" "${ORACLE}")
+  set(all_run_out "${all_run_out}CPU ${profile}: fresh positive before hold; true no-run refused after held guest time; hold released and same instance produced fresh positive\n${no_run_out}\n" PARENT_SCOPE)
+endfunction()
+
+function(run_timer_no_run_control profile)
+  run_timer_observation("${profile}")
+  execute_process(COMMAND "${TEST_BINARY}" no-run timers "${profile}" "${SUITE_BUILD}" "${ORACLE}"
+          "${ROOT}/docs/timer-source-index14-pending.json"
+    TIMEOUT 120 RESULT_VARIABLE no_run_rc OUTPUT_VARIABLE no_run_out ERROR_VARIABLE no_run_err)
+  set(no_run_text "${no_run_out}${no_run_err}")
+  if(NOT no_run_rc STREQUAL "0" OR
+     NOT no_run_text MATCHES "suite: completion: guest execution absent; post-return sentinel was not written" OR
+     NOT no_run_out MATCHES "no-run control: exact absent-execution refusal observed after minimum held guest time; hold released" OR
+     NOT no_run_out MATCHES "timer observation complete: profile=${profile} meaningful=16 reserved=2 source_agreements=15 pending_index=14 actual=0c expected=0d")
+    message(FATAL_ERROR "suite_driver: timer ${profile} no-run did not prove exact refusal and a resumed observation: ${no_run_rc} ${no_run_out} ${no_run_err}")
+  endif()
+  assert_timer_artifacts("${profile}")
+  set(all_run_out "${all_run_out}Timers ${profile}: fresh pending-row observation before hold; true no-run refused after held guest time; hold released and same instance produced fresh bound observation\n${no_run_out}\n" PARENT_SCOPE)
 endfunction()
 
 function(timer_assert_baseline_unchanged profile)
@@ -578,6 +622,20 @@ if(FAILURE STREQUAL "")
     TIMEOUT 10 RESULT_VARIABLE validate_rc OUTPUT_VARIABLE validate_out ERROR_VARIABLE validate_err)
   if(NOT validate_rc STREQUAL "0" OR NOT validate_out MATCHES "cpu=18/18 timers=16/18")
     set(FAILURE "generated oracle validation failed: ${validate_rc} ${validate_out} ${validate_err}")
+  endif()
+endif()
+
+if(FAILURE STREQUAL "")
+  if(MODE STREQUAL "cpu_no_run")
+    set(all_run_out "")
+    foreach(profile lynx1 lynx2)
+      run_cpu_no_run_control("${profile}")
+    endforeach()
+  elseif(MODE STREQUAL "timers_no_run")
+    set(all_run_out "")
+    foreach(profile lynx1 lynx2)
+      run_timer_no_run_control("${profile}")
+    endforeach()
   endif()
 endif()
 
