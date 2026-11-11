@@ -11,18 +11,18 @@
 #include "cpu.h"
 #include "lynxplosion.h"
 
-/* Snapshot format version 3 (core/snapshot.c documents the layout). */
+/* Snapshot format version 4 (core/snapshot.c documents the layout). */
 #define LYNX__SNAPSHOT_MAGIC "LYNXSNAP" /* 8 bytes, no terminating NUL in the blob */
 #define LYNX__SNAPSHOT_MAGIC_LEN 8u
-#define LYNX__SNAPSHOT_FORMAT 3u
+#define LYNX__SNAPSHOT_FORMAT 4u
 #define LYNX__BUILD_ID_FIELD 128u
 #define LYNX__SNAPSHOT_HEADER_LEN 252u  /* prior header + format/startup/entry/object identity */
-#define LYNX__SNAPSHOT_PAYLOAD_LEN 65568u /* 32 bytes of CPU and clock state + 65536 RAM */
+#define LYNX__SNAPSHOT_PAYLOAD_LEN 65604u /* CPU/clock, RAM, timers, IRQ, event cursor and hold */
 
 /* The payload layout belongs to the format number: a layout change without a
    format bump stops the build. */
-_Static_assert(LYNX__SNAPSHOT_FORMAT != 3u || LYNX__SNAPSHOT_PAYLOAD_LEN == 65568u,
-               "snapshot format 3 has a 65568-byte payload; bump the format to change it");
+_Static_assert(LYNX__SNAPSHOT_FORMAT != 4u || LYNX__SNAPSHOT_PAYLOAD_LEN == 65604u,
+               "snapshot format 4 has a 65604-byte payload; bump the format to change it");
 
 /* Build identity string baked at configure time (core/build_id.c.in). */
 extern const char lynx__build_id[];
@@ -44,8 +44,9 @@ typedef struct lynx__timer {
     uint8_t control_b;
 } lynx__timer;
 
-/* The last applied event timestamp distinguishes an edge pending exactly at
-   guest_ticks from an edge already dispatched before a same-tick CPU action. */
+/* The event cursor is canonical only for the current guest tick. Advancing
+   guest time clears it; snapshots store the current-tick bit and reconstruct
+   its timestamp from guest_ticks instead of preserving historical CPU ticks. */
 typedef struct lynx__timer_bank {
     lynx__timer timers[LYNX__TIMER_COUNT];
     uint8_t pending;

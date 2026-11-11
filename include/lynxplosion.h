@@ -288,9 +288,11 @@ const char *lynx_build_id(void);
 
 /* Snapshots. A snapshot is a versioned blob: a header that names the build,
    profile, RAM policy, seed and loaded content, then the machine state with a
-   SHA-256 of that state. All integers in it are little-endian. Format 3 adds
-   content format, startup tier, entry, object length and MAPCTL. It is
-   documented beside its code in core/snapshot.c; versions 1 and 2 are refused.
+   SHA-256 of that state. All integers in it are little-endian. Format 3 added
+   content format, startup tier, entry, object length and MAPCTL. Format 4
+   adds timer/IRQ state, the current-tick event cursor and CPU bus hold; the
+   posted request and wake state are derived. It is documented beside its code
+   in core/snapshot.c; versions 1 through 3 are refused.
 
    A snapshot restores only into an instance of the same build (the full
    lynx_build_id string), with the same profile, RAM policy and seed and the

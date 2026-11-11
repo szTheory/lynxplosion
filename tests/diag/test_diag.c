@@ -1188,7 +1188,7 @@ static int save_snapshot_for_machine(const lynx_machine *machine, uint8_t **snap
         read_le32(*snapshot + SNAP_HEADER_SIZE + 16u) != FINAL_TICK) {
         free(*snapshot);
         *snapshot = NULL;
-        return fail("public snapshot does not describe format 3 at final tick");
+        return fail("public snapshot does not describe format 4 at final tick");
     }
     return 0;
 }

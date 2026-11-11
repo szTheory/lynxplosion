@@ -84,6 +84,11 @@ static bool machine_valid(const lynx_machine *m)
    readiness becomes the current tick; ownership hold remains a separate gate. */
 static void machine_set_guest_tick(struct lynx_machine *m, uint64_t tick)
 {
+    if (tick > m->guest_ticks && m->timer_bank.last_event_valid != 0u &&
+        tick > m->timer_bank.last_event_tick) {
+        m->timer_bank.last_event_valid = 0u;
+        m->timer_bank.last_event_tick = 0u;
+    }
     m->guest_ticks = tick;
     if (m->cpu_ready_at < tick) {
         m->cpu_ready_at = tick;

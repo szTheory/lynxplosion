@@ -123,6 +123,23 @@ static const uint8_t timer_snapshot_program[] = {
     0x4Cu, 0x0Eu, 0x02u                  /* JMP to itself */
 };
 
+/* After enabling a repeating timer, ten NOPs and a five-cycle LDA/branch pair
+   align the real FD91 store request with the timer edge at tick 240. The request
+   returns at that same tick after timer-priority work has already run. */
+static const uint8_t timer_cursor_refusal_program[] = {
+    0x78u,                               /* SEI */
+    0xA9u, 0x01u,                         /* LDA #1 */
+    0x8Du, 0x00u, 0xFDu,                 /* STA timer 0 backup */
+    0x8Du, 0x02u, 0xFDu,                 /* STA timer 0 count */
+    0xA9u, 0x98u,                         /* LDA #IRQ|RELOAD|COUNT */
+    0x8Du, 0x01u, 0xFDu,                 /* STA timer 0 CTLA at tick 80 */
+    0xEAu, 0xEAu, 0xEAu, 0xEAu, 0xEAu,
+    0xEAu, 0xEAu, 0xEAu, 0xEAu, 0xEAu, /* delay before the request */
+    0xA9u, 0x01u, 0xD0u, 0x00u,         /* 2-cycle LDA + taken zero-offset BNE */
+    0xA9u, 0x5Au,                         /* LDA #$5A */
+    0x8Du, 0x91u, 0xFDu                  /* STA unavailable $FD91 */
+};
+
 /* Original guest for the mapped IRQ path. It maps the RAM vector window,
    installs an IRQ vector and handler, checks FD80/FD81 force/ack semantics,
    then waits for a timer-0 IRQ while I is set. It disables that source after
@@ -2374,10 +2391,15 @@ static void case_reset_power_on(void)
 #define SNAP_OFF_PAYLOAD_SHA 220u
 #define SNAP_SEED 0x0123456789abcdefu
 
-/* Payload offsets of format 3 (white-box, from core/snapshot.c). */
+/* Payload offsets of format 4 (white-box, from core/snapshot.c). */
 enum {
     PAY_PC = 0, PAY_P = 6, PAY_FLAGS = 7, PAY_OPCODE = 8, PAY_STEP = 9, PAY_EA = 10, PAY_TMP = 12,
-    PAY_COST_MODEL = 13, PAY_MAPCTL = 14, PAY_RESERVED = 15, PAY_TICKS = 16, PAY_READY_AT = 24
+    PAY_COST_MODEL = 13, PAY_MAPCTL = 14, PAY_RESERVED = 15, PAY_TICKS = 16, PAY_READY_AT = 24,
+    PAY_TIMERS = 32 + (int)LYNX_ADDRESS_SPACE,
+    PAY_TIMER_PENDING = PAY_TIMERS + (int)(LYNX__TIMER_COUNT * 4u),
+    PAY_TIMER_PHASE = PAY_TIMER_PENDING + 1,
+    PAY_TIMER_EVENT_APPLIED = PAY_TIMER_PHASE + 1,
+    PAY_BUS_HOLD = PAY_TIMER_EVENT_APPLIED + 1
 };
 
 /* Blobs carry one extra byte of room for the trailing-byte case. */
@@ -2639,6 +2661,45 @@ static void compare_snapshot_guest(const lynx_machine *reference,
     CHECK_EQ_U64(reference->cpu.req_data, candidate->cpu.req_data);
 }
 
+static void check_snapshot_cursor_refusal(uint32_t profile)
+{
+    lynx_machine *source = snap_instance_p(machine_buf, profile, SNAP_SEED,
+                                           timer_cursor_refusal_program,
+                                           sizeof timer_cursor_refusal_program, 0x0200u);
+    lynx_machine *restored = snap_instance_p(buf_b, profile, SNAP_SEED,
+                                             timer_cursor_refusal_program,
+                                             sizeof timer_cursor_refusal_program, 0x0200u);
+    if (source == NULL || restored == NULL) {
+        return;
+    }
+    source->ram[0xFD91u] = 0xE7u;
+    restored->ram[0xFD91u] = 0xE7u;
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(source, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_EQ_U64(consumed, 240u);
+    CHECK_EQ_U64(source->guest_ticks, 240u);
+    CHECK_EQ_U64(source->cpu.req_addr, 0xFD91u);
+    CHECK_EQ_U64(source->timer_bank.pending, 1u);
+    CHECK_EQ_U64(source->timer_bank.last_event_valid, 1u);
+    CHECK_EQ_U64(source->timer_bank.last_event_tick, source->guest_ticks);
+    CHECK_EQ_U64(source->timer_bank.timers[0].count, 1u);
+    CHECK_EQ_U64(save_into(source, blob_v), 0u);
+    CHECK_EQ_U64(lynx_snapshot_restore(restored, blob_v, SNAP_TOTAL), LYNX_OK);
+    CHECK(memcmp(source, restored, MSIZE) == 0);
+
+    /* Retrying the refused request must not dispatch the same timer edge a
+       second time after restore. */
+    for (size_t i = 0u; i < 2u; i++) {
+        lynx_machine *machine = i == 0u ? source : restored;
+        CHECK_EQ_U64(lynx_advance(machine, 1000u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+        CHECK_EQ_U64(consumed, 0u);
+    }
+    CHECK(memcmp(source, restored, MSIZE) == 0);
+}
+
 static void case_timer_snapshot(void)
 {
     static const uint32_t profiles[] = {LYNX_PROFILE_LYNX1, LYNX_PROFILE_LYNX2};
@@ -2693,6 +2754,13 @@ static void case_timer_snapshot(void)
         CHECK_EQ_U64(lynx_watch_configure(source, 0x0400u, 1u), LYNX_OK);
         CHECK_EQ_U64(lynx_watch_configure(restored, 0x0400u, 1u), LYNX_OK);
         CHECK_EQ_U64(save_into(source, blob_v), 0u);
+        memcpy(blob_bad, blob_v, SNAP_TOTAL);
+        blob_bad[0] ^= 1u;
+        memcpy(snap_b, restored, MSIZE);
+        CHECK_EQ_U64(lynx_snapshot_restore(restored, blob_bad, SNAP_TOTAL),
+                     LYNX_ERR_SNAPSHOT_INVALID);
+        CHECK_UNCHANGED(buf_b, snap_b);
+        CHECK_EQ_U64(restored->host_observation.watch_armed, 1u);
         CHECK_EQ_U64(lynx_snapshot_restore(restored, blob_v, SNAP_TOTAL), LYNX_OK);
         CHECK_EQ_U64(restored->timer_bank.pending, source->timer_bank.pending);
         CHECK_EQ_U64(restored->timer_bank.timers[0].count,
@@ -2729,6 +2797,8 @@ static void case_timer_snapshot(void)
         CHECK_EQ_U64(save_into(source, blob_v), 0u);
         CHECK_EQ_U64(save_into(restored, blob_c), 0u);
         CHECK(memcmp(blob_v, blob_c, SNAP_TOTAL) == 0);
+
+        check_snapshot_cursor_refusal(profile);
     }
 
     printf("TAP version 13\n1..1\n%s 1 - api.timer_snapshot\n",
@@ -2763,7 +2833,7 @@ static void case_snapshot_roundtrip(void)
     CHECK_UNCHANGED(machine_buf, snap_a);
     CHECK_EQ_U64(blob_v[SNAP_TOTAL], 0xA5u); /* nothing written past the end */
     CHECK(memcmp(blob_v, "LYNXSNAP", 8u) == 0);
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 3u); /* format 3 */
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 4u); /* format 4 */
     CHECK_EQ_U64(get_le(blob_v + 12u, 4u), LYNX__SNAPSHOT_HEADER_LEN);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
@@ -2931,7 +3001,7 @@ static void case_bll_identity(void)
     CHECK_EQ_U64(m->mapctl, 0x0Cu);
     CHECK_EQ_U64(save_into(m, blob_v), 0u);
 
-    /* Format 3 carries the complete object identity in the LE header and the
+    /* Format 4 carries the complete object identity in the LE header and the
        guest-written MAPCTL latch in the payload. */
     CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 3u);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
@@ -3057,8 +3127,8 @@ static void snapshot_forged_cpu_states(void)
 }
 
 /* The guest-time limit through a snapshot (WR-03): a state at the limit is
-   reachable and restores, with the last cycle ending up to 255 ticks past it;
-   lynx_advance then returns LYNX_OK, LYNX_STOP_BUDGET and consumed 0 (the
+   reachable and restores with a flat5 cycle ending at most four ticks past
+   it. lynx_advance then returns LYNX_OK, LYNX_STOP_BUDGET and consumed 0 (the
    documented signal for the end of guest time). One tick above the limit is
    refused, instance untouched. */
 static void snapshot_tick_limit(void)
@@ -3077,9 +3147,9 @@ static void snapshot_tick_limit(void)
     put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, limit + 1u, 8u);
     rehash_payload(blob_bad);
     RESTORE_EXPECT(dst, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_b);
-    /* At the limit, with a cycle ending 254 ticks past it. */
+    /* At the limit, with the maximum flat5 public-return residual. */
     put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, limit, 8u);
-    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, limit + 254u, 8u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, limit + 4u, 8u);
     rehash_payload(blob_bad);
     CHECK_EQ_U64(lynx_snapshot_restore(dst, blob_bad, SNAP_TOTAL), LYNX_OK);
     uint64_t ticks = 0u;
@@ -3141,14 +3211,16 @@ static void case_snapshot_refusal(void)
     RESTORE_EXPECT(m, blob_v, 0u, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
     RESTORE_EXPECT(m, blob_v, LYNX__SNAPSHOT_HEADER_LEN, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
 
-    /* Formats 1 and 2 are unsupported; format 3 is the current positive case. */
-    CHECK_EQ_U64(blob_bad[8], 3u);
+    /* Formats 1, 2 and 3 are unsupported; format 4 is the current positive case. */
+    CHECK_EQ_U64(blob_bad[8], 4u);
     CHECK_EQ_U64(blob_bad[9] | blob_bad[10] | blob_bad[11], 0u);
     blob_bad[8] = 1u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
     blob_bad[8] = 2u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
     blob_bad[8] = 3u;
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
+    blob_bad[8] = 4u;
 
     /* Another identity: each refused as a MISMATCH, whatever the blob holds. */
     unsigned char other_image[sizeof churn_loop];
@@ -3233,7 +3305,8 @@ static void case_snapshot_refusal(void)
     VALUE_REFUSED(m, blob_v, PAY_COST_MODEL, LYNX__COST_MODEL_COUNT, 1u, snap_a); /* undefined */
     VALUE_REFUSED(m, blob_v, PAY_COST_MODEL, 0xFFu, 1u, snap_a);
     uint64_t ticks = get_le(pay + PAY_TICKS, 8u);
-    VALUE_REFUSED(m, blob_v, PAY_READY_AT, ticks + 256u, 8u, snap_a);   /* beyond +255 */
+    VALUE_REFUSED(m, blob_v, PAY_READY_AT, ticks + 5u, 8u, snap_a);     /* flat5 max is +4 */
+    VALUE_REFUSED(m, blob_v, PAY_READY_AT, ticks + 255u, 8u, snap_a);  /* inherited gap */
     VALUE_REFUSED(m, blob_v, PAY_READY_AT, ticks - 1u, 8u, snap_a);     /* before guest time */
     VALUE_REFUSED(m, blob_v, PAY_READY_AT, UINT64_MAX, 8u, snap_a);
     /* Guest time above the lynx_advance limit is a state no run reaches (WR-03):
@@ -3282,10 +3355,40 @@ static void case_snapshot_refusal(void)
         CHECK_EQ_HEX(reg_of(m, LYNX_REG_PC), outside_pcs[i]);
     }
     memcpy(blob_bad, blob_v, SNAP_TOTAL);
-    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, ticks + 255u, 8u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, ticks + 4u, 8u);
     rehash_payload(blob_bad);
     CHECK_EQ_U64(lynx_snapshot_restore(m, blob_bad, SNAP_TOTAL), LYNX_OK);
-    CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE) >> 24, 255u);
+    CHECK_EQ_HEX(reg_of(m, LYNX_REG_CPU_STATE) >> 24, 4u);
+
+    /* The test-skew table's 14-tick vector cycle allows at most 13 positive
+       remaining ticks when a public advance returns at least one tick later. */
+    lynx_machine *skew = snap_instance(buf_b, SNAP_SEED, churn_loop, sizeof churn_loop, 0x0200u);
+    if (skew == NULL) {
+        return;
+    }
+    CHECK_EQ_U64(lynx__machine_set_cost_model(skew, LYNX__COST_TEST_SKEW), LYNX_OK);
+    advance_ticks(skew, 1u);
+    CHECK_EQ_U64(save_into(skew, blob_c), 0u);
+    const uint64_t skew_ticks = get_le(blob_c + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, 8u);
+    memcpy(blob_bad, blob_c, SNAP_TOTAL);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, skew_ticks + 13u, 8u);
+    rehash_payload(blob_bad);
+    CHECK_EQ_U64(lynx_snapshot_restore(skew, blob_bad, SNAP_TOTAL), LYNX_OK);
+    CHECK_EQ_HEX(reg_of(skew, LYNX_REG_CPU_STATE) >> 24, 13u);
+    memcpy(blob_bad, blob_c, SNAP_TOTAL);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, skew_ticks + 14u, 8u);
+    rehash_payload(blob_bad);
+    memcpy(snap_b, skew, MSIZE);
+    RESTORE_EXPECT(skew, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_b);
+
+    /* Timer controls are validated as a complete candidate before apply. */
+    memcpy(snap_a, m, MSIZE);
+    VALUE_REFUSED(m, blob_v, PAY_TIMERS + 2u, 0x8Fu, 1u, snap_a); /* unsupported T0 link */
+    VALUE_REFUSED(m, blob_v, PAY_TIMERS + 3u, 0x10u, 1u, snap_a); /* reserved CTLB bits */
+    VALUE_REFUSED(m, blob_v, PAY_TIMER_PHASE, 0xFFu, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_TIMER_EVENT_APPLIED, 2u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_TIMER_EVENT_APPLIED, 1u, 1u, snap_a); /* no due edge */
+    VALUE_REFUSED(m, blob_v, PAY_BUS_HOLD, 2u, 1u, snap_a);
 
     /* Control: the untouched blob is accepted and gives the instance as saved,
        so every refusal above was the edit. */

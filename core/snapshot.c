@@ -1,4 +1,4 @@
-/* Snapshot save and restore, format version 3.
+/* Snapshot save and restore, format version 4.
 
    A snapshot is a header followed by a payload. Every integer is
    little-endian and is written and read one field at a time, never by copying
@@ -6,7 +6,7 @@
 
    Header (252 bytes), in order:
      0    magic          8 bytes  "LYNXSNAP"
-     8    format_version u32      3
+     8    format_version u32      4
      12   header_len     u32      252
      16   build_id       128      lynx__build_id, NUL-padded to 128
      144  profile        u32
@@ -19,18 +19,27 @@
      204  startup_tier   u32
      208  entry_addr     u32
      212  object_len     u32
-     216  payload_len    u32      65568
+     216  payload_len    u32      65604
      220  payload_sha256 32       SHA-256 of the payload
-   Payload (65568 bytes), offsets relative to its start:
+   Payload (65604 bytes), offsets relative to its start:
      0  pc u16        2  a      3  x      4  y      5  s
      6  p (bits 4 and 5 set)    7  cpu latches (lynx__cpu.flags)
      8  opcode        9  step (cycle index inside the instruction)
      10 ea u16        12 tmp    13 cost_model     14 mapctl u8  15 reserved u8, zero
      16 guest_ticks u64         24 cpu_ready_at u64
      32 ram 65536 bytes
+     65568 eight timer records (backup, count, CTLA, CTLB) in timer order
+     65600 timer pending IRQ bits
+     65601 fixed timer phase policy
+     65602 event-already-applied-at-guest-tick (0 or 1)
+     65603 bus ownership hold (0 or 1)
    The profile is not in the payload: it is part of the header identity. The
-   CPU's pending bus request is derived state and is never stored; restore
-   recomputes it with lynx__cpu_repost.
+   CPU request and wake_pending are derived state and are never stored; restore
+   recomputes them from CPU state and timer pending bits. Divider phase and
+   candidate deadlines derive from guest_ticks and timer controls. The event
+   cursor stores only whether an event at the current tick was already applied;
+   its tick is reconstructed from guest_ticks. Older cursor timestamps are
+   incidental bus history and are normalized away as guest time advances.
 
    Restore accepts a blob only for an instance with the identical build id,
    profile, RAM policy, seed and loaded content: the identity comes from the
@@ -39,7 +48,7 @@
    cannot fail. A refused restore leaves the instance byte-identical. After
    that guest-state apply succeeds, host-only watch configuration and hit
    reporting are cleared; callers must explicitly rearm after restore.
-   Formats 1 and 2 are refused as version errors.
+   Formats 1, 2 and 3 are refused as version errors.
 
    Reversibility: restore needs the same build, so no old snapshot is ever
    accepted and the format may change in any later build without migration. */
@@ -91,12 +100,18 @@ enum {
     P_TICKS = 16,
     P_READY_AT = 24,
     P_RAM = 32,
-    P_END = P_RAM + (int)LYNX_ADDRESS_SPACE
+    P_TIMERS = P_RAM + (int)LYNX_ADDRESS_SPACE,
+    P_TIMER_PENDING = P_TIMERS + (int)(LYNX__TIMER_COUNT * 4u),
+    P_TIMER_PHASE_POLICY = P_TIMER_PENDING + 1,
+    P_TIMER_EVENT_APPLIED = P_TIMER_PHASE_POLICY + 1,
+    P_BUS_HOLD = P_TIMER_EVENT_APPLIED + 1,
+    P_END = P_BUS_HOLD + 1
 };
 
 _Static_assert(OFF_END == (int)LYNX__SNAPSHOT_HEADER_LEN, "snapshot header length");
 _Static_assert(P_END == (int)LYNX__SNAPSHOT_PAYLOAD_LEN, "snapshot payload length");
 _Static_assert(P_RESERVED + 1 == P_TICKS, "snapshot byte fields meet the clock fields");
+_Static_assert(P_TIMERS == 65568, "timer bank follows RAM without padding");
 
 #define SNAPSHOT_TOTAL ((size_t)LYNX__SNAPSHOT_HEADER_LEN + (size_t)LYNX__SNAPSHOT_PAYLOAD_LEN)
 
@@ -163,6 +178,68 @@ static int machine_ok(const lynx_machine *m)
     return m->magic == LYNX__MAGIC;
 }
 
+/* Timer-next only needs to know whether the current edge was already applied.
+   Clear a local copy to derive whether a timer edge would otherwise be emitted
+   at this exact guest tick; no deadline or historical bus tick is serialized. */
+static int timer_edge_due_now(const lynx__timer_bank *bank, uint64_t now)
+{
+    lynx__timer_bank unmarked = *bank;
+    uint64_t next = 0u;
+    unmarked.last_event_valid = 0u;
+    unmarked.last_event_tick = 0u;
+    return lynx__timer_next(&unmarked, now, &next) && next == now;
+}
+
+static int timer_link_supported(uint8_t index)
+{
+    return index == 2u || index == 3u || index == 4u || index == 5u || index == 7u;
+}
+
+static int timer_bank_valid(const lynx__timer_bank *bank, uint64_t ticks,
+                            uint8_t event_applied)
+{
+    if (bank->phase_policy != (uint8_t)LYNX__TIMER_PHASE_FIXED_ZERO_1 ||
+        bank->last_event_valid > 1u || event_applied > 1u) {
+        return 0;
+    }
+    for (uint8_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        const lynx__timer *timer = &bank->timers[i];
+        const uint8_t source = (uint8_t)(timer->control_a & 0x07u);
+        const uint8_t status = (uint8_t)(timer->control_b & 0x07u);
+        if ((timer->control_b & 0xF0u) != 0u ||
+            (status != 0u && status != 0x04u && status != 0x05u &&
+             status != 0x06u && status != 0x07u) ||
+            (source == 0x07u && (timer->control_a & 0x08u) != 0u &&
+             !timer_link_supported(i))) {
+            return 0;
+        }
+    }
+    if (event_applied != 0u &&
+        (ticks == 0u || bank->last_event_valid != 1u ||
+         bank->last_event_tick != ticks || !timer_edge_due_now(bank, ticks))) {
+        return 0;
+    }
+    if (event_applied == 0u && bank->last_event_valid != 0u) {
+        return 0;
+    }
+    return 1;
+}
+
+static uint64_t max_public_ready_span(uint8_t cost_model)
+{
+    /* Every granted cycle returns after at least one tick has elapsed. The
+       table's largest costs are flat5=5 and test_skew=14, so the largest
+       positive remaining span is 4 or 13 respectively. */
+    switch (cost_model) {
+    case LYNX__COST_FLAT5:
+        return 4u;
+    case LYNX__COST_TEST_SKEW:
+        return 13u;
+    default:
+        return 0u;
+    }
+}
+
 lynx_status lynx_snapshot_size(const lynx_machine *m, size_t *size)
 {
     if (m == NULL || size == NULL) {
@@ -208,6 +285,21 @@ lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, 
     put_u64(payload + P_TICKS, m->guest_ticks);
     put_u64(payload + P_READY_AT, m->cpu_ready_at);
     memcpy(payload + P_RAM, m->ram, LYNX_ADDRESS_SPACE);
+    for (uint8_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        const lynx__timer *timer = &m->timer_bank.timers[i];
+        uint8_t *record = payload + P_TIMERS + (size_t)i * 4u;
+        record[0] = timer->backup;
+        record[1] = timer->count;
+        record[2] = timer->control_a;
+        record[3] = timer->control_b;
+    }
+    payload[P_TIMER_PENDING] = m->timer_bank.pending;
+    payload[P_TIMER_PHASE_POLICY] = m->timer_bank.phase_policy;
+    payload[P_TIMER_EVENT_APPLIED] =
+        (uint8_t)(m->timer_bank.last_event_valid == 1u &&
+                  m->timer_bank.last_event_tick == m->guest_ticks &&
+                  timer_edge_due_now(&m->timer_bank, m->guest_ticks));
+    payload[P_BUS_HOLD] = m->bus_hold;
 
     memcpy(buf + OFF_MAGIC, LYNX__SNAPSHOT_MAGIC, LYNX__SNAPSHOT_MAGIC_LEN);
     put_u32(buf + OFF_FORMAT, LYNX__SNAPSHOT_FORMAT);
@@ -328,11 +420,11 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
         payload[P_COST_MODEL] != m->cost_model) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
-    /* Subtraction form: ticks + 255 could wrap, ready - ticks cannot once
-       ready >= ticks. */
+    /* The largest possible positive remaining span is the maximum cycle
+       price minus one tick already elapsed before a public return. */
     uint64_t ticks = get_u64(payload + P_TICKS);
     uint64_t ready = get_u64(payload + P_READY_AT);
-    if (ready < ticks || ready - ticks > 255u) {
+    if (ready < ticks || ready - ticks > max_public_ready_span(payload[P_COST_MODEL])) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
     /* Guest time never passes the limit lynx_advance enforces, so a state
@@ -341,6 +433,30 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
        the last cycle (a cycle granted just below it), which the span check
        above bounds; ticks itself may equal the limit. */
     if (ticks > UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM) {
+        return LYNX_ERR_SNAPSHOT_INVALID;
+    }
+
+    /* The candidate bank is canonical guest state. Pending request and wake
+       are reconstructed from CPU state and the IRQ latch after validation. */
+    lynx__timer_bank timer_cand;
+    memset(&timer_cand, 0, sizeof timer_cand);
+    for (uint8_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        const uint8_t *record = payload + P_TIMERS + (size_t)i * 4u;
+        timer_cand.timers[i].backup = record[0];
+        timer_cand.timers[i].count = record[1];
+        timer_cand.timers[i].control_a = record[2];
+        timer_cand.timers[i].control_b = record[3];
+    }
+    timer_cand.pending = payload[P_TIMER_PENDING];
+    timer_cand.phase_policy = payload[P_TIMER_PHASE_POLICY];
+    const uint8_t event_applied = payload[P_TIMER_EVENT_APPLIED];
+    const uint8_t bus_hold = payload[P_BUS_HOLD];
+    if (bus_hold > 1u) {
+        return LYNX_ERR_SNAPSHOT_INVALID;
+    }
+    timer_cand.last_event_valid = event_applied;
+    timer_cand.last_event_tick = event_applied != 0u ? ticks : 0u;
+    if (!timer_bank_valid(&timer_cand, ticks, event_applied)) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
 
@@ -362,6 +478,9 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     m->cpu_ready_at = ready;
     m->mapctl = payload[P_MAPCTL];
     memcpy(m->ram, payload + P_RAM, LYNX_ADDRESS_SPACE);
+    m->timer_bank = timer_cand;
+    m->bus_hold = bus_hold;
+    m->wake_pending = timer_cand.pending != 0u ? 1u : 0u;
     /* Every refusal check is above. Successful restore resumes guest state
        without carrying the host's previous debugger observation forward. */
     (void)lynx_watch_clear(m);

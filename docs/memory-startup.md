@@ -57,11 +57,12 @@ CPU baseline decision O1 is open. The current flat five-master-tick timing is
 
 ## Snapshot continuation and write-watch observations
 
-Phase 3 snapshot format 3 records the expanded guest state, including startup
-and content identity. Earlier snapshot formats are refused. Snapshot
-continuation tests restore a fresh same-identity machine and compare its final
-guest observations with uninterrupted execution; this is repeatability
-evidence, not a hardware-accuracy result.
+Phase 3 introduced snapshot format 3 with expanded startup and content
+identity. Phase 4 format 4 adds canonical timer/IRQ state, ownership hold and
+the current-tick scheduler cursor; earlier snapshot formats are refused.
+Snapshot continuation tests restore a fresh same-identity machine and compare
+its final guest observations with uninterrupted execution; this is
+repeatability evidence, not a hardware-accuracy result.
 
 Snapshots contain guest machine state only. Watch configuration and hit history
 belong to the host observer and are absent from both snapshot bytes and the
