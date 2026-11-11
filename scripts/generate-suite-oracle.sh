@@ -253,9 +253,18 @@ SCRATCH_REAL=$(CDPATH='' cd -P -- "$SCRATCH_ROOT" && pwd -P)
 case "$PARENT_REAL" in "$SCRATCH_REAL"|"$SCRATCH_REAL"/*) ;; *) printf 'suite oracle: output outside owned scratch root\n' >&2; exit 1 ;; esac
 OUT=$PARENT_REAL/$(basename -- "$OUT")
 [ ! -L "$OUT" ] || { printf 'suite oracle: refusing symlink output\n' >&2; exit 1; }
-rm -f -- "$OUT"
-TEMP=$OUT.$$
-trap 'rm -f -- "$TEMP"' EXIT HUP INT TERM
+if [ -e "$OUT" ] && [ ! -f "$OUT" ]; then
+  printf 'suite oracle: output exists and is not a regular file\n' >&2
+  exit 1
+fi
+umask 077
+TEMP=$(mktemp "$PARENT_REAL/.suite-oracle.XXXXXXXX")
+cleanup_temp() {
+  if [ -n "${TEMP:-}" ]; then rm -f -- "$TEMP"; fi
+}
+trap 'cleanup_temp' EXIT HUP INT TERM
+[ -f "$TEMP" ] && [ ! -L "$TEMP" ] || { printf 'suite oracle: temporary output is not a regular file\n' >&2; exit 1; }
+chmod 600 "$TEMP"
 
 {
   printf 'LYNX-SUITE-ORACLE\t1\n'
@@ -266,6 +275,8 @@ trap 'rm -f -- "$TEMP"' EXIT HUP INT TERM
   parse_source cpu "$CPU_MAIN" "$CPU_ASM"
   parse_source timers "$TIMER_MAIN" "$TIMER_ASM"
 } > "$TEMP"
-mv -- "$TEMP" "$OUT"
+mv -f -- "$TEMP" "$OUT"
+TEMP=
 trap - EXIT HUP INT TERM
+[ -f "$OUT" ] && [ ! -L "$OUT" ] || { printf 'suite oracle: published output is not a regular file\n' >&2; exit 1; }
 printf 'suite oracle generated: %s\n' "$OUT"

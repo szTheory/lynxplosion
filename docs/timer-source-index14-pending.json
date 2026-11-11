@@ -18,7 +18,7 @@
   "oracle_sha256": "08b5a4f48caf0f92e7bc177d9f3a6ac8ff68d757b57b9bc346aad8bd4c698b4f",
   "wrapper_sha256": "fa0973d355eeba6311d9540f3d2ec7d429f6991e1e5641fb36ed7af6c2749e6c",
   "build_recipe_sha256": "a8da249ff0a121a64df8cd3eefe621fd2783515830c4f604db94a919a54735ae",
-  "oracle_generator_sha256": "138a1075dfd962d918b7951ed0ddff2504a0bb046577c0f380fae6023125e483",
+  "oracle_generator_sha256": "7808d90df2c55396a19a5aa4c9caf67037ea2cafb2a9f1f6375dbf21385c2a2b",
   "phase_policy": "timer-phase-fixed-zero-1",
   "scheduler_policy": "timer-cpu-poll-order-1",
   "cost_model": "flat5",

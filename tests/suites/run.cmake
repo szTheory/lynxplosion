@@ -1456,7 +1456,7 @@ if(MODE STREQUAL "timer_pending_controls" AND FAILURE STREQUAL "")
   timer_descriptor_control("\"oracle_sha256\": \"08b5a4f48caf0f92e7bc177d9f3a6ac8ff68d757b57b9bc346aad8bd4c698b4f\"" "\"oracle_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
   timer_descriptor_control("\"wrapper_sha256\": \"fa0973d355eeba6311d9540f3d2ec7d429f6991e1e5641fb36ed7af6c2749e6c\"" "\"wrapper_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
   timer_descriptor_control("\"build_recipe_sha256\": \"a8da249ff0a121a64df8cd3eefe621fd2783515830c4f604db94a919a54735ae\"" "\"build_recipe_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
-  timer_descriptor_control("\"oracle_generator_sha256\": \"138a1075dfd962d918b7951ed0ddff2504a0bb046577c0f380fae6023125e483\"" "\"oracle_generator_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
+  timer_descriptor_control("\"oracle_generator_sha256\": \"7808d90df2c55396a19a5aa4c9caf67037ea2cafb2a9f1f6375dbf21385c2a2b\"" "\"oracle_generator_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
   timer_descriptor_control("\"phase_policy\": \"timer-phase-fixed-zero-1\"" "\"phase_policy\": \"timer-phase-shifted\"" "pending descriptor value mismatch")
   timer_descriptor_control("\"scheduler_policy\": \"timer-cpu-poll-order-1\"" "\"scheduler_policy\": \"timer-cpu-reversed\"" "pending descriptor value mismatch")
   timer_descriptor_control("\"cost_model\": \"flat5\"" "\"cost_model\": \"flat4\"" "pending descriptor value mismatch")
@@ -1505,6 +1505,44 @@ endif()
 if(MODE STREQUAL "oracle_controls" AND FAILURE STREQUAL "")
   expect_success("oracle: cpu=18/18 timers=16/18 source identity and alternatives valid"
     "${TEST_BINARY}" validate-oracle "${ORACLE}")
+
+  set(oracle_attack_parent "${WORK}/oracle-temp-attack")
+  set(oracle_attack_out "${oracle_attack_parent}/generated.tsv")
+  set(oracle_outside_fixture "${WORK}/oracle-outside-fixture.txt")
+  set(oracle_candidate_record "${WORK}/oracle-temp-candidate.txt")
+  file(MAKE_DIRECTORY "${oracle_attack_parent}")
+  file(WRITE "${oracle_outside_fixture}" "preserve this outside-parent fixture\n")
+  file(READ "${oracle_outside_fixture}" oracle_outside_before)
+  execute_process(COMMAND sh -c
+    "set -eu; out=\"\$1\"; root=\"\$2\"; outside=\"\$3\"; candidate=\"\$4\"; ln -s \"\$outside\" \"\$out.\$\$\"; printf '%s\\n' \"\$out.\$\$\" > \"\$candidate\"; exec sh \"\$root/scripts/generate-suite-oracle.sh\" --source \"\$root/build/pins/lynx-tests\" --out \"\$out\""
+    sh "${oracle_attack_out}" "${ROOT}" "${oracle_outside_fixture}" "${oracle_candidate_record}"
+    RESULT_VARIABLE oracle_attack_rc OUTPUT_VARIABLE oracle_attack_out_text ERROR_VARIABLE oracle_attack_err)
+  file(READ "${oracle_outside_fixture}" oracle_outside_after)
+  if(EXISTS "${oracle_candidate_record}")
+    file(READ "${oracle_candidate_record}" oracle_candidate_path)
+    string(STRIP "${oracle_candidate_path}" oracle_candidate_path)
+  else()
+    set(oracle_candidate_path "")
+    set(FAILURE "oracle temporary symlink control could not capture the planted candidate path")
+  endif()
+  if(NOT oracle_attack_rc STREQUAL "0" OR
+     NOT oracle_outside_after STREQUAL oracle_outside_before OR
+     NOT EXISTS "${oracle_attack_out}" OR IS_DIRECTORY "${oracle_attack_out}" OR
+     IS_SYMLINK "${oracle_attack_out}" OR oracle_candidate_path STREQUAL "" OR
+     NOT EXISTS "${oracle_candidate_path}" OR
+     NOT IS_SYMLINK "${oracle_candidate_path}")
+    set(FAILURE "oracle temporary symlink control did not preserve the outside fixture and publish a regular file: ${oracle_attack_rc} ${oracle_attack_out_text} ${oracle_attack_err}")
+  else()
+    execute_process(COMMAND sh -c
+      "mode=\$(stat -c %a \"\$1\" 2>/dev/null || stat -f %Lp \"\$1\"); test \"\$mode\" = 600"
+      sh "${oracle_attack_out}" RESULT_VARIABLE oracle_mode_rc)
+    if(NOT oracle_mode_rc STREQUAL "0")
+      set(FAILURE "oracle temporary symlink control did not publish a mode-600 regular file")
+    endif()
+  endif()
+  if(NOT oracle_candidate_path STREQUAL "")
+    file(REMOVE "${oracle_candidate_path}")
+  endif()
 
   file(READ "${ORACLE}" oracle_text)
   file(WRITE "${WORK}/oracle-empty.tsv" "")
