@@ -1510,6 +1510,29 @@ if(MODE STREQUAL "oracle_controls" AND FAILURE STREQUAL "")
   file(WRITE "${WORK}/oracle-empty.tsv" "")
   expect_failure("suite: oracle: invalid version header" "${TEST_BINARY}" validate-oracle "${WORK}/oracle-empty.tsv")
 
+  file(WRITE "${WORK}/text-token.txt" "token")
+  expect_success("text control: token present within 5 bytes"
+    "${TEST_BINARY}" validate-text-token "${WORK}/text-token.txt" 5 token)
+  file(WRITE "${WORK}/text-zero-limit.txt" "")
+  expect_failure("suite: text control: token missing"
+    "${TEST_BINARY}" validate-text-token "${WORK}/text-zero-limit.txt" 0 token)
+  string(REPEAT "x" 16384 exact_limit_text)
+  file(WRITE "${WORK}/text-exact-limit.txt" "${exact_limit_text}")
+  expect_failure("suite: text control: token missing"
+    "${TEST_BINARY}" validate-text-token "${WORK}/text-exact-limit.txt" 16384 token)
+  string(REPEAT "x" 16385 over_limit_text)
+  file(WRITE "${WORK}/text-over-limit.txt" "${over_limit_text}")
+  expect_failure("suite: input exceeds its bound or contains NUL"
+    "${TEST_BINARY}" validate-text-token "${WORK}/text-over-limit.txt" 16384 token)
+  execute_process(COMMAND sh -c "printf 'ab\\000cd' > \"\$1\"" sh
+    "${WORK}/text-embedded-nul.txt" RESULT_VARIABLE nul_fixture_rc)
+  if(NOT nul_fixture_rc STREQUAL "0")
+    set(FAILURE "text parser control could not create an embedded-NUL fixture")
+  else()
+    expect_failure("suite: text input contains NUL"
+      "${TEST_BINARY}" validate-text-token "${WORK}/text-embedded-nul.txt" 16 token)
+  endif()
+
   set(mutated "${WORK}/oracle-malformed-byte.tsv")
   string(REPLACE "result\t17\t1\t00\n" "result\t17\t1\tGG\n" changed "${oracle_text}")
   if(changed STREQUAL oracle_text)

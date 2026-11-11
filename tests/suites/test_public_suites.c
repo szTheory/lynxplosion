@@ -141,7 +141,11 @@ static int read_file(const char *path, uint8_t **out, size_t *length, size_t lim
     int bad;
     int close_bad;
     if (file == NULL) return fail("cannot open input file");
-    data = malloc(limit == 0u ? 1u : limit);
+    if (limit == SIZE_MAX) {
+        (void)fclose(file);
+        return fail("input bound is too large");
+    }
+    data = malloc(limit + 1u);
     if (data == NULL) {
         (void)fclose(file);
         return fail("cannot allocate input buffer");
@@ -155,6 +159,7 @@ static int read_file(const char *path, uint8_t **out, size_t *length, size_t lim
         free(data);
         return fail("input exceeds its bound or contains NUL");
     }
+    data[got] = '\0';
     *out = data;
     *length = got;
     return 0;
@@ -168,6 +173,7 @@ static int read_text(const char *path, char **out, size_t *length, size_t limit)
         free(bytes);
         return fail("text input contains NUL");
     }
+    bytes[*length] = '\0';
     *out = (char *)bytes;
     return 0;
 }
@@ -2799,6 +2805,25 @@ static int validate_oracle_mode(const char *path)
     return 0;
 }
 
+static int validate_text_token_mode(const char *path, const char *limit_text,
+                                    const char *token)
+{
+    uint32_t parsed_limit;
+    char *text = NULL;
+    size_t length = 0u;
+    if (parse_decimal(limit_text, &parsed_limit) != 0 || parsed_limit > 16384u) {
+        return fail("text control: invalid bound");
+    }
+    if (read_text(path, &text, &length, (size_t)parsed_limit) != 0) return 1;
+    if (strstr(text, token) == NULL) {
+        free(text);
+        return fail("text control: token missing");
+    }
+    free(text);
+    printf("text control: token present within %zu bytes\n", length);
+    return 0;
+}
+
 static int validate_symbols_mode(const char *path)
 {
     char *text = NULL;
@@ -3184,6 +3209,9 @@ int main(int argc, char **argv)
         return validate_timer_record_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);
     }
     if (argc == 3 && strcmp(argv[1], "validate-oracle") == 0) return validate_oracle_mode(argv[2]);
+    if (argc == 5 && strcmp(argv[1], "validate-text-token") == 0) {
+        return validate_text_token_mode(argv[2], argv[3], argv[4]);
+    }
     if (argc == 3 && strcmp(argv[1], "validate-symbols") == 0) return validate_symbols_mode(argv[2]);
     if (argc == 3 && strcmp(argv[1], "validate-time") == 0) return validate_time_mode(argv[2]);
     if (argc == 4 && strcmp(argv[1], "validate-selection") == 0) {
