@@ -45,7 +45,7 @@ patterns-established:
   - "Returning suite wrapper: clear all zero page, independently probe the guest model, call the pinned tests, then write progress and a completion sentinel."
   - "Build verification: compare source, wrapper, layout, tool, object and label identities against an invocation-local record."
 
-requirements-completed: []
+requirements-completed: [EVD-06] # Source-construction slice only; global completion awaits Plans 09 and 12.
 coverage:
   - id: D1
     description: "Pinned audio/audio2 objects and labels build without entering either upstream TGI CRT main."
