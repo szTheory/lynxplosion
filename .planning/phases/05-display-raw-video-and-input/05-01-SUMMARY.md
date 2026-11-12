@@ -5,7 +5,7 @@ subsystem: video-input
 tags: [c, cmake, ctest, raw-video, logical-input, snapshot-v5]
 
 requires:
-  - phase: 04-timers-and-interrupts
+  - phase: 04-timers-interrupts-and-first-public-suites
     provides: Shared guest-tick timer scheduler, CPU bus ownership hold, snapshot format 4
 provides:
   - Public timer-generated bounded raw-frame capture and logical input API
@@ -14,7 +14,6 @@ provides:
 affects: [05-display-raw-video-and-input, 06-audio-and-playable-checkpoint]
 
 actuals:
-  tokens: 21548
   tasks: 2
   commits: 2
 commits: 2
@@ -127,8 +126,8 @@ status: complete
 
 ## Verification
 
-- Task 1 tracer gate, before and after its commit: `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\\.frame_tracer$'` — passed both times.
-- Task 2 focused set: `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(consumer\\.(frame_tracer|public_api|snapshot_ppm|silence_wav)|api\\.header_selfcontained)$'` — all 5 selected cases passed.
+- Task 1 tracer gate, before and after its commit: `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.frame_tracer$'` — passed both times.
+- Task 2 focused set: `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(consumer\.(frame_tracer|public_api|snapshot_ppm|silence_wav)|api\.header_selfcontained)$'` — all 5 selected cases passed.
 - Snapshot/identity seam: `api.snapshot_roundtrip`, `api.snapshot_refusal`, `api.timer_snapshot`, `api.timer_snapshot_controls`, and `api.identity` — passed after the format-5 updates.
 - `sh scripts/hygiene.sh --tree`, `sh scripts/scan-binaries.sh --source --root .`, and `git diff --check` — passed; source scan found 0 exactly-512-byte files.
 

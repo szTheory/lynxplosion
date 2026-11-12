@@ -170,3 +170,8 @@ qualification evidence.
 **Distinguish negative claim guards from open hardware decisions.** A review can verify that unsupported hardware/profile claims were not made while leaving calibration and baseline selection open. Preserving an existing stop does not require renewed owner confirmation.
 
 **Treat reference warnings according to their actual targets.** Phase completion scans inline code as paths: shell commands and brace shorthand produce false missing-file warnings. The Phase 4 command targets and all three RED JSON files exist; these warnings do not invalidate test or goal evidence. Use literal file paths for future artifact links and keep commands in verification prose.
+
+
+**Measure executor progress, not just commit cadence.** Reading the execution contract, active source edits, passing focused checks and closeout tool activity are progress. A long verification tail is not a new approval gate. Keep the parent read-only during a foreground handoff; do not inject finalization urgency into an active executor. Reconcile summary plus reachable commits before classifying an abnormal end.
+
+**Keep report commands executable and metrics evidenced.** Markdown code spans need the actual shell regex, not a JSON/YAML-escaped copy. Preserve YAML escaping inside quoted frontmatter separately. Omit token actuals without an instrumented provenance source; task/commit counts can be checked from the repository.
