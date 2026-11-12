@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Display, Raw Video and Input
-current_plan: 6
+current_plan: 7
 status: executing
-stopped_at: Completed 05-05-PLAN.md
-last_updated: "2026-11-12T05:02:18.602Z"
+stopped_at: Completed 05-06-PLAN.md
+last_updated: "2026-11-12T06:22:46.746Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 05 execution started
-state_head: a8d93203ecbab84903abd560fc8725413409560c
+state_head: 385be8ae82e33fa82991834ecad1c7e17605e6ad
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 57
-  completed_plans: 50
+  completed_plans: 51
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-11)
 ## Current Position
 
 Phase: 05 (Display, Raw Video and Input) — EXECUTING
-Current Plan: 6
+Current Plan: 7
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-11 — Phase 05 execution started
@@ -110,6 +110,7 @@ Progress: [███████░░░] 67%
 | Phase 05 P03 | 35m | 2 tasks | 15 files |
 | Phase 05 P04 | 28min | 2 tasks | 5 files |
 | Phase 05 P05 | 38m | 2 tasks | 7 files |
+| Phase 05 P06 | 61 min | 2 tasks | 19 files |
 
 ## Accumulated Context
 
@@ -231,6 +232,9 @@ Recent decisions affecting current work:
 - [Phase 05]: All nine-bit logical masks remain valid, including opposite directions and simultaneous Option 2 plus Pause.
 - [Phase 05]: Input is sampled at the actual CPU read grant with zero additional sample pricing; changing that point requires a new ordered contract.
 - [Phase 05]: Disconnected cartridge lines are fixed zero only under an explicitly unverified software policy.
+- [Phase 05]: Guest-state digests use a versioned fieldwise dynamic-state stream and exclude immutable identity, padding and host observations.
+- [Phase 05]: The CPU-loop golden changes only because the runner observation schema now includes obs.state.hex; sensitivity controls prove the added stream is nonvacuous.
+- [Phase 05]: VID-04, VID-05, INP-01 and API-06 remain unchecked because zero of four are ready while sibling Phase 05 obligations remain open.
 
 ### Pending Todos
 
@@ -265,6 +269,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-12T05:02:18.197Z
-Stopped at: Completed 05-05-PLAN.md
+Last session: 2026-11-12T06:22:46.231Z
+Stopped at: Completed 05-06-PLAN.md
 Resume file: None
