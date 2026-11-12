@@ -125,7 +125,10 @@ for file in "$@"; do
       failed = 1
     }
     function is_hash_key(k) {
-      return k == "sha256" || k == "input_digest" || (length(k) > 7 && substr(k, length(k) - 6) == "_sha256")
+      return k == "sha256" || k == "input_digest" ||
+        k == "source_built_guest_sha256_lefthand_0" ||
+        k == "source_built_guest_sha256_lefthand_1" ||
+        (length(k) > 7 && substr(k, length(k) - 6) == "_sha256")
     }
     function is_input_probe_key(k) {
       return k == "config_sha256" || k == "ca65_sha256" || k == "ld65_sha256" ||

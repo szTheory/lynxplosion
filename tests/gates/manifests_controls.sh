@@ -442,6 +442,26 @@ sed 's/^config_sha256 = .*/config_sha256 = 0123/' "$t/fixtures/manifests/a.manif
 cp "$work/m" "$t/fixtures/manifests/a.manifest"
 expect_reject input_probe_bad_hash "$t" "config_sha256: bad sha256"
 
+short_hash=$(printf '%s' "$hash64" | cut -c 1-63)
+nonhex_hash=g$(printf '%063d' 0)
+for handedness in 0 1; do
+  hash_key=source_built_guest_sha256_lefthand_$handedness
+
+  make_tree "$t"
+  append_input_probe_fields "$t/fixtures/manifests/a.manifest"
+  sed "s/^${hash_key} = .*/${hash_key} = ${short_hash}/" \
+    "$t/fixtures/manifests/a.manifest" >"$work/m"
+  cp "$work/m" "$t/fixtures/manifests/a.manifest"
+  expect_reject "input_probe_bad_hash_short_lefthand_$handedness" "$t" "$hash_key: bad sha256"
+
+  make_tree "$t"
+  append_input_probe_fields "$t/fixtures/manifests/a.manifest"
+  sed "s/^${hash_key} = .*/${hash_key} = ${nonhex_hash}/" \
+    "$t/fixtures/manifests/a.manifest" >"$work/m"
+  cp "$work/m" "$t/fixtures/manifests/a.manifest"
+  expect_reject "input_probe_bad_hash_nonhex_lefthand_$handedness" "$t" "$hash_key: bad sha256"
+done
+
 make_tree "$t"
 append_input_probe_fields "$t/fixtures/manifests/a.manifest"
 sed '/^legacy_source_sha256 = /d' "$t/fixtures/manifests/a.manifest" >"$work/m"
