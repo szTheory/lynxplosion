@@ -3,8 +3,8 @@ revision = in-repo
 recipe = pinned ca65 --cpu 65SC02 -DLEFTHAND=0|1 and ld65 -C fixtures/diagnostic/input_probe.cfg -Ln; consumer.frame_replay matrix plus retained v3 released/A tracer
 sha256 = e2ed6a86f63c1eafcd2f45cefe2706d6cd4081469c34bbcc38c6de2bf8b2e2ca
 config_sha256 = 64daaf42011ef8fc5f49307225ecf8ec082b5fc52cf2c06048f1a52592b730f9
-ca65_sha256 = aae8906856e0a07e3eb138ed83fd52c1f20ae0b21c35000ce774c896f1785967
-ld65_sha256 = e74938752aabfe22609d7cf3009a525630f1d4dc279a53bad569360b42b3ffd6
+cc65_pin_sha256 = d3e4bfa57c5a40dd386d1a38b27fffad3bbc296950303f3c9017211465f5c8a1
+cc65_build_recipe = 1
 legacy_source = fixtures/diagnostic/input_probe_tracer.s (project-authored)
 legacy_source_sha256 = 2ce520b03e375e92893ae570f7ab7139a9a07d92b5f23037ab4470fcfa6a1a60
 source_built_legacy_tracer_guest_sha256 = a5bb7afd6b39832240fb98ddb9cecfe8e7bdfbe054b6d7f35a98c76db0b20391

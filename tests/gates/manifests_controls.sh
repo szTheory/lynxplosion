@@ -212,8 +212,8 @@ write_manifest() {
 append_input_probe_fields() {
   cat >>"$1" <<EOF2
 config_sha256 = $hash64
-ca65_sha256 = $hash64
-ld65_sha256 = $hash64
+cc65_pin_sha256 = $hash64
+cc65_build_recipe = 1
 legacy_source = fixtures/diagnostic/input_probe_tracer.s (project-authored)
 legacy_source_sha256 = $hash64
 source_built_legacy_tracer_guest_sha256 = $hash64
@@ -428,6 +428,21 @@ append_input_probe_fields "$t/fixtures/manifests/a.manifest"
 run_check "$t"
 [ "$rc" -eq 0 ] || fail input_probe_extension "complete provenance group was rejected: $out"
 ok input_probe_extension
+
+for malformed_pin in 0123 g000000000000000000000000000000000000000000000000000000000000000; do
+  make_tree "$t"
+  append_input_probe_fields "$t/fixtures/manifests/a.manifest"
+  sed "s/^cc65_pin_sha256 = .*/cc65_pin_sha256 = $malformed_pin/" \
+    "$t/fixtures/manifests/a.manifest" >"$work/m"
+  cp "$work/m" "$t/fixtures/manifests/a.manifest"
+  expect_reject input_probe_bad_tool_pin "$t" "cc65_pin_sha256: bad sha256"
+done
+make_tree "$t"
+append_input_probe_fields "$t/fixtures/manifests/a.manifest"
+sed 's/^cc65_build_recipe = 1$/cc65_build_recipe = 2/' \
+  "$t/fixtures/manifests/a.manifest" >"$work/m"
+cp "$work/m" "$t/fixtures/manifests/a.manifest"
+expect_reject input_probe_bad_tool_recipe "$t" "cc65_build_recipe: unexpected cc65 build recipe"
 
 make_tree "$t"
 append_input_probe_fields "$t/fixtures/manifests/a.manifest"

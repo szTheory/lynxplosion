@@ -32,6 +32,32 @@ set(TOOL_FILES "${ROOT}/build/pins/cc65/.lynx-build-files")
 if(NOT EXISTS "${CA65}" OR NOT EXISTS "${LD65}" OR NOT EXISTS "${TOOL_FILES}")
   message(FATAL_ERROR "frame_driver: pinned ca65/ld65 build is missing; scripts/check.sh owns pin preparation")
 endif()
+# Native tool executables differ by platform. Bind their verified per-build
+# hashes to the portable archive pin and build recipe, then bind guest bytes
+# independently to the fixture manifest below.
+file(STRINGS "${ROOT}/pins.txt" cc65_pin_row REGEX "^cc65 ")
+list(LENGTH cc65_pin_row cc65_pin_count)
+if(NOT cc65_pin_count EQUAL 1)
+  message(FATAL_ERROR "frame_driver: cc65 source pin is missing or ambiguous")
+endif()
+string(REGEX REPLACE "^[^ ]+ +[^ ]+ +[^ ]+ +([^ ]+)$" "\\1" cc65_pin "${cc65_pin_row}")
+string(LENGTH "${cc65_pin}" cc65_pin_length)
+if(NOT cc65_pin_length EQUAL 64 OR cc65_pin MATCHES "[^0-9a-f]")
+  message(FATAL_ERROR "frame_driver: cc65 source pin is malformed")
+endif()
+file(READ "${ROOT}/build/pins/cc65/.lynx-pin" cc65_pin_marker)
+string(STRIP "${cc65_pin_marker}" cc65_pin_marker)
+file(STRINGS "${ROOT}/build/pins/cc65/.lynx-build" cc65_stamp_pin REGEX "^pin_sha256 = ")
+file(STRINGS "${ROOT}/build/pins/cc65/.lynx-build" cc65_stamp_recipe REGEX "^recipe = ")
+file(STRINGS "${TOOL_FILES}" cc65_record_pin REGEX "^# pin_sha256 = ")
+file(STRINGS "${TOOL_FILES}" cc65_record_recipe REGEX "^# recipe = ")
+if(NOT cc65_pin_marker STREQUAL cc65_pin OR
+   NOT cc65_stamp_pin STREQUAL "pin_sha256 = ${cc65_pin}" OR
+   NOT cc65_stamp_recipe STREQUAL "recipe = 1" OR
+   NOT cc65_record_pin STREQUAL "# pin_sha256 = ${cc65_pin}" OR
+   NOT cc65_record_recipe STREQUAL "# recipe = 1")
+  message(FATAL_ERROR "frame_driver: cc65 build record is not bound to the pinned source and recipe")
+endif()
 file(SHA256 "${CA65}" ca65_sha)
 file(SHA256 "${LD65}" ld65_sha)
 file(SHA256 "${SOURCE}" source_sha)
@@ -44,13 +70,13 @@ if(NOT ca65_record MATCHES "^${ca65_sha} bin/ca65$" OR NOT ld65_record MATCHES "
 endif()
 file(STRINGS "${MANIFEST}" manifest_source REGEX "^sha256 = ")
 file(STRINGS "${MANIFEST}" manifest_config REGEX "^config_sha256 = ")
-file(STRINGS "${MANIFEST}" manifest_ca65 REGEX "^ca65_sha256 = ")
-file(STRINGS "${MANIFEST}" manifest_ld65 REGEX "^ld65_sha256 = ")
+file(STRINGS "${MANIFEST}" manifest_cc65_pin REGEX "^cc65_pin_sha256 = ")
+file(STRINGS "${MANIFEST}" manifest_cc65_recipe REGEX "^cc65_build_recipe = ")
 file(STRINGS "${MANIFEST}" manifest_legacy_source REGEX "^legacy_source_sha256 = ")
 if(NOT manifest_source STREQUAL "sha256 = ${source_sha}" OR
    NOT manifest_config STREQUAL "config_sha256 = ${config_sha}" OR
-   NOT manifest_ca65 STREQUAL "ca65_sha256 = ${ca65_sha}" OR
-   NOT manifest_ld65 STREQUAL "ld65_sha256 = ${ld65_sha}" OR
+   NOT manifest_cc65_pin STREQUAL "cc65_pin_sha256 = ${cc65_pin}" OR
+   NOT manifest_cc65_recipe STREQUAL "cc65_build_recipe = 1" OR
    NOT manifest_legacy_source STREQUAL "legacy_source_sha256 = ${legacy_source_sha}")
   message(FATAL_ERROR "frame_driver: source/config/cc65 bytes disagree with the rights and build provenance manifest")
 endif()

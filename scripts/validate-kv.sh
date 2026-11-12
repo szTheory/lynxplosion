@@ -131,7 +131,7 @@ for file in "$@"; do
         (length(k) > 7 && substr(k, length(k) - 6) == "_sha256")
     }
     function is_input_probe_key(k) {
-      return k == "config_sha256" || k == "ca65_sha256" || k == "ld65_sha256" ||
+      return k == "config_sha256" || k == "cc65_pin_sha256" || k == "cc65_build_recipe" ||
         k == "legacy_source" || k == "legacy_source_sha256" ||
         k == "source_built_legacy_tracer_guest_sha256" ||
         k == "source_built_legacy_tracer_guest_bytes" ||
@@ -182,6 +182,9 @@ for file in "$@"; do
         bad(NR, key, "bad sha256")
       }
       if (is_input_probe_key(key)) { input_probe_seen[key] = 1; input_probe_count++ }
+      if (key == "cc65_build_recipe" && value != "1") {
+        bad(NR, key, "unexpected cc65 build recipe")
+      }
       if (key == "legacy_source" && value != "fixtures/diagnostic/input_probe_tracer.s (project-authored)") {
         bad(NR, key, "unexpected input-probe legacy source")
       }
@@ -214,7 +217,7 @@ for file in "$@"; do
     }
     END {
       if (input_probe_count > 0) {
-        split("config_sha256 ca65_sha256 ld65_sha256 legacy_source legacy_source_sha256 source_built_legacy_tracer_guest_sha256 source_built_legacy_tracer_guest_bytes source_built_guest_sha256_lefthand_0 source_built_guest_bytes_lefthand_0 source_built_guest_sha256_lefthand_1 source_built_guest_bytes_lefthand_1", probe_keys, " ")
+        split("config_sha256 cc65_pin_sha256 cc65_build_recipe legacy_source legacy_source_sha256 source_built_legacy_tracer_guest_sha256 source_built_legacy_tracer_guest_bytes source_built_guest_sha256_lefthand_0 source_built_guest_bytes_lefthand_0 source_built_guest_sha256_lefthand_1 source_built_guest_bytes_lefthand_1", probe_keys, " ")
         for (i = 1; i <= 11; i++) {
           if (!(probe_keys[i] in input_probe_seen)) bad(0, "", "incomplete input-probe provenance group: missing key: " probe_keys[i])
         }
