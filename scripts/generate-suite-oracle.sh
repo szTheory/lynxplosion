@@ -5,15 +5,17 @@ ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
 SOURCE_ARG=
 OUT_ARG=
 SHAPE_ONLY=0
+INCLUDE_AUDIO=0
 
 usage() {
-  printf 'usage: sh scripts/generate-suite-oracle.sh --source DIR --out FILE\n' >&2
+  printf 'usage: sh scripts/generate-suite-oracle.sh --source DIR [--include-audio] --out FILE\n' >&2
   exit 2
 }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --source) if [ "$#" -lt 2 ] || [ -n "$SOURCE_ARG" ]; then usage; fi; SOURCE_ARG=$2; shift 2 ;;
     --out) if [ "$#" -lt 2 ] || [ -n "$OUT_ARG" ]; then usage; fi; OUT_ARG=$2; shift 2 ;;
+    --include-audio) [ "$INCLUDE_AUDIO" -eq 0 ] || usage; INCLUDE_AUDIO=1; shift ;;
     --test-source-shape-only) [ "$SHAPE_ONLY" -eq 0 ] || usage; SHAPE_ONLY=1; shift ;;
     *) usage ;;
   esac
@@ -103,6 +105,9 @@ parse_source() {
       found_ii = 0
       assembly_extent = 0
       expect_count = 0
+      found_names = 0
+      names_open = 0
+      name_count = 0
     }
     FILENAME == mainfile {
       if ($0 ~ /^[[:space:]]*#define[[:space:]]+RESULT_COUNT[[:space:]]+[0-9]+[[:space:]]*$/) {
@@ -124,6 +129,23 @@ parse_source() {
         found_expect = 1
         array_open = 1
         next
+      }
+      if (index($0, "k_test_names[TEST_COUNT]") != 0) {
+        if (found_names != 0) reject("duplicate test-label array")
+        found_names = 1
+        names_open = 1
+        next
+      }
+      if (names_open != 0) {
+        label_line = $0
+        while (match(label_line, /"[^\"]*"/)) {
+          test_names[++name_count] = substr(label_line, RSTART + 1, RLENGTH - 2)
+          label_line = substr(label_line, RSTART + RLENGTH)
+        }
+        label_tail = label_line
+        gsub(/[[:space:]{},;]/, "", label_tail)
+        if (label_tail != "") reject("unexpected token in test-label array")
+        if ($0 ~ /};/) names_open = 0
       }
       if (array_open != 0) {
         expected_text = expected_text $0 "\n"
@@ -182,7 +204,36 @@ parse_source() {
         meaningful = 16
         if (expect_count != 16) reject("timers must have 16 meaningful expectations")
         if (expect_sizes[8] != 2 || expect_sizes[11] != 3) reject("accepted EXPECT alternatives lost")
+      } else if (suite == "audio") {
+        meaningful = 18
+        if (expect_count != 18 || test_count != 6) reject("audio must have 18 expectations and six cases")
+      } else if (suite == "audio2") {
+        meaningful = 18
+        if (expect_count != 18 || test_count != 7) reject("audio2 must have 18 expectations and seven cases")
+        if (expect_sizes[9] != 2 || expected[9, 1] != 48 || expected[9, 2] != 52) reject("audio2 index 9 source alternative 30|34 lost")
       } else reject("unknown suite")
+      if (suite == "audio" || suite == "audio2") {
+        if (found_names != 1 || names_open != 0 || name_count != test_count) reject("missing or malformed test labels")
+        if (suite == "audio") {
+          expected_name[1] = "CTLB RD/WR"
+          expected_name[2] = "ONESHOT"
+          expected_name[3] = "INTEGRATE"
+          expected_name[4] = "MAX LENGTH"
+          expected_name[5] = "CLIPPING"
+          expected_name[6] = "LONG TEST"
+        } else {
+          expected_name[1] = "LNK CH3 > T1"
+          expected_name[2] = "LNK T7 > CH0"
+          expected_name[3] = "LINK CHAIN"
+          expected_name[4] = "SPEED CHANGE"
+          expected_name[5] = "FEEDB CHANGE"
+          expected_name[6] = "LFSR CHANGE"
+          expected_name[7] = "VOLUME $00"
+        }
+        for (i = 1; i <= test_count; i++) {
+          if (test_names[i] != expected_name[i]) reject("test label mismatch")
+        }
+      }
       for (i = 1; i <= test_count; i++) {
         start = offsets[i]
         span = test_lengths[i]
@@ -215,6 +266,11 @@ parse_source() {
         for (j = 1; j <= expect_sizes[i]; j++) printf("\t%s", bytehex(expected[i, j]))
         printf("\n")
       }
+      if (suite == "audio" || suite == "audio2") {
+        for (i = 1; i <= test_count; i++) {
+          printf("case\t%d\t%d\t%d\t%s\n", i - 1, offsets[i], test_lengths[i], test_names[i])
+        }
+      }
     }
   ' "$main" "$asm"
 }
@@ -223,9 +279,17 @@ CPU_MAIN=$SOURCE/cpu/main.c
 CPU_ASM=$SOURCE/cpu/tests.s
 TIMER_MAIN=$SOURCE/timers/main.c
 TIMER_ASM=$SOURCE/timers/tests.s
+AUDIO_MAIN=$SOURCE/audio/main.c
+AUDIO_ASM=$SOURCE/audio/tests.s
+AUDIO2_MAIN=$SOURCE/audio2/main.c
+AUDIO2_ASM=$SOURCE/audio2/tests.s
 if [ "$SHAPE_ONLY" -eq 1 ]; then
   parse_source cpu "$CPU_MAIN" "$CPU_ASM" >/dev/null
   parse_source timers "$TIMER_MAIN" "$TIMER_ASM" >/dev/null
+  if [ "$INCLUDE_AUDIO" -eq 1 ]; then
+    parse_source audio "$AUDIO_MAIN" "$AUDIO_ASM" >/dev/null
+    parse_source audio2 "$AUDIO2_MAIN" "$AUDIO2_ASM" >/dev/null
+  fi
   exit 0
 fi
 
@@ -242,6 +306,14 @@ for relative in cpu/main.c cpu/tests.s timers/main.c timers/tests.s LICENSE; do
   expected=$(awk -v path="$relative" '$2 == path { print $1; found++ } END { if (found != 1) exit 1 }' "$SOURCE/.lynx-pin-files")
   [ "$actual" = "$expected" ] || { printf 'suite oracle: pinned source hash mismatch: %s\n' "$relative" >&2; exit 1; }
 done
+if [ "$INCLUDE_AUDIO" -eq 1 ]; then
+  for relative in audio/main.c audio/tests.s audio2/main.c audio2/tests.s; do
+    [ -f "$SOURCE/$relative" ] || { printf 'suite oracle: pinned source missing: %s\n' "$relative" >&2; exit 1; }
+    actual=$(sha256 "$SOURCE/$relative")
+    expected=$(awk -v path="$relative" '$2 == path { print $1; found++ } END { if (found != 1) exit 1 }' "$SOURCE/.lynx-pin-files")
+    [ "$actual" = "$expected" ] || { printf 'suite oracle: pinned source hash mismatch: %s\n' "$relative" >&2; exit 1; }
+  done
+fi
 
 case "$OUT_ARG" in /*) OUT=$OUT_ARG ;; *) OUT=$ROOT/$OUT_ARG ;; esac
 OUT_PARENT=$(dirname -- "$OUT")
@@ -274,6 +346,12 @@ chmod 600 "$TEMP"
   printf 'license\t%s\n' "$(sha256 "$SOURCE/LICENSE")"
   parse_source cpu "$CPU_MAIN" "$CPU_ASM"
   parse_source timers "$TIMER_MAIN" "$TIMER_ASM"
+  if [ "$INCLUDE_AUDIO" -eq 1 ]; then
+    printf 'audio_main\t%s\naudio_asm\t%s\n' "$(sha256 "$AUDIO_MAIN")" "$(sha256 "$AUDIO_ASM")"
+    printf 'audio2_main\t%s\naudio2_asm\t%s\n' "$(sha256 "$AUDIO2_MAIN")" "$(sha256 "$AUDIO2_ASM")"
+    parse_source audio "$AUDIO_MAIN" "$AUDIO_ASM"
+    parse_source audio2 "$AUDIO2_MAIN" "$AUDIO2_ASM"
+  fi
 } > "$TEMP"
 mv -f -- "$TEMP" "$OUT"
 TEMP=

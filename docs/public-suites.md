@@ -1,4 +1,4 @@
-# Headless public CPU, timer and page-mode suite evidence
+# Headless public CPU, timer, page-mode and audio suite evidence
 
 The `suite.cpu.lynx1` and `suite.cpu.lynx2` tests build the pinned `lynx-tests` sources, derive expected bytes from their checked-in `main.c` and `tests.s`, load the linked BS93 object through the public BLL API, and run the CPU suite in fresh machines. Each profile runs once with zeroed result/zero-page storage and once with a deterministic test-private seeded pattern. Raw guest bytes and their source-oracle comparisons are separate records. A match means those software observations agree for this build and selected profile input; it does not establish agreement with a physical Lynx or qualify a CPU hardware profile. The overall default profile remains `none`.
 
@@ -7,6 +7,26 @@ The `suite.cpu.lynx1` and `suite.cpu.lynx2` tests build the pinned `lynx-tests` 
 `scripts/generate-suite-oracle.sh --source build/pins/lynx-tests --out build/check/scratch/<owned-run>/oracle.tsv` accepts only the exact extracted pin, archive marker, and per-file source manifest. The generator records the archive and revision identities, SHA-256 values for CPU and timer source/assembly and the license, suite result count, assembly extent, meaningful result count, model tuples, result offsets and accepted byte sets. Production mode refuses a changed identity or source shape, writes through an exclusively created mode-restricted temporary file in the validated output parent, and atomically publishes a regular output file; it has no cached or stale-oracle fallback.
 
 The oracle uses a strict versioned TSV grammar. CPU expectations contain 18 meaningful bytes and both Lynx model tuples. Timer expectations contain 16 meaningful bytes in the pinned 18-byte result extent; the two reserved bytes remain outside the meaningful range. Accepted alternatives are sets, and the timer source's two and three value alternatives are preserved exactly. The C reader checks the complete row inventory, ordering, byte values, alternatives and source identity against the fresh build record before the harness can compare guest results.
+
+## Audio source construction
+
+The default oracle command deliberately keeps its CPU/timer-only rows and
+metadata unchanged for the existing strict C reader. Plan 06-02 adds an
+explicit source-construction mode:
+
+```sh
+sh scripts/generate-suite-oracle.sh --source build/pins/lynx-tests --include-audio --out build/check/scratch/<owned-run>/audio-oracle.tsv
+```
+
+That file contains the original CPU/timer sections followed by audio and
+audio2 sections. It binds all four pinned C/assembly source hashes, checks
+the two 18-byte result extents, exact six/seven case labels and row coverage,
+and preserves audio2 result index 9's accepted `30|34` alternative. The flag
+is required because the current CPU/timer C reader intentionally accepts only
+its original seven metadata rows and two suite sections. Plan 09's audio
+reader must request and validate the extended form explicitly. These objects
+and oracle rows are source-construction evidence; this plan makes no audio
+guest observation or hardware qualification claim.
 
 ## CPU observations
 

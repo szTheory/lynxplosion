@@ -94,11 +94,14 @@ Until then this list is the notice. It is an open question, not a decision.
 - **lynx-tests** (MIT, Copyright (c) 2025 Ignacio Sanchez Gines): pinned in
   `pins.txt` at commit `b583dc43d532d3c41563a6fa35420614fbcead89`, archive SHA-256
   `a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e`; version
-  1.4.9 is the upstream release it follows. Only `cpu/tests.s` and `timers/tests.s`
-  are used as local test assembly inputs. Their hashes and the original wrapper
-  recipe are recorded in the manifests under `fixtures/manifests/`. The complete
-  MIT notice is included in `fixtures/suites/NOTICE` and copied verbatim beside
-  generated outputs; BLL/object/symbol files stay
+  1.4.9 is the upstream release it follows. `cpu/tests.s`, `timers/tests.s`,
+  `audio/tests.s` and `audio2/tests.s` are used as local test assembly inputs.
+  Their hashes and the project-authored wrapper recipes are recorded in the
+  manifests under `fixtures/manifests/`. The complete MIT notice is included in
+  `fixtures/suites/NOTICE` and copied verbatim beside generated outputs;
+  host-local ca65/ld65 hashes are checked against the successful
+  `.lynx-build-files` record and stored in each invocation build record.
+  BLL/object/symbol files stay
   in invocation-owned scratch, and no upstream source or generated BLL is
   committed.
 
@@ -112,6 +115,12 @@ not choose a project licence, authorize a release, permit importing upstream
 source or binaries, or authorize a new artifact/publication channel. The
 upstream MIT test sources are fetched only at the exact pin above and are
 assembled into temporary outputs accompanied by their notice.
+
+Phase 6 adds project-authored audio/audio2 returning wrappers beside the
+existing tier-A suite layout. They remain all rights reserved while O5 is open.
+The unchanged upstream MIT sources are assembled only as local diagnostic
+inputs; the wrappers avoid the TGI CRT main, and no generated audio objects,
+labels or raw source outputs are committed.
 
 No emulator source (Gearlynx, MAME, Holani, Beetle) is copied, linked or vendored;
 see `docs/policy/clean-room.md` and `docs/policy/exposure-record.md`.
