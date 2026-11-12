@@ -632,7 +632,7 @@ if(CASE STREQUAL "replay_edges")
 endif()
 if(CASE STREQUAL "frame_tracer")
   execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
-      "LYNX_TEST_REPLAY_LEGACY=1" "${CONSUMER}" --mode frames
+      "LYNX_TEST_REPLAY_LEGACY=1" "${TEST_CONSUMER}" --mode frames
       --content "${WORK}/input_probe.bll" --symbols "${WORK}/input_probe.lbl"
       --timeline "${WORK}/input.timeline" --out "${WORK}/trace"
     TIMEOUT 60 RESULT_VARIABLE consumer_rc OUTPUT_VARIABLE consumer_out ERROR_VARIABLE consumer_err)
@@ -683,6 +683,99 @@ else()
 endif()
 if(NOT check_rc STREQUAL "0")
   message(FATAL_ERROR "frame_driver: independent raw-frame semantic check failed (${check_rc})\n${check_out}${check_err}\nArtifacts retained under ${WORK}")
+endif()
+if(CASE STREQUAL "frame_tracer")
+  # The historical tracer stays on the test-only legacy consumer above. Prove
+  # that the production binary follows the normal replay path even when its old
+  # test-only environment variable is deliberately present.
+  file(WRITE "${WORK}/production.timeline" "LYNX-INPUT 1\n108544 16\n")
+  file(SHA256 "${WORK}/production.timeline" production_timeline_sha)
+  set(production_guest "${WORK}/production-guest")
+  file(MAKE_DIRECTORY "${production_guest}")
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "CC65_HOME=${ROOT}/build/pins/cc65" "${CA65}" --cpu 65SC02 -DLEFTHAND=1
+      -o "${production_guest}/input_probe.o" "${SOURCE}"
+    WORKING_DIRECTORY "${production_guest}" TIMEOUT 30 RESULT_VARIABLE production_ca_rc
+    OUTPUT_VARIABLE production_ca_out ERROR_VARIABLE production_ca_err)
+  if(NOT production_ca_rc STREQUAL "0")
+    message(FATAL_ERROR "frame_driver: pinned ca65 failed to build the production replay control\n${production_ca_out}${production_ca_err}")
+  endif()
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "CC65_HOME=${ROOT}/build/pins/cc65" "${LD65}" -C "${CONFIG}"
+      -Ln "${production_guest}/input_probe.lbl" -o "${production_guest}/input_probe.bll"
+      "${production_guest}/input_probe.o"
+    WORKING_DIRECTORY "${production_guest}" TIMEOUT 30 RESULT_VARIABLE production_ld_rc
+    OUTPUT_VARIABLE production_ld_out ERROR_VARIABLE production_ld_err)
+  if(NOT production_ld_rc STREQUAL "0" OR
+     NOT EXISTS "${production_guest}/input_probe.bll" OR
+     NOT EXISTS "${production_guest}/input_probe.lbl")
+    message(FATAL_ERROR "frame_driver: pinned ld65 failed to build the production replay control\n${production_ld_out}${production_ld_err}")
+  endif()
+  file(SHA256 "${production_guest}/input_probe.bll" production_guest_sha)
+  file(SIZE "${production_guest}/input_probe.bll" production_guest_bytes)
+  file(STRINGS "${MANIFEST}" production_manifest_sha
+    REGEX "^source_built_guest_sha256_lefthand_1 = ")
+  file(STRINGS "${MANIFEST}" production_manifest_bytes
+    REGEX "^source_built_guest_bytes_lefthand_1 = ")
+  if(NOT production_manifest_sha STREQUAL
+      "source_built_guest_sha256_lefthand_1 = ${production_guest_sha}" OR
+     NOT production_manifest_bytes STREQUAL
+      "source_built_guest_bytes_lefthand_1 = ${production_guest_bytes}")
+    message(FATAL_ERROR "frame_driver: production replay control guest differs from its fixture manifest")
+  endif()
+
+  set(production_default "${WORK}/production-default")
+  set(production_override "${WORK}/production-override")
+  foreach(run IN ITEMS default override)
+    if(run STREQUAL "override")
+      execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+          "LYNX_TEST_REPLAY_LEGACY=1" "${CONSUMER}" --mode frames
+          --content "${production_guest}/input_probe.bll"
+          --symbols "${production_guest}/input_probe.lbl"
+          --timeline "${WORK}/production.timeline" --out "${production_override}" --profile none
+        TIMEOUT 60 RESULT_VARIABLE production_rc OUTPUT_VARIABLE production_out
+        ERROR_VARIABLE production_err)
+    else()
+      execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+          "${CONSUMER}" --mode frames --content "${production_guest}/input_probe.bll"
+          --symbols "${production_guest}/input_probe.lbl"
+          --timeline "${WORK}/production.timeline" --out "${production_default}" --profile none
+        TIMEOUT 60 RESULT_VARIABLE production_rc OUTPUT_VARIABLE production_out
+        ERROR_VARIABLE production_err)
+    endif()
+    if(NOT production_rc STREQUAL "0")
+      message(FATAL_ERROR "frame_driver: production replay ${run} run failed (${production_rc})\n${production_out}${production_err}")
+    endif()
+    if(run STREQUAL "default")
+      set(production_output "${production_default}")
+    else()
+      set(production_output "${production_override}")
+    endif()
+    execute_process(COMMAND "${ARTIFACT_CHECKER}" frames "${production_output}" replay_restore
+        "${production_timeline_sha}" 1 none "${production_guest_sha}"
+      TIMEOUT 30 RESULT_VARIABLE production_check_rc OUTPUT_VARIABLE production_check_out
+      ERROR_VARIABLE production_check_err)
+    if(NOT production_check_rc STREQUAL "0")
+      message(FATAL_ERROR "frame_driver: production replay ${run} output failed independent frame checks\n${production_check_out}${production_check_err}")
+    endif()
+  endforeach()
+  file(STRINGS "${production_default}/frame-trace.manifest" production_frame_count_line
+    REGEX "^frame_count = ")
+  if(NOT production_frame_count_line MATCHES "^frame_count = ([0-9]+)$")
+    message(FATAL_ERROR "frame_driver: production replay manifest has no bounded frame_count")
+  endif()
+  set(production_frame_count "${CMAKE_MATCH_1}")
+  if(production_frame_count LESS 1)
+    message(FATAL_ERROR "frame_driver: production replay emitted no raw frames")
+  endif()
+  file(SHA256 "${production_default}/frame-trace.manifest" production_default_manifest_sha)
+  file(SHA256 "${production_override}/frame-trace.manifest" production_override_manifest_sha)
+  if(NOT production_default_manifest_sha STREQUAL production_override_manifest_sha)
+    message(FATAL_ERROR "frame_driver: production legacy override changed the replay manifest")
+  endif()
+  compare_replay_outputs("${production_default}" "${production_override}"
+    "${production_frame_count}" TRUE)
+  message(STATUS "consumer.frame_tracer: legacy assertions ran through the test consumer; production replay ignored LYNX_TEST_REPLAY_LEGACY")
 endif()
 if(NOT CASE STREQUAL "frame_tracer")
   file(STRINGS "${WORK}/trace/frame-trace.manifest" frame_count_line REGEX "^frame_count = ")

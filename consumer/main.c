@@ -1169,6 +1169,7 @@ done:
     return result;
 }
 
+#if defined(LYNX_CONSUMER_TESTING)
 static int frame_ppm(const uint8_t *pens, const uint8_t *palettes,
                      const lynx_frame_result *frame, uint32_t input_mask,
                      uint32_t sampled_a, const char *input_hash,
@@ -1211,6 +1212,7 @@ static int frame_ppm(const uint8_t *pens, const uint8_t *palettes,
     *out_len = at;
     return 0;
 }
+#endif
 
 static int publish_frame_outputs_generic(const char *directory, const frame_capture *frames,
                                          size_t frame_count, const char *manifest,
@@ -1284,6 +1286,7 @@ failed:
     return report_error("cannot write the complete frame output; this invocation removed its private partial files");
 }
 
+#if defined(LYNX_CONSUMER_TESTING)
 static int publish_frame_outputs(const char *directory, const uint8_t *released,
                                  size_t released_len, const uint8_t *pressed,
                                  size_t pressed_len, const char *manifest,
@@ -1314,7 +1317,9 @@ failed:
     (void)rmdir(staging);
     return report_error("cannot write the complete frame output; this invocation removed its private partial files");
 }
+#endif
 
+#if defined(LYNX_CONSUMER_TESTING)
 static int host_sha_known_vector(void)
 {
     static const char expected[] = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
@@ -1349,6 +1354,7 @@ static int read_probe_result(lynx_machine *machine, uint32_t address,
         lynx_read_memory(machine, 0x4000u, framebuffer_byte, 1u) != LYNX_OK) return 1;
     return 0;
 }
+#endif
 
 static int read_guest_probe(lynx_machine *machine, uint32_t address, guest_probe *out)
 {
@@ -1363,6 +1369,7 @@ static int read_guest_probe(lynx_machine *machine, uint32_t address, guest_probe
     return 0;
 }
 
+#if defined(LYNX_CONSUMER_TESTING)
 static int run_frame_consumer_legacy(const char *content_path, const char *symbols_path,
                                      const char *timeline_path, const char *output_directory,
                                      uint32_t profile)
@@ -1575,6 +1582,7 @@ done:
     destroy_machine(&storage);
     return result;
 }
+#endif
 
 static int replay_sha_vectors(void)
 {
@@ -2253,11 +2261,13 @@ int main(int argc, char **argv)
         if (frame_mode == NULL || strcmp(frame_mode, "frames") != 0 || frame_content == NULL || frame_symbols == NULL ||
             frame_timeline == NULL || frame_output == NULL || parse_profile(frame_profile_text, &selected_profile) != 0)
             return usage_error("frame mode requires --mode frames, BLL, linked symbols, a canonical timeline, output directory, and a supported profile");
+#if defined(LYNX_CONSUMER_TESTING)
         {
             const char *legacy = getenv("LYNX_TEST_REPLAY_LEGACY");
             if (legacy != NULL && strcmp(legacy, "1") == 0)
                 return run_frame_consumer_legacy(frame_content, frame_symbols, frame_timeline, frame_output, selected_profile);
         }
+#endif
         return run_frame_consumer(frame_content, frame_symbols, frame_timeline, frame_output, selected_profile);
     }
     unsigned seen = 0u;
