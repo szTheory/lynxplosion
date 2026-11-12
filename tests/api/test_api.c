@@ -2404,7 +2404,7 @@ static void case_reset_power_on(void)
 /* Payload offsets of format 5 (white-box, from core/snapshot.c). */
 enum {
     PAY_PC = 0, PAY_P = 6, PAY_FLAGS = 7, PAY_OPCODE = 8, PAY_STEP = 9, PAY_EA = 10, PAY_TMP = 12,
-    PAY_COST_MODEL = 13, PAY_MAPCTL = 14, PAY_RESERVED = 15, PAY_TICKS = 16, PAY_READY_AT = 24,
+    PAY_COST_MODEL = 13, PAY_MAPCTL = 14, PAY_PAGE_LATCH = 15, PAY_TICKS = 16, PAY_READY_AT = 24,
     PAY_TIMERS = 32 + (int)LYNX_ADDRESS_SPACE,
     PAY_TIMER_PENDING = PAY_TIMERS + (int)(LYNX__TIMER_COUNT * 4u),
     PAY_TIMER_PHASE = PAY_TIMER_PENDING + 1,
@@ -3312,8 +3312,8 @@ static void case_snapshot_refusal(void)
     VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x01u, 1u, snap_a);             /* IRQ_TAKE: never left set */
     VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x02u, 1u, snap_a);             /* NMI_TAKE: never left set */
     VALUE_REFUSED(m, blob_v, PAY_FLAGS, 0x03u, 1u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_RESERVED, 0x01u, 1u, snap_a);          /* reserved byte */
-    VALUE_REFUSED(m, blob_v, PAY_RESERVED, 0x80u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_PAGE_LATCH, 0x01u, 1u, snap_a);       /* legacy has no page latch */
+    VALUE_REFUSED(m, blob_v, PAY_PAGE_LATCH, 0x80u, 1u, snap_a);
     VALUE_REFUSED(m, blob_v, PAY_STEP, 0xFFu, 1u, snap_a);              /* step past the script */
     VALUE_REFUSED(m, blob_v, PAY_STEP, 0x20u, 1u, snap_a);
     VALUE_REFUSED(m, blob_v, PAY_OPCODE, 0x07u, 1u, snap_a);            /* undefined under none */
@@ -6501,7 +6501,7 @@ static void case_video_page_mode(void)
         lynx_machine *restored = NULL;
         if (m == NULL) continue;
         CHECK_EQ_U64(load_bll_at(m, program, sizeof program, 0x0200u), LYNX_OK);
-        m->mapctl = 0x80u; /* Page-mode enable; low overlay bits remain clear. */
+        m->mapctl = 0u; /* MAPCTL reset enables sequential cycles; low overlays remain clear. */
         lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), 0x0200u);
         m->cpu_ready_at = m->guest_ticks;
 
@@ -6516,7 +6516,7 @@ static void case_video_page_mode(void)
             CHECK_EQ_U64(lynx_snapshot_restore(restored, blob_c, SNAP_TOTAL), LYNX_OK);
             video_page_expect_next(restored, 0x0201u, LYNX__CK_OPCODE, 4u,
                                     "page-mode snapshot retains same-page continuation");
-            restored->mapctl = 0u;
+            restored->mapctl = 0x80u; /* B7 disables sequential cycles. */
             lynx__cpu_start_at(&restored->cpu, lynx__cpu_table(restored->cpu.profile), 0x0200u);
             restored->cpu_ready_at = restored->guest_ticks;
             video_page_expect_next(restored, 0x0200u, LYNX__CK_OPCODE, 5u,
@@ -6578,6 +6578,7 @@ static void case_video_page_mode(void)
         m->ram[0x0301u] = 0xEAu;
         m->ram[0x0302u] = 0xEAu;
         m->ram[0x0303u] = 0xEAu;
+        m->ram[0x0304u] = 0xEAu;
         lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), 0x02FDu);
         video_page_expect_next(m, 0x02FDu, LYNX__CK_OPCODE, 5u,
                                "page-mode conservative JMP opcode uses normal cycle");
@@ -6626,7 +6627,7 @@ static void case_video_page_mode(void)
     lynx_machine *legacy = init_in(machine_buf, &legacy_cfg);
     if (legacy != NULL) {
         CHECK_EQ_U64(load_bll_at(legacy, program, sizeof program, 0x0200u), LYNX_OK);
-        legacy->mapctl = 0x80u;
+        legacy->mapctl = 0u;
         lynx__cpu_start_at(&legacy->cpu, lynx__cpu_table(legacy->cpu.profile), 0x0200u);
         legacy->cpu_ready_at = legacy->guest_ticks;
         video_page_expect_next(legacy, 0x0200u, LYNX__CK_OPCODE, 5u,
