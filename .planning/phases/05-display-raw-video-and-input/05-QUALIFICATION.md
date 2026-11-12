@@ -36,9 +36,11 @@ failed. JUnit, artifact scanning, and full-history hygiene all passed.
 
 | Environment | Toolchain and identity | CTest / JUnit | Artifacts | History / total |
 |---|---|---|---|---|
-| macOS local | macOS 26.6.2 arm64; AppleClang 21.0.0.21000101; CMake 4.4.3; Ninja 1.13.2; ShellCheck 0.11.0; Git 2.50.1 | 200 passed + 2 declared skips (202 JUnit rows); 0 failed; CTest 110.25s | 6,361 files scanned; the only accepted binary was exactly 512 bytes | 85s / 204s |
-| Self-contained Linux | Pinned `ubuntu@sha256:19cad59657037cffa0ac9a48107019b768900ff1071140965827513ac866bd5e`; Ubuntu 24.04 arm64; GCC 13.3.0; CMake 3.28.3; Ninja 1.11.1; ShellCheck 0.9.0; Git 2.43.0 | 200 passed + 2 declared skips (202 JUnit rows); 0 failed; CTest 111.07s | 6,330 files scanned; the only accepted binary was exactly 512 bytes | 13s / 127s |
-| Hosted CI | [Run 43268267738](https://github.com/szTheory/lynxplosion/actions/runs/43268267738), push event on `main`, exact head `d3fb0024fe6a732b05f9b42122a18c110bed8ae2`; Ubuntu 24.04.5 x64; GCC 13.3.0; CMake 3.31.6; Ninja 1.13.2; ShellCheck 0.9.0; Git 2.56.0 | 200 passed + 2 declared skips (202 JUnit rows); 0 failed; CTest 105.60s | 6,329 files scanned; the only accepted binary was exactly 512 bytes | 32s / 171s for the canonical command |
+| macOS local | macOS 26.6.2 arm64; AppleClang 21.0.0.21000101; CMake 4.4.3; Ninja 1.13.2; ShellCheck 0.11.0; Git 2.50.1 | 200 passed + 2 declared skips (202 JUnit rows); 0 failed; CTest 110.25s | 6,361 files scanned; one file was exactly 512 bytes; no findings | 85s / 204s |
+| Self-contained Linux | Pinned `ubuntu@sha256:19cad59657037cffa0ac9a48107019b768900ff1071140965827513ac866bd5e`; Ubuntu 24.04 arm64; GCC 13.3.0; CMake 3.28.3; Ninja 1.11.1; ShellCheck 0.9.0; Git 2.43.0 | 200 passed + 2 declared skips (202 JUnit rows); 0 failed; CTest 111.07s | 6,330 files scanned; one file was exactly 512 bytes; no findings | 13s / 127s |
+| Hosted CI | [Run 43268267738](https://github.com/szTheory/lynxplosion/actions/runs/43268267738), push event on `main`, exact head `d3fb0024fe6a732b05f9b42122a18c110bed8ae2`; Ubuntu 24.04.5 x64; GCC 13.3.0; CMake 3.31.6; Ninja 1.13.2; ShellCheck 0.9.0; Git 2.56.0 | 200 passed + 2 declared skips (202 JUnit rows); 0 failed; CTest 105.60s | 6,329 files scanned; one file was exactly 512 bytes; no findings | 32s / 171s for the canonical command |
+
+The scanner's size counter does not classify that file as binary: the 512-byte file is the pinned UTF-8 assembler source `build/pins/cc65/libsrc/runtime/aslax7.s`. The firmware-like binary refusal rule remains unchanged.
 
 The exact skips in every environment were `suite.page_mode.observation.lynx1`
 and `suite.page_mode.observation.lynx2`. Both stop at the unsupported `$06`

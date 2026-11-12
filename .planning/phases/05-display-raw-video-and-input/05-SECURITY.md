@@ -1,8 +1,8 @@
 ---
 phase: "05"
 slug: display-raw-video-and-input
-status: gaps_found
-threats_open: 1
+status: verified
+threats_open: 0
 asvs_level: 1
 block_on: high
 register_authored_at_plan_time: true
@@ -60,7 +60,7 @@ Independent authored-threat mitigation review, plus affected-mitigation reviews 
 | T-05-31 | Repudiation | new env→legacy exception | high | mitigate | exact source/policy/layout/counter identity before pending admission, explicit new-env refusal control; tests/suites/test_public_suites.c:1641,1690,3506;tests/suites/run.cmake:560 | closed |
 | T-05-32 | Tampering | oracle/counter→desired timing | high | mitigate | unchanged pinned expectation/layout, frozen independent policies and initial-vs-increment trace; tests/suites/test_public_suites.c:3308,3501,3953;tests/suites/run.cmake:589,603 | closed |
 | T-05-33 | Spoofing | incomplete result→agreement | high | mitigate | full16-row extent/model/completion checks; separate raw execution and strict agreement statuses; tests/suites/test_public_suites.c:1932,3407,3555,3617;tests/suites/run.cmake:522 | closed |
-| T-05-34 | Tampering | qualification commit→evidence | high | mitigate | bind exact reviewed source/pushed CI head after accepted fixes, verify bytes for metadata-only followup; .planning/phases/05-display-raw-video-and-input/05-QUALIFICATION.md:69;05-REVIEW-RESOLUTION.md:1;05-12-PLAN.md:96 | open — final qualification binding pending |
+| T-05-34 | Tampering | qualification commit→evidence | high | mitigate | bind exact reviewed source/pushed CI head after accepted fixes, verify bytes for metadata-only followup; .planning/phases/05-display-raw-video-and-input/05-QUALIFICATION.md:69;05-REVIEW-RESOLUTION.md:1;05-12-PLAN.md:96 | closed |
 | T-05-35 | Information disclosure | generated evidence→public repo | high | mitigate | private raw logs stay temporary, normalize repo-relative evidence and hygiene before commit; scripts/hygiene.sh:41,132,200;.planning/AUTONOMY.md:1;05-QUALIFICATION.md:29 | closed |
 | T-05-36 | Repudiation | green software gate→unsupported claim | high | mitigate | separate repeatability/raw agreement/skips/strict mismatch and keep global/owner gates open; docs/claims/skeleton-repeatability.claim:1;tests/suites/test_public_suites.c:4246,3505;README.md:38;05-QUALIFICATION.md:46 | closed |
 
@@ -84,18 +84,22 @@ No accepted risks. No transferred risks.
 | 2026-11-12 | Six repaired source/test paths | 37 | 36 | 1 | Affected mitigations preserved |
 | 2026-11-12 | Final two-path replay-control repair | 37 | 36 | 1 | Affected mitigations preserved; 51 identities verified |
 
-## Remaining qualification obligation
+## Final qualification disposition
 
-T-05-34 is high severity and blocks final phase advancement. It does not block starting qualification: the remaining action is to bind final reviewed source bytes to macOS, self-contained Linux and exact pushed-head hosted CI evidence. Metadata-only followups must be identified and product/script identity preserved. Generated final evidence must pass privacy gates again. Root owns final adjudication from the qualification records; no owner risk acceptance is requested.
+T-05-34 is closed by exact reviewed/tested/pushed source `d3fb0024fe6a732b05f9b42122a18c110bed8ae2`: canonical macOS and self-contained Ubuntu gates passed, and [hosted run43268267738](https://github.com/szTheory/lynxplosion/actions/runs/43268267738) succeeded on that same checkout/build identity. Root independently re-read the hosted job/log through the connected API. Each gate accounts for202 rows:200 passes, two declared page-mode skips, zero failures; JUnit, artifacts and history passed. The tested55-path fingerprint is `ea140006093038be023cdceeb67c4c1468576c940f0aa942b1b4b69bbcf1a1f3`.
+
+Later local followups change only README qualification prose and planning records. Root verified the README replacement SHA-256 `629a416602d47780bee8fdfeb13b64ce9b5e1b9c3c30fab23846f76c2c91a510` and all54 other scoped paths byte-identical, including every product/test/script/fixture path. No later CI result is implied until final closeout push. Guarded metadata commits enforce tree privacy and scoped history is checked before handoff. The artifact size counter's512-byte file is UTF-8 pinned assembler source, not an accepted firmware-like binary.
+
+All37 authored mitigations are closed, with no accepted/transferred risks. Physical calibration, strict timer disagreement and owner rights/shared-contract/release stops remain separate limits, not risks accepted by this audit.
 
 ## Sign-Off
 
 - [x] All authored threats have mitigation dispositions.
 - [x] No implementation gaps or accepted risks remain.
-- [ ] Final environment and pushed-head evidence closes T-05-34.
-- [ ] `threats_open: 0` and `status: verified` after qualification.
+- [x] Final environment and pushed-head evidence closes T-05-34.
+- [x] `threats_open: 0` and `status: verified` after qualification.
 
-**Approval:** implementation mitigation review complete; final qualification pending.
+**Approval:** verified software threat mitigations and final qualification binding, 2026-11-12.
 
 ## Mechanical qualification-preflight followup
 
@@ -120,3 +124,15 @@ At `9e1468717c19c827e2d822f51667e45464274788`, only a local path parameter name 
 ## Portable fixture provenance review
 
 Independent static five-path review at `931fa030d514a8084132159afa44b7ace50567b5` verified all55 identities (`ea140006093038be023cdceeb67c4c1468576c940f0aa942b1b4b69bbcf1a1f3`). One well-formed archive pin is checked against fetched marker, successful stamp, build-files header and manifest, with recipe1 throughout. Native executable bytes remain SHA-verified against per-platform successful records; exact source/config/legacy/guest identities remain cross-platform checks. The strict eleven-field extension, hash shape and recipe/unknown/missing/duplicate refusals remain enforced. T-05-SC/02/23/25 remain closed, no gap/risk accepted. The auditor inspected static assertions without rerunning focused tests; T-05-34 remains final qualification-only open.
+
+## Final adjudication
+
+Root closes the qualification-only obligation from actual local/hosted evidence and unchanged executable-source identities;37/37 closed, zero open. Earlier open-count sections are historical stage verdicts. No new full security scan or hardware/rights acceptance is represented.
+
+## Security Audit 2026-11-12
+
+| Metric | Count |
+|---|---|
+| Threats found | 37 |
+| Closed | 37 |
+| Open | 0 |

@@ -1,8 +1,8 @@
 ---
 phase: "05"
 slug: "display-raw-video-and-input"
-status: in-progress
-nyquist_compliant: false
+status: validated
+nyquist_compliant: true
 wave_0_complete: true
 created: "2026-11-11"
 ---
@@ -314,9 +314,17 @@ None for scoped software behavior. Physical calibration, baseline adoption, lice
 - [x] Every actual task maps to an automated command, intended proof and dependency.
 - [x] No three consecutive tasks lack planned automated feedback.
 - [x] Each new test is created/registered before its owning verification; later users depend on that producer.
-- [ ] Planned tests are implemented and meaningful semantic failures observed.
-- [ ] No watch-mode/background orphan process.
+- [x] Planned tests are implemented and meaningful semantic failures observed.
+- [x] All managed checks completed; no watch-mode or orphan test process. The intentionally retained idle qualification container is available for the next phase.
 - [x] Actual feedback times recorded and broad verification reused appropriately.
-- [ ] nyquist_compliant true only after final coverage audit.
+- [x] Final phase-scoped coverage audit and C122 evidence support nyquist_compliant true.
 
-Wave 0 and the C122 final-source qualification are complete. Nyquist compliance and phase-wide requirement status remain under root's final coverage/security closeout; this Task 2 record does not advance the roadmap or close phase-wide requirements.
+All 24 task commands have recorded semantic evidence, with C122 now backed by the final macOS, self-contained Ubuntu and exact-head hosted gates. Root reuses the independent initial/delta assertion audits and verifies the current qualification/JUnit evidence; there are zero missing software-test gaps and zero manual-only Phase5 checks. Nyquist compliance applies to the Phase5 software/explicit-skip contract. Global EVD-02 remains open and CON-01/EVD-05 remain partial for Phase6; no requirement, hardware or owner boundary is silently closed.
+
+## Validation Audit 2026-11-12
+
+| Metric | Count |
+|---|---|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |

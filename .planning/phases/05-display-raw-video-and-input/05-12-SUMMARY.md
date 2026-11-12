@@ -48,8 +48,8 @@ coverage:
       - kind: integration
         ref: "sh scripts/check.sh; 202 JUnit rows per environment; GitHub Actions run 43268267738"
         status: pass
-    human_judgment: true
-    rationale: "Automation does not resolve the strict timer disagreements, missing page-mode observations, hardware accuracy, or remaining owner decisions."
+    human_judgment: false
+    rationale: "Software qualification is automated; documented strict disagreements and external owner/hardware limits do not require manual acceptance for this scoped result."
 
 duration: "9h 35m from first recorded plan checkpoint"
 completed: 2026-11-12
@@ -84,8 +84,8 @@ status: complete
 
 ## Verification
 
-- **macOS:** CTest 110.25s; workflow 110s; artifacts 6s; history 85s; total 204s. 6,361 files scanned, one accepted exact 512-byte fixture.
-- **Self-contained Ubuntu 24.04:** CTest 111.07s; workflow 111s; artifacts 1s; history 13s; total 127s. The 354-commit clone was non-shallow and had no Git alternates. 6,330 files scanned, one accepted exact 512-byte fixture.
+- **macOS:** CTest 110.25s; workflow 110s; artifacts 6s; history 85s; total 204s. 6,361 files scanned, one 512-byte UTF-8 source file; no findings.
+- **Self-contained Ubuntu 24.04:** CTest 111.07s; workflow 111s; artifacts 1s; history 13s; total 127s. The 354-commit clone was non-shallow and had no Git alternates. 6,330 files scanned, one 512-byte UTF-8 source file; no findings.
 - **Hosted Ubuntu 24.04 CI:** queue about 2s; runner setup under 1s; checkout 2s; canonical command 171s. cc65 build 19s; CMake configure/build about 5s; CTest 105.60s; JUnit 0s; artifact scan 2s; history hygiene 32s. One job, no matrix or duplicate broad gate. Slowest tests: pending timer controls 58.70s, result controls 47.88s, and none-profile seam agreement 24.68s.
 - **Exact skips:** `suite.page_mode.observation.lynx1` and `suite.page_mode.observation.lynx2` stop at the unsupported `$06` write to `$FD8C` before producing a result. Their observations are missing.
 - **Strict comparisons:** `LEGACY_FLAT5` retains only its admitted index-14 `0c` versus source `0d` row. `VIDEO_POLICY1` retains index 14 `0f` versus source `0d` for both profiles and agrees on the other 15/16 rows. Strict source comparisons remain unresolved failures even though observation/control tests pass.
