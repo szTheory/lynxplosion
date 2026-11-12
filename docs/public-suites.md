@@ -98,10 +98,21 @@ The timer wrapper executes its own A1/A2 model probe. The observed records prese
 The full 16-row per-profile comparison and pinned source/tool/build/proof
 identities are recorded in the [Phase 4 qualification ledger](../.planning/phases/04-timers-interrupts-and-first-public-suites/04-QUALIFICATION.md).
 
+`observe timers-video PROFILE BUILDDIR ORACLE` runs the same pinned timer guest
+without a pending descriptor under the explicitly frozen VIDEO_POLICY1 setup
+documented in [the Phase 5 revisit report](timer-video-revisit.md). Its strict
+comparison returns success only for 16 source agreements and returns 1 for any
+mismatch. The two profiles currently agree on 15 rows; each produces `0f` at
+index 14 against the pinned `0d`, so both strict observations exit 1. This
+different result does not inherit D-10's legacy `0c` exception. The current
+model accepts only DISPCTL bit 0; the CRT's `0d` setting and hardware accuracy
+remain unresolved.
+
 `timer-cascade-model` verifies the linked Test6 setup and poll opcodes, operands, addressing modes and branch targets against the unchanged pinned assembly. It derives 14-cycle no-IRQ and 24-cycle IRQ paths, yielding 70/120 tick poll intervals, then independently enumerates all64 first-edge delays over the source-declared 192 polls. The executable proof reports12 acknowledgments and final poll offset13990 for every phase, and binds those results to the actual BLL, labels, raw bytes, run record, comparison, oracle and pending descriptor. This matches the current bounded guest result without modifying its timing or the oracle. The pending row is scheduled for Phase5 review; global EVD-02 remains open.
 
-The exact fast inventory contains these eight timer tests. The two observation
-tests are the positive guest runs; the other six are strict, proof, model,
+The exact fast inventory contains these nine timer tests. The two legacy
+observation tests and the strict video-policy revisit are guest runs; the
+other six are strict, proof, model,
 record, descriptor or no-run controls. They are not suite-pass claims. The
 data-only `result_controls` batch emits exactly 49 unique named subcases. This
 preserves the pre-fix inventory count; Plan 09 recorded 48 before Plan 10 added
@@ -121,6 +132,7 @@ self-controls; these mutations are not counted as guest executions.
 | `suite.timers.pending_controls` | Rejects stale/malformed descriptor, records, identities and proof |
 | `suite.timers.result_controls` | Rejects result/count/time/completion faults and any second mismatch |
 | `suite.timers.no_run` | Proves held guest execution is absent, then validates resumed execution |
+| `suite.timers.video_revisit` | Captures both VIDEO_POLICY1 profiles and requires complete strict row diagnostics without a pending exception |
 
 The strict controls require exit 1 and the exact source mismatch diagnostic
 only after valid observations and proof; they also require exactly 16
@@ -177,7 +189,7 @@ The timer observation/control slice can be rerun with:
 cmake --preset check
 cmake --build --preset check
 ctest --preset check --no-tests=error --output-on-failure \
-  -R '^suite\.timers\.(observation\.(lynx1|lynx2)|strict_comparison_controls|cascade_model|model_controls|result_controls|pending_controls)$'
+  -R '^suite\.timers\.(observation\.(lynx1|lynx2)|strict_comparison_controls|cascade_model|model_controls|result_controls|pending_controls|video_revisit)$'
 ```
 
 The pinned upstream sources and this project’s wrapper remain subject to their fixture manifests and notices. No firmware or commercial game content is used. These software controls establish parser, identity, bounds and repeatable guest-execution behavior for the pinned source; hardware accuracy and public profile qualification remain unresolved.

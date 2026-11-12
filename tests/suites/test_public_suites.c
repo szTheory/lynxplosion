@@ -3201,7 +3201,7 @@ static int write_timer_run_record(const char *path, const char *machine_profile,
                                   uint32_t probe_address, uint32_t model_address,
                                   uint32_t test_return_address,
                                   uint32_t after_tests_address, uint8_t pending,
-                                  int detected_model)
+                                  int detected_model, int video_revisit)
 {
     atomic_output output = {0};
     FILE *file;
@@ -3225,7 +3225,7 @@ static int write_timer_run_record(const char *path, const char *machine_profile,
         "guest_probe_byte=%02x\nguest_model_marker=%02x\nguest_progress=%u\ncompletion_sentinel=a5\n"
         "scheduler_policy=timer-cpu-poll-order-1\nphase_policy=timer-phase-fixed-zero-1\n"
         "cost_model=flat5\ncost_ticks=5\nsample_offset_ticks=0\n"
-        "page_mode_video_enabled=false\nrefresh_dma_enabled=false\ncounter_initialization=zero\n"
+        "page_mode_video_enabled=%s\nrefresh_dma_enabled=%s\ncounter_initialization=zero\n"
         "source_comparison=separate-record\nhardware_accuracy=unverified\nprofile_qualification=unresolved\n",
         machine_profile, selected_profile, bll_sha, labels_sha, oracle_sha, wrapper_sha,
         wrapper_sha, probe_address, model_address, test_return_address,
@@ -3233,15 +3233,145 @@ static int write_timer_run_record(const char *path, const char *machine_profile,
         detected_model < 0 ? "unknown" : profile_label((unsigned)detected_model),
         probe, model, TIMER_MIN_TICKS, TIMER_MAX_TICKS, ticks,
         ticks - TIMER_MIN_TICKS, TIMER_MAX_TICKS - ticks,
-        ticks, TIMER_MIN_TICKS, TIMER_MAX_TICKS, probe, model, progress);
+        ticks, TIMER_MIN_TICKS, TIMER_MAX_TICKS, probe, model, progress,
+        video_revisit != 0 ? "true" : "false",
+        video_revisit != 0 ? "true" : "false");
+    if (video_revisit != 0) {
+        /* This record keeps the legacy CPU cost model distinct from the
+           separately configured video timing policy. */
+        (void)fprintf(file,
+            "timing_policy=video-policy1\nrefresh_policy=video-policy1\n"
+            "video_byte_grant_ticks=5\nrefresh_grant_ticks=5\nrefresh_period_ticks=256\n");
+    }
     if (atomic_output_commit(&output) != 0) return fail("cannot close timer run record");
+    return 0;
+}
+
+static int prepare_timer_video_environment(machine_instance *instance)
+{
+    uint64_t ticks = UINT64_MAX;
+    lynx_machine *machine = instance->machine;
+    if (machine == NULL || lynx_guest_ticks(machine, &ticks) != LYNX_OK || ticks != 0u ||
+        machine->cfg.timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1 ||
+        machine->video.timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1 ||
+        machine->cost_model != LYNX__COST_FLAT5 || machine->mapctl != 0u ||
+        machine->cpu_page_latch != 0u || machine->ram[0x0001u] != 0u ||
+        machine->video.refresh_next_tick != LYNX__VIDEO_REFRESH_PERIOD) {
+        return fail("timer video precondition: fresh VIDEO_POLICY1 state mismatch");
+    }
+    if (!lynx__timer_write(&machine->timer_bank, 0xFD00u, 0x9Eu) ||
+        !lynx__timer_write(&machine->timer_bank, 0xFD01u, 0x18u) ||
+        !lynx__timer_write(&machine->timer_bank, 0xFD08u, 0x68u) ||
+        !lynx__timer_write(&machine->timer_bank, 0xFD09u, 0x1Fu) ||
+        !lynx__video_write(&machine->video, 0xFD93u, 0x29u) ||
+        !lynx__video_write(&machine->video, 0xFD94u, 0x00u) ||
+        !lynx__video_write(&machine->video, 0xFD95u, 0x20u) ||
+        !lynx__video_write(&machine->video, 0xFD92u, 0x01u)) {
+        return fail("timer video precondition: unsupported frozen register setup");
+    }
+    machine->mapctl = 0x0Cu;
+    if (machine->timer_bank.timers[0].backup != 0x9Eu ||
+        machine->timer_bank.timers[0].count != 0u ||
+        machine->timer_bank.timers[0].control_a != 0x18u ||
+        machine->timer_bank.timers[2].backup != 0x68u ||
+        machine->timer_bank.timers[2].count != 0u ||
+        machine->timer_bank.timers[2].control_a != 0x1Fu ||
+        machine->video.pbkup != 0x29u || machine->video.backup_addr != 0x2000u ||
+        machine->video.dispctl != 0x01u || machine->mapctl != 0x0Cu ||
+        machine->cpu_page_latch != 0u) {
+        return fail("timer video precondition: frozen register readback mismatch");
+    }
+    return 0;
+}
+
+static int write_timer_video_revisit_record(const char *directory, const char *profile,
+                                            const machine_instance *instance,
+                                            const char *bll_sha, const char *labels_sha,
+                                            const char *oracle_sha, const char *wrapper_sha,
+                                            uint32_t source_write_count,
+                                            uint32_t acknowledged_increments,
+                                            uint8_t initial_clear_seen,
+                                            uint8_t counter_at_complete,
+                                            uint8_t result14)
+{
+    char build_record_path[4096], source_root[4096], source_tests_path[4096];
+    char source_main_path[4096], layout_path[4096], builder_path[4096], oracle_builder_path[4096];
+    char record_path[4096], build_record_sha[65], source_tests_sha[65], source_main_sha[65];
+    char layout_sha[65], builder_sha[65], oracle_builder_sha[65];
+    char source_revision[128], source_archive[128], cc65_archive[128];
+    char actual_object[65], actual_labels[65];
+    atomic_output output = {0};
+    FILE *file;
+    const lynx_machine *machine = instance->machine;
+    const lynx__timer *timer0 = &machine->timer_bank.timers[0];
+    const lynx__timer *timer2 = &machine->timer_bank.timers[2];
+    const int n0 = snprintf(build_record_path, sizeof build_record_path, "%s/build-record.txt", directory);
+    const int n1 = snprintf(source_root, sizeof source_root, "%s/build/pins/lynx-tests", LYNX_PROJECT_ROOT);
+    if (n0 < 0 || (size_t)n0 >= sizeof build_record_path || n1 < 0 || (size_t)n1 >= sizeof source_root ||
+        snprintf(source_tests_path, sizeof source_tests_path, "%s/timers/tests.s", source_root) >= (int)sizeof source_tests_path ||
+        snprintf(source_main_path, sizeof source_main_path, "%s/timers/main.c", source_root) >= (int)sizeof source_main_path ||
+        snprintf(layout_path, sizeof layout_path, "%s/fixtures/manifests/timer-tests.manifest", LYNX_PROJECT_ROOT) >= (int)sizeof layout_path ||
+        snprintf(builder_path, sizeof builder_path, "%s/scripts/build-suites.sh", LYNX_PROJECT_ROOT) >= (int)sizeof builder_path ||
+        snprintf(oracle_builder_path, sizeof oracle_builder_path, "%s/scripts/generate-suite-oracle.sh", LYNX_PROJECT_ROOT) >= (int)sizeof oracle_builder_path ||
+        snprintf(record_path, sizeof record_path, "%s/timer-video-revisit-%s.txt", directory, profile) >= (int)sizeof record_path ||
+        record_value(build_record_path, "lynx_tests_revision", source_revision, sizeof source_revision) != 0 ||
+        record_value(build_record_path, "lynx_tests_pin", source_archive, sizeof source_archive) != 0 ||
+        record_value(build_record_path, "cc65_pin", cc65_archive, sizeof cc65_archive) != 0 ||
+        record_value(build_record_path, "timers_object_sha256", actual_object, sizeof actual_object) != 0 ||
+        record_value(build_record_path, "timers_labels_sha256", actual_labels, sizeof actual_labels) != 0 ||
+        strcmp(actual_object, bll_sha) != 0 || strcmp(actual_labels, labels_sha) != 0 ||
+        file_sha256(build_record_path, build_record_sha) != 0 ||
+        file_sha256(source_tests_path, source_tests_sha) != 0 ||
+        file_sha256(source_main_path, source_main_sha) != 0 ||
+        file_sha256(layout_path, layout_sha) != 0 ||
+        file_sha256(builder_path, builder_sha) != 0 ||
+        file_sha256(oracle_builder_path, oracle_builder_sha) != 0) {
+        return fail("timer video record: source/tool/object/layout identity unavailable");
+    }
+    if (atomic_output_begin(record_path, &output) != 0) return 1;
+    file = output.stream;
+    (void)fprintf(file,
+        "schema=lynx-timer-video-revisit-v1\nsuite=timers\nmachine_profile=%s\n"
+        "source_revision=%s\nsource_archive_sha256=%s\ncc65_archive_sha256=%s\n"
+        "timer_tests_sha256=%s\ntimer_main_sha256=%s\nwrapper_sha256=%s\n"
+        "oracle_sha256=%s\nbuild_record_sha256=%s\nbll_sha256=%s\nlabels_sha256=%s\n"
+        "layout_manifest_sha256=%s\nbuild_recipe_sha256=%s\noracle_recipe_sha256=%s\n"
+        "core_build_id=%s\ncore_timing_policy=video-policy1\ncpu_cost_model=flat5\ncpu_bus_cycle_ticks=5\n"
+        "video_byte_grant_ticks=5\nrefresh_grant_ticks=5\nrefresh_period_ticks=256\n"
+        "refresh_next_tick_initial=256\nrefresh_next_tick_final=%" PRIu64 "\n"
+        "start_tick=0\ninitial_counter_address=0001\ninitial_counter_value=00\n"
+        "counter_initialization=wrapper-zero-page-clear\nwrapper_counter_clear_write_seen=%s\n"
+        "counter_watched_guest_writes=%u\nsource_acknowledged_increments=%u\n"
+        "counter_value_at_complete=%02x\nresult14=%02x\nstrict_comparison=all-16-source-rows\n"
+        "pending_descriptor=none\nsource_timer_index14_admission=none\n"
+        "timer0_backup_initial=9e\ntimer0_count_initial=00\ntimer0_control_a_initial=18\n"
+        "timer0_backup_final=%02x\ntimer0_count_final=%02x\ntimer0_control_a_final=%02x\ntimer0_control_b_final=%02x\n"
+        "timer2_backup_initial=68\ntimer2_count_initial=00\ntimer2_control_a_initial=1f\n"
+        "timer2_backup_final=%02x\ntimer2_count_final=%02x\ntimer2_control_a_final=%02x\ntimer2_control_b_final=%02x\n"
+        "pbkup_initial=29\npbkup_final=%02x\ndispctl_initial=01\ndispctl_final=%02x\ndispaddr_initial=2000\n"
+        "dispaddr_final=%04x\nmapctl_initial=0c\nmapctl_final=%02x\n"
+        "page_latch_initial=00\npage_latch_final=%02x\nvideo_buffer=zero-filled-scratch-2000\n"
+        "display_dma_owner=machine-event-scheduler\nrefresh_dma_owner=machine-event-scheduler\n"
+        "wrapper_initialization=clears-zero-page;sets-mapctl-0c;does-not-set-display-registers\n"
+        "crt_difference=DISPCTL-0d-unsupported;project-run-uses-supported-bit0-only\n"
+        "hardware_accuracy=unverified\nprofile_qualification=unresolved\n",
+        profile, source_revision, source_archive, cc65_archive, source_tests_sha, source_main_sha,
+        wrapper_sha, oracle_sha, build_record_sha, bll_sha, labels_sha, layout_sha,
+        builder_sha, oracle_builder_sha, lynx_build_id(), machine->video.refresh_next_tick,
+        initial_clear_seen != 0u ? "true" : "false", source_write_count,
+        acknowledged_increments, counter_at_complete, result14,
+        timer0->backup, timer0->count, timer0->control_a, timer0->control_b,
+        timer2->backup, timer2->count, timer2->control_a, timer2->control_b,
+        machine->video.pbkup, machine->video.dispctl, machine->video.dispaddr,
+        machine->mapctl, machine->cpu_page_latch);
+    if (atomic_output_commit(&output) != 0) return fail("timer video record close failed");
     return 0;
 }
 
 static int run_timers(const char *machine_profile_name, const char *selected_profile_name,
                       const char *directory, const char *oracle_path,
                       const char *pending_descriptor_path, int no_run,
-                      uint32_t maximum_ticks)
+                      uint32_t maximum_ticks, int video_revisit)
 {
     uint8_t *bll = NULL;
     size_t bll_length = 0u;
@@ -3269,6 +3399,11 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
     uint32_t selected_profile;
     uint64_t guest_ticks = 0u;
     uint64_t total_consumed = 0u;
+    uint32_t source_counter_write_count = 0u;
+    uint32_t acknowledged_increments = 0u;
+    uint32_t counter_watch_phase = 0u;
+    uint8_t counter_value = 0u;
+    uint8_t counter_at_complete = 0u;
     lynx_stop_reason stop = LYNX_STOP_BUDGET;
     lynx_watch_event event;
     lynx_identity identity;
@@ -3278,6 +3413,7 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
     suite_oracle oracle;
     int complete = 0;
     int initial_done_clear_seen = 0;
+    int wrapper_counter_clear_seen = 0;
     int detected_model = -1;
     int comparison_matches = 0;
     int result = 1;
@@ -3334,7 +3470,10 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
     }
     if (verify_suite_build_artifacts(directory, "timers") != 0 ||
         clear_old_outputs(directory, machine_profile_name) != 0) goto done;
-    if (machine_create(&instance, bll, bll_length, machine_profile) != 0 ||
+    if ((video_revisit != 0 ?
+         machine_create_with_policy(&instance, bll, bll_length, machine_profile,
+                                    LYNX_TIMING_POLICY_VIDEO_POLICY1) :
+         machine_create(&instance, bll, bll_length, machine_profile)) != 0 ||
         lynx_get_identity(instance.machine, &identity) != LYNX_OK ||
         identity.has_content != 1u || identity.content_format != LYNX_CONTENT_BS93 ||
         identity.startup_tier != LYNX_STARTUP_A || identity.entry_addr != symbols.value[0] ||
@@ -3343,6 +3482,7 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         (void)fail("strict timer BS93 identity or linked extent mismatch");
         goto done;
     }
+    if (video_revisit != 0 && prepare_timer_video_environment(&instance) != 0) goto done;
     {
         lynx__sha256 state;
         uint8_t digest[32];
@@ -3359,10 +3499,12 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         (void)snprintf(bll_sha, sizeof bll_sha, "%s", identity_sha);
     }
     if (prepare_timer_ram(&instance, &symbols) != 0) goto done;
-    if (lynx_watch_configure(instance.machine, symbols.value[6], 1u) != LYNX_OK) {
-        (void)fail("could not arm timer post-test sentinel watch");
+    if (lynx_watch_configure(instance.machine,
+                             video_revisit != 0 ? 0x0001u : symbols.value[6], 1u) != LYNX_OK) {
+        (void)fail("could not arm timer completion/counter watch");
         goto done;
     }
+    if (video_revisit != 0) counter_watch_phase = 0u;
     initial_cpu = instance.machine->cpu;
     if (no_run != 0) {
         int completion_result;
@@ -3388,7 +3530,33 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         uint64_t used = 0u;
         uint64_t before = 0u;
         uint64_t after = 0u;
-        if (budget > 10000u) budget = 10000u;
+        if (video_revisit != 0) {
+            /* One flat5 bus cycle per observation lets the private watch move
+               from the wrapper's zero-page clear to Test6 and back without
+               skipping the source counter interval. */
+            if (budget > 5u) budget = 5u;
+            if (counter_watch_phase == 1u && initial_done_clear_seen != 0 &&
+                instance.machine->cpu.pc == (uint16_t)(symbols.value[8] + 16u)) {
+                if (instance.machine->ram[0x0001u] != 0u ||
+                    lynx_watch_configure(instance.machine, 0x0001u, 1u) != LYNX_OK) {
+                    (void)fail("timer video counter: source interval did not start from watched zero");
+                    goto done;
+                }
+                counter_watch_phase = 2u;
+                counter_value = 0u;
+            } else if (counter_watch_phase == 2u &&
+                       instance.machine->cpu.pc == (uint16_t)(symbols.value[8] + 19u)) {
+                counter_at_complete = instance.machine->ram[0x0001u];
+                if (counter_at_complete != counter_value ||
+                    lynx_watch_configure(instance.machine, symbols.value[6], 1u) != LYNX_OK) {
+                    (void)fail("timer video counter: watched source interval did not close at Test6 return");
+                    goto done;
+                }
+                counter_watch_phase = 3u;
+            }
+        } else if (budget > 10000u) {
+            budget = 10000u;
+        }
         if (lynx_guest_ticks(instance.machine, &before) != LYNX_OK ||
             lynx_advance(instance.machine, budget, &used, &stop) != LYNX_OK ||
             used > budget || lynx_guest_ticks(instance.machine, &after) != LYNX_OK) {
@@ -3403,9 +3571,43 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         guest_ticks = after;
         if (stop == LYNX_STOP_WATCH) {
             if (lynx_watch_get(instance.machine, &event) != LYNX_OK ||
-                event.hit != 1u || event.address != symbols.value[6] ||
-                event.return_tick != after || event.return_tick != event.hit_tick + 1u) {
-                (void)fail("timer completion-address watch did not match a guest write");
+                event.hit != 1u || event.return_tick != after || event.return_tick != event.hit_tick + 1u) {
+                (void)fail("timer completion/counter watch did not match a guest write");
+                goto done;
+            }
+            if (video_revisit != 0 && event.address == 0x0001u) {
+                if (counter_watch_phase == 0u) {
+                    if (event.value != 0u || instance.machine->ram[0x0001u] != 0u ||
+                        lynx_watch_configure(instance.machine, symbols.value[6], 1u) != LYNX_OK) {
+                        (void)fail("timer video counter: wrapper zero initialization was not observed");
+                        goto done;
+                    }
+                    wrapper_counter_clear_seen = 1;
+                    counter_watch_phase = 1u;
+                } else if (counter_watch_phase == 2u) {
+                    source_counter_write_count++;
+                    if (event.value == counter_value) {
+                        /* The first 65C02 RMW bus write preserves the old byte. */
+                    } else if (event.value <= UINT8_MAX &&
+                               event.value == (uint32_t)(uint8_t)(counter_value + 1u)) {
+                        counter_value = (uint8_t)event.value;
+                        acknowledged_increments++;
+                    } else {
+                        (void)fail("timer video counter: source write was not an increment or RMW old-byte write");
+                        goto done;
+                    }
+                    if (lynx_watch_configure(instance.machine, 0x0001u, 1u) != LYNX_OK) {
+                        (void)fail("timer video counter: source write watch could not be rearmed");
+                        goto done;
+                    }
+                } else {
+                    (void)fail("timer video counter: write occurred outside the frozen source interval");
+                    goto done;
+                }
+                continue;
+            }
+            if (event.address != symbols.value[6]) {
+                (void)fail("timer completion/counter watch hit an unexpected address");
                 goto done;
             }
             if (event.value == 0u && initial_done_clear_seen == 0) {
@@ -3432,8 +3634,12 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
             (void)fail("timer guest stopped before completion");
             goto done;
         }
-        if (used == 0u || after <= before) {
+        if ((used == 0u || after <= before) && video_revisit == 0) {
             (void)fail("timer guest made no bounded progress toward completion");
+            goto done;
+        }
+        if ((used == 0u || after <= before) && video_revisit != 0) {
+            (void)fail("timer video guest made no progress in one-cycle watch mode");
             goto done;
         }
     }
@@ -3475,6 +3681,13 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
         (void)fail("validated 16-byte timer result buffer could not be read");
         goto done;
     }
+    if (video_revisit != 0 &&
+        (counter_watch_phase != 3u || wrapper_counter_clear_seen == 0 ||
+         counter_at_complete != instance.machine->ram[0x0001u] ||
+         counter_at_complete != results[14])) {
+        (void)fail("timer video counter: source writes, final counter, and result14 disagree");
+        goto done;
+    }
     detected_model = probe_model(probe, model);
     if (write_raw(raw_path, "timers", machine_profile_name, selected_profile_name,
                   "zero", results, TIMER_MEANINGFUL) != 0 ||
@@ -3482,7 +3695,13 @@ static int run_timers(const char *machine_profile_name, const char *selected_pro
                                bll_sha, labels_sha, oracle_sha, wrapper_sha, guest_ticks,
                                probe, model, progress, symbols.value[11], symbols.value[5],
                                symbols.value[12], symbols.value[13], instance.machine->timer_bank.pending,
-                               detected_model) != 0) goto done;
+                               detected_model, video_revisit) != 0 ||
+        (video_revisit != 0 &&
+         write_timer_video_revisit_record(directory, machine_profile_name, &instance,
+                                          bll_sha, labels_sha, oracle_sha, wrapper_sha,
+                                          source_counter_write_count, acknowledged_increments,
+                                          (uint8_t)wrapper_counter_clear_seen, counter_at_complete,
+                                          results[14]) != 0)) goto done;
     if (detected_model < 0) {
         result = fail("timer guest model probe/marker evidence is invalid");
         goto done;
@@ -4315,19 +4534,22 @@ int main(int argc, char **argv)
         return run_cpu(argv[3], argv[4], argv[5], argv[6], argv[7], 0, CPU_MAX_TICKS);
     }
     if (argc == 6 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "timers") == 0) {
-        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL, 0, TIMER_MAX_TICKS);
+        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL, 0, TIMER_MAX_TICKS, 0);
     }
     if (argc == 7 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "timers-selected") == 0) {
-        return run_timers(argv[3], argv[4], argv[5], argv[6], NULL, 0, TIMER_MAX_TICKS);
+        return run_timers(argv[3], argv[4], argv[5], argv[6], NULL, 0, TIMER_MAX_TICKS, 0);
     }
     if (argc == 7 && strcmp(argv[1], "observe") == 0 && strcmp(argv[2], "timers") == 0) {
-        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 0, TIMER_MAX_TICKS);
+        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 0, TIMER_MAX_TICKS, 0);
+    }
+    if (argc == 6 && strcmp(argv[1], "observe") == 0 && strcmp(argv[2], "timers-video") == 0) {
+        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL, 0, TIMER_MAX_TICKS, 1);
     }
     if (argc == 6 && strcmp(argv[1], "no-run") == 0 && strcmp(argv[2], "cpu") == 0) {
         return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero", 1, CPU_MAX_TICKS);
     }
     if (argc == 7 && strcmp(argv[1], "no-run") == 0 && strcmp(argv[2], "timers") == 0) {
-        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 1, TIMER_MAX_TICKS);
+        return run_timers(argv[3], argv[3], argv[4], argv[5], argv[6], 1, TIMER_MAX_TICKS, 0);
     }
     if (argc == 7 && strcmp(argv[1], "run-bounded") == 0 && strcmp(argv[2], "cpu") == 0) {
         uint32_t maximum_ticks;
@@ -4337,7 +4559,7 @@ int main(int argc, char **argv)
     if (argc == 7 && strcmp(argv[1], "run-bounded") == 0 && strcmp(argv[2], "timers") == 0) {
         uint32_t maximum_ticks;
         if (parse_decimal(argv[6], &maximum_ticks) != 0) return fail("time: invalid guest tick integer");
-        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL, 0, maximum_ticks);
+        return run_timers(argv[3], argv[3], argv[4], argv[5], NULL, 0, maximum_ticks, 0);
     }
     if (argc == 7 && strcmp(argv[1], "timer-cascade-model") == 0) {
         return timer_cascade_model_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);
