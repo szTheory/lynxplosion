@@ -71,6 +71,8 @@ api.watch_post_write	api
 consumer.frame_tracer	consumer
 consumer.public_api	consumer
 consumer.refusal_controls	consumer
+consumer.replay_edges	consumer
+consumer.replay_restore	consumer
 consumer.silence_wav	consumer
 consumer.snapshot_ppm	consumer
 core.cpu_includes	core

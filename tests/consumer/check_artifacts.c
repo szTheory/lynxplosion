@@ -578,6 +578,120 @@ failed:
     return 1;
 }
 
+static int validate_replay_directory(const char *directory, const char *scenario,
+                                     const char *expected_input_sha,
+                                     char *error, size_t error_cap)
+{
+    uint8_t *manifest = NULL;
+    size_t manifest_len = 0u;
+    size_t expected_frames;
+    uint64_t starts[3] = {UINT64_C(54272), UINT64_C(108544), UINT64_C(162816)};
+    uint64_t ends[3] = {UINT64_C(108544), UINT64_C(162816), UINT64_C(217088)};
+    uint32_t masks[3] = {0u, 0u, 16u};
+    uint32_t samples[3] = {0u, 0u, 1u};
+    char path[4096], line[512];
+    if (strcmp(scenario, "replay_edges") == 0) {
+        expected_frames = 3u;
+    } else if (strcmp(scenario, "replay_restore") == 0) {
+        expected_frames = 2u; masks[1] = 16u; samples[1] = 1u;
+    } else if (strcmp(scenario, "frame_tracer") == 0) {
+        expected_frames = 2u; masks[1] = 16u; samples[1] = 1u;
+    } else if (strcmp(scenario, "empty") == 0) {
+        expected_frames = 1u;
+    } else {
+        set_error(error, error_cap, "unknown generic replay scenario");
+        return 1;
+    }
+    if (path_join(directory, "frame-trace.manifest", path, sizeof path) != 0 ||
+        read_bounded(path, 8192u, &manifest, &manifest_len, error, error_cap) != 0) return 1;
+#define EXPECT_REPLAY(text) do { if (!has_exact_line(manifest, manifest_len, (text))) goto invalid; } while (0)
+    EXPECT_REPLAY("artifact = FRAME_TRACE");
+    EXPECT_REPLAY("profile = none");
+    EXPECT_REPLAY("startup = A");
+    EXPECT_REPLAY("timing_policy = video-policy1-unverified");
+    EXPECT_REPLAY("raw_pen_order = high nibble first; no host rotation");
+    if (expected_input_sha == NULL || !valid_sha256(expected_input_sha) ||
+        !has_sha_field(manifest, manifest_len, "content_sha256 = ")) goto invalid;
+    (void)snprintf(line, sizeof line, "input_sha256 = %s", expected_input_sha);
+    EXPECT_REPLAY(line);
+    (void)snprintf(line, sizeof line, "frame_count = %zu", expected_frames);
+    EXPECT_REPLAY(line);
+    if (strcmp(scenario, "replay_edges") == 0) {
+        EXPECT_REPLAY("event_count = 5");
+        EXPECT_REPLAY("finish_tick = 217089");
+    } else if (strcmp(scenario, "replay_restore") == 0) {
+        EXPECT_REPLAY("event_count = 1");
+        EXPECT_REPLAY("finish_tick = 162817");
+    } else if (strcmp(scenario, "frame_tracer") == 0) {
+        EXPECT_REPLAY("event_count = 1");
+        EXPECT_REPLAY("finish_tick = 163594");
+    } else {
+        EXPECT_REPLAY("event_count = 0");
+        EXPECT_REPLAY("finish_tick = 108545");
+    }
+    for (size_t i = 0u; i < expected_frames; i++) {
+        uint8_t *raw = NULL, *ppm = NULL;
+        size_t raw_len = 0u, ppm_len = 0u, header_end = SIZE_MAX;
+        char raw_name[40], ppm_name[40];
+        const char ppm_marker[] = "\n160 102\n255\n";
+        const uint8_t green[3] = {0u,255u,0u}, red[3] = {255u,0u,0u}, black[3] = {0u,0u,0u};
+        uint64_t previous_tick = 0u;
+        (void)snprintf(raw_name, sizeof raw_name, "frame-%02zu.raw", i);
+        (void)snprintf(ppm_name, sizeof ppm_name, "frame-%02zu.ppm", i);
+        if (path_join(directory, raw_name, path, sizeof path) != 0 ||
+            read_bounded(path, 102u * 120u, &raw, &raw_len, error, error_cap) != 0 ||
+            raw_len != 102u * 120u) { free(raw); goto invalid; }
+        if (path_join(directory, ppm_name, path, sizeof path) != 0 ||
+            read_bounded(path, FRAME_PPM_LIMIT, &ppm, &ppm_len, error, error_cap) != 0 ||
+            ppm_len < 3u || memcmp(ppm, "P6\n", 3u) != 0) { free(raw); free(ppm); goto invalid; }
+        for (size_t pos = 0u; pos + sizeof ppm_marker - 1u <= ppm_len; pos++)
+            if (memcmp(ppm + pos, ppm_marker, sizeof ppm_marker - 1u) == 0) { header_end = pos; break; }
+        if (header_end == SIZE_MAX || ppm_len - (header_end + sizeof ppm_marker - 1u) != 160u * 102u * 3u) {
+            free(raw); free(ppm); goto invalid;
+        }
+        (void)snprintf(line, sizeof line, "# sequence = %zu", i + 1u);
+        if (!has_exact_line(ppm, header_end, "# artifact = FRAME") || !has_exact_line(ppm, header_end, line)) {
+            free(raw); free(ppm); goto invalid;
+        }
+        (void)snprintf(line, sizeof line, "# frame_start_tick = %" PRIu64, starts[i]);
+        if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
+        (void)snprintf(line, sizeof line, "# frame_end_tick = %" PRIu64, ends[i]);
+        if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
+        (void)snprintf(line, sizeof line, "# input_mask_at_end = %u", masks[i]);
+        if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
+        (void)snprintf(line, sizeof line, "# sample_a = %u", samples[i]);
+        if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
+        (void)snprintf(line, sizeof line, "# input_sha256 = %s", expected_input_sha);
+        if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
+        for (size_t row = 0u; row < 102u; row++) {
+            const uint8_t *record = raw + row * 120u;
+            const uint8_t *pixels = ppm + header_end + sizeof ppm_marker - 1u + row * 160u * 3u;
+            uint64_t tick = 0u;
+            for (size_t byte = 0u; byte < 8u; byte++) tick |= (uint64_t)record[112u + byte] << (8u * byte);
+            if (record[0] != (row == 0u ? (samples[i] != 0u ? 0x22u : 0x11u) : 0u) ||
+                record[80u + 1u] != 0x0Fu || record[80u + 17u] != 0u ||
+                record[80u + 2u] != 0u || record[80u + 18u] != 0x0Fu ||
+                tick < starts[i] || tick >= ends[i] || (row != 0u && tick <= previous_tick)) {
+                free(raw); free(ppm); goto invalid;
+            }
+            previous_tick = tick;
+            for (size_t pixel = 0u; pixel < 160u; pixel++) {
+                const uint8_t *wanted = row == 0u && pixel < 2u ?
+                    (samples[i] != 0u ? red : green) : black;
+                if (memcmp(pixels + pixel * 3u, wanted, 3u) != 0) { free(raw); free(ppm); goto invalid; }
+            }
+        }
+        free(raw); free(ppm);
+    }
+#undef EXPECT_REPLAY
+    free(manifest);
+    return 0;
+invalid:
+    free(manifest);
+    set_error(error, error_cap, "replay transcript, exact input digest, raw pen/palette/ticks or representative rendered pixels are invalid");
+    return 1;
+}
+
 static int write_owned_file(const char *path, const void *bytes, size_t length)
 {
     FILE *file = fopen(path, "wb");
@@ -1471,6 +1585,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "artifact-check: %s\n", error);
         return 1;
     }
+    if (argc == 5 && strcmp(argv[1], "frames") == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], error, sizeof error) == 0) {
+            puts("artifact-check: canonical replay raw/rendered frame transcript is valid");
+            return 0;
+        }
+        fprintf(stderr, "artifact-check: %s\n", error);
+        return 1;
+    }
     if (argc == 6 && strcmp(argv[1], "publication") == 0) {
         if (publication_control(argv[2], argv[3], argv[4], argv[5]) != 0) {
             return 1;
@@ -1505,6 +1627,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "artifact-check: %s\n", error);
         return 1;
     }
-    fprintf(stderr, "Usage: lynx-check-artifacts <output-directory> | frames DIRECTORY | self-test | publication CONSUMER BLL LABELS OUTPUT\n");
+    fprintf(stderr, "Usage: lynx-check-artifacts <output-directory> | frames DIRECTORY [SCENARIO INPUT_SHA256] | self-test | publication CONSUMER BLL LABELS OUTPUT\n");
     return 2;
 }
