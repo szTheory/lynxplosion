@@ -14,7 +14,8 @@ provides:
 affects: [05-04, 05-09, 05-10, 05-11, 05-12]
 
 actuals:
-  tokens: 11354 # 45,414 realized-diff characters / 4, rounded up
+  realized_diff_chars: 45414
+  diff_token_estimate: 11354 # source-size proxy, not measured model usage
   tasks: 2
   commits: 5
 commits: 5
@@ -37,6 +38,7 @@ key-decisions:
   - "Keep the flat5 lane and its cost table unchanged; serialize the page latch in the existing format-5 byte slot."
 
 requirements-completed: [VID-02]
+requirements-partial: [EVD-05]
 
 duration: 35min
 completed: 2026-11-11
@@ -51,7 +53,7 @@ Video and refresh grants now serialize ahead of CPU requests, and VIDEO_POLICY1 
 
 - Duration measured from the first task commit through closeout: about 35 minutes; initial reading and setup happened before that timestamp.
 - Task 2 focused suite: 13/13 tests passed in 2.78 seconds total CTest wall time.
-- The task diff was 45,414 characters; the recorded estimate-scale actual is characters divided by four.
+- The task diff was 45,414 characters; the source-size token proxy is characters divided by four, not measured model token usage.
 
 ## Accomplishments
 
@@ -115,3 +117,7 @@ No user setup or owner action is required for this plan. Plan 05-03 is complete;
 ## Self-Check: PASSED
 
 The summary exists, and all five recorded task commits are ancestors of the current HEAD.
+
+## Post-wave consumer regression
+
+After the page-pricing change, the parent configured/built the metadata head `fd63806` and ran `consumer.frame_tracer` alone. It passed in 0.75 seconds, preserving the original public-only guest/frame path under the expanded policy. No full qualification gate was repeated. The owning wave-post checks were non-blocking: schema drift none, no codebase map to compare, and no interactive frontend files.
