@@ -264,7 +264,7 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
 - [x] 05-12-PLAN.md
 
 ### Phase 6: Audio and Playable Checkpoint
-**Goal**: The homebrew plays sound in response to input, and progress, input, video and audio line up on one guest-tick timeline. The v1 public-suite inventory and a throughput baseline are recorded.
+**Goal**: As a public API host, I want to replay an original homebrew with input-responsive audio and video on one guest-tick timeline, so that I can reproduce an A/V checkpoint and inspect its v1 public-suite inventory and throughput baseline without firmware.
 **Mode:** mvp
 **Depends on**: Phase 4 (timers), Phase 5 (homebrew and input)
 **Requirements**: AUD-01, AUD-02, HB-03, DET-05, EVD-06, PERF-01, CON-01 (final real-audio/video consumer closure), EVD-05 (final device-fault closure)
