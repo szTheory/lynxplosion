@@ -298,39 +298,97 @@ static int bytes_zero(const uint8_t *bytes, size_t count)
     return 1;
 }
 
-static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uint32_t policy)
+static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uint32_t policy,
+                             uint8_t mapctl, uint8_t cpu_page_latch)
 {
+    enum {
+        DMA_GRANT_TICKS = LYNX__VIDEO_DMA_TICKS,
+        REFRESH_PERIOD_TICKS = LYNX__VIDEO_REFRESH_PERIOD
+    };
+    const uint64_t latest_release = ticks + DMA_GRANT_TICKS;
     if (video->timing_policy != policy || video->input_mask > LYNX_INPUT_MASK ||
         video->lefthand > 1u || (video->dispctl & 0xFEu) != 0u ||
         video->frame_synced > 1u || video->line_ordinal > 104u ||
         video->row_active > 1u || video->capture_rows > LYNX_FRAME_MAX_ROWS ||
         video->capture_partial > 1u || video->frame_end_tick != 0u ||
         video->frame_start_tick > ticks ||
-        video->dma_busy_until > ticks + (ticks <= UINT64_MAX - 5u ? 5u : 0u) ||
-        video->refresh_busy_until > ticks + (ticks <= UINT64_MAX - 5u ? 5u : 0u)) return 0;
+        video->frame_sequence > ticks ||
+        video->dma_busy_until > latest_release ||
+        video->refresh_busy_until > latest_release ||
+        (video->dma_busy_until != 0u && video->dma_busy_until < DMA_GRANT_TICKS) ||
+        (video->refresh_busy_until != 0u &&
+         video->refresh_busy_until < DMA_GRANT_TICKS)) return 0;
     if (policy == LYNX_TIMING_POLICY_LEGACY_FLAT5) {
-        return video->row_active == 0u && video->capture_rows == 0u &&
+        return video->frame_synced == 0u && video->line_ordinal == 0u &&
+               video->row_active == 0u && video->capture_rows == 0u &&
                video->dma_next_tick == 0u && video->refresh_next_tick == 0u &&
-               video->capture_partial == 0u &&
+               video->dma_busy_until == 0u && video->refresh_busy_until == 0u &&
+               video->frame_start_tick == 0u && video->frame_sequence == 0u &&
+               video->dispaddr == 0u && video->capture_partial == 0u &&
                bytes_zero(video->pens, sizeof video->pens) &&
-               bytes_zero(video->palettes, sizeof video->palettes);
+               bytes_zero(video->palettes, sizeof video->palettes) &&
+               bytes_zero((const uint8_t *)(const void *)video->line_ticks,
+                          sizeof video->line_ticks);
     }
-    if (video->refresh_next_tick != 0u && video->refresh_next_tick < ticks) return 0;
+
+    /* Refresh deadlines stay on the original 256-tick phase grid. There is
+       always one next phase in VIDEO_POLICY1; an overdue phase is valid only
+       while a video grant is holding the bus or a DMA request is due now. */
+    if (video->refresh_next_tick == 0u ||
+        video->refresh_next_tick % REFRESH_PERIOD_TICKS != 0u ||
+        (video->refresh_next_tick > ticks &&
+         video->refresh_next_tick - ticks > REFRESH_PERIOD_TICKS)) return 0;
+    if (video->refresh_busy_until != 0u &&
+        video->refresh_next_tick <= video->refresh_busy_until - DMA_GRANT_TICKS) return 0;
+    if (video->refresh_next_tick < ticks &&
+        video->dma_busy_until < ticks &&
+        !(video->row_active != 0u && video->dma_next_tick <= ticks)) return 0;
+
+    /* The bus is exclusive: after one grant starts, the other cannot have a
+       future release at the same public return boundary. */
+    if (video->dma_busy_until > ticks && video->refresh_busy_until > ticks) return 0;
+    if (cpu_page_latch != 0u &&
+        (policy == LYNX_TIMING_POLICY_LEGACY_FLAT5 || (mapctl & 0x80u) != 0u ||
+         video->dma_busy_until > ticks || video->refresh_busy_until > ticks)) return 0;
+
     if (video->row_active != 0u) {
         if (video->frame_synced == 0u || video->dispctl == 0u ||
             video->capture_rows >= LYNX_FRAME_MAX_ROWS || video->dma_cursor >= LYNX_FRAME_ROW_BYTES ||
-            video->dma_next_tick < ticks) return 0;
+            video->line_ordinal < 3u || video->line_ordinal > 104u ||
+            video->dma_next_tick == 0u ||
+            video->dma_next_tick < video->line_ticks[video->capture_rows] ||
+            video->dma_next_tick - video->line_ticks[video->capture_rows] < DMA_GRANT_TICKS ||
+            (video->dma_next_tick < ticks && video->refresh_busy_until < ticks) ||
+            (video->dma_next_tick > ticks &&
+             video->dma_next_tick - ticks > DMA_GRANT_TICKS)) return 0;
     } else if (video->dma_cursor != 0u || video->dma_next_tick != 0u) {
         return 0;
     }
+
+    if (video->frame_synced == 0u &&
+        (video->line_ordinal != 0u || video->capture_rows != 0u ||
+         video->row_active != 0u || video->capture_partial != 0u ||
+         video->frame_start_tick != 0u || video->frame_sequence != 0u ||
+         video->dispaddr != 0u)) return 0;
+
     const size_t used_rows = (size_t)video->capture_rows + video->row_active;
-    if (used_rows > LYNX_FRAME_MAX_ROWS) return 0;
+    const size_t rows_reachable_at_ordinal = video->line_ordinal > 2u ?
+        (size_t)(video->line_ordinal - 2u) : 0u;
+    if (used_rows > LYNX_FRAME_MAX_ROWS ||
+        used_rows > rows_reachable_at_ordinal ||
+        (used_rows != 0u && video->frame_synced == 0u)) return 0;
     if (!bytes_zero(video->pens + used_rows * LYNX_FRAME_ROW_BYTES,
                     sizeof video->pens - used_rows * LYNX_FRAME_ROW_BYTES) ||
         !bytes_zero(video->palettes + used_rows * 32u,
                     sizeof video->palettes - used_rows * 32u)) return 0;
-    for (size_t i = used_rows; i < LYNX__VIDEO_CAPTURE_TICKS; i++) {
-        if (video->line_ticks[i] != 0u) return 0;
+    for (size_t i = 0u; i < LYNX__VIDEO_CAPTURE_TICKS; i++) {
+        if (i < used_rows) {
+            if (video->line_ticks[i] < video->frame_start_tick ||
+                video->line_ticks[i] > ticks ||
+                (i != 0u && video->line_ticks[i] <= video->line_ticks[i - 1u])) return 0;
+        } else if (video->line_ticks[i] != 0u) {
+            return 0;
+        }
     }
     if (video->row_active != 0u) {
         const size_t tail = (size_t)video->capture_rows * LYNX_FRAME_ROW_BYTES + video->dma_cursor;
@@ -566,7 +624,8 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     }
     lynx__video_state video_cand;
     video_snapshot_read(&video_cand, payload + P_VIDEO);
-    if (!video_state_valid(&video_cand, ticks, m->cfg.timing_policy)) {
+    if (!video_state_valid(&video_cand, ticks, m->cfg.timing_policy,
+                           payload[P_MAPCTL], cpu_page_latch)) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
 

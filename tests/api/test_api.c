@@ -2413,6 +2413,28 @@ enum {
     PAY_VIDEO = PAY_BUS_HOLD + 1
 };
 
+enum {
+    VIDEO_DISPCTL = 0,
+    VIDEO_FRAME_SYNCED = 2,
+    VIDEO_LINE_ORDINAL = 3,
+    VIDEO_ROW_ACTIVE = 4,
+    VIDEO_CAPTURE_ROWS = 5,
+    VIDEO_DMA_CURSOR = 6,
+    VIDEO_CAPTURE_PARTIAL = 7,
+    VIDEO_INPUT_MASK = 12,
+    VIDEO_LEFTHAND = 14,
+    VIDEO_DMA_NEXT = 16,
+    VIDEO_DMA_BUSY = 24,
+    VIDEO_REFRESH_NEXT = 32,
+    VIDEO_REFRESH_BUSY = 40,
+    VIDEO_FRAME_START = 48,
+    VIDEO_FRAME_SEQUENCE = 64,
+    VIDEO_PALETTE = 72,
+    VIDEO_PENS = VIDEO_PALETTE + 32,
+    VIDEO_ROW_PALETTES = VIDEO_PENS + (int)LYNX__VIDEO_CAPTURE_PENS,
+    VIDEO_LINE_TICKS = VIDEO_ROW_PALETTES + (int)LYNX__VIDEO_CAPTURE_PALETTES
+};
+
 /* Blobs carry one extra byte of room for the trailing-byte case. */
 static unsigned char blob_v[SNAP_TOTAL + 1];
 static unsigned char blob_bad[SNAP_TOTAL + 1];
@@ -8460,6 +8482,39 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static bool video_snapshot_roundtrip(lynx_machine *source, lynx_machine *restored,
+                                     const char *assertion)
+{
+    const int failures_before = check_failures;
+    CHECK_EQ_U64(save_into(source, blob_v), 0u);
+    const lynx_status st = lynx_snapshot_restore(restored, blob_v, SNAP_TOTAL);
+    CHECK_NAMED(st == LYNX_OK, assertion);
+    if (st == LYNX_OK) {
+        CHECK_NAMED(memcmp(source, restored, MSIZE) == 0,
+                    "video_snapshot.boundary-restore-is-byte-identical");
+    }
+    return check_failures == failures_before;
+}
+
+static void video_snapshot_value_refused(lynx_machine *target, const unsigned char *source,
+                                         size_t offset, uint64_t value, size_t width,
+                                         const char *assertion)
+{
+    memcpy(blob_bad, source, SNAP_TOTAL);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + offset, value, width);
+    rehash_payload(blob_bad);
+    CHECK_EQ_U64(lynx_watch_configure(target, 0x0400u, 1u), LYNX_OK);
+    memcpy(snap_a, target, MSIZE);
+    memcpy(blob_c, blob_bad, SNAP_TOTAL);
+    const lynx_status st = lynx_snapshot_restore(target, blob_bad, SNAP_TOTAL);
+    CHECK_NAMED(st == LYNX_ERR_SNAPSHOT_INVALID, assertion);
+    CHECK_UNCHANGED(target, snap_a);
+    CHECK_NAMED(target->host_observation.watch_armed == 1u,
+                "video_snapshot_refusal.watch-preserved");
+    CHECK_NAMED(memcmp(blob_bad, blob_c, SNAP_TOTAL) == 0,
+                "video_snapshot_refusal.caller-blob-preserved");
+}
+
 static void case_video_snapshot(void)
 {
     const int failures_before = check_failures;
@@ -8472,8 +8527,54 @@ static void case_video_snapshot(void)
 
     setup_video_session(source, LYNX_INPUT_A | LYNX_INPUT_PAUSE, 0x51u);
     setup_video_session(restored, LYNX_INPUT_A | LYNX_INPUT_PAUSE, 0x51u);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(source, 0u), LYNX_OK);
+    advance_ticks(source, 1u);
+    CHECK_NAMED(source->cpu_page_latch == 3u,
+                "video_snapshot.same-page-opcode-continuation-is-reached");
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(source, 1u), LYNX_OK);
+    if (!video_snapshot_roundtrip(source, restored,
+                                  "video_snapshot.page-continuation-restores")) goto done;
     advance_to_video_sync_frame(source);
-    advance_to_partial_video_row(source);
+    CHECK(lynx__video_write(&source->video, 0xFD94u, 0xFDu));
+    CHECK(lynx__video_write(&source->video, 0xFD95u, 0xFFu));
+    if (!video_snapshot_roundtrip(source, restored,
+                                  "video_snapshot.frame-boundary-restores")) goto done;
+
+    const uint64_t line_period = UINT64_C(159) * 16u;
+    const uint64_t row_start = source->video.frame_start_tick + 3u * line_period;
+    advance_ticks(source, row_start - source->guest_ticks);
+    CHECK_NAMED(source->guest_ticks == row_start && source->video.row_active == 0u &&
+                    source->video.line_ordinal == 2u,
+                "video_snapshot.before-visible-line-edge");
+    if (!video_snapshot_roundtrip(source, restored,
+                                  "video_snapshot.before-line-edge-restores")) goto done;
+
+    advance_ticks(source, 1u);
+    CHECK_NAMED(source->video.row_active != 0u && source->video.dma_cursor == 0u &&
+                    source->video.line_ticks[0] == row_start &&
+                    source->video.dispaddr == 0xFFFCu,
+                "video_snapshot.visible-line-edge-starts-aligned-wrap-stream");
+    if (!video_snapshot_roundtrip(source, restored,
+                                  "video_snapshot.after-line-edge-restores")) goto done;
+
+    advance_ticks(source, 4u);
+    CHECK_NAMED(source->guest_ticks == row_start + 5u && source->video.dma_cursor == 0u,
+                "video_snapshot.before-first-dma-grant");
+    if (!video_snapshot_roundtrip(source, restored,
+                                  "video_snapshot.before-dma-grant-restores")) goto done;
+
+    advance_ticks(source, 1u);
+    CHECK_NAMED(source->video.dma_cursor == 1u &&
+                    source->video.dma_busy_until > source->guest_ticks,
+                "video_snapshot.inside-first-dma-grant");
+    if (!video_snapshot_roundtrip(source, restored,
+                                  "video_snapshot.inside-dma-grant-restores")) goto done;
+
+    advance_ticks(source, 15u);
+    CHECK_NAMED(source->video.dma_cursor == 4u && source->video.dispaddr == 0u,
+                "video_snapshot.display-address-wraps-after-four-bytes");
+    if (!video_snapshot_roundtrip(source, restored,
+                                  "video_snapshot.after-dma-grant-restores")) goto done;
 
     /* A refresh whose phase falls inside the continuous visible-row stream
        remains queued while each five-tick DMA byte owns the bus. This is a
@@ -8538,6 +8639,8 @@ static void case_video_snapshot(void)
                 "video_snapshot.next-frame-raw-capture-matches");
     CHECK_NAMED(memcmp(source, restored, MSIZE) == 0,
                 "video_snapshot.next-frame-guest-state-matches");
+    if (!video_snapshot_roundtrip(source, restored,
+                                  "video_snapshot.after-frame-boundary-restores")) goto done;
     lynx_machine_deinit(source);
     lynx_machine_deinit(restored);
 
@@ -8582,6 +8685,120 @@ static void case_video_snapshot_refusal(void)
                 "video_snapshot_refusal.watch-preserved");
     CHECK_NAMED(memcmp(blob_bad, blob_c, SNAP_TOTAL) == 0,
                 "video_snapshot_refusal.caller-blob-preserved");
+
+    /* These independent hostile fields carry a fresh payload hash, so the
+       restore path must reject their semantics rather than the checksum. */
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_DISPCTL,
+                                 2u, 1u, "video_snapshot_refusal.reserved-display-mode");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_FRAME_SYNCED,
+                                 2u, 1u, "video_snapshot_refusal.frame-sync-flag");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_LINE_ORDINAL,
+                                 105u, 1u, "video_snapshot_refusal.line-ordinal-range");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_ROW_ACTIVE,
+                                 2u, 1u, "video_snapshot_refusal.row-active-flag");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_CAPTURE_ROWS,
+                                 103u, 1u, "video_snapshot_refusal.capture-row-range");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_DMA_CURSOR,
+                                 LYNX_FRAME_ROW_BYTES, 1u,
+                                 "video_snapshot_refusal.inactive-row-cursor");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_CAPTURE_PARTIAL,
+                                 2u, 1u, "video_snapshot_refusal.partial-flag");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_INPUT_MASK,
+                                 LYNX_INPUT_MASK + 1u, 2u,
+                                 "video_snapshot_refusal.input-mask-width");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_LEFTHAND,
+                                 2u, 1u, "video_snapshot_refusal.input-orientation");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_DMA_NEXT,
+                                 5u, 8u, "video_snapshot_refusal.inactive-dma-deadline");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_REFRESH_NEXT,
+                                 0u, 8u, "video_snapshot_refusal.missing-refresh-phase");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_REFRESH_NEXT,
+                                 257u, 8u, "video_snapshot_refusal.refresh-phase-grid");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_REFRESH_NEXT,
+                                 512u, 8u, "video_snapshot_refusal.refresh-phase-horizon");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_FRAME_START,
+                                 1u, 8u, "video_snapshot_refusal.future-frame-start");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_FRAME_SEQUENCE,
+                                 1u, 8u, "video_snapshot_refusal.future-frame-sequence");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_LINE_TICKS,
+                                 1u, 8u, "video_snapshot_refusal.unused-line-tick");
+    video_snapshot_value_refused(target, blob_v, PAY_TIMER_EVENT_APPLIED,
+                                 1u, 1u, "video_snapshot_refusal.historical-timer-cursor");
+
+    /* A real ongoing DMA stream is accepted as a control before its valid
+       cross-state relationships are independently corrupted below. */
+    setup_video_session(source, LYNX_INPUT_A | LYNX_INPUT_PAUSE, 0x51u);
+    advance_to_video_sync_frame(source);
+    advance_to_partial_video_row(source);
+    bool found_pending_refresh = false;
+    for (uint32_t i = 0u; i < 4096u; i++) {
+        if (source->video.row_active != 0u &&
+            source->video.refresh_next_tick < source->guest_ticks &&
+            source->video.dma_busy_until > source->guest_ticks) {
+            found_pending_refresh = true;
+            break;
+        }
+        advance_ticks(source, 1u);
+    }
+    CHECK_NAMED(found_pending_refresh,
+                "video_snapshot_refusal.active-owner-control-is-reachable");
+    if (!found_pending_refresh) goto done;
+    CHECK_EQ_U64(save_into(source, blob_v), 0u);
+    CHECK_EQ_U64(lynx_snapshot_restore(target, blob_v, SNAP_TOTAL), LYNX_OK);
+    CHECK_NAMED(memcmp(source, target, MSIZE) == 0,
+                "video_snapshot_refusal.active-owner-control-restores");
+
+    const uint64_t current_tick = source->guest_ticks;
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_DMA_BUSY,
+                                 current_tick - 1u, 8u,
+                                 "video_snapshot_refusal.stale-refresh-without-dma-blocker");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_DMA_NEXT,
+                                 current_tick - 1u, 8u,
+                                 "video_snapshot_refusal.stale-dma-without-refresh-owner");
+    video_snapshot_value_refused(target, blob_v, PAY_PAGE_LATCH,
+                                 1u, 1u,
+                                 "video_snapshot_refusal.page-latch-cleared-by-dma-owner");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_DMA_CURSOR,
+                                 LYNX_FRAME_ROW_BYTES, 1u,
+                                 "video_snapshot_refusal.active-cursor-range");
+    video_snapshot_value_refused(target, blob_v,
+                                 PAY_VIDEO + VIDEO_PENS + source->video.dma_cursor,
+                                 0xA5u, 1u,
+                                 "video_snapshot_refusal.active-row-tail-zero");
+    video_snapshot_value_refused(target, blob_v,
+                                 PAY_VIDEO + VIDEO_LINE_TICKS,
+                                 current_tick + 1u, 8u,
+                                 "video_snapshot_refusal.future-line-start");
+
+    /* Once a completed row and its successor are staged, line timestamps and
+       unused tails are a contiguous, monotone prefix rather than 816 slots. */
+    const uint64_t next_line = source->video.frame_start_tick + 4u * UINT64_C(159) * 16u;
+    advance_ticks(source, next_line + 1u - source->guest_ticks);
+    CHECK_NAMED(source->video.capture_rows == 1u && source->video.row_active != 0u,
+                "video_snapshot_refusal.completed-row-before-successor");
+    if (source->video.capture_rows != 1u || source->video.row_active == 0u) goto done;
+    if (!video_snapshot_roundtrip(source, target,
+                                  "video_snapshot_refusal.two-row-state-restores")) goto done;
+    CHECK_EQ_U64(save_into(source, blob_v), 0u);
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_LINE_TICKS + 8u,
+                                 source->video.line_ticks[0], 8u,
+                                 "video_snapshot_refusal.nonmonotone-line-starts");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_LINE_TICKS + 8u,
+                                 source->guest_ticks + 1u, 8u,
+                                 "video_snapshot_refusal.second-line-time-in-future");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_PENS +
+                                 2u * LYNX_FRAME_ROW_BYTES,
+                                 0xA5u, 1u,
+                                 "video_snapshot_refusal.unused-pen-tail-zero");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_ROW_PALETTES + 64u,
+                                 0xA5u, 1u,
+                                 "video_snapshot_refusal.unused-row-palette-zero");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_LINE_TICKS + 16u,
+                                 1u, 8u,
+                                 "video_snapshot_refusal.unused-row-tick-zero");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_CAPTURE_ROWS,
+                                 2u, 1u,
+                                 "video_snapshot_refusal.rows-exceed-visible-ordinal");
 
 done:
     if (source != NULL) lynx_machine_deinit(source);
