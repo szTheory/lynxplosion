@@ -77,6 +77,15 @@ For every discuss phase (and milestone discussion):
   committing generated evidence. Do not rely on the later full gate to catch
   paths already copied into local history (Phase 3 lesson, 2026-11-10).
 
+- At each executor plan handoff, before dispatching its successor, run tree
+  hygiene and history hygiene over that plan's new reachable commit range.
+  Generated evidence can contain checkout paths even when all focused source
+  tests pass. This local check supplements the executor's required pre-commit
+  evidence scan; it does not add a duplicate CI job. If a finding is confined
+  to unpublished history, preserve a private backup and all source/workspace
+  bytes, verify the live remote boundary, and repair only the evidence path.
+  Never rewrite published history or weaken the privacy scanner.
+
 ## CI and CD efficiency review
 
 After every CI run (and at release/CD steps): inspect the slowest

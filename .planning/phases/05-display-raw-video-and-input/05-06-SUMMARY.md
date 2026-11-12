@@ -17,7 +17,7 @@ actuals:
   commits: 5 # Measured: base..plan_head_after; metadata closeout commit is separate
 commits: 5
 plan_head_before: d04e395f116a22b7dfa972783fd544a5438ed873
-plan_head_after: 385be8ae82e33fa82991834ecad1c7e17605e6ad
+plan_head_after: 0135ca3dfff5a50b5e9d2230ca3a8704e9deef3f
 tech-stack:
   added: []
   patterns:
@@ -78,7 +78,7 @@ status: complete
 - **Completed:** 2026-11-12T06:21:43Z
 - **Tasks:** 2
 - **Files modified:** 19 plan artifacts and source/test files
-- **Actuals method:** `git diff --no-ext-diff --unified=0 <plan_head_before>..385be8a`, count added and removed UTF-8 content characters (excluding diff prefixes and headers), divide by 4; 65,473 characters / 4 = 16,368 tokens. The plan head range is recorded above.
+- **Actuals method:** `git diff --no-ext-diff --unified=0 <plan_head_before>..0135ca3`, count added and removed UTF-8 content characters (excluding diff prefixes and headers), divide by 4; 65,473 characters / 4 = 16,368 tokens. The plan head range is recorded above. This is a diff-size proxy, rounded down in the recorded field, and does not measure model or API token usage.
 
 ## Accomplishments
 
@@ -95,7 +95,7 @@ status: complete
 
 ## Verification
 
-- Task 1 owning command passed: `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(api\\.(video_snapshot|video_snapshot_refusal|snapshot_refusal|timer_snapshot_controls))$'`.
+- Task 1 owning command passed: `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(api\.(video_snapshot|video_snapshot_refusal|snapshot_refusal|timer_snapshot_controls))$'`.
 - Final focused command passed 6/6: build, `api.state_digest`, `api.header_selfcontained`, both video determinism tests, `det.golden`, and its negative control.
 - 17 directly affected CTests passed, including snapshot continuation/refusal, timer snapshot controls, two-run and two-instance bundle checks, profile agreement, golden, runner CLI and manifest controls.
 - `sh scripts/check-claims.sh` passed. The sorted inventory SHA-256 is `a3c690c0a94302a69528112d785f1cec2f6e9d34b3c05dc6837d92425cb2ed16` and matches the claim.
@@ -103,10 +103,10 @@ status: complete
 ## Task Commits
 
 1. **Task 1 RED:** `f9dc36c` — failing test for reachable queued video snapshot restore.
-2. **Task 1 refusal RED:** `778a8a5` — refusal controls for impossible video snapshot owners.
-3. **Task 1 GREEN:** `11ced21` — validate reachable format 5 video snapshot state.
-4. **Task 2 RED:** `ac5527c` — failing test for input-sensitive state observation.
-5. **Task 2 GREEN:** `385be8a` — public guest digest and complete video path observations.
+2. **Task 1 refusal RED:** `d3a1b32` — refusal controls for impossible video snapshot owners.
+3. **Task 1 GREEN:** `d7e2cbe` — validate reachable format 5 video snapshot state.
+4. **Task 2 RED:** `f9946c2` — failing test for input-sensitive state observation.
+5. **Task 2 GREEN:** `0135ca3` — public guest digest and complete video path observations.
 
 ## Decisions Made
 
@@ -125,7 +125,7 @@ status: complete
 - **Fix:** Updated the bundle contract and deterministic two-run inventory/comparisons so every digest-covered file is checked.
 - **Files modified:** `runner/bundle.h`, `tests/det/two_runs.cmake`
 - **Verification:** `det.two_runs` and the 17-test directly affected regression set passed.
-- **Committed in:** `385be8a`
+- **Committed in:** `0135ca3`
 
 The golden rebaseline was explicitly allowed by the plan when accompanied by a semantic reason and sensitivity proof; it is documented above. No other plan deviations.
 
@@ -154,4 +154,4 @@ Plan 05-06 is ready to be consumed by Plan 05-07. The local build and focused/di
 
 ## Self-Check: PASSED
 
-The summary, snapshot-video documentation and all three RED evidence records exist. All five task commits are ancestors of HEAD. The persisted plan ledger measures five task commits from `d04e395f116a22b7dfa972783fd544a5438ed873` through `385be8ae82e33fa82991834ecad1c7e17605e6ad`.
+The summary, snapshot-video documentation and all three RED evidence records exist. All five task commits are ancestors of HEAD. The persisted plan ledger measures five task commits from `d04e395f116a22b7dfa972783fd544a5438ed873` through `0135ca3dfff5a50b5e9d2230ca3a8704e9deef3f`.

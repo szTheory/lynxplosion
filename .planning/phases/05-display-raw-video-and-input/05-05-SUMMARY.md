@@ -81,7 +81,7 @@ plan_head_after: a8d93203ecbab84903abd560fc8725413409560c
 
 - **Duration:** About 38 minutes from dispatch artifact creation to completion; the exact executor start was not separately captured.
 - **Started:** Approximately 2026-11-11T23:17:57-05:00 (dispatch artifact creation time).
-- **Completed:** 2026-11-11T23:55:36Z.
+- **Task 2 commit:** 2026-11-12T04:55:08Z; metadata closeout commit: 2026-11-12T05:03:23Z. These are Git commit timestamps; the earlier completion timestamp incorrectly labelled local time as UTC.
 - **Tasks:** 2.
 - **Files modified:** 7.
 
