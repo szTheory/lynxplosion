@@ -732,8 +732,14 @@ static int write_exclusive(const char *path, const void *bytes, size_t length)
     int failed;
 #if defined(LYNX_CONSUMER_TESTING)
     const char *injected = getenv("LYNX_TEST_IO_FAILURE");
-    int inject_write = injected != NULL && strcmp(injected, "write") == 0;
-    int inject_close = injected != NULL && strcmp(injected, "close") == 0;
+    const char *base = strrchr(path, '/');
+    base = base == NULL ? path : base + 1;
+    int inject_write = injected != NULL &&
+        (strcmp(injected, "write") == 0 ||
+         (strncmp(injected, "write:", 6u) == 0 && strcmp(injected + 6u, base) == 0));
+    int inject_close = injected != NULL &&
+        (strcmp(injected, "close") == 0 ||
+         (strncmp(injected, "close:", 6u) == 0 && strcmp(injected + 6u, base) == 0));
 #endif
     if (file == NULL) {
         return 1;
@@ -778,6 +784,38 @@ static int normalize_destination(const char *directory, char *normalized,
 static int destination_is_absent(const char *directory)
 {
     struct stat info;
+    char absolute[4096], parent[4096];
+    size_t length;
+    if (directory[0] == '/') {
+        if (snprintf(absolute, sizeof absolute, "%s", directory) >= (int)sizeof absolute)
+            return report_error("output path exceeds its fixed bound");
+    } else {
+        char cwd[2048];
+        if (getcwd(cwd, sizeof cwd) == NULL ||
+            snprintf(absolute, sizeof absolute, "%s/%s", cwd, directory) >= (int)sizeof absolute)
+            return report_error("cannot resolve the output path from the current directory");
+    }
+    length = strlen(absolute);
+    while (length > 1u && absolute[length - 1u] == '/') absolute[--length] = '\0';
+    for (char *cursor = absolute + 1; *cursor != '\0'; cursor++) {
+        if (*cursor == '/') {
+            struct stat component;
+            *cursor = '\0';
+            if (lstat(absolute, &component) == 0 && S_ISLNK(component.st_mode))
+                return report_error("output path traverses a symbolic-link parent; use a direct directory path");
+            *cursor = '/';
+        }
+    }
+    if (snprintf(parent, sizeof parent, "%s", absolute) >= (int)sizeof parent)
+        return report_error("output parent path exceeds its fixed bound");
+    {
+        char *slash = strrchr(parent, '/');
+        if (slash == NULL) (void)snprintf(parent, sizeof parent, ".");
+        else if (slash == parent) slash[1] = '\0';
+        else *slash = '\0';
+    }
+    if (stat(parent, &info) != 0 || !S_ISDIR(info.st_mode))
+        return report_error("output parent must be an existing directory");
     if (lstat(directory, &info) == 0) {
         return report_error("output directory already exists; choose a new empty --out path (existing files were not changed)");
     }
@@ -785,6 +823,87 @@ static int destination_is_absent(const char *directory)
         return report_error("cannot inspect the output path; check its parent path and permissions");
     }
     return 0;
+}
+
+static int frame_input_paths_are_distinct(const char *content, const char *symbols,
+                                          const char *timeline)
+{
+    const char *paths[3] = {content, symbols, timeline};
+    struct stat info[3];
+    int have[3] = {0, 0, 0};
+    for (size_t index = 0u; index < 3u; index++)
+        have[index] = stat(paths[index], &info[index]) == 0;
+    for (size_t left = 0u; left < 3u; left++) {
+        for (size_t right = left + 1u; right < 3u; right++) {
+            if (have[left] && have[right] && info[left].st_dev == info[right].st_dev &&
+                info[left].st_ino == info[right].st_ino)
+                return report_error("frame input paths must refer to distinct files");
+        }
+    }
+    return 0;
+}
+
+static int frame_stage_is_owned(const char *staging, const struct stat *created)
+{
+    char owner[4096];
+    char expected[4096];
+    const char *base = strrchr(staging, '/');
+    uint8_t *bytes = NULL;
+    size_t length = 0u;
+    struct stat current;
+    int result;
+    base = base == NULL ? staging : base + 1;
+    if (lstat(staging, &current) != 0 || !S_ISDIR(current.st_mode) ||
+        current.st_dev != created->st_dev || current.st_ino != created->st_ino ||
+        output_path(staging, ".lynx-owner", owner, sizeof owner) != 0 ||
+        snprintf(expected, sizeof expected, "%s\n", base) >= (int)sizeof expected)
+        return 0;
+    result = read_bounded(owner, 4096u, &bytes, &length, "frame stage owner marker");
+    if (result != 0) { free(bytes); return 0; }
+    result = length == strlen(expected) && memcmp(bytes, expected, length) == 0;
+    free(bytes);
+    return result;
+}
+
+static int frame_stage_same_inode(const char *staging, const struct stat *created)
+{
+    struct stat current;
+    return lstat(staging, &current) == 0 && S_ISDIR(current.st_mode) &&
+        current.st_dev == created->st_dev && current.st_ino == created->st_ino;
+}
+
+static int write_frame_owner(const char *owner, const char *value, size_t length)
+{
+    int fd = open(owner, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    size_t used = 0u;
+    int failed = 0;
+    if (fd < 0) return 1;
+    while (used < length) {
+        ssize_t written = write(fd, value + used, length - used);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) { failed = 1; break; }
+        used += (size_t)written;
+    }
+    if (close(fd) != 0) failed = 1;
+    if (failed != 0) (void)unlink(owner);
+    return failed;
+}
+
+static int cleanup_frame_stage(const char *staging, const struct stat *created,
+                               int nonce_verified, char paths[][4096], size_t files)
+{
+    char owner[4096];
+    int cleanup_failed = 0;
+    if (nonce_verified == 0 && !frame_stage_is_owned(staging, created)) return 1;
+    if (nonce_verified != 0 && !frame_stage_same_inode(staging, created)) return 1;
+    for (size_t index = 0u; index < files; index++) {
+        if (paths[index][0] != '\0' && unlink(paths[index]) != 0 && errno != ENOENT)
+            cleanup_failed = 1;
+    }
+    if (output_path(staging, ".lynx-owner", owner, sizeof owner) != 0 ||
+        (unlink(owner) != 0 && errno != ENOENT)) cleanup_failed = 1;
+    if (rmdir(staging) != 0 && errno != ENOENT) cleanup_failed = 1;
+    return cleanup_failed;
 }
 
 static int publish_directory_exclusive(const char *staging, const char *directory)
@@ -1097,13 +1216,17 @@ static int publish_frame_outputs_generic(const char *directory, const frame_capt
                                          size_t frame_count, const char *manifest,
                                          size_t manifest_len)
 {
-    char normalized[4096], staging[4096], paths[FRAME_OUTPUT_LIMIT * 2u + 1u][4096] = {{0}};
+    char normalized[4096], staging[4096], owner[4096], owner_value[4096];
+    char paths[FRAME_OUTPUT_LIMIT * 2u + 1u][4096] = {{0}};
     char names[FRAME_OUTPUT_LIMIT * 2u + 1u][32], probe[4096];
     const void *data[FRAME_OUTPUT_LIMIT * 2u + 1u];
     size_t lengths[FRAME_OUTPUT_LIMIT * 2u + 1u];
     size_t files = 0u;
     int n;
     int made = 0;
+    int nonce_verified = 0;
+    struct stat stage_identity = {0};
+    int stage_identity_valid = 0;
     if (frame_count > FRAME_OUTPUT_LIMIT || normalize_destination(directory, normalized, sizeof normalized) != 0 ||
         destination_is_absent(normalized) != 0)
         return report_error("frame output path is unavailable or the bounded frame count was exceeded");
@@ -1125,10 +1248,29 @@ static int publish_frame_outputs_generic(const char *directory, const frame_capt
     if (n < 0 || (size_t)n >= sizeof staging || mkdtemp(staging) == NULL)
         return report_error("cannot create a private frame output staging directory");
     made = 1;
+    if (lstat(staging, &stage_identity) != 0 || !S_ISDIR(stage_identity.st_mode)) goto failed;
+    stage_identity_valid = 1;
+    if (output_path(staging, ".lynx-owner", owner, sizeof owner) != 0) goto failed;
+    {
+        const char *base = strrchr(staging, '/');
+        base = base == NULL ? staging : base + 1;
+        n = snprintf(owner_value, sizeof owner_value, "%s\n", base);
+    }
+    if (n < 0 || (size_t)n >= sizeof owner_value ||
+        write_frame_owner(owner, owner_value, (size_t)n) != 0) goto failed;
     for (size_t i = 0u; i < files; i++) {
         if (output_path(staging, names[i], paths[i], sizeof paths[i]) != 0 ||
             write_exclusive(paths[i], data[i], lengths[i]) != 0) goto failed;
     }
+#if defined(LYNX_CONSUMER_TESTING)
+    {
+        const char *abort_point = getenv("LYNX_TEST_FRAME_ABORT");
+        if (abort_point != NULL && strcmp(abort_point, "before-publish") == 0) goto failed;
+    }
+#endif
+    if (!frame_stage_is_owned(staging, &stage_identity)) goto failed;
+    nonce_verified = 1;
+    if (unlink(owner) != 0) goto failed;
     if (publish_directory_exclusive(staging, normalized) != 0) {
         (void)report_error("cannot publish the complete frame directory without replacement");
         goto failed;
@@ -1136,8 +1278,9 @@ static int publish_frame_outputs_generic(const char *directory, const frame_capt
     made = 0;
     return 0;
 failed:
-    for (size_t i = 0u; i < files; i++) if (paths[i][0] != '\0') (void)unlink(paths[i]);
-    if (made != 0) (void)rmdir(staging);
+    if (made != 0 && stage_identity_valid != 0 && cleanup_frame_stage(staging, &stage_identity, nonce_verified,
+                                         paths, files) != 0)
+        (void)report_error("frame stage cleanup refused because its invocation nonce or directory identity did not match");
     return report_error("cannot write the complete frame output; this invocation removed its private partial files");
 }
 
@@ -1563,7 +1706,8 @@ static uint32_t replay_expected_joystick(uint32_t mask, uint32_t lefthand)
 
 static int replay_guest_observation(lynx_machine *machine, uint32_t result_address,
                                    uint32_t handedness_address, uint32_t expected_mask,
-                                   uint32_t *handedness_out, guest_probe *sample)
+                                   uint32_t *handedness_out, guest_probe *sample,
+                                   const char **failure)
 {
     static const uint32_t logical_bits[9] = {
         LYNX_INPUT_A, LYNX_INPUT_B, LYNX_INPUT_UP, LYNX_INPUT_DOWN,
@@ -1572,15 +1716,34 @@ static int replay_guest_observation(lynx_machine *machine, uint32_t result_addre
     };
     uint8_t pattern[9];
     uint8_t handedness = 0u;
-    if (lynx_read_memory(machine, handedness_address, &handedness, 1u) != LYNX_OK || handedness > 1u ||
-        read_guest_probe(machine, result_address, sample) != 0 ||
-        sample->joystick != replay_expected_joystick(expected_mask, handedness) ||
+    if (lynx_read_memory(machine, handedness_address, &handedness, 1u) != LYNX_OK || handedness > 1u) {
+        *failure = "source-linked homebrew handedness is outside its declared 0/1 range";
+        return 1;
+    }
+    if (read_guest_probe(machine, result_address, sample) != 0) {
+        *failure = "homebrew result block schema is invalid";
+        return 1;
+    }
+    if (sample->progress < 2u) {
+        *failure = "homebrew progress did not advance";
+        return 1;
+    }
+    if (sample->error != 0u || sample->done != 1u) {
+        *failure = "homebrew result block reports guest error or incomplete state";
+        return 1;
+    }
+    if (sample->joystick != replay_expected_joystick(expected_mask, handedness) ||
         sample->switches != ((expected_mask & LYNX_INPUT_PAUSE) != 0u ? 1u : 0u) ||
-        sample->progress < 2u || sample->error != 0u || sample->done != 1u ||
-        lynx_read_memory(machine, 0x4000u, pattern, 9u) != LYNX_OK) return 1;
+        lynx_read_memory(machine, 0x4000u, pattern, 9u) != LYNX_OK) {
+        *failure = "homebrew input response mismatch";
+        return 1;
+    }
     for (size_t index = 0u; index < 9u; index++) {
         const uint8_t wanted = (expected_mask & logical_bits[index]) != 0u ? 0x22u : 0x11u;
-        if (pattern[index] != wanted) return 1;
+        if (pattern[index] != wanted) {
+            *failure = "homebrew input response mismatch";
+            return 1;
+        }
     }
     *handedness_out = handedness;
     return 0;
@@ -1813,6 +1976,7 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
         interleaved_test = requested != NULL && strcmp(requested, "1") == 0;
     }
     if (replay_sha_vectors() != 0) { (void)report_error("independent SHA-256 vectors failed"); goto done; }
+    if (frame_input_paths_are_distinct(content_path, symbols_path, timeline_path) != 0) goto done;
     if (read_bounded(timeline_path, TIMELINE_LIMIT, &timeline_bytes, &timeline_len, "input timeline") != 0 ||
         parse_input_timeline(timeline_bytes, timeline_len, &timeline) != 0) {
         (void)report_error("timeline is not canonical LYNX-INPUT 1 ASCII; use strict increasing decimal tick/mask LF rows within the documented bounds"); goto done;
@@ -1894,10 +2058,14 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
                     } else if (pending_edge_tick != UINT64_MAX && frame.frame_end_tick > pending_edge_tick) {
                         pending_edge_tick = UINT64_MAX;
                     }
-                    if (frame_count >= FRAME_OUTPUT_LIMIT || frame.row_count > LYNX_FRAME_MAX_ROWS ||
-                        replay_guest_observation(active.machine, probe_address, handedness_address,
-                            frame_mask, &handedness, &sample) != 0 || handedness != source_handedness) {
-                        (void)report_error("frame output bound or source-linked joystick/switch/result/pattern assertion failed"); goto done;
+                    const char *observation_failure = "homebrew input response mismatch";
+                    if (frame_count >= FRAME_OUTPUT_LIMIT || frame.row_count > LYNX_FRAME_MAX_ROWS) {
+                        (void)report_error("frame output bound or row count exceeded its fixed limit"); goto done;
+                    }
+                    if (replay_guest_observation(active.machine, probe_address, handedness_address,
+                            frame_mask, &handedness, &sample, &observation_failure) != 0 ||
+                        handedness != source_handedness) {
+                        (void)report_error(observation_failure); goto done;
                     }
                     capture = &frames[frame_count]; memset(capture, 0, sizeof *capture);
                     capture->result = frame; capture->input_mask = frame_mask;
@@ -1928,6 +2096,11 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
                 target_created = 1;
             }
             memcpy(checkpoint.script_digest, script_digest, sizeof script_digest);
+#if defined(LYNX_CONSUMER_TESTING)
+            if (getenv("LYNX_TEST_REPLAY_RESTORE_BAD_SCRIPT") != NULL &&
+                strcmp(getenv("LYNX_TEST_REPLAY_RESTORE_BAD_SCRIPT"), "1") == 0)
+                checkpoint.script_digest[0] ^= 1u;
+#endif
             if (replay_restore_checkpoint(active.machine, restore_target.machine, &checkpoint, &timeline, script_digest) != 0) {
                 (void)report_error("pre-edge checkpoint restore failed script digest, tick, lower-bound cursor, prior mask or state digest"); goto done;
             }
@@ -1940,6 +2113,11 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
         if (checkpoint_test != 0) {
             replay_checkpoint checkpoint = {{0}, event->tick, cursor, current_mask, CHECKPOINT_POST_EDGE};
             memcpy(checkpoint.script_digest, script_digest, sizeof script_digest);
+#if defined(LYNX_CONSUMER_TESTING)
+            if (getenv("LYNX_TEST_REPLAY_RESTORE_BAD_SCRIPT") != NULL &&
+                strcmp(getenv("LYNX_TEST_REPLAY_RESTORE_BAD_SCRIPT"), "1") == 0)
+                checkpoint.script_digest[0] ^= 1u;
+#endif
             if (replay_restore_checkpoint(active.machine, restore_target.machine, &checkpoint, &timeline, script_digest) != 0) {
                 (void)report_error("post-edge checkpoint restore failed script digest, tick, upper-bound cursor, applied mask or state digest"); goto done;
             }
@@ -1979,9 +2157,11 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
                         pending_edge_tick = UINT64_MAX;
                     }
                     if (frame_count >= FRAME_OUTPUT_LIMIT || frame.row_count > LYNX_FRAME_MAX_ROWS) { (void)report_error("final frame exceeded the bounded output count or row count"); goto done; }
+                    const char *observation_failure = "homebrew input response mismatch";
                     if (replay_guest_observation(active.machine, probe_address, handedness_address,
-                            frame_mask, &handedness, &sample) != 0 || handedness != source_handedness) {
-                        (void)report_error("final frame guest joystick/switch sample or source-linked result/pattern is invalid"); goto done;
+                            frame_mask, &handedness, &sample, &observation_failure) != 0 ||
+                        handedness != source_handedness) {
+                        (void)report_error(observation_failure); goto done;
                     }
                     capture = &frames[frame_count]; memset(capture, 0, sizeof *capture); capture->result = frame;
                     capture->input_mask = frame_mask; capture->sample = sample; capture->handedness = handedness;
