@@ -119,6 +119,18 @@ if [ ! -f "$CC65_DIR/.lynx-build" ] || [ ! -f "$CC65_DIR/.lynx-build-files" ]; t
   printf 'build-suites: verified cc65 build records are missing\n' >&2
   exit 1
 fi
+if ! awk -v pin="$CC65_PIN" '
+  $1 == "pin_sha256" && $2 == "=" { pin_seen++; pin_value = $3 }
+  $1 == "recipe" && $2 == "=" { recipe_seen++; recipe_value = $3 }
+  $1 == "build_seconds" && $2 == "=" { seconds_seen++; seconds_value = $3 }
+  END {
+    if (pin_seen != 1 || pin_value != pin || recipe_seen != 1 || recipe_value != "1" ||
+        seconds_seen != 1 || seconds_value !~ /^(0|[1-9][0-9]*)$/) exit 1
+  }
+' "$CC65_DIR/.lynx-build"; then
+  printf 'build-suites: local cc65 build record is not a successful pinned recipe-1 build\n' >&2
+  exit 1
+fi
 CA65_SHA=$(verify_tool bin/ca65)
 LD65_SHA=$(verify_tool bin/ld65)
 
