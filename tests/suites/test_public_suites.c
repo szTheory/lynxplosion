@@ -1782,8 +1782,18 @@ static int read_timer_raw(const char *path, const char *profile, uint8_t results
     }
     for (i = 0u; i < TIMER_MEANINGFUL; i++) {
         uint32_t index;
-        RAW_ROW("result", 3u);
-        if (parse_decimal(fields[1], &index) != 0 || index != i || parse_byte(fields[2], &results[i]) != 0) {
+        if (next_line(text, length, &offset, line, sizeof line) != 0) {
+            free(text); return fail("timer raw record shape mismatch");
+        }
+        if (line[0] != '\0' && line[strlen(line) - 1u] == '\t') {
+            free(text); return fail("timer raw record count or byte malformed");
+        }
+        count = split_fields(line, fields, 4u);
+        if (count != 3u || strcmp(fields[0], "result") != 0) {
+            free(text); return fail("timer raw record shape mismatch");
+        }
+        if (parse_decimal(fields[1], &index) != 0 || index != i ||
+            !valid_hex(fields[2], 2u) || parse_byte(fields[2], &results[i]) != 0) {
             free(text); return fail("timer raw record count or byte malformed");
         }
     }
@@ -1815,7 +1825,7 @@ static int validate_timer_comparison_file(const char *path, const suite_oracle *
         if (next_line(text, length, &offset, line, sizeof line) != 0 ||
             (count = split_fields(line, fields, 6u)) != 5u || strcmp(fields[0], "result") != 0 ||
             parse_decimal(fields[1], &index) != 0 || index != i ||
-            parse_byte(fields[2], &value) != 0 || value != results[i]) {
+            !valid_hex(fields[2], 2u) || parse_byte(fields[2], &value) != 0 || value != results[i]) {
             free(text); return fail("timer comparison record row mismatch");
         }
         if (snprintf(expected, sizeof expected, "EXPECT(") >= (int)sizeof expected) {
@@ -3284,6 +3294,17 @@ static int prepare_timer_video_environment(machine_instance *instance)
     return 0;
 }
 
+static void timer_video_core_build_id_sha(char output[65])
+{
+    lynx__sha256 state;
+    uint8_t digest[32];
+    const char *build_id = lynx_build_id();
+    lynx__sha256_init(&state);
+    lynx__sha256_update(&state, build_id, strlen(build_id));
+    lynx__sha256_final(&state, digest);
+    lynx__sha256_hex(digest, output);
+}
+
 static int write_timer_video_revisit_record(const char *directory, const char *profile,
                                             const machine_instance *instance,
                                             const char *bll_sha, const char *labels_sha,
@@ -3297,7 +3318,7 @@ static int write_timer_video_revisit_record(const char *directory, const char *p
     char build_record_path[4096], source_root[4096], source_tests_path[4096];
     char source_main_path[4096], layout_path[4096], builder_path[4096], oracle_builder_path[4096];
     char record_path[4096], build_record_sha[65], source_tests_sha[65], source_main_sha[65];
-    char layout_sha[65], builder_sha[65], oracle_builder_sha[65];
+    char layout_sha[65], builder_sha[65], oracle_builder_sha[65], core_build_id_sha[65];
     char source_revision[128], source_archive[128], cc65_archive[128];
     char actual_object[65], actual_labels[65];
     atomic_output output = {0};
@@ -3305,6 +3326,7 @@ static int write_timer_video_revisit_record(const char *directory, const char *p
     const lynx_machine *machine = instance->machine;
     const lynx__timer *timer0 = &machine->timer_bank.timers[0];
     const lynx__timer *timer2 = &machine->timer_bank.timers[2];
+    timer_video_core_build_id_sha(core_build_id_sha);
     const int n0 = snprintf(build_record_path, sizeof build_record_path, "%s/build-record.txt", directory);
     const int n1 = snprintf(source_root, sizeof source_root, "%s/build/pins/lynx-tests", LYNX_PROJECT_ROOT);
     if (n0 < 0 || (size_t)n0 >= sizeof build_record_path || n1 < 0 || (size_t)n1 >= sizeof source_root ||
@@ -3336,7 +3358,7 @@ static int write_timer_video_revisit_record(const char *directory, const char *p
         "timer_tests_sha256=%s\ntimer_main_sha256=%s\nwrapper_sha256=%s\n"
         "oracle_sha256=%s\nbuild_record_sha256=%s\nbll_sha256=%s\nlabels_sha256=%s\n"
         "layout_manifest_sha256=%s\nbuild_recipe_sha256=%s\noracle_recipe_sha256=%s\n"
-        "core_build_id=%s\ncore_timing_policy=video-policy1\ncpu_cost_model=flat5\ncpu_bus_cycle_ticks=5\n"
+        "core_build_id_sha256=%s\ncore_timing_policy=video-policy1\ncpu_cost_model=flat5\ncpu_bus_cycle_ticks=5\n"
         "video_byte_grant_ticks=5\nrefresh_grant_ticks=5\nrefresh_period_ticks=256\n"
         "refresh_next_tick_initial=256\nrefresh_next_tick_final=%" PRIu64 "\n"
         "start_tick=0\ninitial_counter_address=0001\ninitial_counter_value=00\n"
@@ -3357,7 +3379,7 @@ static int write_timer_video_revisit_record(const char *directory, const char *p
         "hardware_accuracy=unverified\nprofile_qualification=unresolved\n",
         profile, source_revision, source_archive, cc65_archive, source_tests_sha, source_main_sha,
         wrapper_sha, oracle_sha, build_record_sha, bll_sha, labels_sha, layout_sha,
-        builder_sha, oracle_builder_sha, lynx_build_id(), machine->video.refresh_next_tick,
+        builder_sha, oracle_builder_sha, core_build_id_sha, machine->video.refresh_next_tick,
         initial_clear_seen != 0u ? "true" : "false", source_write_count,
         acknowledged_increments, counter_at_complete, result14,
         timer0->backup, timer0->count, timer0->control_a, timer0->control_b,
@@ -3366,6 +3388,359 @@ static int write_timer_video_revisit_record(const char *directory, const char *p
         machine->mapctl, machine->cpu_page_latch);
     if (atomic_output_commit(&output) != 0) return fail("timer video record close failed");
     return 0;
+}
+
+static int timer_video_record_validate(const char *profile, const char *raw_path,
+                                      const char *run_record_path, const char *video_record_path,
+                                      const char *comparison_path, const char *oracle_path,
+                                      const char *directory)
+{
+    char build_record_path[4096], source_root[4096], source_tests_path[4096];
+    char source_main_path[4096], layout_path[4096], builder_path[4096], oracle_builder_path[4096];
+    char bll_path[4096], labels_path[4096], value[256], expected[256];
+    char source_revision[128], source_archive[128], cc65_archive[128];
+    char source_tests_sha[65], source_main_sha[65], layout_sha[65], core_build_id_sha[65];
+    char builder_sha[65], oracle_builder_sha[65], build_record_sha[65];
+    char bll_sha[65], labels_sha[65], oracle_sha[65], wrapper_sha[65];
+    uint8_t results[TIMER_MEANINGFUL];
+    uint32_t ticks, guest_ticks, tick_min, tick_max, margin, headroom;
+    uint32_t acknowledgements, watched_writes, agreements = 0u;
+    uint8_t counter_value, result14;
+    unsigned profile_index_value;
+    suite_oracle oracle;
+    int status = 1;
+    if (profile == NULL || raw_path == NULL || run_record_path == NULL ||
+        video_record_path == NULL || comparison_path == NULL || oracle_path == NULL ||
+        directory == NULL) return fail("timer video record: null input");
+    if (profile_index(profile, &profile_index_value) != 0) return fail("timer video record: invalid profile");
+    (void)profile_index_value;
+    if (!regular_nosymlink_file(raw_path) || !regular_nosymlink_file(run_record_path) ||
+        !regular_nosymlink_file(video_record_path) || !regular_nosymlink_file(comparison_path)) {
+        return fail("timer video record: missing or unsafe record input");
+    }
+    if (parse_oracle(oracle_path, &oracle) != 0 || read_build_identity(directory, &oracle) != 0 ||
+        verify_suite_build_artifacts(directory, "timers") != 0 ||
+        file_sha256(raw_path, expected) != 0 || file_sha256(run_record_path, expected) != 0 ||
+        file_sha256(comparison_path, expected) != 0 ||
+        snprintf(build_record_path, sizeof build_record_path, "%s/build-record.txt", directory) >= (int)sizeof build_record_path ||
+        snprintf(source_root, sizeof source_root, "%s/build/pins/lynx-tests", LYNX_PROJECT_ROOT) >= (int)sizeof source_root ||
+        snprintf(source_tests_path, sizeof source_tests_path, "%s/timers/tests.s", source_root) >= (int)sizeof source_tests_path ||
+        snprintf(source_main_path, sizeof source_main_path, "%s/timers/main.c", source_root) >= (int)sizeof source_main_path ||
+        snprintf(layout_path, sizeof layout_path, "%s/fixtures/manifests/timer-tests.manifest", LYNX_PROJECT_ROOT) >= (int)sizeof layout_path ||
+        snprintf(builder_path, sizeof builder_path, "%s/scripts/build-suites.sh", LYNX_PROJECT_ROOT) >= (int)sizeof builder_path ||
+        snprintf(oracle_builder_path, sizeof oracle_builder_path, "%s/scripts/generate-suite-oracle.sh", LYNX_PROJECT_ROOT) >= (int)sizeof oracle_builder_path ||
+        checked_join(bll_path, sizeof bll_path, directory, "timers.bll") != 0 ||
+        checked_join(labels_path, sizeof labels_path, directory, "timers.lbl") != 0 ||
+        record_value(build_record_path, "lynx_tests_revision", source_revision, sizeof source_revision) != 0 ||
+        record_value(build_record_path, "lynx_tests_pin", source_archive, sizeof source_archive) != 0 ||
+        record_value(build_record_path, "cc65_pin", cc65_archive, sizeof cc65_archive) != 0 ||
+        file_sha256(build_record_path, build_record_sha) != 0 ||
+        file_sha256(source_tests_path, source_tests_sha) != 0 ||
+        file_sha256(source_main_path, source_main_sha) != 0 ||
+        file_sha256(layout_path, layout_sha) != 0 ||
+        file_sha256(builder_path, builder_sha) != 0 ||
+        file_sha256(oracle_builder_path, oracle_builder_sha) != 0 ||
+        file_sha256(bll_path, bll_sha) != 0 || file_sha256(labels_path, labels_sha) != 0 ||
+        file_sha256(oracle_path, oracle_sha) != 0 ||
+        record_value(build_record_path, "timers_wrapper_sha256", wrapper_sha, sizeof wrapper_sha) != 0) {
+        return fail("timer video record: source/tool/build identity unavailable");
+    }
+    timer_video_core_build_id_sha(core_build_id_sha);
+    if (read_timer_raw(raw_path, profile, results) != 0) return 1;
+#define VIDEO_RUN_CHECK(key, wanted, diagnostic) \
+    do { if (timer_record_is(run_record_path, (key), (wanted), (diagnostic)) != 0) goto done; } while (0)
+    VIDEO_RUN_CHECK("suite", "timers", "timer video record: run identity mismatch");
+    VIDEO_RUN_CHECK("machine_profile", profile, "timer video record: run identity mismatch");
+    VIDEO_RUN_CHECK("profile_input", profile, "timer video record: run identity mismatch");
+    VIDEO_RUN_CHECK("ram_seed", "zero", "timer video record: run identity mismatch");
+    VIDEO_RUN_CHECK("bll_sha256", bll_sha, "timer video record: object identity mismatch");
+    VIDEO_RUN_CHECK("labels_sha256", labels_sha, "timer video record: layout identity mismatch");
+    VIDEO_RUN_CHECK("oracle_sha256", oracle_sha, "timer video record: oracle identity mismatch");
+    VIDEO_RUN_CHECK("wrapper_sha256", wrapper_sha, "timer video record: wrapper identity mismatch");
+    VIDEO_RUN_CHECK("cost_model", "flat5", "timer video record: CPU cost identity mismatch");
+    VIDEO_RUN_CHECK("cost_ticks", "5", "timer video record: CPU cost identity mismatch");
+    VIDEO_RUN_CHECK("sample_offset_ticks", "0", "timer video record: sampling phase mismatch");
+    VIDEO_RUN_CHECK("page_mode_video_enabled", "true", "timer video record: video policy mismatch");
+    VIDEO_RUN_CHECK("refresh_dma_enabled", "true", "timer video record: refresh policy mismatch");
+    VIDEO_RUN_CHECK("timing_policy", "video-policy1", "timer video record: timing policy mismatch");
+    VIDEO_RUN_CHECK("refresh_policy", "video-policy1", "timer video record: refresh policy mismatch");
+    VIDEO_RUN_CHECK("video_byte_grant_ticks", "5", "timer video record: video cost identity mismatch");
+    VIDEO_RUN_CHECK("refresh_grant_ticks", "5", "timer video record: refresh cost identity mismatch");
+    VIDEO_RUN_CHECK("refresh_period_ticks", "256", "timer video record: refresh period mismatch");
+    VIDEO_RUN_CHECK("counter_initialization", "zero", "timer video record: counter initialization mismatch");
+    VIDEO_RUN_CHECK("hardware_accuracy", "unverified", "timer video record: qualification claim mismatch");
+    VIDEO_RUN_CHECK("profile_qualification", "unresolved", "timer video record: qualification claim mismatch");
+#undef VIDEO_RUN_CHECK
+#define VIDEO_ENV_CHECK(key, wanted, diagnostic) \
+    do { if (timer_record_is(video_record_path, (key), (wanted), (diagnostic)) != 0) goto done; } while (0)
+    VIDEO_ENV_CHECK("schema", "lynx-timer-video-revisit-v1", "timer video record: unsupported schema");
+    VIDEO_ENV_CHECK("suite", "timers", "timer video record: run identity mismatch");
+    VIDEO_ENV_CHECK("machine_profile", profile, "timer video record: run identity mismatch");
+    VIDEO_ENV_CHECK("source_revision", source_revision, "timer video record: source revision mismatch");
+    VIDEO_ENV_CHECK("source_archive_sha256", source_archive, "timer video record: source archive mismatch");
+    VIDEO_ENV_CHECK("cc65_archive_sha256", cc65_archive, "timer video record: tool identity mismatch");
+    VIDEO_ENV_CHECK("timer_tests_sha256", source_tests_sha, "timer video record: source identity mismatch");
+    VIDEO_ENV_CHECK("timer_main_sha256", source_main_sha, "timer video record: source identity mismatch");
+    VIDEO_ENV_CHECK("wrapper_sha256", wrapper_sha, "timer video record: wrapper identity mismatch");
+    VIDEO_ENV_CHECK("oracle_sha256", oracle_sha, "timer video record: oracle identity mismatch");
+    VIDEO_ENV_CHECK("build_record_sha256", build_record_sha, "timer video record: build identity mismatch");
+    VIDEO_ENV_CHECK("bll_sha256", bll_sha, "timer video record: object identity mismatch");
+    VIDEO_ENV_CHECK("labels_sha256", labels_sha, "timer video record: labels identity mismatch");
+    VIDEO_ENV_CHECK("layout_manifest_sha256", layout_sha, "timer video record: layout identity mismatch");
+    VIDEO_ENV_CHECK("build_recipe_sha256", builder_sha, "timer video record: build recipe identity mismatch");
+    VIDEO_ENV_CHECK("oracle_recipe_sha256", oracle_builder_sha, "timer video record: oracle recipe identity mismatch");
+    VIDEO_ENV_CHECK("core_build_id_sha256", core_build_id_sha, "timer video record: core build identity mismatch");
+    VIDEO_ENV_CHECK("core_timing_policy", "video-policy1", "timer video record: timing policy mismatch");
+    VIDEO_ENV_CHECK("cpu_cost_model", "flat5", "timer video record: CPU cost identity mismatch");
+    VIDEO_ENV_CHECK("cpu_bus_cycle_ticks", "5", "timer video record: CPU cost identity mismatch");
+    VIDEO_ENV_CHECK("video_byte_grant_ticks", "5", "timer video record: video cost identity mismatch");
+    VIDEO_ENV_CHECK("refresh_grant_ticks", "5", "timer video record: refresh cost identity mismatch");
+    VIDEO_ENV_CHECK("refresh_period_ticks", "256", "timer video record: refresh period mismatch");
+    VIDEO_ENV_CHECK("refresh_next_tick_initial", "256", "timer video record: refresh phase mismatch");
+    VIDEO_ENV_CHECK("start_tick", "0", "timer video record: start phase mismatch");
+    VIDEO_ENV_CHECK("initial_counter_address", "0001", "timer video record: counter identity mismatch");
+    VIDEO_ENV_CHECK("initial_counter_value", "00", "timer video record: counter initialization mismatch");
+    VIDEO_ENV_CHECK("counter_initialization", "wrapper-zero-page-clear", "timer video record: counter initialization mismatch");
+    VIDEO_ENV_CHECK("wrapper_counter_clear_write_seen", "true", "timer video record: counter initialization mismatch");
+    VIDEO_ENV_CHECK("strict_comparison", "all-16-source-rows", "timer video record: comparison policy mismatch");
+    VIDEO_ENV_CHECK("pending_descriptor", "none", "timer video record: legacy descriptor inheritance refused");
+    VIDEO_ENV_CHECK("source_timer_index14_admission", "none", "timer video record: legacy descriptor inheritance refused");
+    VIDEO_ENV_CHECK("timer0_backup_initial", "9e", "timer video record: Timer0 precondition mismatch");
+    VIDEO_ENV_CHECK("timer0_count_initial", "00", "timer video record: Timer0 precondition mismatch");
+    VIDEO_ENV_CHECK("timer0_control_a_initial", "18", "timer video record: Timer0 precondition mismatch");
+    VIDEO_ENV_CHECK("timer2_backup_initial", "68", "timer video record: Timer2 precondition mismatch");
+    VIDEO_ENV_CHECK("timer2_count_initial", "00", "timer video record: Timer2 precondition mismatch");
+    VIDEO_ENV_CHECK("timer2_control_a_initial", "1f", "timer video record: Timer2 precondition mismatch");
+    VIDEO_ENV_CHECK("pbkup_initial", "29", "timer video record: display register mismatch");
+    VIDEO_ENV_CHECK("dispctl_initial", "01", "timer video record: display register mismatch");
+    VIDEO_ENV_CHECK("dispaddr_initial", "2000", "timer video record: display register mismatch");
+    VIDEO_ENV_CHECK("mapctl_initial", "0c", "timer video record: bus map mismatch");
+    VIDEO_ENV_CHECK("page_latch_initial", "00", "timer video record: page state mismatch");
+    VIDEO_ENV_CHECK("video_buffer", "zero-filled-scratch-2000", "timer video record: display buffer identity mismatch");
+    VIDEO_ENV_CHECK("display_dma_owner", "machine-event-scheduler", "timer video record: bus ownership mismatch");
+    VIDEO_ENV_CHECK("refresh_dma_owner", "machine-event-scheduler", "timer video record: bus ownership mismatch");
+    VIDEO_ENV_CHECK("hardware_accuracy", "unverified", "timer video record: qualification claim mismatch");
+    VIDEO_ENV_CHECK("profile_qualification", "unresolved", "timer video record: qualification claim mismatch");
+#undef VIDEO_ENV_CHECK
+    if (timer_record_number(run_record_path, "ticks_observed", &ticks, "timer video record: invalid ticks_observed") != 0 ||
+        timer_record_number(run_record_path, "guest_ticks", &guest_ticks, "timer video record: guest tick records disagree") != 0 ||
+        timer_record_number(run_record_path, "tick_min", &tick_min, "timer video record: completion bound metadata mismatch") != 0 ||
+        timer_record_number(run_record_path, "tick_max", &tick_max, "timer video record: completion bound metadata mismatch") != 0 ||
+        timer_record_number(run_record_path, "completion_margin_ticks", &margin, "timer video record: completion margin mismatch") != 0 ||
+        timer_record_number(run_record_path, "maximum_headroom_ticks", &headroom, "timer video record: completion headroom mismatch") != 0) goto done;
+    if (tick_min != TIMER_MIN_TICKS || tick_max != TIMER_MAX_TICKS || ticks < tick_min || ticks > tick_max) {
+        (void)fail("timer video record: ticks outside completion bounds");
+        goto done;
+    }
+    if (guest_ticks != ticks || margin != ticks - tick_min || headroom != tick_max - ticks) {
+        (void)fail("timer video record: checked guest tick arithmetic mismatch");
+        goto done;
+    }
+    if (timer_record_number(video_record_path, "counter_watched_guest_writes", &watched_writes,
+                            "timer video record: malformed counter watch count") != 0 ||
+        timer_record_number(video_record_path, "source_acknowledged_increments", &acknowledgements,
+                            "timer video record: malformed counter increment count") != 0 ||
+        timer_record_field(video_record_path, "counter_value_at_complete", value, sizeof value) != 0 ||
+        parse_byte(value, &counter_value) != 0 ||
+        timer_record_field(video_record_path, "result14", value, sizeof value) != 0 ||
+        parse_byte(value, &result14) != 0) {
+        (void)fail("timer video record: malformed counter/result evidence");
+        goto done;
+    }
+    if (acknowledgements > UINT8_MAX || watched_writes < acknowledgements ||
+        (uint32_t)counter_value != acknowledgements || counter_value != results[14] || result14 != results[14]) {
+        (void)fail("timer video record: counter/result evidence mismatch");
+        goto done;
+    }
+    if (validate_timer_comparison_file(comparison_path, &oracle, results, &agreements) != 0) goto done;
+    for (uint32_t i = 0u; i < TIMER_MEANINGFUL; i++) {
+        int accepted = 0;
+        for (uint32_t j = 0u; j < oracle.counts[1][i]; j++) {
+            if (oracle.values[1][i][j] == results[i]) accepted = 1;
+        }
+        if ((i == 14u && accepted != 0) || (i != 14u && accepted == 0)) {
+            (void)fail("timer video record: strict mismatch set changed");
+            goto done;
+        }
+    }
+    if (agreements != TIMER_MEANINGFUL - 1u) {
+        (void)fail("timer video record: strict mismatch set changed");
+        goto done;
+    }
+    printf("timer video record: strict %u/16 source agreements; profile=%s, identity and frozen preconditions valid\n",
+           agreements, profile);
+    status = 0;
+done:
+    return status;
+}
+
+static int timer_video_null_inputs_self_test(void)
+{
+    const char *valid = "not-opened";
+    if (timer_video_record_validate(NULL, valid, valid, valid, valid, valid, valid) == 0 ||
+        timer_video_record_validate("lynx1", NULL, valid, valid, valid, valid, valid) == 0 ||
+        timer_video_record_validate("lynx1", valid, NULL, valid, valid, valid, valid) == 0 ||
+        timer_video_record_validate("lynx1", valid, valid, NULL, valid, valid, valid) == 0 ||
+        timer_video_record_validate("lynx1", valid, valid, valid, NULL, valid, valid) == 0 ||
+        timer_video_record_validate("lynx1", valid, valid, valid, valid, NULL, valid) == 0 ||
+        timer_video_record_validate("lynx1", valid, valid, valid, valid, valid, NULL) == 0) {
+        return fail("timer video null control: validator accepted a NULL input");
+    }
+    puts("timer video null control: all NULL source/record inputs refused");
+    return 0;
+}
+
+static int timer_video_time_candidate_check(const char *path)
+{
+    uint32_t ticks, minimum, maximum;
+    if (path == NULL) return fail("timer video time candidate: null input");
+    if (timer_record_number(path, "tick_min", &minimum,
+                            "timer video time candidate: malformed tick_min") != 0 ||
+        timer_record_number(path, "tick_max", &maximum,
+                            "timer video time candidate: malformed tick_max") != 0 ||
+        timer_record_number(path, "ticks_observed", &ticks,
+                            "timer video time candidate: invalid ticks_observed") != 0) return 1;
+    if (minimum != TIMER_MIN_TICKS || maximum != TIMER_MAX_TICKS) {
+        return fail("timer video time candidate: bound identity mismatch");
+    }
+    if (ticks < minimum || ticks > maximum) {
+        return fail("timer video time candidate: ticks outside completion bounds");
+    }
+    puts("timer video time candidate: integer within declared bounds; not guest evidence");
+    return 0;
+}
+
+static int timer_video_comparator_only(const char *profile, const char *raw_path,
+                                       const char *comparison_path, const char *oracle_path)
+{
+    uint8_t results[TIMER_MEANINGFUL];
+    uint32_t agreements = 0u;
+    suite_oracle oracle;
+    if (profile == NULL || raw_path == NULL || comparison_path == NULL || oracle_path == NULL) {
+        return fail("timer video comparator-only: null input");
+    }
+    if (profile_index(profile, &agreements) != 0 || parse_oracle(oracle_path, &oracle) != 0 ||
+        read_timer_raw(raw_path, profile, results) != 0 ||
+        validate_timer_comparison_file(comparison_path, &oracle, results, &agreements) != 0) return 1;
+    if (agreements != TIMER_MEANINGFUL) {
+        return fail("timer video comparator-only: all-source agreement is required");
+    }
+    puts("timer video comparator-only: 16/16 source rows accepted; not guest evidence");
+    return 0;
+}
+
+static int timer_video_advance_to(machine_instance *instance, uint64_t target,
+                                  unsigned mode, uint32_t *watch_events)
+{
+    uint64_t total = 0u;
+    if (mode == 2u && lynx_watch_configure(instance->machine, 0x0001u, 1u) != LYNX_OK) {
+        return fail("timer video slicing control: counter watch setup failed");
+    }
+    while (total < target) {
+        uint64_t budget = target - total;
+        uint64_t before = 0u, after = 0u, used = 0u;
+        lynx_stop_reason stop = LYNX_STOP_BUDGET;
+        lynx_watch_event event;
+        if (mode == 1u && budget > 37u) budget = 37u;
+        if (lynx_guest_ticks(instance->machine, &before) != LYNX_OK ||
+            lynx_advance(instance->machine, budget, &used, &stop) != LYNX_OK ||
+            used > budget || lynx_guest_ticks(instance->machine, &after) != LYNX_OK ||
+            after < before || after - before != used || after > target) {
+            return fail("timer video slicing control: bounded advance accounting failed");
+        }
+        total += used;
+        if (stop == LYNX_STOP_WATCH) {
+            if (mode != 2u || lynx_watch_get(instance->machine, &event) != LYNX_OK ||
+                event.hit != 1u || event.address != 0x0001u ||
+                event.return_tick != after || event.return_tick != event.hit_tick + 1u ||
+                lynx_watch_configure(instance->machine, 0x0001u, 1u) != LYNX_OK) {
+                return fail("timer video slicing control: unexpected watched bus event");
+            }
+            (*watch_events)++;
+        } else if (stop != LYNX_STOP_BUDGET) {
+            return fail("timer video slicing control: guest stopped before common tick");
+        }
+        if (used == 0u || after == before) {
+            return fail("timer video slicing control: no progress to common tick");
+        }
+    }
+    return total == target ? 0 : fail("timer video slicing control: common tick mismatch");
+}
+
+static int timer_video_slicing_control(const char *profile, const char *directory,
+                                       const char *oracle_path, uint32_t target_ticks)
+{
+    uint8_t *bll = NULL;
+    size_t bll_length = 0u;
+    char bll_path[4096], labels_path[4096], bll_sha[65], labels_sha[65];
+    char *labels = NULL;
+    size_t labels_length = 0u;
+    uint8_t results[3][TIMER_MEANINGFUL];
+    uint8_t digests[3][32];
+    char digest_hex[65];
+    uint32_t watch_events = 0u;
+    uint32_t profile_value;
+    suite_symbols symbols;
+    suite_oracle oracle;
+    unsigned mode;
+    int result = 1;
+    if (profile_index(profile, &profile_value) != 0 ||
+        (target_ticks < TIMER_MIN_TICKS || target_ticks > TIMER_MAX_TICKS)) {
+        return fail("timer video slicing control: invalid profile or common tick");
+    }
+    if (parse_oracle(oracle_path, &oracle) != 0 || read_build_identity(directory, &oracle) != 0 ||
+        verify_suite_build_artifacts(directory, "timers") != 0 ||
+        checked_join(bll_path, sizeof bll_path, directory, "timers.bll") != 0 ||
+        checked_join(labels_path, sizeof labels_path, directory, "timers.lbl") != 0 ||
+        read_file(bll_path, &bll, &bll_length, 65536u) != 0 ||
+        read_text(labels_path, &labels, &labels_length, 16384u) != 0 ||
+        file_sha256(bll_path, bll_sha) != 0 || file_sha256(labels_path, labels_sha) != 0 ||
+        parse_symbols(labels, labels_length, &symbols) != 0 || ranges_valid(&symbols, RESULT_EXTENT) != 0) goto done;
+    for (mode = 0u; mode < 3u; mode++) {
+        machine_instance instance = {0};
+        uint32_t selected_profile = profile_value == 0u ? LYNX_PROFILE_LYNX1 : LYNX_PROFILE_LYNX2;
+        uint8_t done = 0u, progress = 0u, marker = 0u, probe = 0u;
+        uint32_t events_for_mode = 0u;
+        if (machine_create_with_policy(&instance, bll, bll_length, selected_profile,
+                                       LYNX_TIMING_POLICY_VIDEO_POLICY1) != 0 ||
+            prepare_timer_video_environment(&instance) != 0 ||
+            prepare_timer_ram(&instance, &symbols) != 0 ||
+            timer_video_advance_to(&instance, target_ticks, mode, &events_for_mode) != 0 ||
+            lynx_read_memory(instance.machine, symbols.value[2], results[mode], TIMER_MEANINGFUL) != LYNX_OK ||
+            lynx_read_memory(instance.machine, symbols.value[6], &done, 1u) != LYNX_OK ||
+            lynx_read_memory(instance.machine, symbols.value[4], &progress, 1u) != LYNX_OK ||
+            lynx_read_memory(instance.machine, symbols.value[5], &marker, 1u) != LYNX_OK ||
+            lynx_read_memory(instance.machine, symbols.value[11], &probe, 1u) != LYNX_OK ||
+            lynx_state_digest(instance.machine, digests[mode]) != LYNX_OK) {
+            machine_destroy(&instance);
+            goto done;
+        }
+        if (instance.machine->guest_ticks != target_ticks || done != 0xA5u || progress != 8u ||
+            probe != (profile_value == 0u ? 0x01u : 0x00u) ||
+            marker != (profile_value == 0u ? 0xA1u : 0xA2u) ||
+            instance.machine->ram[0x0001u] != results[mode][14]) {
+            machine_destroy(&instance);
+            (void)fail("timer video slicing control: common-tick guest completion mismatch");
+            goto done;
+        }
+        if (mode == 2u) watch_events = events_for_mode;
+        machine_destroy(&instance);
+    }
+    if (memcmp(results[0], results[1], sizeof results[0]) != 0 ||
+        memcmp(results[0], results[2], sizeof results[0]) != 0 ||
+        memcmp(digests[0], digests[1], sizeof digests[0]) != 0 ||
+        memcmp(digests[0], digests[2], sizeof digests[0]) != 0 || watch_events == 0u) {
+        (void)fail("timer video slicing control: uninterrupted, sliced and watched states differ");
+        goto done;
+    }
+    lynx__sha256_hex(digests[0], digest_hex);
+    printf("timer video slicing control: profile=%s common_tick=%u uninterrupted/sliced/watched state equal digest=%s watched_events=%u\n",
+           profile, target_ticks, digest_hex, watch_events);
+    result = 0;
+done:
+    free(labels);
+    free(bll);
+    return result;
 }
 
 static int run_timers(const char *machine_profile_name, const char *selected_profile_name,
@@ -4569,6 +4944,24 @@ int main(int argc, char **argv)
     }
     if (argc == 7 && strcmp(argv[1], "validate-timer-record") == 0) {
         return validate_timer_record_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);
+    }
+    if (argc == 9 && strcmp(argv[1], "validate-timer-video-record") == 0) {
+        return timer_video_record_validate(argv[2], argv[3], argv[4], argv[5],
+                                           argv[6], argv[7], argv[8]);
+    }
+    if (argc == 2 && strcmp(argv[1], "timer-video-null-controls") == 0) {
+        return timer_video_null_inputs_self_test();
+    }
+    if (argc == 3 && strcmp(argv[1], "timer-video-time-candidate") == 0) {
+        return timer_video_time_candidate_check(argv[2]);
+    }
+    if (argc == 6 && strcmp(argv[1], "validate-timer-video-comparator-only") == 0) {
+        return timer_video_comparator_only(argv[2], argv[3], argv[4], argv[5]);
+    }
+    if (argc == 6 && strcmp(argv[1], "timer-video-slicing-control") == 0) {
+        uint32_t ticks;
+        if (parse_decimal(argv[5], &ticks) != 0) return fail("timer video slicing control: invalid common tick");
+        return timer_video_slicing_control(argv[2], argv[3], argv[4], ticks);
     }
     if (argc == 3 && strcmp(argv[1], "validate-oracle") == 0) return validate_oracle_mode(argv[2]);
     if (argc == 4 && strcmp(argv[1], "validate-pin-marker") == 0) {

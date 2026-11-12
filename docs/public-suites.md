@@ -110,10 +110,10 @@ remain unresolved.
 
 `timer-cascade-model` verifies the linked Test6 setup and poll opcodes, operands, addressing modes and branch targets against the unchanged pinned assembly. It derives 14-cycle no-IRQ and 24-cycle IRQ paths, yielding 70/120 tick poll intervals, then independently enumerates all64 first-edge delays over the source-declared 192 polls. The executable proof reports12 acknowledgments and final poll offset13990 for every phase, and binds those results to the actual BLL, labels, raw bytes, run record, comparison, oracle and pending descriptor. This matches the current bounded guest result without modifying its timing or the oracle. The pending row is scheduled for Phase5 review; global EVD-02 remains open.
 
-The exact fast inventory contains these nine timer tests. The two legacy
-observation tests and the strict video-policy revisit are guest runs; the
-other six are strict, proof, model,
-record, descriptor or no-run controls. They are not suite-pass claims. The
+The exact fast inventory contains these ten timer tests. The two legacy
+observations and the video-policy revisit are guest runs; the other seven are
+strict, proof, model, record, descriptor, no-run or continuation controls.
+They are not suite-pass claims. The
 data-only `result_controls` batch emits exactly 49 unique named subcases. This
 preserves the pre-fix inventory count; Plan 09 recorded 48 before Plan 10 added
 the copied Lynx II profile case. The pending-controls batch now emits exactly
@@ -133,6 +133,7 @@ self-controls; these mutations are not counted as guest executions.
 | `suite.timers.result_controls` | Rejects result/count/time/completion faults and any second mismatch |
 | `suite.timers.no_run` | Proves held guest execution is absent, then validates resumed execution |
 | `suite.timers.video_revisit` | Captures both VIDEO_POLICY1 profiles and requires complete strict row diagnostics without a pending exception |
+| `suite.timers.video_revisit_controls` | Validates independent video-policy identities, strict result records, descriptor refusal, bounds and common-tick continuation controls |
 
 The strict controls require exit 1 and the exact source mismatch diagnostic
 only after valid observations and proof; they also require exactly 16
@@ -140,7 +141,7 @@ comparison rows, 15 accepted rows and the sole index 14 mismatch
 `0c`/`EXPECT(0d)`. The full Plan 12 Task 1 targeted integration gate and its
 current result are recorded in the qualification ledger.
 
-The timer controls `suite.timers.model_controls`, `suite.timers.result_controls`, and `suite.timers.pending_controls` also require exact named refusals. A wrong selected profile is an actual guest execution and is bracketed by fresh observations for both profiles. Captured-result, record, descriptor and companion mutations use private copies of an immutable baseline captured from fresh Lynx1/Lynx2 observations at the start of each control-test invocation; both baseline records are positively revalidated and their hashes checked before and after every individual mutation. Each batch ends with fresh observations for both profiles. The EXPECT alternative-set cases validate a separately labelled captured comparator corpus, not guest execution. These test controls do not accept another mismatch, alter D-10's pending row, or qualify the profiles.
+The timer controls `suite.timers.model_controls`, `suite.timers.result_controls`, and `suite.timers.pending_controls` also require exact named refusals. A wrong selected profile is an actual guest execution and is bracketed by fresh observations for both profiles. Captured-result, record, descriptor and companion mutations use private copies of an immutable baseline captured from fresh Lynx1/Lynx2 observations at the start of each control-test invocation; both baseline records are positively revalidated and their hashes checked before and after every individual mutation. Each batch ends with fresh observations for both profiles. The EXPECT alternative-set cases validate a separately labelled captured comparator corpus, not guest execution. `video_revisit_controls` similarly freezes both fresh profile baselines, checks exact source/tool/object/core/layout/policy identity and all 16 rows, rejects legacy-descriptor inheritance and malformed rows, and brackets the controls with new observations. Its manufactured agreeing comparison and accepted tick candidates are labelled as comparator/parser evidence, not guest execution. Its uninterrupted, sliced and watched runs must agree at common guest ticks. These controls do not accept another mismatch, alter D-10's pending row, or qualify the profiles.
 
 The Timer2 suite is source-only at this stage. Page-mode timing, audio, and the later audio2 suite remain deferred for scoped future work; none of these source or software observations resolves physical, firmware, rights, publication or release stops.
 
@@ -189,7 +190,7 @@ The timer observation/control slice can be rerun with:
 cmake --preset check
 cmake --build --preset check
 ctest --preset check --no-tests=error --output-on-failure \
-  -R '^suite\.timers\.(observation\.(lynx1|lynx2)|strict_comparison_controls|cascade_model|model_controls|result_controls|pending_controls|video_revisit)$'
+  -R '^suite\.timers\.(observation\.(lynx1|lynx2)|strict_comparison_controls|cascade_model|model_controls|result_controls|pending_controls|video_revisit|video_revisit_controls)$'
 ```
 
 The pinned upstream sources and this project’s wrapper remain subject to their fixture manifests and notices. No firmware or commercial game content is used. These software controls establish parser, identity, bounds and repeatable guest-execution behavior for the pinned source; hardware accuracy and public profile qualification remain unresolved.

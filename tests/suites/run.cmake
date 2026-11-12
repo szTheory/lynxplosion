@@ -397,6 +397,14 @@ function(run_timer_video_observation profile)
      NOT video_record_text MATCHES "initial_counter_value=00")
     message(FATAL_ERROR "suite_driver: video-policy timer environment identity/counter evidence is incomplete for ${profile}")
   endif()
+  expect_success("timer video record: strict"
+    "${TEST_BINARY}" validate-timer-video-record "${profile}" "${raw}" "${record}"
+    "${video_record}" "${comparison}" "${ORACLE}" "${SUITE_BUILD}")
+  string(REGEX MATCH "ticks=([0-9]+)" tick_match "${observe_out}")
+  if(tick_match STREQUAL "")
+    message(FATAL_ERROR "suite_driver: video-policy timer observation omitted the measured guest tick count for ${profile}")
+  endif()
+  set(VIDEO_PROFILE_TICKS "${CMAKE_MATCH_1}" PARENT_SCOPE)
   set(normalized_rows "")
   foreach(row IN LISTS comparison_rows)
     string(APPEND normalized_rows "${row}\n")
@@ -408,8 +416,312 @@ endfunction()
 
 function(run_timer_video_pair)
   run_timer_video_observation(lynx1)
+  set(lynx1_ticks "${VIDEO_PROFILE_TICKS}")
   run_timer_video_observation(lynx2)
+  set(lynx2_ticks "${VIDEO_PROFILE_TICKS}")
   set(all_run_out "${all_run_out}" PARENT_SCOPE)
+  set(VIDEO_LYNX1_TICKS "${lynx1_ticks}" PARENT_SCOPE)
+  set(VIDEO_LYNX2_TICKS "${lynx2_ticks}" PARENT_SCOPE)
+endfunction()
+
+function(video_assert_baseline_unchanged)
+  foreach(profile lynx1 lynx2)
+    set(base "${WORK}/video-baseline/${profile}")
+    set(manifest "${WORK}/video-baseline/${profile}.sha256")
+    if(NOT EXISTS "${manifest}")
+      message(FATAL_ERROR "suite_driver: video-policy immutable baseline manifest is missing for ${profile}")
+    endif()
+    file(STRINGS "${manifest}" entries)
+    foreach(entry IN LISTS entries)
+      if(NOT entry MATCHES "^([0-9a-f]+)  ([^ ]+)$")
+        message(FATAL_ERROR "suite_driver: malformed video-policy baseline entry: ${entry}")
+      endif()
+      set(expected_sha "${CMAKE_MATCH_1}")
+      set(file_name "${CMAKE_MATCH_2}")
+      if(NOT EXISTS "${base}/${file_name}")
+        message(FATAL_ERROR "suite_driver: video-policy immutable baseline file disappeared: ${profile}/${file_name}")
+      endif()
+      file(SHA256 "${base}/${file_name}" actual_sha)
+      if(NOT actual_sha STREQUAL expected_sha)
+        message(FATAL_ERROR "suite_driver: video-policy immutable baseline changed: ${profile}/${file_name}")
+      endif()
+    endforeach()
+  endforeach()
+endfunction()
+
+function(video_case_begin case_name)
+  video_assert_baseline_unchanged()
+  get_property(case_names GLOBAL PROPERTY VIDEO_CONTROL_CASE_NAMES)
+  if(case_names STREQUAL "")
+    set(case_names "")
+  endif()
+  list(FIND case_names "${case_name}" duplicate_index)
+  if(NOT duplicate_index EQUAL -1)
+    message(FATAL_ERROR "suite_driver: duplicate video-policy control case ${case_name}")
+  endif()
+  list(APPEND case_names "${case_name}")
+  set_property(GLOBAL PROPERTY VIDEO_CONTROL_CASE_NAMES "${case_names}")
+  get_property(case_count GLOBAL PROPERTY VIDEO_CONTROL_CASE_COUNT)
+  if(case_count STREQUAL "")
+    set(case_count 0)
+  endif()
+  math(EXPR case_count "${case_count} + 1")
+  set_property(GLOBAL PROPERTY VIDEO_CONTROL_CASE_COUNT "${case_count}")
+  string(MAKE_C_IDENTIFIER "${case_name}" case_slug)
+  set(case_dir "${WORK}/video-cases/${case_count}-${case_slug}")
+  if(EXISTS "${case_dir}" OR IS_SYMLINK "${case_dir}")
+    message(FATAL_ERROR "suite_driver: video-policy case directory already exists")
+  endif()
+  file(MAKE_DIRECTORY "${case_dir}")
+  file(COPY "${WORK}/video-baseline/lynx1/" DESTINATION "${case_dir}")
+  write_suite_owner_marker("${case_dir}")
+  set(VIDEO_CASE_DIR "${case_dir}" PARENT_SCOPE)
+endfunction()
+
+function(video_validate_failure expected directory)
+  expect_failure("${expected}" "${TEST_BINARY}" validate-timer-video-record lynx1
+    "${directory}/raw-results-lynx1.tsv" "${directory}/run-record-lynx1.txt"
+    "${directory}/timer-video-revisit-lynx1.txt" "${directory}/comparison-lynx1.tsv"
+    "${directory}/oracle.tsv" "${directory}")
+endfunction()
+
+function(video_case_end)
+  video_assert_baseline_unchanged()
+endfunction()
+
+function(video_rewrite_case case_name file_name old_text new_text diagnostic)
+  video_case_begin("${case_name}")
+  set(path "${VIDEO_CASE_DIR}/${file_name}")
+  file(READ "${path}" original)
+  string(FIND "${original}" "${old_text}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "suite_driver: video-policy control target text missing for ${case_name}")
+  endif()
+  string(REPLACE "${old_text}" "${new_text}" mutated "${original}")
+  if(mutated STREQUAL original)
+    message(FATAL_ERROR "suite_driver: video-policy mutation did not change its private copy for ${case_name}")
+  endif()
+  file(WRITE "${path}" "${mutated}")
+  video_validate_failure("${diagnostic}" "${VIDEO_CASE_DIR}")
+  video_case_end()
+endfunction()
+
+function(video_expect_time_candidate case_name tick expected_failure)
+  video_case_begin("${case_name}")
+  set(candidate "${WORK}/video-candidates/${case_name}.txt")
+  file(MAKE_DIRECTORY "${WORK}/video-candidates")
+  file(WRITE "${candidate}" "tick_min=256\ntick_max=50000000\nticks_observed=${tick}\n")
+  if(expected_failure STREQUAL "")
+    expect_success("not guest evidence" "${TEST_BINARY}" timer-video-time-candidate "${candidate}")
+  else()
+    expect_failure("${expected_failure}" "${TEST_BINARY}" timer-video-time-candidate "${candidate}")
+  endif()
+  video_case_end()
+endfunction()
+
+function(run_timer_video_revisit_controls)
+  run_timer_video_pair()
+  set(file_names
+    "raw-results-lynx1.tsv" "run-record-lynx1.txt" "comparison-lynx1.tsv"
+    "timer-video-revisit-lynx1.txt" "timers.bll" "timers.lbl" "build-record.txt" "oracle.tsv"
+    "raw-results-lynx2.tsv" "run-record-lynx2.txt" "comparison-lynx2.tsv" "timer-video-revisit-lynx2.txt")
+  foreach(profile lynx1 lynx2)
+    set(base "${WORK}/video-baseline/${profile}")
+    if(EXISTS "${base}" OR IS_SYMLINK "${base}")
+      message(FATAL_ERROR "suite_driver: video-policy baseline directory already exists")
+    endif()
+    file(MAKE_DIRECTORY "${base}")
+    write_suite_owner_marker("${base}")
+    set(manifest "${WORK}/video-baseline/${profile}.sha256")
+    file(WRITE "${manifest}" "")
+    foreach(file_name IN LISTS file_names)
+      if((profile STREQUAL "lynx1" AND file_name MATCHES "lynx2") OR
+         (profile STREQUAL "lynx2" AND file_name MATCHES "lynx1"))
+        continue()
+      endif()
+      if(NOT EXISTS "${SUITE_BUILD}/${file_name}")
+        message(FATAL_ERROR "suite_driver: video-policy baseline output missing: ${profile}/${file_name}")
+      endif()
+      file(COPY_FILE "${SUITE_BUILD}/${file_name}" "${base}/${file_name}")
+      file(SHA256 "${base}/${file_name}" file_sha)
+      file(APPEND "${manifest}" "${file_sha}  ${file_name}\n")
+    endforeach()
+  endforeach()
+  set_property(GLOBAL PROPERTY VIDEO_CONTROL_CASE_COUNT 0)
+  set_property(GLOBAL PROPERTY VIDEO_CONTROL_CASE_NAMES "")
+  video_assert_baseline_unchanged()
+  expect_success("timer video record: strict"
+    "${TEST_BINARY}" validate-timer-video-record lynx1
+    "${WORK}/video-baseline/lynx1/raw-results-lynx1.tsv"
+    "${WORK}/video-baseline/lynx1/run-record-lynx1.txt"
+    "${WORK}/video-baseline/lynx1/timer-video-revisit-lynx1.txt"
+    "${WORK}/video-baseline/lynx1/comparison-lynx1.tsv"
+    "${WORK}/video-baseline/lynx1/oracle.tsv" "${WORK}/video-baseline/lynx1")
+
+  video_case_begin("legacy-pending-rejected")
+  expect_failure("timer record: environment metadata mismatch"
+    "${TEST_BINARY}" validate-timer-record lynx1
+    "${WORK}/video-baseline/lynx1/raw-results-lynx1.tsv"
+    "${WORK}/video-baseline/lynx1/run-record-lynx1.txt"
+    "${WORK}/video-baseline/lynx1/oracle.tsv" "${ROOT}/docs/timer-source-index14-pending.json")
+  video_case_end()
+  video_case_begin("missing-descriptor-rejected")
+  expect_failure("pending descriptor malformed JSON"
+    "${TEST_BINARY}" validate-timer-record lynx1
+    "${WORK}/video-baseline/lynx1/raw-results-lynx1.tsv"
+    "${WORK}/video-baseline/lynx1/run-record-lynx1.txt"
+    "${WORK}/video-baseline/lynx1/oracle.tsv" "${WORK}/missing-video-pending.json")
+  video_case_end()
+  video_case_begin("stale-descriptor-rejected")
+  set(stale_descriptor "${VIDEO_CASE_DIR}/stale-pending.json")
+  file(COPY_FILE "${ROOT}/docs/timer-source-index14-pending.json" "${stale_descriptor}")
+  file(READ "${stale_descriptor}" stale_text)
+  string(REPLACE "\"actual\": \"0c\"" "\"actual\": \"0b\"" stale_text "${stale_text}")
+  file(WRITE "${stale_descriptor}" "${stale_text}")
+  expect_failure("pending descriptor value mismatch"
+    "${TEST_BINARY}" validate-timer-record lynx1
+    "${VIDEO_CASE_DIR}/raw-results-lynx1.tsv" "${VIDEO_CASE_DIR}/run-record-lynx1.txt"
+    "${VIDEO_CASE_DIR}/oracle.tsv" "${stale_descriptor}")
+  video_case_end()
+  video_rewrite_case("descriptor-inheritance-field" "timer-video-revisit-lynx1.txt"
+    "pending_descriptor=none" "pending_descriptor=docs/timer-source-index14-pending.json"
+    "timer video record: legacy descriptor inheritance refused")
+  video_rewrite_case("policy-changed" "timer-video-revisit-lynx1.txt"
+    "core_timing_policy=video-policy1" "core_timing_policy=legacy-flat5"
+    "timer video record: timing policy mismatch")
+  video_rewrite_case("cpu-cost-changed" "run-record-lynx1.txt"
+    "cost_ticks=5" "cost_ticks=6" "timer video record: CPU cost identity mismatch")
+  video_rewrite_case("video-cost-changed" "timer-video-revisit-lynx1.txt"
+    "video_byte_grant_ticks=5" "video_byte_grant_ticks=6"
+    "timer video record: video cost identity mismatch")
+  video_rewrite_case("refresh-cost-changed" "timer-video-revisit-lynx1.txt"
+    "refresh_grant_ticks=5" "refresh_grant_ticks=6"
+    "timer video record: refresh cost identity mismatch")
+  video_rewrite_case("refresh-period-changed" "timer-video-revisit-lynx1.txt"
+    "refresh_period_ticks=256" "refresh_period_ticks=257"
+    "timer video record: refresh period mismatch")
+  video_rewrite_case("initial-counter-changed" "timer-video-revisit-lynx1.txt"
+    "initial_counter_value=00" "initial_counter_value=01"
+    "timer video record: counter initialization mismatch")
+  video_rewrite_case("source-hash-changed" "timer-video-revisit-lynx1.txt"
+    "source_archive_sha256=a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e"
+    "source_archive_sha256=0000000000000000000000000000000000000000000000000000000000000000"
+    "timer video record: source archive mismatch")
+  video_rewrite_case("source-tests-hash-changed" "timer-video-revisit-lynx1.txt"
+    "timer_tests_sha256=dde10583ae050aba1dcd72f3e0b92cdf2d38d5037c4380c5e8864f2c81702e1f"
+    "timer_tests_sha256=0000000000000000000000000000000000000000000000000000000000000000"
+    "timer video record: source identity mismatch")
+  video_rewrite_case("oracle-hash-changed" "timer-video-revisit-lynx1.txt"
+    "oracle_sha256=08b5a4f48caf0f92e7bc177d9f3a6ac8ff68d757b57b9bc346aad8bd4c698b4f"
+    "oracle_sha256=0000000000000000000000000000000000000000000000000000000000000000"
+    "timer video record: oracle identity mismatch")
+  video_rewrite_case("build-hash-changed" "timer-video-revisit-lynx1.txt"
+    "build_record_sha256=43f74b8cff5f754938b769504423b1bcc3fc9717a7beba8e60ef261fb560d3b7"
+    "build_record_sha256=0000000000000000000000000000000000000000000000000000000000000000"
+    "timer video record: build identity mismatch")
+  video_rewrite_case("layout-hash-changed" "timer-video-revisit-lynx1.txt"
+    "layout_manifest_sha256=177acdcf8690ed73cd303aacf608b4c5aaaf1b69d5a27e472a08aba673b8121f"
+    "layout_manifest_sha256=0000000000000000000000000000000000000000000000000000000000000000"
+    "timer video record: layout identity mismatch")
+  video_rewrite_case("object-hash-changed" "timer-video-revisit-lynx1.txt"
+    "bll_sha256=d766a24031246ad166edc6b417e4d30a841e18dda5115eae201804847ef96c79"
+    "bll_sha256=0000000000000000000000000000000000000000000000000000000000000000"
+    "timer video record: object identity mismatch")
+  video_rewrite_case("labels-hash-changed" "timer-video-revisit-lynx1.txt"
+    "labels_sha256=b1423949c03badc1158b5cacfb67af146cbe18228cc73f156b11dd548776efa3"
+    "labels_sha256=0000000000000000000000000000000000000000000000000000000000000000"
+    "timer video record: labels identity mismatch")
+  video_rewrite_case("wrapper-hash-changed" "timer-video-revisit-lynx1.txt"
+    "wrapper_sha256=fa0973d355eeba6311d9540f3d2ec7d429f6991e1e5641fb36ed7af6c2749e6c"
+    "wrapper_sha256=0000000000000000000000000000000000000000000000000000000000000000"
+    "timer video record: wrapper identity mismatch")
+  video_rewrite_case("result14-record-changed" "timer-video-revisit-lynx1.txt"
+    "result14=0f" "result14=0d" "timer video record: counter/result evidence mismatch")
+  video_case_begin("second-mismatch")
+  set(second_mismatch_raw "${VIDEO_CASE_DIR}/raw-results-lynx1.tsv")
+  set(second_mismatch_comparison "${VIDEO_CASE_DIR}/comparison-lynx1.tsv")
+  file(READ "${second_mismatch_raw}" second_mismatch_raw_text)
+  file(READ "${second_mismatch_comparison}" second_mismatch_comparison_text)
+  string(FIND "${second_mismatch_raw_text}" "result\t0\t08\n" second_raw_found)
+  string(FIND "${second_mismatch_comparison_text}" "result\t0\t08\tEXPECT(08)\tsource-accepted" second_comparison_found)
+  if(second_raw_found EQUAL -1 OR second_comparison_found EQUAL -1)
+    message(FATAL_ERROR "suite_driver: second-mismatch control source row is missing")
+  endif()
+  string(REPLACE "result\t0\t08\n" "result\t0\t09\n" second_mismatch_raw_text "${second_mismatch_raw_text}")
+  string(REPLACE "result\t0\t08\tEXPECT(08)\tsource-accepted"
+    "result\t0\t09\tEXPECT(08)\tsource-mismatch" second_mismatch_comparison_text "${second_mismatch_comparison_text}")
+  file(WRITE "${second_mismatch_raw}" "${second_mismatch_raw_text}")
+  file(WRITE "${second_mismatch_comparison}" "${second_mismatch_comparison_text}")
+  video_validate_failure("timer video record: strict mismatch set changed" "${VIDEO_CASE_DIR}")
+  video_case_end()
+  video_rewrite_case("raw-empty" "raw-results-lynx1.tsv" "suite\ttimers" "" "timer raw record shape mismatch")
+  video_rewrite_case("raw-count-0" "raw-results-lynx1.tsv" "result_count\t16" "result_count\t0" "timer raw record count drift")
+  video_rewrite_case("raw-count-1" "raw-results-lynx1.tsv" "result_count\t16" "result_count\t1" "timer raw record count drift")
+  video_rewrite_case("raw-count-15" "raw-results-lynx1.tsv" "result_count\t16" "result_count\t15" "timer raw record count drift")
+  video_rewrite_case("raw-count-17" "raw-results-lynx1.tsv" "result_count\t16" "result_count\t17" "timer raw record count drift")
+  video_rewrite_case("raw-duplicate-row" "raw-results-lynx1.tsv" "result\t15\t08" "result\t14\t08" "timer raw record count or byte malformed")
+  video_rewrite_case("raw-extra-row" "raw-results-lynx1.tsv" "result\t15\t08\n" "result\t15\t08\nresult\t16\t00\n" "timer raw record has extra rows")
+  video_rewrite_case("raw-empty-result" "raw-results-lynx1.tsv" "result\t14\t0f" "result\t14\t" "timer raw record count or byte malformed")
+  video_rewrite_case("raw-uppercase-hex" "raw-results-lynx1.tsv" "result\t14\t0f" "result\t14\t0F" "timer raw record count or byte malformed")
+  video_rewrite_case("raw-odd-hex" "raw-results-lynx1.tsv" "result\t14\t0f" "result\t14\t0f0" "timer raw record count or byte malformed")
+  video_rewrite_case("comparison-missing-row" "comparison-lynx1.tsv" "result\t15\t08\tEXPECT(08)\tsource-accepted\n" "" "timer comparison record row mismatch")
+  video_rewrite_case("comparison-duplicate-row" "comparison-lynx1.tsv" "result\t15\t08\tEXPECT(08)\tsource-accepted" "result\t14\t08\tEXPECT(08)\tsource-accepted" "timer comparison record row mismatch")
+  video_rewrite_case("comparison-extra-row" "comparison-lynx1.tsv" "comparison\tmismatch" "result\t16\t00\tEXPECT(00)\tsource-accepted\ncomparison\tmismatch" "timer comparison record summary mismatch")
+  video_rewrite_case("comparison-summary" "comparison-lynx1.tsv" "comparison\tmismatch" "comparison\tmatch" "timer comparison record summary mismatch")
+  video_case_begin("null-inputs")
+  expect_success("timer video null control: all NULL source/record inputs refused"
+    "${TEST_BINARY}" timer-video-null-controls)
+  video_case_end()
+  video_case_begin("manufactured-agreement-comparator-only")
+  set(fake_raw "${VIDEO_CASE_DIR}/raw-results-lynx1.tsv")
+  set(fake_comparison "${VIDEO_CASE_DIR}/comparison-lynx1.tsv")
+  file(READ "${fake_raw}" fake_raw_text)
+  file(READ "${fake_comparison}" fake_comparison_text)
+  string(REPLACE "result\t14\t0f" "result\t14\t0d" fake_raw_text "${fake_raw_text}")
+  string(REPLACE "result\t14\t0f\tEXPECT(0d)\tsource-mismatch" "result\t14\t0d\tEXPECT(0d)\tsource-accepted" fake_comparison_text "${fake_comparison_text}")
+  string(REPLACE "comparison\tmismatch" "comparison\tmatch" fake_comparison_text "${fake_comparison_text}")
+  file(WRITE "${fake_raw}" "${fake_raw_text}")
+  file(WRITE "${fake_comparison}" "${fake_comparison_text}")
+  expect_success("not guest evidence" "${TEST_BINARY}" validate-timer-video-comparator-only lynx1
+    "${fake_raw}" "${fake_comparison}" "${VIDEO_CASE_DIR}/oracle.tsv")
+  video_case_end()
+
+  video_expect_time_candidate("time-255" 255 "timer video time candidate: ticks outside completion bounds")
+  video_expect_time_candidate("time-256" 256 "")
+  video_expect_time_candidate("time-257" 257 "")
+  video_expect_time_candidate("time-49999999" 49999999 "")
+  video_expect_time_candidate("time-50000000" 50000000 "")
+  video_expect_time_candidate("time-50000001" 50000001 "timer video time candidate: ticks outside completion bounds")
+  video_expect_time_candidate("time-uint64-overflow" 18446744073709551616 "timer video time candidate: invalid ticks_observed")
+
+  video_case_begin("slicing-lynx1")
+  expect_success("timer video slicing control: profile=lynx1 common_tick=${VIDEO_LYNX1_TICKS}"
+    "${TEST_BINARY}" timer-video-slicing-control lynx1 "${SUITE_BUILD}" "${ORACLE}" "${VIDEO_LYNX1_TICKS}")
+  video_case_end()
+  video_case_begin("slicing-lynx2")
+  expect_success("timer video slicing control: profile=lynx2 common_tick=${VIDEO_LYNX2_TICKS}"
+    "${TEST_BINARY}" timer-video-slicing-control lynx2 "${SUITE_BUILD}" "${ORACLE}" "${VIDEO_LYNX2_TICKS}")
+  video_case_end()
+
+  video_assert_baseline_unchanged()
+  get_property(actual_cases GLOBAL PROPERTY VIDEO_CONTROL_CASE_NAMES)
+  set(expected_cases
+    "legacy-pending-rejected" "missing-descriptor-rejected" "stale-descriptor-rejected"
+    "descriptor-inheritance-field" "policy-changed" "cpu-cost-changed" "video-cost-changed"
+    "refresh-cost-changed" "refresh-period-changed" "initial-counter-changed" "source-hash-changed"
+    "source-tests-hash-changed" "oracle-hash-changed" "build-hash-changed" "layout-hash-changed"
+    "object-hash-changed" "labels-hash-changed" "wrapper-hash-changed"
+    "result14-record-changed" "second-mismatch" "raw-empty" "raw-count-0" "raw-count-1"
+    "raw-count-15" "raw-count-17" "raw-duplicate-row" "raw-extra-row" "raw-empty-result" "raw-uppercase-hex"
+    "raw-odd-hex" "comparison-missing-row" "comparison-duplicate-row" "comparison-extra-row"
+    "comparison-summary" "null-inputs" "manufactured-agreement-comparator-only"
+    "time-255" "time-256" "time-257" "time-49999999" "time-50000000" "time-50000001"
+    "time-uint64-overflow" "slicing-lynx1" "slicing-lynx2")
+  if(NOT "${actual_cases}" STREQUAL "${expected_cases}")
+    message(FATAL_ERROR "suite_driver: video-policy control case inventory drifted; actual=${actual_cases}; expected=${expected_cases}")
+  endif()
+  run_timer_video_pair()
+  string(APPEND all_run_out "video-policy controls: exact identities, strict rows, counters, boundaries, hostile copies, NULLs, descriptor refusal and common-tick slicing/watching verified; no synthetic comparator result is guest evidence\n")
 endfunction()
 
 function(run_timer_pair)
@@ -2005,6 +2317,10 @@ endif()
 if(MODE STREQUAL "timer_video_revisit" AND FAILURE STREQUAL "")
   run_timer_video_pair()
   string(APPEND all_run_out "video-policy timer revisit: both profiles independently configured before execution; exact strict row sets and outcomes retained without a pending exception\n")
+endif()
+
+if(MODE STREQUAL "timer_video_revisit_controls" AND FAILURE STREQUAL "")
+  run_timer_video_revisit_controls()
 endif()
 
 if(MODE STREQUAL "timer_strict_controls" AND FAILURE STREQUAL "")

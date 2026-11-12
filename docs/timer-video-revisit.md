@@ -86,7 +86,7 @@ The two observations use the same source/tool/object/layout identities:
 | Layout manifest SHA-256 | `177acdcf8690ed73cd303aacf608b4c5aaaf1b69d5a27e472a08aba673b8121f` |
 | Suite builder SHA-256 | `1399702fdb178bbd1d4ff662c6d704db90c92a58a770628f99784e7dae68c893` |
 | Oracle generator SHA-256 | `894866d4c91c2c422a8f3199b98aee026234d8db36351f7a2ed5701e4883eb78` |
-| Core build ID | `git=dd5ccc59f3bf32be4d62873284a2a71aa680eafd+dirty cc=AppleClang-21.0.0.21000101 sys=Darwin-arm64` |
+| Core build ID captured by the initial observation | `git=dd5ccc59f3bf32be4d62873284a2a71aa680eafd+dirty cc=AppleClang-21.0.0.21000101 sys=Darwin-arm64` |
 
 The Lynx I run completed at guest tick `366080`; the Lynx II run completed at
 `366101`. Initial refresh was due at tick `256`, at a `256` tick period. The
@@ -97,6 +97,41 @@ bus grant costs and ownership are retained in the private per-profile run
 records and checked by CTest. Raw records remain in invocation-owned ignored
 build scratch and are not committed.
 
+## Strict record and continuation controls
+
+`suite.timers.video_revisit_controls` creates fresh Lynx I and Lynx II positive
+baselines, validates their exact source/tool/object/layout/core identities and
+all 16 rows, hashes immutable copies, and revalidates both baselines around
+each private mutation. Its exact inventory contains 45 named cases. They
+refuse use of the legacy D-10 descriptor, a missing or stale descriptor,
+changed policy/cost/refresh/counter/source/build/layout/object/label/wrapper
+identity, a changed row 14 or second comparison mismatch, and malformed,
+missing, duplicate, empty, truncated or extra raw/comparison rows. Null source
+and record pointers have explicit refusal checks. The test ends with fresh
+observations of both profiles.
+
+The manufactured `0d` row and matching comparison table are passed only to a
+strict comparator-only check, which reports 16/16 source rows accepted and
+explicitly labels the result as not guest evidence. Candidate tick records
+cover 255, 256, 257, 49,999,999, 50,000,000, 50,000,001 and uint64 overflow;
+these exercise integer parsing and range boundaries, not fabricated guest
+completion. A valid pinned-source completion at 256 ticks is infeasible: the
+unchanged timer suite needs the timer wait sequence and completes at 366,080
+and 366,101 ticks in these two profiles. It naturally completes before the
+50,000,000-tick ceiling, so no exact-boundary guest completion is claimed.
+
+For each profile, three fresh machines advance to its observed common
+completion tick: one uninterrupted, one in 37-tick slices, and one with a
+counter-write watch. The control requires identical result bytes, completion
+and model bytes, counter/result-14 equality, and an identical public-state
+digest at that tick; the watched path must observe counter writes. The caller
+serializes each machine's operations. These controls establish deterministic
+API continuation under the selected software policy, not hardware accuracy.
+
+The current run-record validator compares the core build ID by its SHA-256;
+the raw build ID above is the identity captured by the initial Task 1 run.
+Per-invocation raw files and detailed control logs stay in owned build scratch.
+
 The hardware-oriented evidence remains incomplete: the selected project
 environment is not a hardware result, and the upstream CRT's `DISPCTL=0d` is
 unsupported by the current model. O1 and EVD-02 therefore remain open. The
@@ -106,9 +141,11 @@ agreement or hardware qualification.
 Verification command:
 
 ```sh
-cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.timers\.(video_revisit|observation\.(lynx1|lynx2)|strict_comparison_controls|cascade_model)$'
+cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.timers\.(video_revisit|video_revisit_controls|observation\.(lynx1|lynx2)|strict_comparison_controls|cascade_model|pending_controls|result_controls|model_controls)$'
 ```
 
-The five focused tests passed. The new test passes only after confirming the
-exact 16-row records and the expected strict mismatch on each profile.
+The Task 1 observation/strict/cascade slice passed five tests. The Task 2
+video-revisit, pending, result and model-control slice passed four tests. The
+new observation is green only as a complete capture with its expected strict
+mismatch; it does not represent full source agreement.
 

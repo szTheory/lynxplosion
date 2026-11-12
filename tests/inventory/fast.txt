@@ -191,6 +191,7 @@ suite.timers.pending_controls	suite
 suite.timers.result_controls	suite
 suite.timers.strict_comparison_controls	suite
 suite.timers.video_revisit	suite
+suite.timers.video_revisit_controls	suite
 timer.fault.done	timer
 timer.fault.irq	timer
 timer.fault.order	timer
