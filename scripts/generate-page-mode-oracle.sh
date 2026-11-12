@@ -126,7 +126,7 @@ if [ "$SHAPE_ONLY" -eq 0 ]; then
 fi
 
 if [ "$SHAPE_ONLY" -eq 1 ]; then
-  printf '%s' "$PARSED"
+  printf '%s\n' "$PARSED"
   exit 0
 fi
 
@@ -149,7 +149,7 @@ tmp="$OUT.tmp-$nonce"
   printf 'LYNX-PAGE-MODE-ORACLE\t1\n'
   printf 'revision\t%s\nmain_sha256\t%s\ntests_sha256\t%s\nnotice_sha256\t%s\nrecipe_sha256\t%s\n' "$REVISION" "$MAIN_SHA" "$TESTS_SHA" "$NOTICE_SHA" "$RECIPE_SHA"
   printf 'result_count\t6\ntest_count\t6\nextent\t6\n'
-  printf '%s' "$PARSED"
+  printf '%s\n' "$PARSED"
 } > "$tmp"
 (umask 077; printf 'nonce=%s\npath=%s\n' "$nonce" "$OUT" > "$OUT.owner")
 mv -- "$tmp" "$OUT"
