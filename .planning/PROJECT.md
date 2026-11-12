@@ -4,7 +4,7 @@
 
 Lynxplosion (owner-selected working name; not trademark clearance) is a new
 Atari Lynx emulator aimed at accuracy, reproducibility and usefulness. It
-emulates clearly named Lynx hardware and cartridge profiles through one
+targets clearly named Lynx hardware and cartridge profiles through one
 canonical, deterministic, headless-drivable machine core, so behavior can be
 tested and observed separately from any host frontend. It is built for the
 owner's emulator portfolio as an automation-first breadth and learning

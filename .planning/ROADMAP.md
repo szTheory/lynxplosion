@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: CPU Profiles and Per-Opcode Vectors** - 65C02-class CPU with Lynx I and Lynx II profiles as data, tick-stamped bus cycles, proven by pinned vectors (completed 2026-11-10)
 - [x] **Phase 3: Memory Map, Direct-Load Startup and First Diagnostic** - MAPCTL memory map, startup tier A, original diagnostic reporting through a RAM result block, first labelled snapshot via an independent consumer (completed 2026-11-10)
 - [x] **Phase 4: Timers, Interrupts and First Public Suites** - Master-tick scheduler, Mikey timer bank, IRQ and minimal sleep; `timers` and `cpu` suites read from guest RAM with controls (completed 2026-11-11)
-- [ ] **Phase 5: Display, Raw Video and Input** - Timer-driven frames, display DMA, per-line palette, raw video and logical input; live input-responsive homebrew frame
+- [x] **Phase 5: Display, Raw Video and Input** - Timer-driven frames, display DMA, per-line palette, raw video and logical input; live input-responsive homebrew frame (completed 2026-11-12)
 - [ ] **Phase 6: Audio and Playable Checkpoint** - Four audio channels and integer PCM; homebrew with sound; v1 suite inventory and throughput baseline
 
 ## Phase Details
@@ -226,7 +226,7 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
   5. An original homebrew direct-load image, driven by a recorded input timeline, shows input-responsive frames that the consumer renders. The same recording yields the same raw-frame digest, labelled as repeatability.
 **Owner gates**: O9 before the canonical raw video form is frozen, if the form affects LibFuturo. O1 for any `page-mode` claim.
 **Research flag**: Deeper research needed before planning: DMA burst timing and refresh period and cost (open; do not import another emulator's constants); per-line versus per-frame palette contract; frame-complete definition (Disagreement 10); palette byte order versus LCD latch order.
-**Plans**: 11/12 plans executed
+**Plans**: 12/12 plans complete
 **Wave 1**
 - [x] 05-01-PLAN.md
 
@@ -261,7 +261,7 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
 - [x] 05-11-PLAN.md
 
 **Wave 12** *(blocked on Wave 11 completion)*
-- [ ] 05-12-PLAN.md
+- [x] 05-12-PLAN.md
 
 ### Phase 6: Audio and Playable Checkpoint
 **Goal**: The homebrew plays sound in response to input, and progress, input, video and audio line up on one guest-tick timeline. The v1 public-suite inventory and a throughput baseline are recorded.
@@ -304,5 +304,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. CPU Profiles and Per-Opcode Vectors | 11/11 | Complete    | 2026-11-10 |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 9/9 | Complete    | 2026-11-10 |
 | 4. Timers, Interrupts and First Public Suites | 12/12 | Complete    | 2026-11-11 |
-| 5. Display, Raw Video and Input | 11/12 | In Progress | - |
+| 5. Display, Raw Video and Input | 12/12 | Complete    | 2026-11-12 |
 | 6. Audio and Playable Checkpoint | 0/TBD | Not started | - |

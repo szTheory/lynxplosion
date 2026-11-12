@@ -41,7 +41,7 @@ sequence, not a ceiling on the project goal.
 - [x] **API-03**: Host can advance the machine by a bounded master-tick budget and receives ticks consumed and a stop reason (budget, frame, watch hit, halt)
 - [x] **API-04**: Host can reset the machine to a declared power-on state, including a configurable RAM power-on policy whose seed is recorded in run identity
 - [x] **API-05**: Host can inspect registers and memory through a side-effect-free path that never changes machine state or guest time
-- [ ] **API-06**: Host supplies logical input as a timeline sampled at defined guest-time boundaries; no physical controller discovery happens in the core
+- [x] **API-06**: Host supplies logical input as a timeline sampled at defined guest-time boundaries; no physical controller discovery happens in the core
 - [x] **API-07**: Host can capture a snapshot and restore it in the same build; restore validates identity before replacing state and refuses mismatches
 - [x] **API-08**: Host can register a memory watch that stops advancement on write without altering machine behavior
 
@@ -77,12 +77,12 @@ sequence, not a ceiling on the project goal.
 
 ### Display and input
 
-- [ ] **VID-01**: Timers 0 and 2 drive a line and frame generator with programmable timing (not a fixed 60 Hz)
+- [x] **VID-01**: Timers 0 and 2 drive a line and frame generator with programmable timing (not a fixed 60 Hz)
 - [x] **VID-02**: Display DMA reads the framebuffer as a bus requestor that costs ticks and interacts with page-mode fetches
-- [ ] **VID-03**: The 16-entry, 12-bit palette is emulated with its per-line latch behavior
-- [ ] **VID-04**: Host receives raw video carrying pen data, palette state per line and timing metadata, separate from any scaling, rotation or color presentation (canonical form decided in-phase; LibFuturo implications are owner decision O9)
-- [ ] **VID-05**: Host can stop advancement on a defined frame-complete event, with the event definition documented
-- [ ] **INP-01**: The joystick and switch registers reflect the logical input timeline (d-pad, A, B, Option 1, Option 2, Pause) at their sampled guest time
+- [x] **VID-03**: The 16-entry, 12-bit palette is emulated with its per-line latch behavior
+- [x] **VID-04**: Host receives raw video carrying pen data, palette state per line and timing metadata, separate from any scaling, rotation or color presentation (canonical form decided in-phase; LibFuturo implications are owner decision O9)
+- [x] **VID-05**: Host can stop advancement on a defined frame-complete event, with the event definition documented
+- [x] **INP-01**: The joystick and switch registers reflect the logical input timeline (d-pad, A, B, Option 1, Option 2, Pause) at their sampled guest time
 
 ### Audio
 
@@ -108,7 +108,7 @@ sequence, not a ceiling on the project goal.
 ### Playable scenario and consumer
 
 - [x] **HB-01**: A tick-stamped framebuffer snapshot from an original diagnostic is rendered to a viewable image early, labelled as a snapshot, not a frame
-- [ ] **HB-02**: An original homebrew direct-load image shows input-responsive frames when driven by a recorded input timeline
+- [x] **HB-02**: An original homebrew direct-load image shows input-responsive frames when driven by a recorded input timeline
 - [ ] **HB-03**: The homebrew plays sound in response to input (the v1 playable checkpoint)
 - [ ] **CON-01**: An independent consumer program, using only the public C API, drives the core and writes raw frames as PNG or PPM and audio as WAV
 - [ ] **PERF-01**: A named workload (the homebrew with a fixed input timeline) has a recorded throughput baseline with its output digest held constant; no optimization in v1
@@ -196,7 +196,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-03 | Phase 1 | Complete |
 | API-04 | Phase 1 | Complete |
 | API-05 | Phase 1 | Complete |
-| API-06 | Phase 5 | Pending |
+| API-06 | Phase 5 | Complete |
 | API-07 | Phase 1 | Complete |
 | API-08 | Phase 3 | Complete |
 | DET-01 | Phase 1 | Complete |
@@ -217,12 +217,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TIM-02 | Phase 4 | Complete |
 | TIM-03 | Phase 4 | Complete |
 | TIM-04 | Phase 4 | Complete |
-| VID-01 | Phase 5 | Pending |
+| VID-01 | Phase 5 | Complete |
 | VID-02 | Phase 5 | Complete |
-| VID-03 | Phase 5 | Pending |
-| VID-04 | Phase 5 | Pending |
-| VID-05 | Phase 5 | Pending |
-| INP-01 | Phase 5 | Pending |
+| VID-03 | Phase 5 | Complete |
+| VID-04 | Phase 5 | Complete |
+| VID-05 | Phase 5 | Complete |
+| INP-01 | Phase 5 | Complete |
 | AUD-01 | Phase 6 | Pending |
 | AUD-02 | Phase 6 | Pending |
 | EVD-01 | Phase 3 | Complete |
@@ -232,7 +232,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EVD-05 | Phases 4, 5 and 6 | Phase 4 slice complete; Phase 5 and 6 device-fault obligations remain open |
 | EVD-06 | Phase 6 | Pending |
 | HB-01 | Phase 3 | Complete |
-| HB-02 | Phase 5 | Pending |
+| HB-02 | Phase 5 | Complete |
 | HB-03 | Phase 6 | Pending |
 | CON-01 | Phases 3, 5, 6 | Phase 3 snapshot/silence slice complete; actual frames/audio pending |
 | PERF-01 | Phase 6 | Pending |
