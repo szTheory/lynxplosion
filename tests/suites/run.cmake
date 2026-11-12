@@ -98,11 +98,14 @@ foreach(required MODE ROOT WORK SCRATCH_ROOT TEST_BINARY ENV_EXECUTABLE)
     message(FATAL_ERROR "suite_driver: -D${required} is required")
   endif()
 endforeach()
-if(NOT MODE MATCHES "^(cpu|cpu_no_run|timers_no_run|completion_controls|selection_controls|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls|timer_observation|timer_strict_controls|timer_cascade_model|timer_model_controls|timer_result_controls|timer_pending_controls)$")
+if(NOT MODE MATCHES "^(cpu|cpu_no_run|timers_no_run|completion_controls|selection_controls|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls|timer_observation|timer_strict_controls|timer_cascade_model|timer_model_controls|timer_result_controls|timer_pending_controls|page_mode_observation|page_mode_controls)$")
   message(FATAL_ERROR "suite_driver: unknown mode")
 endif()
 if(MODE STREQUAL "cpu" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
   message(FATAL_ERROR "suite_driver: explicit CPU PROFILE is required")
+endif()
+if(MODE STREQUAL "page_mode_observation" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
+  message(FATAL_ERROR "suite_driver: explicit page-mode PROFILE is required")
 endif()
 
 function(write_suite_owner_marker directory)
@@ -173,8 +176,13 @@ file(MAKE_DIRECTORY "${WORK}")
 write_suite_owner_marker("${WORK}")
 file(MAKE_DIRECTORY "${WORK}/tmp" "${WORK}/build")
 write_suite_owner_marker("${WORK}/build")
-set(SUITE_BUILD "${WORK}/build")
-set(ORACLE "${WORK}/build/oracle.tsv")
+if(MODE MATCHES "^page_mode")
+  set(SUITE_BUILD "${WORK}/page-mode-build")
+  set(ORACLE "${WORK}/page-mode-oracle.tsv")
+else()
+  set(SUITE_BUILD "${WORK}/build")
+  set(ORACLE "${WORK}/build/oracle.tsv")
+endif()
 set(FAILURE "")
 
 function(expect_failure expected)
@@ -1387,32 +1395,179 @@ function(expect_shape_failure expected)
       --source "${WORK}/source" --test-source-shape-only)
 endfunction()
 
-execute_process(
-  COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
-          "TMPDIR=${WORK}/tmp"
-          sh "${ROOT}/scripts/build-suites.sh" --out "${SUITE_BUILD}"
-  TIMEOUT 30 RESULT_VARIABLE build_rc OUTPUT_VARIABLE build_out ERROR_VARIABLE build_err)
-if(NOT build_rc STREQUAL "0" OR
-   NOT build_out MATCHES "lynx_tests_pin=a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e")
-  set(FAILURE "pinned suite source build failed: ${build_rc} ${build_out} ${build_err}")
-endif()
-
-if(FAILURE STREQUAL "")
+if(MODE MATCHES "^page_mode")
   execute_process(
-    COMMAND sh "${ROOT}/scripts/generate-suite-oracle.sh"
-            --source "${ROOT}/build/pins/lynx-tests" --out "${ORACLE}"
-    TIMEOUT 15 RESULT_VARIABLE oracle_rc OUTPUT_VARIABLE oracle_out ERROR_VARIABLE oracle_err)
-  if(NOT oracle_rc STREQUAL "0")
-    set(FAILURE "source oracle generation failed: ${oracle_rc} ${oracle_err}")
+    COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin" "TMPDIR=${WORK}/tmp"
+            sh "${ROOT}/scripts/build-page-mode.sh" --out "${SUITE_BUILD}"
+    TIMEOUT 30 RESULT_VARIABLE build_rc OUTPUT_VARIABLE build_out ERROR_VARIABLE build_err)
+  if(NOT build_rc STREQUAL "0" OR
+     NOT build_out MATCHES "lynx_tests_pin=a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e" OR
+     NOT build_out MATCHES "result_count=6")
+    set(FAILURE "pinned page-mode source build failed: ${build_rc} ${build_out} ${build_err}")
+  endif()
+  if(FAILURE STREQUAL "")
+    execute_process(
+      COMMAND sh "${ROOT}/scripts/generate-page-mode-oracle.sh"
+              --source "${ROOT}/build/pins/lynx-tests" --out "${ORACLE}"
+      TIMEOUT 15 RESULT_VARIABLE oracle_rc OUTPUT_VARIABLE oracle_out ERROR_VARIABLE oracle_err)
+    if(NOT oracle_rc STREQUAL "0")
+      set(FAILURE "page-mode source oracle generation failed: ${oracle_rc} ${oracle_err}")
+    endif()
+  endif()
+  if(FAILURE STREQUAL "")
+    execute_process(COMMAND "${TEST_BINARY}" validate-page-mode-build
+      "${WORK}" "${SUITE_BUILD}" "${ORACLE}"
+      TIMEOUT 10 RESULT_VARIABLE validate_rc OUTPUT_VARIABLE validate_out ERROR_VARIABLE validate_err)
+    if(NOT validate_rc STREQUAL "0" OR
+       NOT validate_out MATCHES "page-mode build: pinned source, tool, notice, wrapper, object, labels and six-row oracle identities valid")
+      set(FAILURE "page-mode build/oracle identity validation failed: ${validate_rc} ${validate_out} ${validate_err}")
+    endif()
+  endif()
+else()
+  execute_process(
+    COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+            "TMPDIR=${WORK}/tmp"
+            sh "${ROOT}/scripts/build-suites.sh" --out "${SUITE_BUILD}"
+    TIMEOUT 30 RESULT_VARIABLE build_rc OUTPUT_VARIABLE build_out ERROR_VARIABLE build_err)
+  if(NOT build_rc STREQUAL "0" OR
+     NOT build_out MATCHES "lynx_tests_pin=a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e")
+    set(FAILURE "pinned suite source build failed: ${build_rc} ${build_out} ${build_err}")
+  endif()
+
+  if(FAILURE STREQUAL "")
+    execute_process(
+      COMMAND sh "${ROOT}/scripts/generate-suite-oracle.sh"
+              --source "${ROOT}/build/pins/lynx-tests" --out "${ORACLE}"
+      TIMEOUT 15 RESULT_VARIABLE oracle_rc OUTPUT_VARIABLE oracle_out ERROR_VARIABLE oracle_err)
+    if(NOT oracle_rc STREQUAL "0")
+      set(FAILURE "source oracle generation failed: ${oracle_rc} ${oracle_err}")
+    endif()
+  endif()
+
+  if(FAILURE STREQUAL "")
+    execute_process(COMMAND "${TEST_BINARY}" validate-oracle "${ORACLE}"
+      TIMEOUT 10 RESULT_VARIABLE validate_rc OUTPUT_VARIABLE validate_out ERROR_VARIABLE validate_err)
+    if(NOT validate_rc STREQUAL "0" OR NOT validate_out MATCHES "cpu=18/18 timers=16/18")
+      set(FAILURE "generated oracle validation failed: ${validate_rc} ${validate_out} ${validate_err}")
+    endif()
   endif()
 endif()
 
-if(FAILURE STREQUAL "")
-  execute_process(COMMAND "${TEST_BINARY}" validate-oracle "${ORACLE}"
-    TIMEOUT 10 RESULT_VARIABLE validate_rc OUTPUT_VARIABLE validate_out ERROR_VARIABLE validate_err)
-  if(NOT validate_rc STREQUAL "0" OR NOT validate_out MATCHES "cpu=18/18 timers=16/18")
-    set(FAILURE "generated oracle validation failed: ${validate_rc} ${validate_out} ${validate_err}")
-  endif()
+if(FAILURE STREQUAL "" AND MODE STREQUAL "page_mode_observation")
+  set(all_run_out "")
+  set(record "${WORK}/page-mode-run-${PROFILE}.txt")
+  expect_success("LYNX-SKIP: page-mode source requires unavailable SERCTL write at $FD8C"
+    "${TEST_BINARY}" observe page-mode "${PROFILE}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+  expect_success("page-mode record: exact SERCTL blocker and missing six-byte observation valid for ${PROFILE}"
+    "${TEST_BINARY}" validate-page-mode-record "${PROFILE}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+  string(APPEND all_run_out "LYNX-SKIP: page-mode source requires unavailable SERCTL write at $FD8C\n")
+elseif(FAILURE STREQUAL "" AND MODE STREQUAL "page_mode_controls")
+  set(all_run_out "")
+  foreach(profile lynx1 lynx2)
+    set(record "${WORK}/page-mode-run-${profile}.txt")
+    expect_success("page-mode control: exact SERCTL write blocker at $FD8C"
+      "${TEST_BINARY}" observe page-mode "${profile}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}" control)
+    expect_success("page-mode record: exact SERCTL blocker and missing six-byte observation valid for ${profile}"
+      "${TEST_BINARY}" validate-page-mode-record "${profile}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+    file(READ "${record}" record_baseline)
+
+    if(profile STREQUAL "lynx1")
+      set(wrong_profile lynx2)
+    else()
+      set(wrong_profile lynx1)
+    endif()
+    string(REPLACE "detected_model=${profile}\n" "detected_model=${wrong_profile}\n" mutated "${record_baseline}")
+    file(WRITE "${record}" "${mutated}")
+    expect_failure("page-mode record detected model mismatch"
+      "${TEST_BINARY}" validate-page-mode-record "${profile}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+    file(WRITE "${record}" "${record_baseline}")
+
+    string(REPLACE "meaningful_count=0\n" "meaningful_count=1\n" mutated "${record_baseline}")
+    file(WRITE "${record}" "${mutated}")
+    expect_failure("page-mode record must preserve missing results"
+      "${TEST_BINARY}" validate-page-mode-record "${profile}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+    file(WRITE "${record}" "${record_baseline}")
+
+    string(REGEX REPLACE "ticks_observed=[0-9]+" "ticks_observed=39999" mutated "${record_baseline}")
+    file(WRITE "${record}" "${mutated}")
+    expect_failure("page-mode record ticks outside bound or do not match guest time"
+      "${TEST_BINARY}" validate-page-mode-record "${profile}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+    file(WRITE "${record}" "${record_baseline}")
+
+    string(REPLACE "request_address=fd8c\n" "request_address=fe00\n" mutated "${record_baseline}")
+    file(WRITE "${record}" "${mutated}")
+    expect_failure("page-mode record unsupported request address mismatch"
+      "${TEST_BINARY}" validate-page-mode-record "${profile}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+    file(WRITE "${record}" "${record_baseline}")
+
+    file(APPEND "${record}" "unexpected=value\n")
+    expect_failure("page-mode record unknown key"
+      "${TEST_BINARY}" validate-page-mode-record "${profile}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+    file(WRITE "${record}" "${record_baseline}")
+
+    expect_success("page-mode control: exact SERCTL write blocker at $FD8C"
+      "${TEST_BINARY}" no-run page-mode "${profile}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+    if(NOT EXISTS "${record}")
+      message(FATAL_ERROR "suite_driver: page-mode no-run control did not retain its blocker record")
+    endif()
+    file(READ "${record}" no_run_record)
+    if(NOT no_run_record MATCHES "no_run_hold_verified=true")
+      message(FATAL_ERROR "suite_driver: page-mode no-run record omitted the verified hold")
+    endif()
+    expect_success("page-mode record: exact SERCTL blocker and missing six-byte observation valid for ${profile}"
+      "${TEST_BINARY}" validate-page-mode-record "${profile}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
+  endforeach()
+
+  set(tab "\t")
+  file(READ "${ORACLE}" page_oracle)
+  string(REPLACE "result_count${tab}6\n" "result_count${tab}5\n" bad_count "${page_oracle}")
+  file(WRITE "${WORK}/page-oracle-count.tsv" "${bad_count}")
+  expect_failure("page-mode oracle: result count mismatch"
+    "${TEST_BINARY}" validate-page-mode-oracle "${WORK}/page-oracle-count.tsv")
+  string(REPLACE "result${tab}4${tab}2${tab}74${tab}75\n" "result${tab}4${tab}2${tab}73${tab}75\n" bad_alternative "${page_oracle}")
+  file(WRITE "${WORK}/page-oracle-alternative.tsv" "${bad_alternative}")
+  expect_failure("page-mode oracle: source expectation mismatch"
+    "${TEST_BINARY}" validate-page-mode-oracle "${WORK}/page-oracle-alternative.tsv")
+
+  file(MAKE_DIRECTORY "${WORK}/source/page-mode")
+  configure_file("${ROOT}/build/pins/lynx-tests/page-mode/main.c" "${WORK}/source/page-mode/main.c" COPYONLY)
+  configure_file("${ROOT}/build/pins/lynx-tests/page-mode/tests.s" "${WORK}/source/page-mode/tests.s" COPYONLY)
+  configure_file("${ROOT}/build/pins/lynx-tests/LICENSE" "${WORK}/source/LICENSE" COPYONLY)
+  file(READ "${WORK}/source/page-mode/main.c" source_main)
+  string(REPLACE "EXPECT(0x74, 0x75)" "EXPECT(0x73, 0x75)" source_mutant "${source_main}")
+  file(WRITE "${WORK}/source/page-mode/main.c" "${source_mutant}")
+  expect_failure("page-mode oracle: source shape: source alternative at result 4 must remain EXPECT(0x74,0x75)"
+    sh "${ROOT}/scripts/generate-page-mode-oracle.sh" --source "${WORK}/source" --test-source-shape-only)
+
+  expect_failure("page-mode build: output is outside invocation-owned scratch"
+    sh "${ROOT}/scripts/build-page-mode.sh" --out "${ROOT}/build/check/page-mode-outside-${SUITE_RUN_NONCE}")
+  expect_success_timeout("page-mode script controls: isolated source, tool, marker, notice, shape, and output hostility controls refused; positive brackets remained valid" 120
+    sh "${ROOT}/tests/gates/page-mode-script-controls.sh" "${ROOT}" "${WORK}/page-mode-script-hostility")
+  expect_success_timeout("inventory_controls: junit: all cases ok" 30
+    ${CMAKE_COMMAND} -DMODE=junit -DSCRIPTS=${ROOT}/tests/cmake
+    -DWORK=${WORK}/junit-controls -P "${ROOT}/tests/cmake/inventory_controls.cmake")
+  string(ASCII 9 page_tab)
+  set(page_inventory "${WORK}/page-mode-skips.inventory.txt")
+  set(page_skips "${WORK}/page-mode-skips.txt")
+  set(page_junit "${WORK}/page-mode-skips.junit.xml")
+  file(WRITE "${page_inventory}" "# name<TAB>labels\nsuite.page_mode.observation.lynx1${page_tab}suite\nsuite.page_mode.observation.lynx2${page_tab}suite\n")
+  file(WRITE "${page_skips}" "# name<TAB>reason\nsuite.page_mode.observation.lynx1${page_tab}page-mode source reaches unsupported SERCTL write $FD8C before tests\nsuite.page_mode.observation.lynx2${page_tab}page-mode source reaches unsupported SERCTL write $FD8C before tests\n")
+  set(page_junit_skipped "<testsuite>\n  <testcase name=\"suite.page_mode.observation.lynx1\" status=\"notrun\"><skipped message=\"SERCTL unsupported\" /></testcase>\n  <testcase name=\"suite.page_mode.observation.lynx2\" status=\"notrun\"><skipped message=\"SERCTL unsupported\" /></testcase>\n</testsuite>\n")
+  file(WRITE "${page_junit}" "${page_junit_skipped}")
+  expect_success("check_junit: 2 tests accounted for once each (2 declared skips)"
+    "${CMAKE_COMMAND}" "-DJUNIT=${page_junit}" "-DINVENTORY=${page_inventory}" "-DSKIPS=${page_skips}"
+    -P "${ROOT}/tests/cmake/check_junit.cmake")
+  file(WRITE "${page_skips}" "# name<TAB>reason\nsuite.page_mode.observation.lynx1${page_tab}page-mode source reaches unsupported SERCTL write $FD8C before tests\n")
+  expect_failure("suite.page_mode.observation.lynx2: skipped but not declared in skips.txt"
+    "${CMAKE_COMMAND}" "-DJUNIT=${page_junit}" "-DINVENTORY=${page_inventory}" "-DSKIPS=${page_skips}"
+    -P "${ROOT}/tests/cmake/check_junit.cmake")
+  file(WRITE "${page_skips}" "# name<TAB>reason\nsuite.page_mode.observation.lynx1${page_tab}page-mode source reaches unsupported SERCTL write $FD8C before tests\nsuite.page_mode.observation.lynx2${page_tab}page-mode source reaches unsupported SERCTL write $FD8C before tests\n")
+  set(page_junit_stale "<testsuite>\n  <testcase name=\"suite.page_mode.observation.lynx1\" status=\"notrun\"><skipped message=\"SERCTL unsupported\" /></testcase>\n  <testcase name=\"suite.page_mode.observation.lynx2\" status=\"run\"></testcase>\n</testsuite>\n")
+  file(WRITE "${page_junit}" "${page_junit_stale}")
+  expect_failure("suite.page_mode.observation.lynx2: declared as skipped but ran"
+    "${CMAKE_COMMAND}" "-DJUNIT=${page_junit}" "-DINVENTORY=${page_inventory}" "-DSKIPS=${page_skips}"
+    -P "${ROOT}/tests/cmake/check_junit.cmake")
+  string(APPEND all_run_out "page-mode controls: both profiles prove the exact unsupported request; no-run holds then resumes; isolated script source/tool/marker/notice/shape/path hostility, altered model/count/time/address/unknown-key/source/oracle, and actual-name declared, undeclared and stale-skip controls refuse\n")
 endif()
 
 if(FAILURE STREQUAL "")
@@ -2366,4 +2521,8 @@ if(NOT FAILURE STREQUAL "")
   message(FATAL_ERROR "suite_driver: ${FAILURE}")
 endif()
 cleanup_suite_run("${WORK}" "${SCRATCH_ROOT}" "${SUITE_RUN_NONCE}")
-message(STATUS "${all_run_out}")
+if(MODE STREQUAL "page_mode_observation")
+  message("${all_run_out}")
+else()
+  message(STATUS "${all_run_out}")
+endif()

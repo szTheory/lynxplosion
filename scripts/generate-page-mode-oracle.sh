@@ -41,9 +41,10 @@ if [ "$SHAPE_ONLY" -eq 0 ]; then
   CC65_DIR="$ROOT/build/pins/cc65"
   [ "$(cat "$CC65_DIR/.lynx-pin")" = "$CC65_PIN" ] || { printf 'page-mode oracle: cc65 pin marker mismatch\n' >&2; exit 1; }
   for tool in bin/ca65 bin/ld65; do
+    [ -x "$CC65_DIR/$tool" ] || { printf 'page-mode oracle: pinned tool missing: %s\n' "$tool" >&2; exit 1; }
     actual=$(sha256 "$CC65_DIR/$tool")
     expected=$(awk -v path="$tool" '$2 == path { print $1; found++ } END { if (found != 1) exit 1 }' "$CC65_DIR/.lynx-build-files")
-    [ -x "$CC65_DIR/$tool" ] && [ "$actual" = "$expected" ] || { printf 'page-mode oracle: pinned cc65 tool mismatch: %s\n' "$tool" >&2; exit 1; }
+    [ "$actual" = "$expected" ] || { printf 'page-mode oracle: pinned cc65 tool mismatch: %s\n' "$tool" >&2; exit 1; }
     if [ "$tool" = bin/ca65 ]; then CA65_BEFORE=$actual; else LD65_BEFORE=$actual; fi
   done
   MAIN_SHA=$(verify_source page-mode/main.c)

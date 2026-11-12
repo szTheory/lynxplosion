@@ -1,4 +1,4 @@
-# Headless public CPU and timer suite evidence
+# Headless public CPU, timer and page-mode suite evidence
 
 The `suite.cpu.lynx1` and `suite.cpu.lynx2` tests build the pinned `lynx-tests` sources, derive expected bytes from their checked-in `main.c` and `tests.s`, load the linked BS93 object through the public BLL API, and run the CPU suite in fresh machines. Each profile runs once with zeroed result/zero-page storage and once with a deterministic test-private seeded pattern. Raw guest bytes and their source-oracle comparisons are separate records. A match means those software observations agree for this build and selected profile input; it does not establish agreement with a physical Lynx or qualify a CPU hardware profile. The overall default profile remains `none`.
 
@@ -29,6 +29,60 @@ The private `--test-source-shape-only` option is used only by negative controls 
 `sh scripts/build-page-mode.sh --out build/check/scratch/<new-owned-output>` assembles the unchanged pinned `page-mode/tests.s` into a temporary tier-A BS93 object. The companion `sh scripts/generate-page-mode-oracle.sh --source build/pins/lynx-tests --out build/check/scratch/<new-oracle.tsv>` derives six expected bytes from pinned `main.c` and `tests.s`: `35 41 69 81 74|75 81`, with offsets `0..5`, one byte per test, and a six-byte result extent. Together with their artifact records, the builder and oracle bind the exact page-mode source, upstream notice, cc65 tools, wrapper, BLL layout, recipe, labels and object identities; existing CPU and timer outputs and descriptors remain independent.
 
 The page wrapper keeps `WaitVBlank`, the MAPCTL accesses, Timer6 measurements and SERCTL trigger writes from upstream source. It configures the source-declared Timer0/Timer2 wait chain and uses the explicit unverified `VIDEO_POLICY1` policy in the host harness. Display DMA remains disabled. This source build establishes assembly and oracle provenance only; it does not claim runtime completion, expected-byte agreement, hardware accuracy or profile qualification.
+
+## Page-mode runtime blocker
+
+The registered suite.page_mode.observation.lynx1 and
+suite.page_mode.observation.lynx2 cases each create a fresh BS93 instance,
+probe the guest model independently, select VIDEO_POLICY1, and execute the
+unchanged source until its first unsupported request. Both reach the initial
+TriggerPulse before the first page-mode test body can write a result:
+SERCTL address $FD8C, write value $06. The harness stops there and emits the
+exact LYNX-SKIP: page-mode source requires unavailable SERCTL write at $FD8C
+signal. These are declared CTest skips, with matching rows in
+tests/inventory/skips.txt; the JUnit inventory gate rejects undeclared skips
+and stale declarations.
+
+| Profile | Guest ticks | Probe / marker | Progress / done | First unsupported request | Result evidence |
+| --- | ---: | --- | --- | --- | --- |
+| lynx1 | 267,429 | 01 / a1 | 1 / 00 | write $06 to $FD8C | 0 meaningful bytes; raw observation missing; comparison not run |
+| lynx2 | 267,414 | 00 / a2 | 1 / 00 | write $06 to $FD8C | 0 meaningful bytes; raw observation missing; comparison not run |
+
+The 40,000-tick minimum is a software-model bound derived from the wrapper's
+Timer0 backup 158 and Timer2 backup 104 wait chain: it exceeds two complete
+(158 + 1) × (104 + 1) timer periods. The finite maximum is 50,000,000 guest
+ticks. The controls also hold a fresh machine for the minimum time before
+releasing it, then prove that the same exact SERCTL request is reached. Timer
+setup remains Timer0 backup/control 9e/18 and Timer2 68/1f; MAPCTL is 0c,
+timing policy is VIDEO_POLICY1, and display DMA remains disabled. The MAPCTL
+reads inside the six tests, their Timer6 measurements, test completion, and
+all six result writes are not reached.
+
+The exact source, build, tool, oracle and runtime-record identities were
+validated before the invocation-owned scratch was removed:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Pinned Lynx tests revision | b583dc43d532d3c41563a6fa35420614fbcead89 |
+| page-mode/main.c | 4504f1c9ebe9fc0a414f245bcb45193b2a90e5025f912b23c9443624b95acce7 |
+| page-mode/tests.s | 929d0f032a5f1cf36ff55b163abec388adb08159304e56cf25516c705e6410f4 |
+| Upstream notice | 5473029e68513703f857ffcac8194be3edae89469a71143499b9579d9a3ec2e3 |
+| cc65 ca65 | aae8906856e0a07e3eb138ed83fd52c1f20ae0b21c35000ce774c896f1785967 |
+| cc65 ld65 | e74938752aabfe22609d7cf3009a525630f1d4dc279a53bad569360b42b3ffd6 |
+| Page-mode BLL object | 63ba7bc2778a4d9f1f78de1307e21e91781109aa82ae102c3636bd080183f2c6 |
+| Page-mode labels | ca6f3e4f695fe574e039a4489a630a86e5aebf20a259ea9301b65353d3a9825e |
+| Six-row source oracle | 38f96b51601edab5e927f64e59b1bf2ca57a84fca6eaa68d84550099a1cf9d26 |
+| Page-mode build record | 21ec422b3e905c588cc3ee20efa00eec6910e9ef9d0be2d1369aea05089056d4 |
+| Wrapper | 8e8d403eb5b58db1914d3e105a2c5da4ebada05c8aa2a74c7953507e00e4d18d |
+| BLL layout | f00dbf7ea1b9c47a1e20f658bb4b981149c7def2db886985c5b44f6b295422e6 |
+| Fixture manifest | 54ef001c06b44b620350941ed246e9bf409baa8cd7f56865f41f7163708c4ce3 |
+| Page-mode builder recipe | 163a5ba66568eda1e04b452a35280810ec19218fffccf6fdfe413f6b1b317af7 |
+| Page-mode oracle recipe | faa03ce3f05904259d1fd99d98145a277bc2b027a00a7151f8724d6254bb6fea |
+| Lynx I blocker record | dbf4288b48020c09a187878423d38972fef066bb2e301de86d02ba662aa258c1 |
+| Lynx II blocker record | f0328a044b9d562e7ace6fcf4a0dd81d9f6aeab2335c2eda6c3c20306bfbbf5a |
+
+Neither skip is a source-oracle agreement, raw frame, input response, hardware
+result, or profile qualification. EVD-02 remains open.
 
 ## Timer observations and the pending source row
 
@@ -104,6 +158,18 @@ cmake --build --preset check
 ctest --preset check --no-tests=error --output-on-failure \
   -R '^suite\.(oracle_tracer|oracle_controls|symbol_controls|cpu\.(lynx1|lynx2|model_controls|bound_controls))$'
 ```
+
+The page-mode slice runs both source-bound observations, its blocker/no-run and
+record/parser controls, isolated builder/oracle source, tool, notice, marker,
+shape and output-ownership hostility controls, and the existing oracle and
+symbol controls:
+
+~~~sh
+cmake --preset check
+cmake --build --preset check
+ctest --preset check --no-tests=error --output-on-failure \
+  -R '^suite\.(page_mode\.(observation\.(lynx1|lynx2)|controls)|oracle_controls|symbol_controls)$'
+~~~
 
 The timer observation/control slice can be rerun with:
 

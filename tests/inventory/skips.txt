@@ -2,3 +2,5 @@
 # A skipped test passes the JUnit completeness check only when it is listed
 # here with a non-empty reason. A declared skip that actually ran fails as a
 # stale declaration. Phase 1 has no skips.
+suite.page_mode.observation.lynx1	page-mode source reaches unsupported SERCTL write $FD8C before tests
+suite.page_mode.observation.lynx2	page-mode source reaches unsupported SERCTL write $FD8C before tests

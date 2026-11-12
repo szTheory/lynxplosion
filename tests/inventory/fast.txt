@@ -177,6 +177,9 @@ suite.cpu.model_controls	suite
 suite.cpu.no_run	suite
 suite.oracle_controls	suite
 suite.oracle_tracer	suite
+suite.page_mode.controls	suite
+suite.page_mode.observation.lynx1	suite
+suite.page_mode.observation.lynx2	suite
 suite.selection_controls	suite
 suite.symbol_controls	suite
 suite.timers.cascade_model	suite

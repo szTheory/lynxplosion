@@ -28,6 +28,9 @@ enum {
     TIMER_RESERVED = 2,
     TIMER_MIN_TICKS = 256,
     TIMER_MAX_TICKS = 50000000,
+    PAGE_MODE_RESULT_COUNT = 6,
+    PAGE_MODE_MIN_TICKS = 40000,
+    PAGE_MODE_MAX_TICKS = 50000000,
     JSON_MAX_FIELDS = 48,
     JSON_ARRAY_MAX = 8,
     JSON_TEXT_MAX = 256,
@@ -60,6 +63,30 @@ typedef struct suite_oracle {
     uint8_t counts[2][RESULT_EXTENT];
     uint8_t tuple[2][4];
 } suite_oracle;
+
+typedef struct page_mode_oracle {
+    char revision[41];
+    char main_sha256[65];
+    char tests_sha256[65];
+    char notice_sha256[65];
+    char recipe_sha256[65];
+    uint8_t values[PAGE_MODE_RESULT_COUNT][2];
+    uint8_t counts[PAGE_MODE_RESULT_COUNT];
+} page_mode_oracle;
+
+typedef struct page_mode_build_identity {
+    char object_sha256[65];
+    char labels_sha256[65];
+    char oracle_sha256[65];
+    char build_record_sha256[65];
+    char wrapper_sha256[65];
+    char layout_sha256[65];
+    char manifest_sha256[65];
+    char recipe_sha256[65];
+    char oracle_recipe_sha256[65];
+    char ca65_sha256[65];
+    char ld65_sha256[65];
+} page_mode_build_identity;
 
 typedef struct machine_instance {
     void *storage;
@@ -620,6 +647,104 @@ static int parse_oracle(const char *path, suite_oracle *out)
     if (out->counts[1][8] != 2u || out->counts[1][11] != 3u) {
         free(bytes);
         return fail("oracle: timer accepted alternatives were lost");
+    }
+    free(bytes);
+    return 0;
+}
+
+static int parse_page_mode_oracle(const char *path, page_mode_oracle *out)
+{
+    static const char *const metadata_names[5] = {
+        "revision", "main_sha256", "tests_sha256", "notice_sha256", "recipe_sha256"
+    };
+    static const size_t metadata_lengths[5] = {40u, 64u, 64u, 64u, 64u};
+    static const uint8_t expected_counts[PAGE_MODE_RESULT_COUNT] = {1u, 1u, 1u, 1u, 2u, 1u};
+    static const uint8_t expected_values[PAGE_MODE_RESULT_COUNT][2] = {
+        {0x35u, 0u}, {0x41u, 0u}, {0x69u, 0u}, {0x81u, 0u},
+        {0x74u, 0x75u}, {0x81u, 0u}
+    };
+    char *bytes = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    size_t i;
+    char line[ORACLE_LINE_MAX + 1u];
+    char *fields[12];
+    size_t count;
+
+    memset(out, 0, sizeof *out);
+    if (read_text(path, &bytes, &length, 8192u) != 0) return 1;
+    if (oracle_line(bytes, length, &offset, line, fields, &count) != 0 || count != 2u ||
+        strcmp(fields[0], "LYNX-PAGE-MODE-ORACLE") != 0 || strcmp(fields[1], "1") != 0) {
+        free(bytes);
+        return fail("page-mode oracle: invalid version header");
+    }
+    for (i = 0u; i < 5u; i++) {
+        char *destination;
+        size_t capacity;
+        if (oracle_line(bytes, length, &offset, line, fields, &count) != 0 || count != 2u ||
+            strcmp(fields[0], metadata_names[i]) != 0 || strlen(fields[1]) != metadata_lengths[i]) {
+            free(bytes);
+            return fail("page-mode oracle: malformed source identity record");
+        }
+        if (i == 0u) { destination = out->revision; capacity = sizeof out->revision; }
+        else if (i == 1u) { destination = out->main_sha256; capacity = sizeof out->main_sha256; }
+        else if (i == 2u) { destination = out->tests_sha256; capacity = sizeof out->tests_sha256; }
+        else if (i == 3u) { destination = out->notice_sha256; capacity = sizeof out->notice_sha256; }
+        else { destination = out->recipe_sha256; capacity = sizeof out->recipe_sha256; }
+        if (copy_field(destination, capacity, fields[1]) != 0 ||
+            (i == 0u ? !valid_hex(fields[1], 40u) : !valid_hex(fields[1], 64u))) {
+            free(bytes);
+            return fail("page-mode oracle: malformed source identity");
+        }
+    }
+    if (oracle_line(bytes, length, &offset, line, fields, &count) != 0 || count != 2u ||
+        strcmp(fields[0], "result_count") != 0 || strcmp(fields[1], "6") != 0) {
+        free(bytes);
+        return fail("page-mode oracle: result count mismatch");
+    }
+    if (oracle_line(bytes, length, &offset, line, fields, &count) != 0 || count != 2u ||
+        strcmp(fields[0], "test_count") != 0 || strcmp(fields[1], "6") != 0) {
+        free(bytes);
+        return fail("page-mode oracle: test count mismatch");
+    }
+    if (oracle_line(bytes, length, &offset, line, fields, &count) != 0 || count != 2u ||
+        strcmp(fields[0], "extent") != 0 || strcmp(fields[1], "6") != 0) {
+        free(bytes);
+        return fail("page-mode oracle: result extent mismatch");
+    }
+    for (i = 0u; i < PAGE_MODE_RESULT_COUNT; i++) {
+        uint32_t row = UINT32_MAX;
+        uint32_t accepted = UINT32_MAX;
+        size_t j;
+        if (oracle_line(bytes, length, &offset, line, fields, &count) != 0) {
+            char message[128];
+            (void)snprintf(message, sizeof message,
+                           "page-mode oracle: missing result row %zu at %zu/%zu", i, offset, length);
+            free(bytes);
+            return fail(message);
+        }
+        if (count < 4u || strcmp(fields[0], "result") != 0 ||
+            parse_decimal(fields[1], &row) != 0 || row != i) {
+            free(bytes);
+            return fail("page-mode oracle: malformed result row index or shape");
+        }
+        if (parse_decimal(fields[2], &accepted) != 0 || accepted != expected_counts[i] ||
+            count != (size_t)(3u + accepted)) {
+            free(bytes);
+            return fail("page-mode oracle: malformed result alternative count");
+        }
+        out->counts[i] = (uint8_t)accepted;
+        for (j = 0u; j < accepted; j++) {
+            if (parse_byte(fields[3u + j], &out->values[i][j]) != 0 ||
+                out->values[i][j] != expected_values[i][j]) {
+                free(bytes);
+                return fail("page-mode oracle: source expectation mismatch");
+            }
+        }
+    }
+    if (offset != length) {
+        free(bytes);
+        return fail("page-mode oracle: trailing data");
     }
     free(bytes);
     return 0;
@@ -1213,6 +1338,286 @@ static int read_build_identity(const char *directory, const suite_oracle *oracle
         verify_pinned_source("LICENSE", oracle->license) != 0) {
         return fail("oracle: source identity mismatch");
     }
+    return 0;
+}
+
+static int regular_nosymlink_file(const char *path)
+{
+    struct stat info;
+    return lstat(path, &info) == 0 && S_ISREG(info.st_mode) && !S_ISLNK(info.st_mode);
+}
+
+static int validate_page_mode_owner_marker(const char *marker_path, const char *owned_path)
+{
+    char *text = NULL;
+    char tail[4096];
+    size_t length = 0u;
+    size_t tail_length;
+    size_t i;
+    int n;
+    if (!regular_nosymlink_file(marker_path) || read_text(marker_path, &text, &length, 8192u) != 0) {
+        return fail("page-mode build: owner marker missing or invalid");
+    }
+    n = snprintf(tail, sizeof tail, "path=%s\n", owned_path);
+    if (n < 0 || (size_t)n >= sizeof tail) {
+        free(text);
+        return fail("page-mode build: owner path too long");
+    }
+    tail_length = (size_t)n;
+    if (length != 55u + tail_length || memcmp(text, "nonce=", 6u) != 0 || text[54] != '\n' ||
+        memcmp(text + 55u, tail, tail_length) != 0) {
+        free(text);
+        return fail("page-mode build: owner marker mismatch");
+    }
+    for (i = 6u; i < 54u; i++) {
+        if (hex_digit((unsigned char)text[i]) < 0) {
+            free(text);
+            return fail("page-mode build: owner nonce malformed");
+        }
+    }
+    free(text);
+    return 0;
+}
+
+static int read_named_pin(const char *wanted, char archive_sha[65], char revision[41])
+{
+    char pins_path[4096];
+    char *pins = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    unsigned found = 0u;
+    if (snprintf(pins_path, sizeof pins_path, "%s/pins.txt", LYNX_PROJECT_ROOT) >= (int)sizeof pins_path ||
+        read_text(pins_path, &pins, &length, 65536u) != 0) return 1;
+    while (offset < length) {
+        char line[1024];
+        char *save = NULL;
+        char *name;
+        char *version;
+        char *url;
+        char *archive;
+        char *revision_start;
+        char revision_value[41];
+        size_t end = offset;
+        size_t line_length;
+        while (end < length && pins[end] != '\n') end++;
+        line_length = end - offset;
+        if (line_length >= sizeof line) { free(pins); return fail("page-mode build: malformed pins.txt row"); }
+        memcpy(line, pins + offset, line_length);
+        line[line_length] = '\0';
+        offset = end + (end < length ? 1u : 0u);
+        name = strtok_r(line, " \t", &save);
+        if (name == NULL || name[0] == '#') continue;
+        if (strcmp(name, wanted) != 0) continue;
+        version = strtok_r(NULL, " \t", &save);
+        url = strtok_r(NULL, " \t", &save);
+        archive = strtok_r(NULL, " \t", &save);
+        if (version == NULL || url == NULL || archive == NULL || strtok_r(NULL, " \t", &save) != NULL ||
+            !valid_hex(archive, 64u) || (revision_start = strstr(url, "/archive/")) == NULL) {
+            free(pins);
+            return fail("page-mode build: malformed pinned identity row");
+        }
+        revision_start += 9;
+        if (strlen(revision_start) != 47u || strcmp(revision_start + 40u, ".tar.gz") != 0 ||
+            found++ != 0u) {
+            free(pins);
+            return fail("page-mode build: malformed pinned revision");
+        }
+        memcpy(revision_value, revision_start, 40u);
+        revision_value[40] = '\0';
+        if (!valid_hex(revision_value, 40u)) {
+            free(pins);
+            return fail("page-mode build: malformed pinned revision");
+        }
+        memcpy(archive_sha, archive, 65u);
+        memcpy(revision, revision_value, sizeof revision_value);
+    }
+    free(pins);
+    return found == 1u ? 0 : fail("page-mode build: pinned identity row missing");
+}
+
+static int pinned_cc65_tool_hash(const char *relative_path, char hash[65])
+{
+    char manifest_path[4096];
+    char *manifest = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    unsigned found = 0u;
+    if (snprintf(manifest_path, sizeof manifest_path, "%s/build/pins/cc65/.lynx-build-files",
+                 LYNX_PROJECT_ROOT) >= (int)sizeof manifest_path ||
+        read_text(manifest_path, &manifest, &length, 1048576u) != 0) return 1;
+    while (offset < length) {
+        char line[512];
+        char *save = NULL;
+        char *sha;
+        char *path;
+        size_t end = offset;
+        size_t line_length;
+        while (end < length && manifest[end] != '\n') end++;
+        line_length = end - offset;
+        if (line_length >= sizeof line) { free(manifest); return fail("page-mode build: malformed tool manifest row"); }
+        memcpy(line, manifest + offset, line_length);
+        line[line_length] = '\0';
+        offset = end + (end < length ? 1u : 0u);
+        sha = strtok_r(line, " \t", &save);
+        if (sha == NULL || sha[0] == '#') continue;
+        path = strtok_r(NULL, " \t", &save);
+        if (path == NULL || strtok_r(NULL, " \t", &save) != NULL) {
+            free(manifest);
+            return fail("page-mode build: malformed tool manifest row");
+        }
+        if (strcmp(path, relative_path) == 0) {
+            if (!valid_hex(sha, 64u) || found++ != 0u) {
+                free(manifest);
+                return fail("page-mode build: malformed tool identity");
+            }
+            memcpy(hash, sha, 65u);
+        }
+    }
+    free(manifest);
+    return found == 1u ? 0 : fail("page-mode build: pinned tool identity missing");
+}
+
+static int verify_page_mode_build(const char *run_directory, const char *build_directory,
+                                  const char *oracle_path, const page_mode_oracle *oracle,
+                                  page_mode_build_identity *identity)
+{
+    char expected_build[4096];
+    char expected_oracle[4096];
+    char build_real[4096];
+    char record_path[4096];
+    char file_path[4096];
+    char source_root[4096];
+    char archive[65], revision[41], cc65_archive[65], cc65_revision[41];
+    char expected[128], actual[65], ca65_pin[65], ld65_pin[65];
+    char marker_path[4096];
+    char marker[4096];
+    struct stat info;
+    const char *const files[] = {"page-mode.bll", "page-mode.lbl", "page-mode.o", "NOTICE", "build-record.txt"};
+    size_t i;
+#define PAGE_RECORD(key, value) do { \
+        if (record_value(record_path, (key), expected, sizeof expected) != 0 || strcmp(expected, (value)) != 0) \
+            return fail("page-mode build: bound build record identity mismatch"); \
+    } while (0)
+    if (validate_owned_output_directory(run_directory) != 0 ||
+        checked_join(expected_build, sizeof expected_build, run_directory, "page-mode-build") != 0 ||
+        checked_join(expected_oracle, sizeof expected_oracle, run_directory, "page-mode-oracle.tsv") != 0 ||
+        strcmp(build_directory, expected_build) != 0 || strcmp(oracle_path, expected_oracle) != 0) {
+        return fail("page-mode build: artifacts are outside the exact owned invocation");
+    }
+    if (lstat(build_directory, &info) != 0 || !S_ISDIR(info.st_mode) || S_ISLNK(info.st_mode) ||
+        realpath(build_directory, build_real) == NULL || strcmp(build_real, build_directory) != 0 ||
+        checked_join(marker_path, sizeof marker_path, build_directory, ".lynx-page-owner") != 0 ||
+        validate_page_mode_owner_marker(marker_path, build_directory) != 0 ||
+        !regular_nosymlink_file(oracle_path)) {
+        return fail("page-mode build: output ownership or oracle file invalid");
+    }
+    if (snprintf(marker, sizeof marker, "%s.owner", oracle_path) >= (int)sizeof marker ||
+        validate_page_mode_owner_marker(marker, oracle_path) != 0) return 1;
+    for (i = 0u; i < sizeof files / sizeof files[0]; i++) {
+        if (checked_join(file_path, sizeof file_path, build_directory, files[i]) != 0 ||
+            !regular_nosymlink_file(file_path)) return fail("page-mode build: artifact missing or not a regular file");
+    }
+    if (read_named_pin("lynx-tests", archive, revision) != 0 ||
+        read_named_pin("cc65", cc65_archive, cc65_revision) != 0 ||
+        strcmp(archive, "a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e") != 0 ||
+        strcmp(revision, oracle->revision) != 0 ||
+        snprintf(source_root, sizeof source_root, "%s/build/pins/lynx-tests", LYNX_PROJECT_ROOT) >= (int)sizeof source_root) {
+        return fail("page-mode build: current pinned source identity differs from oracle");
+    }
+    (void)cc65_revision;
+    {
+        char pin_path[4096];
+        char cc65_marker_path[4096];
+        char pin_text[65];
+        FILE *pin_file;
+        size_t got;
+        if (snprintf(pin_path, sizeof pin_path, "%s/.lynx-pin", source_root) >= (int)sizeof pin_path ||
+            snprintf(cc65_marker_path, sizeof cc65_marker_path, "%s/build/pins/cc65/.lynx-pin", LYNX_PROJECT_ROOT) >= (int)sizeof cc65_marker_path ||
+            !regular_nosymlink_file(pin_path) || !regular_nosymlink_file(cc65_marker_path) ||
+            (pin_file = fopen(pin_path, "rb")) == NULL) return fail("page-mode build: source pin marker missing");
+        got = fread(pin_text, 1u, sizeof pin_text, pin_file);
+        if (ferror(pin_file) != 0 || fclose(pin_file) != 0 || got != 65u || pin_text[64] != '\n' ||
+            memcmp(pin_text, archive, 64u) != 0) return fail("page-mode build: source pin marker mismatch");
+        if ((pin_file = fopen(cc65_marker_path, "rb")) == NULL) return fail("page-mode build: cc65 pin marker missing");
+        got = fread(pin_text, 1u, sizeof pin_text, pin_file);
+        if (ferror(pin_file) != 0 || fclose(pin_file) != 0 || got != 65u || pin_text[64] != '\n' ||
+            memcmp(pin_text, cc65_archive, 64u) != 0) return fail("page-mode build: cc65 pin marker mismatch");
+    }
+    if (verify_pinned_source("page-mode/main.c", oracle->main_sha256) != 0 ||
+        verify_pinned_source("page-mode/tests.s", oracle->tests_sha256) != 0 ||
+        verify_pinned_source("LICENSE", oracle->notice_sha256) != 0) return 1;
+    if (checked_join(file_path, sizeof file_path, build_directory, "NOTICE") != 0 ||
+        file_sha256(file_path, actual) != 0 || strcmp(actual, oracle->notice_sha256) != 0) {
+        return fail("page-mode build: copied source notice identity mismatch");
+    }
+    if (snprintf(file_path, sizeof file_path, "%s/build/pins/cc65/bin/ca65", LYNX_PROJECT_ROOT) >= (int)sizeof file_path ||
+        !regular_nosymlink_file(file_path) || file_sha256(file_path, actual) != 0 ||
+        pinned_cc65_tool_hash("bin/ca65", ca65_pin) != 0 || strcmp(actual, ca65_pin) != 0) {
+        return fail("page-mode build: ca65 tool identity mismatch");
+    }
+    if (snprintf(file_path, sizeof file_path, "%s/build/pins/cc65/bin/ld65", LYNX_PROJECT_ROOT) >= (int)sizeof file_path ||
+        !regular_nosymlink_file(file_path) || file_sha256(file_path, actual) != 0 ||
+        pinned_cc65_tool_hash("bin/ld65", ld65_pin) != 0 || strcmp(actual, ld65_pin) != 0) {
+        return fail("page-mode build: ld65 tool identity mismatch");
+    }
+    if (checked_join(record_path, sizeof record_path, build_directory, "build-record.txt") != 0 ||
+        checked_join(file_path, sizeof file_path, build_directory, "page-mode.bll") != 0 ||
+        file_sha256(file_path, identity->object_sha256) != 0 ||
+        checked_join(file_path, sizeof file_path, build_directory, "page-mode.lbl") != 0 ||
+        file_sha256(file_path, identity->labels_sha256) != 0 ||
+        file_sha256(oracle_path, identity->oracle_sha256) != 0 ||
+        file_sha256(record_path, identity->build_record_sha256) != 0) return 1;
+#define PAGE_FILE_HASH(key, rel, member) do { \
+        if (snprintf(file_path, sizeof file_path, "%s/%s", LYNX_PROJECT_ROOT, (rel)) >= (int)sizeof file_path || \
+            file_sha256(file_path, actual) != 0 || record_value(record_path, (key), expected, sizeof expected) != 0 || \
+            strcmp(actual, expected) != 0) return fail("page-mode build: fixture or recipe hash mismatch"); \
+        (void)snprintf((member), 65u, "%s", actual); \
+    } while (0)
+    PAGE_FILE_HASH("wrapper_sha256", "fixtures/suites/page-mode-wrapper.s", identity->wrapper_sha256);
+    PAGE_FILE_HASH("manifest_sha256", "fixtures/manifests/page-mode-tests.manifest", identity->manifest_sha256);
+    PAGE_FILE_HASH("layout_sha256", "fixtures/suites/bll.cfg", identity->layout_sha256);
+    PAGE_FILE_HASH("recipe_sha256", "scripts/build-page-mode.sh", identity->recipe_sha256);
+#undef PAGE_FILE_HASH
+    if (snprintf(file_path, sizeof file_path, "%s/scripts/generate-page-mode-oracle.sh", LYNX_PROJECT_ROOT) >= (int)sizeof file_path ||
+        file_sha256(file_path, actual) != 0 || strcmp(actual, oracle->recipe_sha256) != 0) {
+        return fail("page-mode build: oracle recipe identity mismatch");
+    }
+    (void)snprintf(identity->oracle_recipe_sha256, sizeof identity->oracle_recipe_sha256, "%s", actual);
+    if (file_sha256(oracle_path, actual) != 0 || record_value(record_path, "object_sha256", expected, sizeof expected) != 0 ||
+        strcmp(expected, identity->object_sha256) != 0 ||
+        record_value(record_path, "labels_sha256", expected, sizeof expected) != 0 || strcmp(expected, identity->labels_sha256) != 0 ||
+        record_value(record_path, "lynx_tests_pin", expected, sizeof expected) != 0 || strcmp(expected, archive) != 0 ||
+        record_value(record_path, "lynx_tests_revision", expected, sizeof expected) != 0 || strcmp(expected, oracle->revision) != 0 ||
+        record_value(record_path, "cc65_pin", expected, sizeof expected) != 0 || strcmp(expected, cc65_archive) != 0 ||
+        record_value(record_path, "main_sha256", expected, sizeof expected) != 0 || strcmp(expected, oracle->main_sha256) != 0 ||
+        record_value(record_path, "tests_sha256", expected, sizeof expected) != 0 || strcmp(expected, oracle->tests_sha256) != 0 ||
+        record_value(record_path, "notice_sha256", expected, sizeof expected) != 0 || strcmp(expected, oracle->notice_sha256) != 0 ||
+        record_value(record_path, "ca65_sha256", expected, sizeof expected) != 0 || strcmp(expected, ca65_pin) != 0 ||
+        record_value(record_path, "ld65_sha256", expected, sizeof expected) != 0 || strcmp(expected, ld65_pin) != 0 ||
+        record_value(record_path, "result_count", expected, sizeof expected) != 0 || strcmp(expected, "6") != 0 ||
+        record_value(record_path, "result_extent", expected, sizeof expected) != 0 || strcmp(expected, "6") != 0 ||
+        record_value(record_path, "startup_tier", expected, sizeof expected) != 0 || strcmp(expected, "BS93-A") != 0) {
+        return fail("page-mode build: bound build record identity mismatch");
+    }
+    (void)snprintf(identity->ca65_sha256, sizeof identity->ca65_sha256, "%s", ca65_pin);
+    (void)snprintf(identity->ld65_sha256, sizeof identity->ld65_sha256, "%s", ld65_pin);
+    if (file_sha256(oracle_path, identity->oracle_sha256) != 0 ||
+        file_sha256(record_path, identity->build_record_sha256) != 0) return 1;
+    PAGE_RECORD("profiles", "lynx1,lynx2");
+#undef PAGE_RECORD
+    return 0;
+}
+
+static int validate_page_mode_build_mode(const char *run_directory,
+                                         const char *build_directory,
+                                         const char *oracle_path)
+{
+    page_mode_oracle oracle;
+    page_mode_build_identity identity;
+    if (parse_page_mode_oracle(oracle_path, &oracle) != 0 ||
+        verify_page_mode_build(run_directory, build_directory, oracle_path,
+                               &oracle, &identity) != 0) return 1;
+    puts("page-mode build: pinned source, tool, notice, wrapper, object, labels and six-row oracle identities valid");
     return 0;
 }
 
@@ -2181,8 +2586,9 @@ static int timer_companion_validate(const char *profile, const char *directory,
     return 0;
 }
 
-static int machine_create(machine_instance *instance, const uint8_t *bll, size_t bll_length,
-                          uint32_t profile)
+static int machine_create_with_policy(machine_instance *instance, const uint8_t *bll,
+                                     size_t bll_length, uint32_t profile,
+                                     uint32_t timing_policy)
 {
     lynx_config config;
     memset(instance, 0, sizeof *instance);
@@ -2195,6 +2601,7 @@ static int machine_create(machine_instance *instance, const uint8_t *bll, size_t
     }
     lynx_config_default(&config);
     config.profile = profile;
+    config.timing_policy = timing_policy;
     if (lynx_machine_init(instance->storage, lynx_machine_size(), &config,
                           &instance->machine) != LYNX_OK ||
         lynx_load_bll(instance->machine, bll, bll_length) != LYNX_OK) {
@@ -2204,6 +2611,13 @@ static int machine_create(machine_instance *instance, const uint8_t *bll, size_t
         return fail("public BS93 load failed");
     }
     return 0;
+}
+
+static int machine_create(machine_instance *instance, const uint8_t *bll, size_t bll_length,
+                          uint32_t profile)
+{
+    return machine_create_with_policy(instance, bll, bll_length, profile,
+                                      LYNX_TIMING_POLICY_LEGACY_FLAT5);
 }
 
 static void machine_destroy(machine_instance *instance)
@@ -3134,6 +3548,335 @@ static int timer_cascade_model_mode(const char *profile, const char *directory,
     return 0;
 }
 
+static const char *const page_mode_record_keys[] = {
+    "schema", "suite", "machine_profile", "detected_model", "probe_byte", "model_marker",
+    "probe_source", "probe_source_sha256", "bll_sha256", "labels_sha256", "oracle_sha256",
+    "build_record_sha256", "wrapper_sha256", "layout_sha256", "manifest_sha256",
+    "build_recipe_sha256", "oracle_recipe_sha256", "ca65_sha256", "ld65_sha256",
+    "timing_policy", "refresh_policy", "display_dma", "mapctl", "result_extent",
+    "expected_count", "meaningful_count", "raw_observation", "source_comparison",
+    "ticks_observed", "tick_min", "tick_max", "guest_progress", "guest_done", "stop",
+    "request_address", "request_kind", "request_value", "no_run_hold_verified",
+    "timer0_backup", "timer0_control", "timer2_backup", "timer2_control",
+    "hardware_accuracy", "profile_qualification"
+};
+
+static int page_mode_record_shape(const char *path)
+{
+    char *text = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    uint8_t seen[sizeof page_mode_record_keys / sizeof page_mode_record_keys[0]] = {0u};
+    size_t rows = 0u;
+    if (!regular_nosymlink_file(path) || read_text(path, &text, &length, 16384u) != 0) {
+        return fail("page-mode record is missing or not a regular file");
+    }
+    while (offset < length) {
+        char line[256];
+        char *equals;
+        size_t line_length = 0u;
+        size_t key_index;
+        while (offset + line_length < length && text[offset + line_length] != '\n') line_length++;
+        if (line_length == 0u || line_length >= sizeof line || offset + line_length >= length) {
+            free(text);
+            return fail("page-mode record malformed line");
+        }
+        memcpy(line, text + offset, line_length);
+        line[line_length] = '\0';
+        offset += line_length + 1u;
+        equals = strchr(line, '=');
+        if (equals == NULL || equals == line || equals[1] == '\0' || strchr(equals + 1, '=') != NULL) {
+            free(text);
+            return fail("page-mode record malformed field");
+        }
+        *equals = '\0';
+        for (key_index = 0u; key_index < sizeof page_mode_record_keys / sizeof page_mode_record_keys[0]; key_index++) {
+            if (strcmp(line, page_mode_record_keys[key_index]) == 0) break;
+        }
+        if (key_index == sizeof page_mode_record_keys / sizeof page_mode_record_keys[0]) {
+            free(text);
+            return fail("page-mode record unknown key");
+        }
+        if (seen[key_index] != 0u) {
+            free(text);
+            return fail("page-mode record duplicate key");
+        }
+        seen[key_index] = 1u;
+        rows++;
+    }
+    free(text);
+    if (rows != sizeof page_mode_record_keys / sizeof page_mode_record_keys[0]) {
+        return fail("page-mode record missing key");
+    }
+    return 0;
+}
+
+static int page_mode_record_check(const char *path, const char *profile,
+                                  const page_mode_build_identity *identity,
+                                  uint32_t expected_ticks)
+{
+    char value[256];
+    uint32_t parsed;
+    const char *probe_byte = strcmp(profile, "lynx1") == 0 ? "01" : "00";
+    const char *model_marker = strcmp(profile, "lynx1") == 0 ? "a1" : "a2";
+    if (page_mode_record_shape(path) != 0) return 1;
+#define PAGE_CHECK(key, want, message) do { \
+        if (record_value(path, (key), value, sizeof value) != 0 || strcmp(value, (want)) != 0) \
+            return fail(message); \
+    } while (0)
+    PAGE_CHECK("schema", "lynx-page-mode-run-v1", "page-mode record unsupported schema");
+    PAGE_CHECK("suite", "page-mode", "page-mode record suite mismatch");
+    PAGE_CHECK("machine_profile", profile, "page-mode record profile mismatch");
+    PAGE_CHECK("detected_model", profile, "page-mode record detected model mismatch");
+    PAGE_CHECK("probe_byte", probe_byte, "page-mode record model probe mismatch");
+    PAGE_CHECK("model_marker", model_marker, "page-mode record model marker mismatch");
+    PAGE_CHECK("probe_source", "fixtures/suites/page-mode-wrapper.s", "page-mode record probe source mismatch");
+    PAGE_CHECK("probe_source_sha256", identity->wrapper_sha256, "page-mode record probe source identity mismatch");
+    PAGE_CHECK("bll_sha256", identity->object_sha256, "page-mode record BLL identity mismatch");
+    PAGE_CHECK("labels_sha256", identity->labels_sha256, "page-mode record labels identity mismatch");
+    PAGE_CHECK("oracle_sha256", identity->oracle_sha256, "page-mode record oracle identity mismatch");
+    PAGE_CHECK("build_record_sha256", identity->build_record_sha256, "page-mode record build record identity mismatch");
+    PAGE_CHECK("wrapper_sha256", identity->wrapper_sha256, "page-mode record wrapper identity mismatch");
+    PAGE_CHECK("layout_sha256", identity->layout_sha256, "page-mode record layout identity mismatch");
+    PAGE_CHECK("manifest_sha256", identity->manifest_sha256, "page-mode record manifest identity mismatch");
+    PAGE_CHECK("build_recipe_sha256", identity->recipe_sha256, "page-mode record builder identity mismatch");
+    PAGE_CHECK("oracle_recipe_sha256", identity->oracle_recipe_sha256, "page-mode record oracle recipe identity mismatch");
+    PAGE_CHECK("ca65_sha256", identity->ca65_sha256, "page-mode record ca65 identity mismatch");
+    PAGE_CHECK("ld65_sha256", identity->ld65_sha256, "page-mode record ld65 identity mismatch");
+    PAGE_CHECK("timing_policy", "video-policy1", "page-mode record timing policy mismatch");
+    PAGE_CHECK("refresh_policy", "video-policy1", "page-mode record refresh policy mismatch");
+    PAGE_CHECK("display_dma", "disabled-dispctl-00", "page-mode record display DMA precondition mismatch");
+    PAGE_CHECK("mapctl", "0c", "page-mode record MAPCTL precondition mismatch");
+    PAGE_CHECK("result_extent", "6", "page-mode record result extent mismatch");
+    PAGE_CHECK("expected_count", "6", "page-mode record expected count mismatch");
+    PAGE_CHECK("meaningful_count", "0", "page-mode record must preserve missing results");
+    PAGE_CHECK("raw_observation", "missing", "page-mode record raw observation must remain missing");
+    PAGE_CHECK("source_comparison", "not-run", "page-mode record comparison must remain unrun");
+    PAGE_CHECK("tick_min", "40000", "page-mode record tick minimum mismatch");
+    PAGE_CHECK("tick_max", "50000000", "page-mode record tick maximum mismatch");
+    PAGE_CHECK("guest_progress", "1", "page-mode record source progress mismatch");
+    PAGE_CHECK("guest_done", "00", "page-mode record completion state mismatch");
+    PAGE_CHECK("stop", "unavailable", "page-mode record stop reason mismatch");
+    PAGE_CHECK("request_address", "fd8c", "page-mode record unsupported request address mismatch");
+    PAGE_CHECK("request_kind", "write", "page-mode record unsupported request kind mismatch");
+    PAGE_CHECK("request_value", "06", "page-mode record unsupported request value mismatch");
+    PAGE_CHECK("timer0_backup", "9e", "page-mode record Timer0 source setup mismatch");
+    PAGE_CHECK("timer0_control", "18", "page-mode record Timer0 control setup mismatch");
+    PAGE_CHECK("timer2_backup", "68", "page-mode record Timer2 source setup mismatch");
+    PAGE_CHECK("timer2_control", "1f", "page-mode record Timer2 control setup mismatch");
+    PAGE_CHECK("hardware_accuracy", "unverified", "page-mode record hardware status mismatch");
+    PAGE_CHECK("profile_qualification", "unresolved", "page-mode record profile qualification mismatch");
+    if (record_value(path, "ticks_observed", value, sizeof value) != 0 ||
+        parse_decimal(value, &parsed) != 0 || parsed < 40000u || parsed > PAGE_MODE_MAX_TICKS ||
+        (expected_ticks != 0u && parsed != expected_ticks)) {
+        return fail("page-mode record ticks outside bound or do not match guest time");
+    }
+    if (record_value(path, "no_run_hold_verified", value, sizeof value) != 0 ||
+        (strcmp(value, "true") != 0 && strcmp(value, "false") != 0)) {
+        return fail("page-mode record no-run evidence malformed");
+    }
+#undef PAGE_CHECK
+    return 0;
+}
+
+static int validate_page_mode_record_mode(const char *profile, const char *run_directory,
+                                          const char *build_directory, const char *oracle_path,
+                                          const char *record_path)
+{
+    unsigned profile_number;
+    char expected_record[4096];
+    char record_name[96];
+    page_mode_oracle oracle;
+    page_mode_build_identity identity;
+    if (profile_index(profile, &profile_number) != 0 ||
+        snprintf(record_name, sizeof record_name, "page-mode-run-%s.txt", profile) >= (int)sizeof record_name ||
+        checked_join(expected_record, sizeof expected_record, run_directory, record_name) != 0 ||
+        strcmp(expected_record, record_path) != 0 || validate_owned_output_directory(run_directory) != 0 ||
+        parse_page_mode_oracle(oracle_path, &oracle) != 0 ||
+        verify_page_mode_build(run_directory, build_directory, oracle_path, &oracle, &identity) != 0 ||
+        page_mode_record_check(record_path, profile, &identity, 0u) != 0) return 1;
+    (void)profile_number;
+    printf("page-mode record: exact SERCTL blocker and missing six-byte observation valid for %s\n", profile);
+    return 0;
+}
+
+static int run_page_mode(const char *profile, const char *run_directory,
+                         const char *build_directory, const char *oracle_path,
+                         const char *record_path, int no_run, int control_mode)
+{
+    uint8_t *bll = NULL;
+    size_t bll_length = 0u;
+    char *labels = NULL;
+    size_t labels_length = 0u;
+    char expected_record[4096];
+    char record_name[96];
+    char bll_path[4096];
+    char labels_path[4096];
+    char record_path_expected[4096];
+    char bll_sha[65], labels_sha[65], oracle_sha[65];
+    uint32_t profile_number;
+    uint32_t machine_profile;
+    uint64_t total_consumed = 0u;
+    uint64_t guest_ticks = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    machine_instance instance = {0};
+    suite_symbols symbols;
+    page_mode_oracle oracle;
+    page_mode_build_identity identity;
+    lynx_identity public_identity;
+    uint8_t model_byte;
+    uint8_t model_marker;
+    uint8_t progress;
+    uint8_t done;
+    uint8_t *results;
+    int hold_verified = 0;
+    int result = 1;
+    if (profile_index(profile, &profile_number) != 0 ||
+        snprintf(record_name, sizeof record_name, "page-mode-run-%s.txt", profile) >= (int)sizeof record_name ||
+        checked_join(record_path_expected, sizeof record_path_expected, run_directory, record_name) != 0 ||
+        strcmp(record_path_expected, record_path) != 0 ||
+        validate_owned_output_directory(run_directory) != 0 ||
+        parse_page_mode_oracle(oracle_path, &oracle) != 0 ||
+        verify_page_mode_build(run_directory, build_directory, oracle_path, &oracle, &identity) != 0) {
+        return fail("page-mode runner source/build identity or invocation mismatch");
+    }
+    machine_profile = profile_number == 0u ? LYNX_PROFILE_LYNX1 : LYNX_PROFILE_LYNX2;
+    if (checked_join(bll_path, sizeof bll_path, build_directory, "page-mode.bll") != 0 ||
+        checked_join(labels_path, sizeof labels_path, build_directory, "page-mode.lbl") != 0 ||
+        read_file(bll_path, &bll, &bll_length, 65536u) != 0 ||
+        read_text(labels_path, &labels, &labels_length, 16384u) != 0 ||
+        parse_symbols(labels, labels_length, &symbols) != 0 ||
+        ranges_valid(&symbols, PAGE_MODE_RESULT_COUNT) != 0 ||
+        symbols.value[3] != symbols.value[2] + PAGE_MODE_RESULT_COUNT ||
+        symbols.value[11] >= SUITE_ZP_END || file_sha256(bll_path, bll_sha) != 0 ||
+        file_sha256(labels_path, labels_sha) != 0 || file_sha256(oracle_path, oracle_sha) != 0 ||
+        strcmp(bll_sha, identity.object_sha256) != 0 || strcmp(labels_sha, identity.labels_sha256) != 0 ||
+        strcmp(oracle_sha, identity.oracle_sha256) != 0) {
+        (void)fail("page-mode symbols, result extent or build identity mismatch");
+        goto done;
+    }
+    if (machine_create_with_policy(&instance, bll, bll_length, machine_profile,
+                                   LYNX_TIMING_POLICY_VIDEO_POLICY1) != 0 ||
+        lynx_get_identity(instance.machine, &public_identity) != LYNX_OK ||
+        public_identity.has_content != 1u || public_identity.content_format != LYNX_CONTENT_BS93 ||
+        public_identity.startup_tier != LYNX_STARTUP_A ||
+        public_identity.entry_addr != symbols.value[0] || public_identity.object_len != bll_length ||
+        symbols.value[7] < BLL_HEADER_SIZE || symbols.value[7] - 0x01F6u != bll_length ||
+        instance.machine->cfg.timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1 ||
+        instance.machine->mapctl != 0u ||
+        instance.machine->video.timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1) {
+        (void)fail("page-mode public BS93 identity or VIDEO_POLICY1 environment mismatch");
+        goto done;
+    }
+    if (lynx__machine_set_bus_hold(instance.machine, 0u) != LYNX_OK) {
+        (void)fail("page-mode runner could not establish released bus state");
+        goto done;
+    }
+    if (no_run != 0) {
+        if (prove_held_no_run(&instance, &symbols, PAGE_MODE_MIN_TICKS, &guest_ticks) != 0 ||
+            lynx__machine_set_bus_hold(instance.machine, 0u) != LYNX_OK ||
+            instance.machine->bus_hold != 0u) {
+            (void)fail("page-mode no-run hold/refusal proof failed");
+            goto done;
+        }
+        total_consumed = guest_ticks;
+        hold_verified = 1;
+    }
+    while (total_consumed < PAGE_MODE_MAX_TICKS) {
+        uint64_t budget = PAGE_MODE_MAX_TICKS - total_consumed;
+        uint64_t used = 0u;
+        uint64_t before = 0u;
+        uint64_t after = 0u;
+        if (budget > 10000u) budget = 10000u;
+        if (lynx_guest_ticks(instance.machine, &before) != LYNX_OK ||
+            lynx_advance(instance.machine, budget, &used, &stop) != LYNX_OK || used > budget ||
+            lynx_guest_ticks(instance.machine, &after) != LYNX_OK || after < before ||
+            after - before != used || after > PAGE_MODE_MAX_TICKS) {
+            (void)fail("page-mode bounded guest advance or tick accounting failed");
+            goto done;
+        }
+        total_consumed += used;
+        guest_ticks = after;
+        if (stop == LYNX_STOP_UNAVAILABLE) break;
+        if (stop != LYNX_STOP_BUDGET) {
+            (void)fail("page-mode guest stopped before the exact unsupported request");
+            goto done;
+        }
+        if (used == 0u) {
+            (void)fail("page-mode guest made no progress within a nonempty budget");
+            goto done;
+        }
+    }
+    if (stop != LYNX_STOP_UNAVAILABLE || guest_ticks < PAGE_MODE_MIN_TICKS ||
+        guest_ticks > PAGE_MODE_MAX_TICKS || instance.machine->cpu.req_addr != 0xFD8Cu ||
+        (instance.machine->cpu.req_flags & LYNX__CF_WRITE) == 0u ||
+        instance.machine->cpu.req_data != 0x06u || instance.machine->mapctl != 0x0Cu ||
+        instance.machine->cfg.timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1 ||
+        instance.machine->video.timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1 ||
+        instance.machine->video.dispctl != 0u ||
+        instance.machine->timer_bank.timers[0].backup != 0x9Eu ||
+        instance.machine->timer_bank.timers[0].control_a != 0x18u ||
+        instance.machine->timer_bank.timers[2].backup != 0x68u ||
+        instance.machine->timer_bank.timers[2].control_a != 0x1Fu) {
+        (void)fail("page-mode did not stop at the exact first SERCTL write under its declared preconditions");
+        goto done;
+    }
+    model_byte = instance.machine->ram[symbols.value[11]];
+    model_marker = instance.machine->ram[symbols.value[5]];
+    progress = instance.machine->ram[symbols.value[4]];
+    done = instance.machine->ram[symbols.value[6]];
+    results = instance.machine->ram + symbols.value[2];
+    if (probe_model(model_byte, model_marker) != (int)profile_number || progress != 1u || done != 0u ||
+        memcmp(results, "\0\0\0\0\0\0", PAGE_MODE_RESULT_COUNT) != 0) {
+        (void)fail("page-mode model probe, setup progress or unrun result state mismatch");
+        goto done;
+    }
+    if (snprintf(expected_record, sizeof expected_record, "%s", record_path) >= (int)sizeof expected_record) {
+        (void)fail("page-mode record path too long");
+        goto done;
+    }
+    {
+        atomic_output output = {0};
+        FILE *file;
+        if (atomic_output_begin(record_path, &output) != 0) goto done;
+        file = output.stream;
+        (void)fprintf(file,
+            "schema=lynx-page-mode-run-v1\nsuite=page-mode\nmachine_profile=%s\ndetected_model=%s\n"
+            "probe_byte=%02x\nmodel_marker=%02x\nprobe_source=fixtures/suites/page-mode-wrapper.s\n"
+            "probe_source_sha256=%s\nbll_sha256=%s\nlabels_sha256=%s\noracle_sha256=%s\n"
+            "build_record_sha256=%s\nwrapper_sha256=%s\nlayout_sha256=%s\nmanifest_sha256=%s\n"
+            "build_recipe_sha256=%s\noracle_recipe_sha256=%s\nca65_sha256=%s\nld65_sha256=%s\n"
+            "timing_policy=video-policy1\nrefresh_policy=video-policy1\ndisplay_dma=disabled-dispctl-00\n"
+            "mapctl=0c\nresult_extent=6\nexpected_count=6\nmeaningful_count=0\n"
+            "raw_observation=missing\nsource_comparison=not-run\nticks_observed=%" PRIu64 "\n"
+            "tick_min=%u\ntick_max=%u\nguest_progress=%u\nguest_done=%02x\nstop=unavailable\n"
+            "request_address=fd8c\nrequest_kind=write\nrequest_value=06\nno_run_hold_verified=%s\n"
+            "timer0_backup=9e\ntimer0_control=18\ntimer2_backup=68\ntimer2_control=1f\n"
+            "hardware_accuracy=unverified\nprofile_qualification=unresolved\n",
+            profile, profile, model_byte, model_marker, identity.wrapper_sha256, identity.object_sha256,
+            identity.labels_sha256, identity.oracle_sha256, identity.build_record_sha256,
+            identity.wrapper_sha256, identity.layout_sha256, identity.manifest_sha256,
+            identity.recipe_sha256, identity.oracle_recipe_sha256, identity.ca65_sha256,
+            identity.ld65_sha256, guest_ticks, PAGE_MODE_MIN_TICKS, PAGE_MODE_MAX_TICKS,
+            (unsigned)progress, (unsigned)done, hold_verified != 0 ? "true" : "false");
+        if (atomic_output_commit(&output) != 0) goto done;
+    }
+    if (page_mode_record_check(record_path, profile, &identity, (uint32_t)guest_ticks) != 0) goto done;
+    if (control_mode != 0) {
+        printf("page-mode control: exact SERCTL write blocker at $FD8C after %" PRIu64
+               " guest ticks; profile=%s progress=1 missing-results=6 no-run=%s\n",
+               guest_ticks, profile, hold_verified != 0 ? "verified" : "not-requested");
+    } else {
+        puts("LYNX-SKIP: page-mode source requires unavailable SERCTL write at $FD8C");
+    }
+    result = 0;
+done:
+    machine_destroy(&instance);
+    free(labels);
+    free(bll);
+    return result;
+}
+
 static int validate_timer_record_mode(const char *profile, const char *raw_path,
                                       const char *record_path, const char *oracle_path,
                                       const char *descriptor_path)
@@ -3538,6 +4281,30 @@ static int validate_cpu_record_mode(const char *selected_profile,
 
 int main(int argc, char **argv)
 {
+    if (argc == 3 && strcmp(argv[1], "validate-page-mode-oracle") == 0) {
+        page_mode_oracle oracle;
+        if (parse_page_mode_oracle(argv[2], &oracle) != 0 ||
+            verify_pinned_source("page-mode/main.c", oracle.main_sha256) != 0 ||
+            verify_pinned_source("page-mode/tests.s", oracle.tests_sha256) != 0 ||
+            verify_pinned_source("LICENSE", oracle.notice_sha256) != 0) return 1;
+        puts("page-mode oracle: six source-derived rows and source identities valid");
+        return 0;
+    }
+    if (argc == 5 && strcmp(argv[1], "validate-page-mode-build") == 0) {
+        return validate_page_mode_build_mode(argv[2], argv[3], argv[4]);
+    }
+    if ((argc == 8 || argc == 9) && strcmp(argv[1], "observe") == 0 &&
+        strcmp(argv[2], "page-mode") == 0) {
+        return run_page_mode(argv[3], argv[4], argv[5], argv[6], argv[7], 0,
+                             argc == 9 && strcmp(argv[8], "control") == 0);
+    }
+    if (argc == 8 && strcmp(argv[1], "no-run") == 0 &&
+        strcmp(argv[2], "page-mode") == 0) {
+        return run_page_mode(argv[3], argv[4], argv[5], argv[6], argv[7], 1, 1);
+    }
+    if (argc == 7 && strcmp(argv[1], "validate-page-mode-record") == 0) {
+        return validate_page_mode_record_mode(argv[2], argv[3], argv[4], argv[5], argv[6]);
+    }
     if (argc == 6 && strcmp(argv[1], "run") == 0 && strcmp(argv[2], "cpu") == 0) {
         return run_cpu(argv[3], argv[3], argv[4], argv[5], "zero", 0, CPU_MAX_TICKS);
     }
@@ -3603,6 +4370,11 @@ int main(int argc, char **argv)
     }
     fprintf(stderr,
         "usage: lynx-test-suites COMMAND ...\n"
+        "  validate-page-mode-oracle ORACLE\n"
+        "  validate-page-mode-build RUN_DIRECTORY BUILDDIR ORACLE\n"
+        "  observe page-mode PROFILE RUN_DIRECTORY BUILDDIR ORACLE RECORD [control]\n"
+        "  no-run page-mode PROFILE RUN_DIRECTORY BUILDDIR ORACLE RECORD\n"
+        "  validate-page-mode-record PROFILE RUN_DIRECTORY BUILDDIR ORACLE RECORD\n"
         "  run cpu PROFILE BUILDDIR ORACLE [zero|seeded]\n"
         "  run cpu-selected MACHINE_PROFILE SELECTED_PROFILE BUILDDIR ORACLE CASE\n"
         "  run timers PROFILE BUILDDIR ORACLE\n"
