@@ -7628,6 +7628,29 @@ static uint64_t input_complete_read(lynx_machine *m, uint16_t address,
     return UINT64_MAX;
 }
 
+static void input_advance_exclusive_to(lynx_machine *m, uint64_t target,
+                                       const char *assertion)
+{
+    const uint64_t start = ticks_of(m);
+    CHECK_NAMED(target >= start, assertion);
+    if (target < start) return;
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    const lynx_status status = lynx_advance(m, target - start, &consumed, &stop);
+    CHECK_NAMED(status == LYNX_OK && consumed == target - start &&
+                    ticks_of(m) == target && stop == LYNX_STOP_BUDGET,
+                assertion);
+}
+
+static uint64_t input_next_grant_tick(const lynx_machine *m)
+{
+    uint64_t grant = m->guest_ticks;
+    if (grant < m->cpu_ready_at) grant = m->cpu_ready_at;
+    if (grant < m->video.dma_busy_until) grant = m->video.dma_busy_until;
+    if (grant < m->video.refresh_busy_until) grant = m->video.refresh_busy_until;
+    return grant;
+}
+
 static void input_set_exact_mask(lynx_machine *m, uint32_t mask,
                                  const char *assertion)
 {
@@ -8099,6 +8122,202 @@ static void setup_video_session(lynx_machine *m, uint16_t input, uint8_t salt)
     configure_video_cadence(m, 158u, 104u);
 }
 
+static void input_run_adjacent_edge(int edge_offset)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) return;
+    CHECK_EQ_U64(load_input_read_guest(m, 0x0Cu, 0x08u), LYNX_OK);
+    CHECK_EQ_U64(lynx_set_input(m, LYNX_INPUT_A), LYNX_OK);
+    input_wait_for_read_request(m, 0xFCB0u, "input_edges.guest-read-posted-before-sample");
+    CHECK_EQ_U64(m->bus_hold, 0u);
+    const uint64_t sample_tick = input_next_grant_tick(m);
+    CHECK_NAMED(sample_tick > ticks_of(m), "input_edges.future-grant-is-observable");
+
+    const uint64_t before_zero = ticks_of(m);
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 0u, &consumed, &stop), LYNX_OK);
+    CHECK_NAMED(consumed == 0u && ticks_of(m) == before_zero &&
+                    stop == LYNX_STOP_BUDGET &&
+                    input_read_request(m, 0xFCB0u),
+                "input_edges.zero-consumed-does-not-move-pending-edge");
+
+    if (edge_offset < 0) {
+        input_advance_exclusive_to(m, sample_tick - 1u,
+                                   "input_edges.minus-one-boundary-is-exclusive");
+        input_set_exact_mask(m, LYNX_INPUT_B,
+                             "input_edges.minus-one-setter-preserves-posted-request");
+        input_advance_exclusive_to(m, sample_tick,
+                                   "input_edges.minus-one-stops-at-sample-boundary");
+        CHECK_NAMED(input_read_request(m, 0xFCB0u) && ticks_of(m) == sample_tick,
+                    "input_edges.minus-one-does-not-read-at-exclusive-target");
+        const uint64_t observed = input_complete_read(
+            m, 0xFCB0u, 0x02u, "input_edges.minus-one-level-is-sampled-at-grant");
+        CHECK_EQ_U64(observed, sample_tick);
+    } else if (edge_offset == 0) {
+        input_advance_exclusive_to(m, sample_tick,
+                                   "input_edges.exact-boundary-is-exclusive");
+        input_set_exact_mask(m, LYNX_INPUT_B,
+                             "input_edges.exact-setter-preserves-posted-request");
+        const uint64_t observed = input_complete_read(
+            m, 0xFCB0u, 0x02u, "input_edges.exact-level-is-sampled-at-grant");
+        CHECK_EQ_U64(observed, sample_tick);
+    } else {
+        input_advance_exclusive_to(m, sample_tick,
+                                   "input_edges.plus-one-starts-after-exclusive-boundary");
+        const uint64_t observed_old = input_complete_read(
+            m, 0xFCB0u, 0x01u, "input_edges.plus-one-keeps-old-level-at-grant");
+        CHECK_EQ_U64(observed_old, sample_tick);
+        const uint64_t edge_tick = ticks_of(m);
+        CHECK_EQ_U64(edge_tick, sample_tick + 1u);
+        input_set_exact_mask(m, LYNX_INPUT_B,
+                             "input_edges.plus-one-setter-preserves-next-request");
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input_edges.plus-one-next-guest-read-posted");
+        const uint64_t observed_new = input_complete_read(
+            m, 0xFCB0u, 0x02u, "input_edges.plus-one-level-is-seen-on-next-read");
+        CHECK_NAMED(observed_new > edge_tick,
+                    "input_edges.plus-one-does-not-retroactively-change-sample");
+    }
+    lynx_machine_deinit(m);
+}
+
+static void case_input_edges(void)
+{
+    const int failures_before = check_failures;
+    input_run_adjacent_edge(-1);
+    input_run_adjacent_edge(0);
+    input_run_adjacent_edge(1);
+
+    /* Align one real pending guest read with a frame endpoint. The frame API
+       publishes its captured row before the host applies the edge; after
+       resume the same-tick CPU grant observes the new level. */
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        CHECK_EQ_U64(load_input_read_guest(m, 0x0Cu, 0x08u), LYNX_OK);
+        CHECK_EQ_U64(lynx_set_input(m, LYNX_INPUT_A), LYNX_OK);
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input_edges.frame-tie-guest-read-posted");
+        const uint64_t start = ticks_of(m);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+        configure_video_cadence(m, 0u, 0u);
+        uint64_t frame_tick = UINT64_MAX;
+        CHECK(lynx__timer_next(&m->timer_bank, start, &frame_tick));
+        CHECK_NAMED(frame_tick > start, "input_edges.frame-tie-event-is-future");
+        m->cpu_ready_at = frame_tick;
+        m->video.capture_rows = 1u;
+        m->video.pens[0] = 0xA5u;
+        m->video.palettes[0] = 0x5Au;
+        m->video.line_ticks[0] = start;
+
+        uint8_t pens[LYNX_FRAME_PENS_CAPACITY];
+        uint8_t palettes[LYNX_FRAME_PALETTE_CAPACITY];
+        uint64_t line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+        lynx_frame_buffers buffers;
+        lynx_frame_result result;
+        init_video_frame_buffers(&buffers, pens, palettes, line_ticks);
+        init_video_frame_result(&result);
+        fill_frame_test_outputs(pens, palettes, line_ticks, 0xC7u);
+        const uint64_t budget = frame_tick - start + 1u;
+        CHECK_EQ_U64(lynx_advance_frame(m, budget, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME &&
+                        result.frame_end_tick == frame_tick &&
+                        result.ticks_consumed == frame_tick - start &&
+                        result.row_count == 1u && pens[0] == 0xA5u &&
+                        palettes[0] == 0x5Au && line_ticks[0] == start,
+                    "input_edges.frame-publishes-prior-captured-row-at-endpoint");
+        input_set_exact_mask(m, LYNX_INPUT_B,
+                             "input_edges.frame-endpoint-setter-preserves-completed-frame");
+        CHECK_NAMED(pens[0] == 0xA5u && palettes[0] == 0x5Au &&
+                        line_ticks[0] == start && ticks_of(m) == frame_tick,
+                    "input_edges.frame-endpoint-level-does-not-rewrite-published-frame");
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
+        const uint64_t observed = input_complete_read(
+            m, 0xFCB0u, 0x02u,
+            "input_edges.frame-endpoint-level-is-sampled-after-resume");
+        CHECK_EQ_U64(observed, frame_tick);
+        CHECK_NAMED(pens[0] == 0xA5u && palettes[0] == 0x5Au &&
+                        line_ticks[0] == start,
+                    "input_edges.same-tick-read-leaves-completed-output-unchanged");
+        lynx_machine_deinit(m);
+    }
+
+    /* A real video DMA grant followed by refresh holds this posted input read
+       while the host changes levels; sampling waits for the eventual release. */
+    m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        CHECK_EQ_U64(load_input_read_guest(m, 0x0Cu, 0x08u), LYNX_OK);
+        CHECK_EQ_U64(lynx_set_input(m, LYNX_INPUT_A), LYNX_OK);
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input_edges.hold-guest-read-posted");
+        const uint64_t video_tick = input_next_grant_tick(m);
+        CHECK_NAMED(video_tick > ticks_of(m), "input_edges.hold-start-is-future");
+        m->video.dispctl = 1u;
+        m->video.row_active = 1u;
+        m->video.dma_cursor = LYNX_FRAME_ROW_BYTES - 1u;
+        m->video.dma_next_tick = video_tick;
+        m->video.refresh_next_tick = video_tick;
+        input_advance_exclusive_to(m, video_tick + 1u,
+                                   "input_edges.video-begins-hold-at-grant-tick");
+        CHECK_NAMED(input_read_request(m, 0xFCB0u) &&
+                        m->video.dma_busy_until == video_tick + 5u,
+                    "input_edges.posted-read-remains-held-after-video-grant");
+        input_set_exact_mask(m, LYNX_INPUT_B,
+                             "input_edges.level-change-during-video-hold-preserves-request");
+        const uint64_t held_sample = input_complete_read(
+            m, 0xFCB0u, 0x02u,
+            "input_edges.held-read-samples-latest-level-after-refresh");
+        CHECK_NAMED(held_sample >= video_tick + 10u &&
+                        held_sample == m->video.refresh_busy_until &&
+                        m->video.dma_busy_until == video_tick + 5u,
+                    "input_edges.sample-tick-follows-video-and-refresh-release");
+        lynx_machine_deinit(m);
+    }
+
+    /* The edge is applied at a one-shot write-watch return boundary and stays
+       there while the guest proceeds to its real input read. */
+    static const uint8_t watch_then_input_guest[] = {
+        0xA9u, 0x0Cu, 0x8Du, 0xF9u, 0xFFu,
+        0xA9u, 0x5Au, 0x8Du, 0x00u, 0x04u,
+        0xADu, 0xB0u, 0xFCu, 0x4Cu, 0x0Au, 0x02u
+    };
+    m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        CHECK_EQ_U64(load_bll_at(m, watch_then_input_guest,
+                                 sizeof watch_then_input_guest, 0x0200u), LYNX_OK);
+        CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_HALT;
+        CHECK_EQ_U64(lynx_advance(m, 512u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+        lynx_watch_event watch;
+        CHECK_EQ_U64(lynx_watch_get(m, &watch), LYNX_OK);
+        CHECK_NAMED(watch.hit == 1u && watch.address == 0x0400u &&
+                        watch.return_tick == watch.hit_tick + 1u &&
+                        ticks_of(m) == watch.return_tick,
+                    "input_edges.watch-return-is-edge-adjacent-boundary");
+        input_set_exact_mask(m, LYNX_INPUT_B,
+                             "input_edges.watch-boundary-setter-preserves-watch-and-time");
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input_edges.watch-following-guest-read-posted");
+        const uint64_t observed = input_complete_read(
+            m, 0xFCB0u, 0x02u,
+            "input_edges.watch-boundary-level-is-sampled-by-guest");
+        CHECK_NAMED(observed > watch.return_tick,
+                    "input_edges.watch-boundary-does-not-move-sample-time");
+        lynx_machine_deinit(m);
+    }
+
+    printf("TAP version 13\n1..1\n%s 1 - api.input_edges\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void advance_to_video_sync_frame(lynx_machine *m)
 {
     uint8_t pens[LYNX_FRAME_PENS_CAPACITY];
@@ -8256,6 +8475,7 @@ static const struct {
     {"frame_refusal", case_frame_refusal},
     {"frame_stops", case_frame_stops},
     {"input_bits", case_input_bits},
+    {"input_edges", case_input_edges},
     {"input_orientation", case_input_orientation},
     {"input_refusal", case_input_refusal},
     {"video_reset_load", case_video_reset_load},

@@ -29,6 +29,7 @@ lynx_add_test(NAME api.frame_edges COMMAND lynx-test-api frame_edges LABELS api 
 lynx_add_test(NAME api.frame_refusal COMMAND lynx-test-api frame_refusal LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.frame_stops COMMAND lynx-test-api frame_stops LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.input_bits COMMAND lynx-test-api input_bits LABELS api TIMEOUT 60)
+lynx_add_test(NAME api.input_edges COMMAND lynx-test-api input_edges LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.input_orientation COMMAND lynx-test-api input_orientation LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.input_refusal COMMAND lynx-test-api input_refusal LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.palette_boundary COMMAND lynx-test-api palette_boundary LABELS api TIMEOUT 60)

@@ -70,6 +70,7 @@ that policy requires a separately specified and tested sampling contract.
 Automated coverage runs original guest CPU code with MAPCTL and Lefthand
 explicitly configured. It checks all 512 logical masks through both guest
 orientation mappings, the MAPCTL `0F` RAM negative control, exact and adjacent
-input edges, retained reads across bus holds, and frame/watch boundaries.
+`T-1`, `T`, and `T+1` input edges, retained reads across video/refresh holds,
+zero-consumed advances, and frame/watch boundaries.
 Passing these checks establishes deterministic behavior for this software
 policy; it does not establish hardware accuracy.

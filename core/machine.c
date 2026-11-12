@@ -447,6 +447,8 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
             if (!lynx__input_write(&m->video, addr, data)) return false;
             *result = data;
         } else {
+            /* MUTATION_ANCHOR_INPUT_SAMPLE_EDGE: input is sampled only when
+               this CPU read receives its actual bus grant (price.sample is 0). */
             *result = lynx__input_peek(&m->video, addr);
         }
         return true;
