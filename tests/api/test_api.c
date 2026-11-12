@@ -6475,6 +6475,125 @@ static void case_video_bus_edges(void)
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void case_video_dma_cost_fault(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_HALT;
+        CHECK_EQ_U64(load_bll_at(m, watch_count_program, sizeof watch_count_program,
+                                 0x0200u), LYNX_OK);
+        for (unsigned i = 0u; i < 200u &&
+                              !(m->cpu.req_addr == 0x0400u &&
+                                (m->cpu.req_flags & LYNX__CF_WRITE) != 0u); i++) {
+            CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        }
+        const uint64_t start = m->guest_ticks;
+        CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+        m->cpu.p = (uint8_t)(m->cpu.p | 0x04u);
+        CHECK(lynx__video_write(&m->video, 0xFD92u, 1u));
+        m->video.row_active = 1u;
+        m->video.capture_rows = 0u;
+        m->video.dma_cursor = 70u;
+        m->video.dma_next_tick = start;
+        m->video.dma_busy_until = start;
+        m->video.refresh_next_tick = start;
+        m->video.refresh_busy_until = start;
+        CHECK(timer_write_required(&m->timer_bank, 0xFD00u, 0u));
+        CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 0u));
+        CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x88u));
+        CHECK_EQ_U64(lynx_advance(m, 128u, &consumed, &stop), LYNX_OK);
+        CHECK_NAMED(stop == LYNX_STOP_WATCH &&
+                        m->host_observation.watch_event.hit_tick == start + 55u,
+                    "video.fault.dma-cost-holds-cpu-until-release");
+        lynx_machine_deinit(m);
+    }
+
+    /* The timing fault must not alter the bytes transferred by a complete
+       DMA row. Hold the CPU so this check isolates content from arbitration. */
+    m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_HALT;
+        CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+        CHECK(lynx__video_write(&m->video, 0xFD92u, 1u));
+        const uint64_t start = m->guest_ticks;
+        m->video.row_active = 1u;
+        m->video.capture_rows = 0u;
+        m->video.dispaddr = 0xFCB0u;
+        m->video.dma_next_tick = start;
+        m->video.dma_busy_until = start;
+        m->video.refresh_next_tick = 0u;
+        m->video.refresh_busy_until = start;
+        for (unsigned i = 0u; i < LYNX_FRAME_ROW_BYTES; i++) {
+            m->ram[0xFCB0u + i] = (uint8_t)(0xA5u ^ (uint8_t)i);
+        }
+        CHECK_EQ_U64(lynx_advance(m, 401u, &consumed, &stop), LYNX_OK);
+        uint8_t expected_pens[LYNX_FRAME_PENS_CAPACITY];
+        uint8_t expected_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+        uint64_t expected_line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+        memset(expected_pens, 0, sizeof expected_pens);
+        memset(expected_palettes, 0, sizeof expected_palettes);
+        memset(expected_line_ticks, 0, sizeof expected_line_ticks);
+        for (unsigned i = 0u; i < LYNX_FRAME_ROW_BYTES; i++) {
+            expected_pens[i] = m->ram[0xFCB0u + i];
+        }
+        const bool raw_frame_matches = stop == LYNX_STOP_BUDGET && consumed == 401u &&
+            m->video.capture_rows == 1u &&
+            memcmp(m->video.pens, expected_pens, sizeof expected_pens) == 0 &&
+            memcmp(m->video.palettes, expected_palettes, sizeof expected_palettes) == 0 &&
+            memcmp(m->video.line_ticks, expected_line_ticks, sizeof expected_line_ticks) == 0;
+        CHECK_NAMED(raw_frame_matches,
+                    "video.fault.dma-cost-preserves-full-raw-frame");
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.video_dma_cost_fault\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_video_dma_request_fault(void)
+{
+    const int failures_before = check_failures;
+    lynx__video_state idle;
+    uint64_t next = UINT64_MAX;
+    lynx__video_init(&idle, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+    CHECK_NAMED(!lynx__video_next_dma(&idle, 0u, &next),
+                "video.fault.inactive-dma-has-no-request");
+
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_HALT;
+        CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+        const uint64_t start = m->guest_ticks;
+        m->ram[0xFCB0u] = 0xA6u;
+        m->video.dispctl = 1u;
+        m->video.row_active = 1u;
+        m->video.capture_rows = 0u;
+        m->video.dispaddr = 0xFCB0u;
+        m->video.dma_next_tick = start;
+        m->video.dma_busy_until = start;
+        m->video.refresh_next_tick = 0u;
+        m->video.refresh_busy_until = start;
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_NAMED(stop == LYNX_STOP_BUDGET && consumed == 1u &&
+                        m->video.pens[0] == 0xA6u,
+                    "video.fault.active-row-receives-video-ram-grant");
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.video_dma_request_fault\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void video_page_expect_grant(lynx_machine *m, uint64_t grant_tick,
                                     uint16_t addr, uint8_t kind, uint8_t ticks,
                                     const char *assertion)
@@ -7125,6 +7244,56 @@ static void case_palette_boundary(void)
         lynx_machine_deinit(m);
     }
     printf("TAP version 13\n1..1\n%s 1 - api.palette_boundary\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_video_palette_fault(void)
+{
+    const int failures_before = check_failures;
+    const uint64_t line_ticks = 32u * 16u;
+    const uint64_t frame_ticks = line_ticks * 105u;
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t line_ticks_out[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_frame_buffers buffers;
+    init_video_frame_buffers(&buffers, pens, palettes, line_ticks_out);
+    lynx_machine *m = init_video_geometry_machine();
+    if (m != NULL) {
+        CHECK(lynx__video_write(&m->video, 0xFD92u, 1u));
+        set_video_test_address(m, 0x2000u);
+        for (unsigned i = 0u; i < LYNX_FRAME_PENS_CAPACITY; i++) {
+            m->ram[0x2000u + i] = (uint8_t)(0x3Cu ^ (uint8_t)i);
+        }
+        write_video_test_palette(m, 1u);
+        configure_video_cadence(m, 31u, 104u);
+        lynx_frame_result result;
+        init_video_frame_result(&result);
+        CHECK_EQ_U64(lynx_advance_frame(m, frame_ticks + 1u, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 0u,
+                    "video.fault.palette-sync-frame-is-empty");
+        CHECK_EQ_U64(lynx_advance_frame(m, 3u * line_ticks, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET,
+                    "video.fault.palette-row-zero-edge-is-deferred");
+        write_video_test_palette(m, 2u);
+        CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET,
+                    "video.fault.palette-row-zero-boundary-is-processed");
+        write_video_test_palette(m, 3u);
+        CHECK_EQ_U64(lynx_advance_frame(m, frame_ticks - 3u * line_ticks,
+                                         &buffers, &result), LYNX_OK);
+        bool row_zero_matches = true;
+        for (unsigned entry = 0u; entry < 16u; entry++) {
+            row_zero_matches = row_zero_matches &&
+                               palettes[entry] == video_test_green(2u, entry) &&
+                               palettes[16u + entry] == video_test_blue_red(2u, entry);
+        }
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 102u &&
+                        row_zero_matches,
+                    "video.fault.palette-row-boundary-late");
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.video_palette_fault\n",
            check_failures == failures_before ? "ok" : "not ok");
 }
 
@@ -8943,6 +9112,9 @@ static const struct {
     {"timer_shared_phase", case_timer_shared_phase},
     {"video_bus", case_video_bus},
     {"video_bus_edges", case_video_bus_edges},
+    {"video_dma_cost_fault", case_video_dma_cost_fault},
+    {"video_dma_request_fault", case_video_dma_request_fault},
+    {"video_palette_fault", case_video_palette_fault},
     {"video_page_mode", case_video_page_mode},
     {"video_cadence", case_video_cadence},
     {"video_geometry", case_video_geometry},

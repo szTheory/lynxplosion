@@ -189,3 +189,6 @@ timer.fault.phase	timer
 timer.fault.reset_done	timer
 toolchain.probe	toolchain
 toolchain.probe.self_test	toolchain
+video.fault.dma_cost_zero	api
+video.fault.dma_request_omitted	api
+video.fault.palette_boundary	api

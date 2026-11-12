@@ -79,6 +79,17 @@ lynx_add_test(NAME api.video_snapshot COMMAND lynx-test-api video_snapshot LABEL
 lynx_add_test(NAME api.video_snapshot_refusal COMMAND lynx-test-api video_snapshot_refusal LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.video_cadence COMMAND lynx-test-api video_cadence LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.video_geometry COMMAND lynx-test-api video_geometry LABELS api TIMEOUT 60)
+foreach(fault_id IN ITEMS dma_cost_zero dma_request_omitted palette_boundary)
+  lynx_add_test(NAME video.fault.${fault_id}
+    COMMAND ${CMAKE_COMMAND}
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DBUILD_DIR=${PROJECT_BINARY_DIR}"
+      "-DAPI_TEST_BINARY=$<TARGET_FILE:lynx-test-api>"
+      "-DC_COMPILER=${CMAKE_C_COMPILER}"
+      "-DFAULT_ID=${fault_id}"
+      -P ${PROJECT_SOURCE_DIR}/tests/video/fault_controls.cmake
+    LABELS api TIMEOUT 300)
+endforeach()
 lynx_add_test(NAME api.watch_controls COMMAND lynx-test-api watch_controls LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.watch_independent COMMAND lynx-test-api watch_independent LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.watch_post_write COMMAND lynx-test-api watch_post_write LABELS api TIMEOUT 30)
