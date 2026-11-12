@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Display, Raw Video and Input
-current_plan: 10
+current_plan: 11
 status: executing
-stopped_at: Completed 05-09-PLAN.md
-last_updated: "2026-11-12T10:03:52.326Z"
+stopped_at: Completed 05-10-PLAN.md
+last_updated: "2026-11-12T11:32:33.580Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 05 execution started
-state_head: e6afbbe3658545cbbf1def252457162aa2dca4dd
+state_head: 04c4f79c98d0ed9f5db73776e13e1dc430f22e10
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 57
-  completed_plans: 54
+  completed_plans: 55
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-11)
 ## Current Position
 
 Phase: 05 (Display, Raw Video and Input) — EXECUTING
-Current Plan: 10
+Current Plan: 11
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-11 — Phase 05 execution started
@@ -114,6 +114,7 @@ Progress: [███████░░░] 67%
 | Phase 05 P07 | 55 min | 2 tasks | 10 files |
 | Phase 05 P08 | 18min | 2 tasks | 6 files |
 | Phase 05 P09 | 41 min | 2 tasks | 6 files |
+| Phase 05 P10 | 71 min | 2 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -248,6 +249,9 @@ Recent decisions affecting current work:
 - [Phase 05]: Keep Task 2 baseline-green evidence distinct from a comparative failure on the reconstructed pre-plan consumer.
 - [Phase 05]: Keep all eight video and input faults as independent copied-source semantic mutations without production fault switches.
 - [Phase 05]: Keep EVD-05 partial until the Phase 6 audio fault obligation is complete.
+- [Phase 05]: Keep page-mode source build/oracle evidence separate from guest agreement; retain six missing results at the exact unsupported request.
+- [Phase 05]: Declare only the two exact page-mode profile observation skips and keep EVD-02 open.
+- [Phase 05]: Allow only the exact page-mode CTest skip property through the no-skip scanner; reject all near-matches.
 
 ### Pending Todos
 
@@ -270,7 +274,7 @@ Other open owner decisions remain in force:
 - Phase 3 goal verification and software qualification pass. CON-01 remains globally open for the actual-frame and actual-audio consumer obligations already scheduled in Phases 5 and 6; the Phase 3 snapshot/silence slice is complete. Research flags remain for Phases 4-6.
 - Carried follow-ups: the timer bank now consumes bus tick stamps with ordering controls; `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
 - Final marker validation rejects trailing pin data; its old behavior was reproduced before the fix. All final local/Linux/hosted gates pass. The outage-era queued run remains historical and unexecuted. Source qualification is authoritative in `04-QUALIFICATION.md`; metadata-only closeout needs an exact-head hosted run, without repeating unchanged local/Linux gates.
-
+- The pinned page-mode source reaches an unsupported SERCTL write at $FD8C before any result write; both profile results remain missing and EVD-02 stays open.
 
 ## Deferred Items
 
@@ -282,6 +286,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-12T10:03:51.938Z
-Stopped at: Completed 05-09-PLAN.md
+Last session: 2026-11-12T11:32:33.207Z
+Stopped at: Completed 05-10-PLAN.md
 Resume file: None
