@@ -31,7 +31,7 @@ while [ "$#" -gt 0 ]; do
     *) usage ;;
   esac
 done
-[ -n "$MODE" ] && [ -n "$OUT_ARG" ] || usage
+if [ -z "$MODE" ] || [ -z "$OUT_ARG" ]; then usage; fi
 case "$OUT_ARG" in
   /) printf 'build-suites: refusing root output path\n' >&2; exit 1 ;;
   *'/../'*|../*|*/..|..) printf 'build-suites: refusing parent traversal in output path\n' >&2; exit 1 ;;
