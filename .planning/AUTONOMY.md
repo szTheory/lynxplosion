@@ -86,6 +86,15 @@ For every discuss phase (and milestone discussion):
   bytes, verify the live remote boundary, and repair only the evidence path.
   Never rewrite published history or weaken the privacy scanner.
 
+- Before invoking GSD state updates, copy and hash any pre-existing untracked
+  `.planning/state.json` into private temporary storage. Never stage or delete
+  it. The SDK can refresh this derived phase/status/next cache while updating
+  `STATE.md`; verify that any refresh contains only expected generated fields.
+  Such a generated-cache refresh is routine authorized bookkeeping, not lost
+  source work or an owner approval gate. Preserve the backup and report any
+  unexpected fields or unexplained changes; never fabricate an exact restore
+  when prior bytes were not captured. Plan 05-07 exposed this SDK side effect.
+
 ## CI and CD efficiency review
 
 After every CI run (and at release/CD steps): inspect the slowest
