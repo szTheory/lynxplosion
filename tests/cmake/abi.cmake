@@ -26,6 +26,11 @@ endif()
 # the core builds with -fno-stack-protector -U_FORTIFY_SOURCE, so no
 # __stack_chk_* or __*_chk name ever appears.
 set(helpers
+  # Apple clang 21 emits ___chkstk_darwin for the large local snapshot/video
+  # buffer in snapshot.c.o. nm -P reports that Mach-O spelling; CMake's global
+  # ^_ replacement below removes every leading underscore, so the exact name
+  # checked here is chkstk_darwin. Do not broaden this to arbitrary helpers.
+  "^Darwin/:chkstk_darwin"
   # Apple clang lowers a zeroing memset to bzero (measured: nm -u on the core,
   # Apple clang 21, -O3).
   "^Darwin/:bzero __bzero"
@@ -56,7 +61,7 @@ foreach(line IN LISTS lines)
   set(name "${CMAKE_MATCH_1}")
   set(type "${CMAKE_MATCH_2}")
   if(SYSTEM MATCHES "^Darwin/")
-    string(REGEX REPLACE "^_" "" name "${name}") # Mach-O prefixes C names with _
+    string(REGEX REPLACE "^_" "" name "${name}") # CMake removes all leading Mach-O underscores
   endif()
   if(type STREQUAL "U")
     list(APPEND undefined "${name}")

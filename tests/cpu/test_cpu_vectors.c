@@ -19,7 +19,7 @@
      --fault no-step|stray-write|mutant-69 (named faults used only by the controls).
      seam-agreement --profile none|lynx1|lynx2 --sample FILE --manifest FILE
          the machine against the vector seam: for every run row the first vector of
-         the opcode is written into a format-2 snapshot (hash recomputed), restored
+         the opcode is written into a format-5 snapshot (hash recomputed), restored
          into a machine through the public restore call and advanced by the seam's
          cycle count at 5 ticks; registers and the whole RAM must equal the internal
          seam step. Under none every vector of the undefined rows must stop with
@@ -1182,6 +1182,18 @@ static int cmd_complete(const run_opts *o)
 
 /* ---- seam-agreement: the shipping machine against the vector seam --------- */
 
+/* Format 5 places the payload digest at 220-251 and the timing-policy field
+   at 252-255. The header grew after the digest, so header-length minus 32 is
+   not the digest offset. */
+enum {
+    SA_SNAPSHOT_PAYLOAD_HASH_OFFSET = 220u,
+    SA_SNAPSHOT_TIMING_POLICY_OFFSET = 252u
+};
+_Static_assert(SA_SNAPSHOT_PAYLOAD_HASH_OFFSET + 32u == SA_SNAPSHOT_TIMING_POLICY_OFFSET,
+               "format 5 payload digest precedes timing-policy identity");
+_Static_assert(SA_SNAPSHOT_TIMING_POLICY_OFFSET + 4u == LYNX__SNAPSHOT_HEADER_LEN,
+               "format 5 timing-policy identity ends the header");
+
 static _Alignas(max_align_t) unsigned char g_mbuf[sizeof(struct lynx_machine)];
 static unsigned char g_tmpl[LYNX__SNAPSHOT_HEADER_LEN + LYNX__SNAPSHOT_PAYLOAD_LEN];
 static unsigned char g_blob[LYNX__SNAPSHOT_HEADER_LEN + LYNX__SNAPSHOT_PAYLOAD_LEN];
@@ -1201,7 +1213,7 @@ static void sa_fail(const sst_vector *v, const char *what, unsigned got, unsigne
     g_sa_printed++;
 }
 
-/* The vector's initial state as a format-2 payload on top of the template blob,
+/* The vector's initial state as a format-5 payload on top of the template blob,
    the payload hash recomputed, restored through the public call. The CPU is at
    an instruction boundary at the vector's pc, the cost model is flat5 and guest
    time is 0 with the next cycle due at once. 0 on success. */
@@ -1221,7 +1233,7 @@ static int sa_restore(lynx_machine *m, const sst_vector *v, const uint8_t *ram)
     memcpy(pay + 32, ram, 65536u);
     lynx__sha256_init(&h);
     lynx__sha256_update(&h, pay, LYNX__SNAPSHOT_PAYLOAD_LEN);
-    lynx__sha256_final(&h, g_blob + (LYNX__SNAPSHOT_HEADER_LEN - 32u));
+    lynx__sha256_final(&h, g_blob + SA_SNAPSHOT_PAYLOAD_HASH_OFFSET);
     return lynx_snapshot_restore(m, g_blob, sizeof g_blob) == LYNX_OK ? 0 : -1;
 }
 

@@ -142,8 +142,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 add_executable(lynx-test-api
   tests/api/test_api.c
-  core/bus.c core/cpu.c core/cpu_profile.c core/machine.c
-  core/sha256.c core/snapshot.c core/timer.c core/build_id.c
+  core/bus.c core/cpu.c core/cpu_profile.c core/input.c core/machine.c
+  core/sha256.c core/snapshot.c core/timer.c core/video.c core/build_id.c
   runner/bundle.c)
 target_include_directories(lynx-test-api PRIVATE include core runner tests tests/cpu)
 target_compile_definitions(lynx-test-api PRIVATE _POSIX_C_SOURCE=200809L)
