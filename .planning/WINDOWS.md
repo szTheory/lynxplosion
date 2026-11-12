@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 4
+open_count: 5
 waived_count: 0
 fixed_count: 1
-total_count: 5
-last_updated: 2026-11-11T04:53:22.856Z
+total_count: 6
+last_updated: 2026-11-12T09:14:53.962Z
 ---
 
 # Broken Windows Ledger
@@ -20,6 +20,7 @@ last_updated: 2026-11-11T04:53:22.856Z
 | 3 | 03 | stub | consumer/main.c | 464 | Phase 3 WAV output is intentional 800-sample silence pending Phase 6 audio. | open |  | 2026-11-10T21:55:54.394Z |  |
 | 4 | 04 | stub | docs/timers-interrupts.md | 58 | CTLB bits 2–0 are not modeled and read as zero. | open |  | 2026-11-11T04:53:22.726Z |  |
 | 5 | 04 | stub | docs/timers-interrupts.md | 90 | Timer bank and event cursor are absent from snapshots until Phase 4 Plan 06. | open |  | 2026-11-11T04:53:22.856Z |  |
+| 6 | 05 | stub | consumer/main.c | 682 | Placeholder PCM silence remains pending Phase 6 audio implementation. | open |  | 2026-11-12T09:14:53.962Z |  |
 
 ````json
 [
@@ -85,6 +86,19 @@ last_updated: 2026-11-11T04:53:22.856Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-11-11T04:53:22.856Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 6,
+    "kind": "stub",
+    "phase": "05",
+    "file": "consumer/main.c",
+    "line": 682,
+    "description": "Placeholder PCM silence remains pending Phase 6 audio implementation.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-11-12T09:14:53.962Z",
     "resolved_at": null,
     "milestone": null
   }

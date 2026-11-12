@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Display, Raw Video and Input
-current_plan: 8
+current_plan: 9
 status: executing
-stopped_at: Completed 05-07-PLAN.md
-last_updated: "2026-11-12T08:07:36.456Z"
+stopped_at: Completed 05-08-PLAN.md
+last_updated: "2026-11-12T09:15:57.796Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 05 execution started
-state_head: dd993011a39f305ee1b355a8e6226fdb4c770404
+state_head: 42aea18b57a881cd50d1e80d92c5ddbaee592137
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 57
-  completed_plans: 52
+  completed_plans: 53
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-11)
 ## Current Position
 
 Phase: 05 (Display, Raw Video and Input) — EXECUTING
-Current Plan: 8
+Current Plan: 9
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-11 — Phase 05 execution started
@@ -112,6 +112,7 @@ Progress: [███████░░░] 67%
 | Phase 05 P05 | 38m | 2 tasks | 7 files |
 | Phase 05 P06 | 61 min | 2 tasks | 19 files |
 | Phase 05 P07 | 55 min | 2 tasks | 10 files |
+| Phase 05 P08 | 18min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -240,6 +241,10 @@ Recent decisions affecting current work:
 - [Phase 05]: During software CPU/DMA overlap, require exact input patterns only on settled frames and bound transitional pen/color values with raw-to-PPM checks; this is not hardware tearing qualification.
 - [Phase 05]: Observe two final frame periods with a 32-frame bound so the final held input has a settled endpoint frame.
 - [Phase 05]: Keep API-06, INP-01, HB-02, CON-01, VID-04 and VID-05 partial because the requirements ready-ids query reports remaining Phase 05 obligations.
+- [Phase 05]: Preflight device/inode identity and symlink containment before creating output, so alternate spellings of one file cannot pass as distinct inputs.
+- [Phase 05]: Remove staging only after checking the invocation marker and cached directory identity; publish the complete bundle with exclusive directory rename.
+- [Phase 05]: Report the point of failure separately for result schema, guest progress, logical-input response, raw-frame evidence, and rendered PPM color.
+- [Phase 05]: Keep Task 2 baseline-green evidence distinct from a comparative failure on the reconstructed pre-plan consumer.
 
 ### Pending Todos
 
@@ -274,6 +279,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-12T08:07:36.007Z
-Stopped at: Completed 05-07-PLAN.md
+Last session: 2026-11-12T09:15:57.406Z
+Stopped at: Completed 05-08-PLAN.md
 Resume file: None
