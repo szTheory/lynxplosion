@@ -58,7 +58,8 @@ elseif(CASE STREQUAL "replay_controls")
 elseif(CASE STREQUAL "frame_publication_controls")
   file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n108544 16\n")
 elseif(CASE STREQUAL "frame_response_controls")
-  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n0 0\n108545 16\n")
+  file(WRITE "${WORK}/input.timeline"
+    "LYNX-INPUT 1\n0 0\n108545 16\n217089 32\n325633 1\n434177 2\n542721 4\n651265 8\n759809 64\n868353 128\n976897 256\n1085441 511\n1193985 0\n")
 else()
   message(FATAL_ERROR "frame_driver: unknown CASE ${CASE}")
 endif()
@@ -269,6 +270,108 @@ else()
   endif()
 endif()
 file(REMOVE "${WORK}/input_probe.o")
+if(CASE STREQUAL "frame_response_controls")
+  function(build_input_variant variant_name anchor replacement)
+    set(variant_dir "${WORK}/variant-${variant_name}")
+    file(MAKE_DIRECTORY "${variant_dir}")
+    file(READ "${SOURCE}" original_text)
+    string(FIND "${original_text}" "${anchor}" anchor_position)
+    if(anchor_position LESS 0)
+      message(FATAL_ERROR "frame_driver: unique source anchor for ${variant_name} is missing")
+    endif()
+    string(REPLACE "${anchor}" "" text_without_anchor "${original_text}")
+    string(FIND "${text_without_anchor}" "${anchor}" duplicate_anchor_position)
+    if(NOT duplicate_anchor_position LESS 0)
+      message(FATAL_ERROR "frame_driver: source anchor for ${variant_name} is not unique")
+    endif()
+    string(REPLACE "${anchor}" "${replacement}" variant_text "${original_text}")
+    file(WRITE "${variant_dir}/input_probe.s" "${variant_text}")
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+        "CC65_HOME=${ROOT}/build/pins/cc65" "${CA65}" --cpu 65SC02
+        -DLEFTHAND=1 -o "${variant_dir}/input_probe.o" "${variant_dir}/input_probe.s"
+      WORKING_DIRECTORY "${variant_dir}" TIMEOUT 30 RESULT_VARIABLE variant_ca_rc
+      OUTPUT_VARIABLE variant_ca_out ERROR_VARIABLE variant_ca_err)
+    if(NOT variant_ca_rc STREQUAL "0")
+      message(FATAL_ERROR "frame_driver: pinned ca65 failed to build ${variant_name}\n${variant_ca_out}${variant_ca_err}")
+    endif()
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+        "CC65_HOME=${ROOT}/build/pins/cc65" "${LD65}" -C "${CONFIG}"
+        -Ln "${variant_dir}/input_probe.lbl" -o "${variant_dir}/input_probe.bll" "${variant_dir}/input_probe.o"
+      WORKING_DIRECTORY "${variant_dir}" TIMEOUT 30 RESULT_VARIABLE variant_ld_rc
+      OUTPUT_VARIABLE variant_ld_out ERROR_VARIABLE variant_ld_err)
+    if(NOT variant_ld_rc STREQUAL "0" OR NOT EXISTS "${variant_dir}/input_probe.bll" OR
+       NOT EXISTS "${variant_dir}/input_probe.lbl")
+      message(FATAL_ERROR "frame_driver: pinned ld65 failed to link ${variant_name}\n${variant_ld_out}${variant_ld_err}")
+    endif()
+    file(SHA256 "${SOURCE}" original_source_sha)
+    file(SHA256 "${variant_dir}/input_probe.s" variant_source_sha)
+    file(SHA256 "${variant_dir}/input_probe.o" object_sha)
+    file(SHA256 "${variant_dir}/input_probe.bll" variant_bll_sha)
+    file(SHA256 "${variant_dir}/input_probe.lbl" variant_labels_sha)
+    file(SHA256 "${CMAKE_CURRENT_LIST_FILE}" driver_sha)
+    file(WRITE "${variant_dir}/fixture.identity"
+      "variant = ${variant_name}\nsource_original_sha256 = ${original_source_sha}\nsource_variant_sha256 = ${variant_source_sha}\nconfig_sha256 = ${config_sha}\nca65_sha256 = ${ca65_sha}\nld65_sha256 = ${ld65_sha}\ndriver_sha256 = ${driver_sha}\nobject_sha256 = ${object_sha}\nbll_sha256 = ${variant_bll_sha}\nlabels_sha256 = ${variant_labels_sha}\nanchor = ${anchor}")
+    set(${variant_name}_BLL "${variant_dir}/input_probe.bll" PARENT_SCOPE)
+    set(${variant_name}_LBL "${variant_dir}/input_probe.lbl" PARENT_SCOPE)
+  endfunction()
+  function(expect_semantic_refusal scenario content labels timeline output expected)
+    execute_process(COMMAND "${CONSUMER}" --mode frames
+        --content "${content}" --symbols "${labels}"
+        --timeline "${timeline}" --out "${output}" --profile none
+      TIMEOUT 60 RESULT_VARIABLE semantic_rc
+      OUTPUT_VARIABLE semantic_out ERROR_VARIABLE semantic_err)
+    if(NOT semantic_rc STREQUAL "1" OR NOT semantic_out STREQUAL "" OR
+       EXISTS "${output}" OR NOT semantic_err MATCHES "${expected}")
+      message(FATAL_ERROR
+        "frame_driver: ${scenario} did not fail at the intended guest semantic assertion '${expected}'\n"
+        "actual exit=${semantic_rc}\n${semantic_out}${semantic_err}")
+    endif()
+  endfunction()
+  build_input_variant(no-progress "poll_input:\n"
+    "stall_before_poll:\n        jmp stall_before_poll\npoll_input:\n")
+  build_input_variant(no-response "        and probe_result + 5\n"
+    "        and #$00\n")
+  build_input_variant(bad-schema "        lda #$03\n        sta probe_result + 4\n"
+    "        lda #$02\n        sta probe_result + 4\n")
+  file(SHA256 "${WORK}/input.timeline" timeline_sha)
+  set(positive_before_no_progress "${WORK}/positive-before-no-progress")
+  run_replay("${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"
+    "${WORK}/input.timeline" "${positive_before_no_progress}" frame_replay 1 none FALSE)
+  expect_semantic_refusal(no-progress "${no-progress_BLL}" "${no-progress_LBL}"
+    "${WORK}/input.timeline" "${WORK}/no-progress-output" "homebrew progress did not advance")
+  run_replay("${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"
+    "${WORK}/input.timeline" "${WORK}/positive-after-no-progress" frame_replay 1 none FALSE)
+  set(positive_before_no_response "${WORK}/positive-before-no-response")
+  run_replay("${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"
+    "${WORK}/input.timeline" "${positive_before_no_response}" frame_replay 1 none FALSE)
+  set(stale_good "${WORK}/stale-good-output")
+  file(COPY "${positive_before_no_response}/" DESTINATION "${stale_good}")
+  file(SHA256 "${stale_good}/frame-trace.manifest" stale_manifest_before)
+  file(SHA256 "${stale_good}/frame-00.raw" stale_raw_before)
+  expect_semantic_refusal(no-response "${no-response_BLL}" "${no-response_LBL}"
+    "${WORK}/input.timeline" "${stale_good}/new-frame-run" "homebrew input response mismatch")
+  file(SHA256 "${stale_good}/frame-trace.manifest" stale_manifest_after)
+  file(SHA256 "${stale_good}/frame-00.raw" stale_raw_after)
+  if(NOT stale_manifest_before STREQUAL stale_manifest_after OR NOT stale_raw_before STREQUAL stale_raw_after)
+    message(FATAL_ERROR "frame_driver: no-response invocation changed stale-good guest output")
+  endif()
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" frames-color-negative
+      "${positive_before_no_response}" frame_replay "${timeline_sha}" 1 none
+    TIMEOUT 30 RESULT_VARIABLE color_rc OUTPUT_VARIABLE color_out ERROR_VARIABLE color_err)
+  if(NOT color_rc STREQUAL "0" OR NOT color_out MATCHES "rejected the deliberately corrupted transition pixel color")
+    message(FATAL_ERROR "frame_driver: correct raw input response did not remain independent from wrong rendered color\n${color_out}${color_err}")
+  endif()
+  run_replay("${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"
+    "${WORK}/input.timeline" "${WORK}/positive-after-no-response" frame_replay 1 none FALSE)
+  run_replay("${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"
+    "${WORK}/input.timeline" "${WORK}/positive-before-schema" frame_replay 1 none FALSE)
+  expect_semantic_refusal(bad-schema "${bad-schema_BLL}" "${bad-schema_LBL}"
+    "${WORK}/input.timeline" "${WORK}/bad-schema-output" "homebrew result block schema is invalid")
+  run_replay("${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"
+    "${WORK}/input.timeline" "${WORK}/positive-after-schema" frame_replay 1 none FALSE)
+  message(STATUS "frame_response_controls: source-bound progress, response, and result-schema mutants failed with fresh positive brackets")
+  return()
+endif()
 if(CASE STREQUAL "frame_publication_controls")
   file(SHA256 "${WORK}/input.timeline" timeline_sha)
   run_replay("${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"

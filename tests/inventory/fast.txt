@@ -70,6 +70,7 @@ api.watch_independent	api
 api.watch_post_write	api
 consumer.frame_publication_controls	consumer
 consumer.frame_replay	consumer
+consumer.frame_response_controls	consumer
 consumer.frame_tracer	consumer
 consumer.public_api	consumer
 consumer.refusal_controls	consumer
