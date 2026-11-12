@@ -2409,7 +2409,8 @@ enum {
     PAY_TIMER_PENDING = PAY_TIMERS + (int)(LYNX__TIMER_COUNT * 4u),
     PAY_TIMER_PHASE = PAY_TIMER_PENDING + 1,
     PAY_TIMER_EVENT_APPLIED = PAY_TIMER_PHASE + 1,
-    PAY_BUS_HOLD = PAY_TIMER_EVENT_APPLIED + 1
+    PAY_BUS_HOLD = PAY_TIMER_EVENT_APPLIED + 1,
+    PAY_VIDEO = PAY_BUS_HOLD + 1
 };
 
 /* Blobs carry one extra byte of room for the trailing-byte case. */
@@ -8459,6 +8460,92 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void case_video_snapshot(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *source = init_in(machine_buf, &cfg);
+    lynx_machine *restored = init_in(buf_b, &cfg);
+    if (source == NULL || restored == NULL) goto done;
+
+    setup_video_session(source, LYNX_INPUT_A | LYNX_INPUT_PAUSE, 0x51u);
+    setup_video_session(restored, LYNX_INPUT_A | LYNX_INPUT_PAUSE, 0x51u);
+    advance_to_video_sync_frame(source);
+    advance_to_partial_video_row(source);
+
+    /* A refresh whose phase falls inside the continuous visible-row stream
+       remains queued while each five-tick DMA byte owns the bus. This is a
+       reachable public boundary: refresh_next_tick may be behind guest time
+       while the current video grant is still in flight. */
+    bool found_pending_refresh = false;
+    for (uint32_t i = 0u; i < 4096u; i++) {
+        if (source->video.row_active != 0u &&
+            source->video.refresh_next_tick < source->guest_ticks &&
+            source->video.dma_busy_until > source->guest_ticks) {
+            found_pending_refresh = true;
+            break;
+        }
+        advance_ticks(source, 1u);
+    }
+    CHECK_NAMED(found_pending_refresh && source->video.row_active != 0u &&
+                    source->video.refresh_next_tick < source->guest_ticks &&
+                    source->video.dma_busy_until > source->guest_ticks,
+                "video_snapshot.reachable-refresh-waits-behind-dma");
+    if (!found_pending_refresh) goto done;
+
+    CHECK_EQ_U64(save_into(source, blob_v), 0u);
+    CHECK_NAMED(lynx_watch_configure(restored, 0x0400u, 1u) == LYNX_OK,
+                "video_snapshot.target-watch-armed-before-apply");
+    const lynx_status restore_status = lynx_snapshot_restore(restored, blob_v, SNAP_TOTAL);
+    CHECK_NAMED(restore_status == LYNX_OK,
+                "video_snapshot.reachable-pending-refresh-restores");
+    if (restore_status != LYNX_OK) goto done;
+    CHECK_EQ_U64(restored->host_observation.watch_armed, 0u);
+    CHECK_NAMED(memcmp(source, restored, MSIZE) == 0,
+                "video_snapshot.restore-applies-complete-guest-state");
+
+    uint8_t source_pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t source_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t source_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    uint8_t restored_pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t restored_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t restored_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_frame_buffers source_buffers;
+    lynx_frame_buffers restored_buffers;
+    lynx_frame_result source_result;
+    lynx_frame_result restored_result;
+    init_video_frame_buffers(&source_buffers, source_pens, source_palettes, source_ticks);
+    init_video_frame_buffers(&restored_buffers, restored_pens, restored_palettes, restored_ticks);
+    init_video_frame_result(&source_result);
+    init_video_frame_result(&restored_result);
+    CHECK_EQ_U64(lynx_advance_frame(source, 300000u, &source_buffers, &source_result), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance_frame(restored, 300000u, &restored_buffers, &restored_result),
+                 LYNX_OK);
+    CHECK_NAMED(source_result.stop == LYNX_STOP_FRAME &&
+                    restored_result.stop == LYNX_STOP_FRAME &&
+                    source_result.ticks_consumed == restored_result.ticks_consumed &&
+                    source_result.frame_start_tick == restored_result.frame_start_tick &&
+                    source_result.frame_end_tick == restored_result.frame_end_tick &&
+                    source_result.sequence == restored_result.sequence &&
+                    source_result.row_count == restored_result.row_count &&
+                    source_result.flags == restored_result.flags,
+                "video_snapshot.next-frame-metadata-matches");
+    CHECK_NAMED(memcmp(source_pens, restored_pens, sizeof source_pens) == 0 &&
+                    memcmp(source_palettes, restored_palettes, sizeof source_palettes) == 0 &&
+                    memcmp(source_ticks, restored_ticks, sizeof source_ticks) == 0,
+                "video_snapshot.next-frame-raw-capture-matches");
+    CHECK_NAMED(memcmp(source, restored, MSIZE) == 0,
+                "video_snapshot.next-frame-guest-state-matches");
+    lynx_machine_deinit(source);
+    lynx_machine_deinit(restored);
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.video_snapshot\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -8478,6 +8565,7 @@ static const struct {
     {"input_edges", case_input_edges},
     {"input_orientation", case_input_orientation},
     {"input_refusal", case_input_refusal},
+    {"video_snapshot", case_video_snapshot},
     {"video_reset_load", case_video_reset_load},
     {"cpu_program", case_cpu_program},
     {"identity", case_identity},

@@ -1,0 +1,11 @@
+{
+  "command": "build/check/tests/lynx-test-api video_snapshot 2>/private/tmp/lynx-video-snapshot-red.stderr",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.video_snapshot\n",
+  "targetTest": "api.video_snapshot",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "Restore the scheduler-reached VIDEO_POLICY1 snapshot with an overdue refresh waiting behind an active DMA grant and return LYNX_OK.",
+  "actual": "The target case executed and failed its planned restore assertion: lynx_snapshot_restore returned LYNX_ERR_SNAPSHOT_INVALID. The reachability assertion passed.",
+  "semanticAssessment": "Valid RED: the TAP target case ran and failed at the expected restore assertion for the reachable queued-refresh condition. This is a production behavior failure, not a build, load, or discovery failure.",
+  "stderr": "ASSERT video_snapshot.reachable-pending-refresh-restores failed\n"
+}
