@@ -90,6 +90,11 @@ bool lynx__video_write(lynx__video_state *video, uint16_t addr, uint8_t value)
     if (addr == DISPCTL) {
         /* Only display-DMA enable is implemented; all other mode bits refuse. */
         if ((value & 0xFEu) != 0u) return false;
+        if ((value & 1u) == 0u && video->row_active != 0u) {
+            /* A disabled mid-row stream is abandoned. A later enable waits
+               for the next Timer 0 row edge instead of replaying stale work. */
+            discard_incomplete_row(video);
+        }
         video->dispctl = value;
         return true;
     }
@@ -122,11 +127,14 @@ bool lynx__video_next_dma(const lynx__video_state *video, uint64_t now, uint64_t
     if (video == NULL || tick == NULL ||
         video->timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1 ||
         (video->dispctl & 1u) == 0u ||
-        video->row_active == 0u || video->dma_cursor >= LYNX_FRAME_ROW_BYTES ||
-        video->dma_next_tick < now) {
+        video->row_active == 0u || video->dma_cursor >= LYNX_FRAME_ROW_BYTES) {
         return false;
     }
-    *tick = video->dma_next_tick;
+    uint64_t grant = video->dma_next_tick;
+    if (grant < video->dma_busy_until) grant = video->dma_busy_until;
+    if (grant < video->refresh_busy_until) grant = video->refresh_busy_until;
+    if (grant < now) grant = now;
+    *tick = grant;
     return true;
 }
 
@@ -134,11 +142,14 @@ bool lynx__video_next_refresh(const lynx__video_state *video, uint64_t now, uint
 {
     if (video == NULL || tick == NULL ||
         video->timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1 ||
-        video->refresh_next_tick == 0u ||
-        video->refresh_next_tick < now) {
+        video->refresh_next_tick == 0u) {
         return false;
     }
-    *tick = video->refresh_next_tick;
+    uint64_t grant = video->refresh_next_tick;
+    if (grant < video->dma_busy_until) grant = video->dma_busy_until;
+    if (grant < video->refresh_busy_until) grant = video->refresh_busy_until;
+    if (grant < now) grant = now;
+    *tick = grant;
     return true;
 }
 
@@ -147,7 +158,9 @@ void lynx__video_dma_apply(lynx__video_state *video, const uint8_t *ram, uint64_
     if (video == NULL || ram == NULL ||
         video->timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1 || video->row_active == 0u ||
         (video->dispctl & 1u) == 0u || video->capture_rows >= LYNX_FRAME_MAX_ROWS ||
-        video->dma_cursor >= LYNX_FRAME_ROW_BYTES) {
+        video->dma_cursor >= LYNX_FRAME_ROW_BYTES || tick < video->dma_next_tick ||
+        tick < video->dma_busy_until || tick < video->refresh_busy_until ||
+        tick > UINT64_MAX - VIDEO_DMA_TICKS) {
         return;
     }
     const size_t row = (size_t)video->capture_rows;
@@ -167,12 +180,17 @@ void lynx__video_dma_apply(lynx__video_state *video, const uint8_t *ram, uint64_
 
 void lynx__video_refresh_apply(lynx__video_state *video, uint64_t tick)
 {
-    if (video == NULL || video->refresh_next_tick != tick) {
+    if (video == NULL || video->refresh_next_tick == 0u ||
+        tick < video->refresh_next_tick || tick < video->dma_busy_until ||
+        tick < video->refresh_busy_until || tick > UINT64_MAX - VIDEO_DMA_TICKS) {
         return;
     }
+    const uint64_t previous_deadline = video->refresh_next_tick;
     video->refresh_busy_until = tick + VIDEO_DMA_TICKS;
-    video->refresh_next_tick = tick <= UINT64_MAX - REFRESH_PERIOD ?
-                                   tick + REFRESH_PERIOD : 0u;
+    const uint64_t elapsed = tick - previous_deadline;
+    const uint64_t periods = elapsed / REFRESH_PERIOD + 1u;
+    video->refresh_next_tick = periods <= (UINT64_MAX - previous_deadline) / REFRESH_PERIOD ?
+                                   previous_deadline + periods * REFRESH_PERIOD : 0u;
 }
 
 static void begin_visible_row(lynx__video_state *video, uint64_t tick)

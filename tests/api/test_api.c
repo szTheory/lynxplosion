@@ -6382,9 +6382,38 @@ static void case_video_bus_edges(void)
     CHECK(!lynx__video_next_dma(&video, 300u, &next));
     CHECK(lynx__video_write(&video, 0xFD92u, 1u));
     CHECK(!lynx__video_next_dma(&video, 300u, &next));
-    CHECK(lynx__video_timer_apply(&video, 1u, 320u));
+    (void)lynx__video_timer_apply(&video, 1u, 320u);
     CHECK_EQ_U64(video.row_active, 1u);
     CHECK_EQ_U64(video.dma_next_tick, 325u);
+
+    /* A Timer 0 source reprogram made while video work is pending changes
+       the next timer deadline without shifting the shared divider phase. The
+       same-tick video grant still runs first, then refresh, before that edge. */
+    lynx__timer_bank timers;
+    lynx__video_state timed_video;
+    lynx__timer_init(&timers);
+    lynx__video_init(&timed_video, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+    CHECK(timer_write_required(&timers, 0xFD02u, 0u));
+    CHECK(timer_write_required(&timers, 0xFD01u, 0x88u));
+    CHECK(lynx__timer_next(&timers, 300u, &next));
+    CHECK_EQ_U64(next, 304u);
+    CHECK(timer_write_required(&timers, 0xFD01u, 0x89u));
+    CHECK(lynx__timer_next(&timers, 300u, &next));
+    CHECK_EQ_U64(next, 320u);
+    CHECK(lynx__video_write(&timed_video, 0xFD92u, 1u));
+    timed_video.row_active = 1u;
+    timed_video.dma_cursor = 0u;
+    timed_video.dma_next_tick = 304u;
+    timed_video.refresh_next_tick = 304u;
+    CHECK(lynx__video_next_dma(&timed_video, 300u, &next));
+    CHECK_EQ_U64(next, 304u);
+    lynx__video_dma_apply(&timed_video, ram, 304u);
+    CHECK(lynx__video_next_refresh(&timed_video, 304u, &next));
+    CHECK_EQ_U64(next, 309u);
+    lynx__video_refresh_apply(&timed_video, 309u);
+    CHECK_EQ_U64(timed_video.refresh_busy_until, 314u);
+    CHECK(lynx__timer_next(&timers, 309u, &next));
+    CHECK_EQ_U64(next, 320u);
 
     lynx__video_state idle;
     lynx__video_init(&idle, LYNX_TIMING_POLICY_VIDEO_POLICY1);
