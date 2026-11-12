@@ -24,6 +24,7 @@ api.irq_poll	api
 api.load_refusal_unchanged	api
 api.memory_peek_pure	api
 api.memory_peek_pure.self_test	api
+api.palette_boundary	api
 api.profile_select	api
 api.request_boundary	api
 api.request_hold	api
@@ -49,6 +50,7 @@ api.timer_standalone	api
 api.timer_tracer	api
 api.timer_unavailable	api
 api.video_cadence	api
+api.video_geometry	api
 api.watch_controls	api
 api.watch_controls.self_test	api
 api.watch_independent	api

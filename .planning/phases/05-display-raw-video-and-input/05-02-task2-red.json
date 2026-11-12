@@ -1,0 +1,11 @@
+{
+  "command": "./build/check/tests/lynx-test-api video_geometry",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.video_geometry\n",
+  "stderr": "ASSERT video.geometry-address-masked-at-third-blank failed\nASSERT video.geometry-raw-nibbles-normal-traversal-and-wrap failed\nASSERT video.geometry-row0-row1-row101-pen-order failed\nASSERT video.geometry-dma-reads-underlying-ram-through-overlay failed\n",
+  "targetTest": "api.video_geometry",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "A DISPADDR low-two-bit value is ignored at the third-blank transfer, producing aligned normal traversal from row0 through row101 and full-RAM DMA across CPU overlays and 16-bit wrap.",
+  "actual": "The API case ran and failed four semantic assertions: effective address was not masked at the third blank, raw row bytes and row pen order began from the wrong address, and the captured underlying RAM byte at FD92 did not match because traversal started three bytes late.",
+  "semanticAssessment": "This is a production-behavior RED, not a scaffold failure. The named API case built and ran on the VIDEO_POLICY1 machine, returned the expected first synchronization frame, and failed assertions tied to the source-specified four-byte aligned display address. The current address selector copies backup_addr unchanged; the remedy is to mask only the effective display address when the documented third-blank transfer occurs, leaving raw register backup state unchanged. The companion palette_boundary case passed on baseline and is recorded as existing behavior, not claimed as a RED."
+}

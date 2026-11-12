@@ -6418,6 +6418,284 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+enum { VIDEO_TEST_GUARD = 16 };
+
+static uint8_t video_test_green(uint8_t salt, unsigned entry)
+{
+    return (uint8_t)(0xA0u | ((entry * 3u + salt) & 0x0Fu));
+}
+
+static uint8_t video_test_blue_red(uint8_t salt, unsigned entry)
+{
+    return (uint8_t)(0xC0u | ((entry * 5u + salt * 3u + 1u) & 0x0Fu));
+}
+
+static void write_video_test_palette(lynx_machine *m, uint8_t salt)
+{
+    for (unsigned entry = 0u; entry < 16u; entry++) {
+        CHECK(lynx__video_write(&m->video, (uint16_t)(0xFDA0u + entry),
+                                video_test_green(salt, entry)));
+        CHECK(lynx__video_write(&m->video, (uint16_t)(0xFDB0u + entry),
+                                video_test_blue_red(salt, entry)));
+    }
+}
+
+static void check_video_test_palette(const uint8_t *palettes, unsigned row, uint8_t salt,
+                                     const char *name)
+{
+    bool matches = true;
+    for (unsigned entry = 0u; entry < 16u; entry++) {
+        matches = matches &&
+                  palettes[row * 32u + entry] == video_test_green(salt, entry) &&
+                  palettes[row * 32u + 16u + entry] == video_test_blue_red(salt, entry);
+    }
+    CHECK_NAMED(matches, name);
+}
+
+static lynx_machine *init_video_geometry_machine(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    }
+    return m;
+}
+
+static void set_video_test_address(lynx_machine *m, uint16_t address)
+{
+    CHECK(lynx__video_write(&m->video, 0xFD94u, (uint8_t)address));
+    CHECK(lynx__video_write(&m->video, 0xFD95u, (uint8_t)(address >> 8)));
+}
+
+static void case_video_geometry(void)
+{
+    const int failures_before = check_failures;
+    const uint64_t line_ticks_expected = 32u * 16u;
+    const uint64_t frame_ticks_expected = line_ticks_expected * 105u;
+    const uint16_t requested_base = 0xFC03u;
+    const uint16_t aligned_base = 0xFC00u;
+    uint8_t pens_storage[VIDEO_TEST_GUARD + LYNX_FRAME_PENS_CAPACITY + VIDEO_TEST_GUARD];
+    uint8_t palettes_storage[VIDEO_TEST_GUARD + LYNX_FRAME_PALETTE_CAPACITY + VIDEO_TEST_GUARD];
+    uint64_t ticks_storage[VIDEO_TEST_GUARD / sizeof(uint64_t) +
+                           LYNX_FRAME_LINE_TICKS_CAPACITY + VIDEO_TEST_GUARD / sizeof(uint64_t)];
+    uint8_t *pens = pens_storage + VIDEO_TEST_GUARD;
+    uint8_t *palettes = palettes_storage + VIDEO_TEST_GUARD;
+    uint64_t *line_ticks = ticks_storage + VIDEO_TEST_GUARD / sizeof(uint64_t);
+    lynx_frame_buffers buffers;
+    init_video_frame_buffers(&buffers, pens, palettes, line_ticks);
+    memset(pens_storage, 0xC7, sizeof pens_storage);
+    memset(palettes_storage, 0xC7, sizeof palettes_storage);
+    memset(ticks_storage, 0xC7, sizeof ticks_storage);
+
+    lynx_machine *m = init_video_geometry_machine();
+    if (m != NULL) {
+        /* Address selection and DMA use underlying RAM, even across device
+           overlays and 16-bit wrap. This distinct byte proves MAPCTL still
+           exposes the Mikey register to the CPU at the same address. */
+        for (unsigned i = 0u; i < LYNX_FRAME_PENS_CAPACITY; i++) {
+            const uint16_t addr = (uint16_t)(aligned_base + i);
+            m->ram[addr] = ((i / LYNX_FRAME_ROW_BYTES + i % LYNX_FRAME_ROW_BYTES) & 1u) != 0u ?
+                               0xF0u : 0x0Fu;
+        }
+        m->ram[requested_base] = 0xABu;
+        m->ram[0xFD92u] = 0x3Cu;
+        CHECK(lynx__video_write(&m->video, 0xFD92u, 1u));
+        CHECK(!lynx__video_write(&m->video, 0xFD92u, 3u));
+        CHECK_NAMED(m->video.dispctl == 1u &&
+                        lynx__video_peek(&m->video, 0xFD92u) == 1u,
+                    "video.unsupported-flip-mode-refuses-atomically");
+        CHECK(!lynx__video_write(&m->video, 0xFD92u, 0x0Du));
+        CHECK_NAMED(m->video.dispctl == 1u &&
+                        lynx__video_peek(&m->video, 0xFD92u) == 1u,
+                    "video.unsupported-color-mode-refuses-atomically");
+        set_video_test_address(m, requested_base);
+        write_video_test_palette(m, 2u);
+        configure_video_cadence(m, 31u, 104u);
+
+        uint8_t cpu_overlay = 0u;
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD92u, &cpu_overlay, 1u), LYNX_OK);
+        CHECK_EQ_U64(cpu_overlay, 1u);
+        lynx_frame_result result;
+        init_video_frame_result(&result);
+        CHECK_EQ_U64(lynx_advance_frame(m, frame_ticks_expected + 1u, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 0u &&
+                        result.sequence == 0u,
+                    "video.geometry-first-sync-is-empty");
+        const uint64_t first_frame_tick = result.frame_end_tick;
+
+        /* Event exactly at target is deferred. The start address is not
+           transferred until Timer 0 reaches the third blank-line edge. */
+        CHECK_EQ_U64(lynx_advance_frame(m, 2u * line_ticks_expected, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET && m->video.dispaddr == 0u,
+                    "video.geometry-address-before-third-blank");
+        CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(m->video.dispaddr == aligned_base,
+                    "video.geometry-address-masked-at-third-blank");
+        CHECK_EQ_U64(lynx_advance_frame(m, frame_ticks_expected -
+                                               2u * line_ticks_expected + 1u,
+                                         &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 102u &&
+                        result.flags == 0u && result.frame_start_tick == first_frame_tick &&
+                        result.frame_end_tick == first_frame_tick + frame_ticks_expected,
+                    "video.geometry-102-visible-rows");
+        bool bytes_match = true;
+        for (unsigned i = 0u; i < LYNX_FRAME_PENS_CAPACITY; i++) {
+            bytes_match = bytes_match && pens[i] == m->ram[(uint16_t)(aligned_base + i)];
+        }
+        CHECK_NAMED(bytes_match, "video.geometry-raw-nibbles-normal-traversal-and-wrap");
+        CHECK_NAMED(pens[0] == 0x0Fu && pens[1] == 0xF0u &&
+                        pens[LYNX_FRAME_ROW_BYTES] == 0xF0u &&
+                        pens[101u * LYNX_FRAME_ROW_BYTES] == 0xF0u,
+                    "video.geometry-row0-row1-row101-pen-order");
+        CHECK_NAMED(pens[5u * LYNX_FRAME_ROW_BYTES + 2u] == 0x3Cu,
+                    "video.geometry-dma-reads-underlying-ram-through-overlay");
+        CHECK_NAMED(line_ticks[0] == first_frame_tick + 3u * line_ticks_expected &&
+                        line_ticks[1] == first_frame_tick + 4u * line_ticks_expected &&
+                        line_ticks[101] == first_frame_tick + 104u * line_ticks_expected,
+                    "video.geometry-exact-row-start-ticks");
+        check_video_test_palette(palettes, 0u, 2u, "video.geometry-row0-palette");
+        check_video_test_palette(palettes, 1u, 2u, "video.geometry-row1-palette");
+        check_video_test_palette(palettes, 101u, 2u, "video.geometry-row101-palette");
+        bool guards_intact = true;
+        for (unsigned i = 0u; i < VIDEO_TEST_GUARD; i++) {
+            guards_intact = guards_intact && pens_storage[i] == 0xC7u &&
+                            pens_storage[VIDEO_TEST_GUARD + LYNX_FRAME_PENS_CAPACITY + i] == 0xC7u &&
+                            palettes_storage[i] == 0xC7u &&
+                            palettes_storage[VIDEO_TEST_GUARD + LYNX_FRAME_PALETTE_CAPACITY + i] == 0xC7u;
+        }
+        for (unsigned i = 0u; i < VIDEO_TEST_GUARD / sizeof(uint64_t); i++) {
+            guards_intact = guards_intact && ticks_storage[i] == UINT64_C(0xC7C7C7C7C7C7C7C7) &&
+                            ticks_storage[VIDEO_TEST_GUARD / sizeof(uint64_t) +
+                                          LYNX_FRAME_LINE_TICKS_CAPACITY + i] ==
+                                UINT64_C(0xC7C7C7C7C7C7C7C7);
+        }
+        CHECK_NAMED(guards_intact, "video.geometry-row103-buffer-canaries");
+        lynx_machine_deinit(m);
+    }
+
+    /* A disabled display produces a real zero-row frame rather than a
+       synthesized black image. */
+    m = init_video_geometry_machine();
+    if (m != NULL) {
+        CHECK(lynx__video_write(&m->video, 0xFD92u, 0u));
+        configure_video_cadence(m, 31u, 104u);
+        lynx_frame_result result;
+        init_video_frame_result(&result);
+        CHECK_EQ_U64(lynx_advance_frame(m, frame_ticks_expected + 1u, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 0u &&
+                        result.flags == 0u,
+                    "video.geometry-blank-frame-has-zero-rows");
+        CHECK_EQ_U64(lynx_advance_frame(m, frame_ticks_expected + 1u, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 0u &&
+                        result.flags == 0u,
+                    "video.geometry-next-blank-frame-remains-empty");
+        lynx_machine_deinit(m);
+    }
+
+    /* A four-line programmed interval completes row 0 and reports exactly
+       one actual row; row_count follows completed DMA, not nominal geometry. */
+    m = init_video_geometry_machine();
+    if (m != NULL) {
+        CHECK(lynx__video_write(&m->video, 0xFD92u, 1u));
+        set_video_test_address(m, 0x2000u);
+        for (unsigned i = 0u; i < LYNX_FRAME_ROW_BYTES; i++) m->ram[0x2000u + i] = 0x0Fu;
+        configure_video_cadence(m, 31u, 3u);
+        lynx_frame_result result;
+        init_video_frame_result(&result);
+        CHECK_EQ_U64(lynx_advance_frame(m, 4u * line_ticks_expected + 1u,
+                                        &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 0u,
+                    "video.geometry-short-sync-empty");
+        CHECK_EQ_U64(lynx_advance_frame(m, 4u * line_ticks_expected + 1u,
+                                        &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 1u &&
+                        result.flags == 0u && pens[0] == 0x0Fu && pens[79] == 0x0Fu,
+                    "video.geometry-short-frame-one-actual-row");
+        lynx_machine_deinit(m);
+    }
+
+    printf("TAP version 13\n1..1\n%s 1 - api.video_geometry\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_palette_boundary(void)
+{
+    const int failures_before = check_failures;
+    const uint64_t line_ticks_expected = 32u * 16u;
+    const uint64_t frame_ticks_expected = line_ticks_expected * 105u;
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_frame_buffers buffers;
+    init_video_frame_buffers(&buffers, pens, palettes, line_ticks);
+    lynx_machine *m = init_video_geometry_machine();
+    if (m != NULL) {
+        CHECK(lynx__video_write(&m->video, 0xFD92u, 1u));
+        set_video_test_address(m, 0x2000u);
+        for (unsigned i = 0u; i < LYNX_FRAME_PENS_CAPACITY; i++) {
+            m->ram[0x2000u + i] = ((i / LYNX_FRAME_ROW_BYTES + i % LYNX_FRAME_ROW_BYTES) & 1u) != 0u ?
+                                      0xF0u : 0x0Fu;
+        }
+        write_video_test_palette(m, 1u);
+        configure_video_cadence(m, 31u, 104u);
+        lynx_frame_result result;
+        init_video_frame_result(&result);
+        CHECK_EQ_U64(lynx_advance_frame(m, frame_ticks_expected + 1u, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 0u,
+                    "video.palette-first-sync-empty");
+        const uint64_t frame_start = result.frame_end_tick;
+
+        /* A write made after reaching the half-open row boundary is visible
+           to the timer event that is still deferred at that exact tick. */
+        CHECK_EQ_U64(lynx_advance_frame(m, 3u * line_ticks_expected, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET,
+                    "video.palette-row0-boundary-deferred");
+        write_video_test_palette(m, 2u);
+        CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET,
+                    "video.palette-row0-snapshot-completed");
+        write_video_test_palette(m, 3u);
+        CHECK_EQ_U64(lynx_advance_frame(m, line_ticks_expected - 1u, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET,
+                    "video.palette-row1-boundary-deferred");
+        CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET,
+                    "video.palette-row1-snapshot-completed");
+        write_video_test_palette(m, 4u);
+        const uint64_t to_frame_end = frame_ticks_expected - 4u * line_ticks_expected + 1u;
+        CHECK_EQ_U64(lynx_advance_frame(m, to_frame_end, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 102u &&
+                        result.frame_start_tick == frame_start,
+                    "video.palette-capture-frame-complete");
+        CHECK_NAMED(pens[0] == 0x0Fu && pens[1] == 0xF0u &&
+                        pens[LYNX_FRAME_ROW_BYTES] == 0xF0u,
+                    "video.palette-asymmetric-pen-nibbles");
+        CHECK_NAMED(line_ticks[0] == frame_start + 3u * line_ticks_expected &&
+                        line_ticks[1] == frame_start + 4u * line_ticks_expected &&
+                        line_ticks[2] == frame_start + 5u * line_ticks_expected &&
+                        line_ticks[101] == frame_start + 104u * line_ticks_expected,
+                    "video.palette-selected-row-edges");
+        check_video_test_palette(palettes, 0u, 2u, "video.palette-before-edge-selects-row0");
+        check_video_test_palette(palettes, 1u, 3u, "video.palette-after-row0-selects-row1");
+        check_video_test_palette(palettes, 2u, 4u, "video.palette-after-row1-selects-row2");
+        check_video_test_palette(palettes, 101u, 4u, "video.palette-asymmetric-row101");
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.palette_boundary\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void case_timer_pending_after_disable(void)
 {
     const int failures_before = check_failures;
@@ -6486,6 +6764,7 @@ static const struct {
     {"load_refusal_unchanged", case_load_refusal_unchanged},
     {"profile_divergence", case_profile_divergence},
     {"profile_select", case_profile_select},
+    {"palette_boundary", case_palette_boundary},
     {"request_boundary", case_request_boundary},
     {"rom_unavailable", case_rom_unavailable},
     {"request_hold", case_request_hold},
@@ -6508,6 +6787,7 @@ static const struct {
     {"timer_reset_done_held", case_timer_reset_done_held},
     {"timer_shared_phase", case_timer_shared_phase},
     {"video_cadence", case_video_cadence},
+    {"video_geometry", case_video_geometry},
     {"timer_pending_after_disable", case_timer_pending_after_disable},
     {"watch_controls", case_watch_controls},
     {"watch_independent", case_watch_independent},

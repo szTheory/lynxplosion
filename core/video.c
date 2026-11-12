@@ -184,6 +184,7 @@ static void begin_visible_row(lynx__video_state *video, uint64_t tick)
         discard_incomplete_row(video);
     }
     const size_t row = (size_t)video->capture_rows;
+    /* MUTATION_ANCHOR: video.palette-row-snapshot */
     memcpy(video->palettes + row * 32u, video->palette, 32u);
     video->line_ticks[row] = tick;
     video->row_active = 1u;
@@ -219,7 +220,8 @@ bool lynx__video_timer_apply(lynx__video_state *video, uint8_t borrow_mask, uint
             video->line_ordinal++;
         }
         if (video->line_ordinal == 2u) {
-            video->dispaddr = video->backup_addr;
+            /* MUTATION_ANCHOR: video.display-address-select */
+            video->dispaddr = (uint16_t)(video->backup_addr & 0xFFFCu);
         }
         if (video->line_ordinal >= VISIBLE_FIRST_ORDINAL &&
             video->line_ordinal <= VISIBLE_LAST_ORDINAL) {

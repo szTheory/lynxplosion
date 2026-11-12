@@ -26,6 +26,7 @@ lynx_add_test(NAME api.cost_model.self_test
     -P ${PROJECT_SOURCE_DIR}/tests/cmake/expect_fail.cmake
   LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.frame_edges COMMAND lynx-test-api frame_edges LABELS api TIMEOUT 60)
+lynx_add_test(NAME api.palette_boundary COMMAND lynx-test-api palette_boundary LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.cpu_program COMMAND lynx-test-api cpu_program LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.build_id COMMAND lynx-test-api build_id LABELS api TIMEOUT 30)
 # The identity follows the checkout (commit, staged change, linked worktree)
@@ -64,6 +65,7 @@ lynx_add_test(NAME api.timer_link_tracer COMMAND lynx-test-api timer_link_tracer
 lynx_add_test(NAME api.timer_links COMMAND lynx-test-api timer_links LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.timer_unavailable COMMAND lynx-test-api timer_unavailable LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.video_cadence COMMAND lynx-test-api video_cadence LABELS api TIMEOUT 60)
+lynx_add_test(NAME api.video_geometry COMMAND lynx-test-api video_geometry LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.watch_controls COMMAND lynx-test-api watch_controls LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.watch_independent COMMAND lynx-test-api watch_independent LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.watch_post_write COMMAND lynx-test-api watch_post_write LABELS api TIMEOUT 30)

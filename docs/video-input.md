@@ -17,10 +17,27 @@ zero rows; it is not a renderable image. The following Timer 0 events count
 blank ordinals 1 and 2, with the backup display address transferred at
 ordinal 2 (the third blank line). Visible rows 0..101 are captured at ordinals
 3..104; Timer 2 completes the interval at ordinal 105. PBKUP is retained as a
-guest latch, but raw output is not flipped or rotated in the core. Interrupted
-rows are zero-padded and flagged `LYNX_FRAME_PARTIAL`.
+guest latch, but raw output is not flipped or rotated in the core. The normal
+display address is aligned down to a four-byte boundary when the backup
+transfers at blank ordinal 2; DMA then walks forward through the 16-bit RAM
+address space, including underlying RAM where the CPU sees a device overlay.
+`DISPCTL` currently accepts only bit 0 (DMA enable); flip, two-bit and
+monochrome mode writes are refused without changing the selected mode. This
+limited mode does not implement the manual's bottom-up flip traversal.
+Interrupted rows are omitted from `row_count`, their unused slot is cleared,
+and the frame is flagged `LYNX_FRAME_PARTIAL`; DMA grants and guest time
+already consumed are not rolled back.
 
 Cadence comes from guest Timer 0/2 configuration, not a host refresh rate.
+For steady reloads, Timer 0's line period is its source interval multiplied by
+`backup + 1`; linked Timer 2 completes after `backup + 1` Timer 0 borrows. The
+core's fixed-zero divider phase defines the first edge after guest timer setup.
+That initial setup phase is an unverified software policy and is independent
+of the steady reload-period checks; it is not a calibrated display edge. At
+each Timer 0 row-start event, the current 32 palette register bytes are
+snapshotted after timer work and before a same-tick CPU store. This
+line-snapshot ordering is project policy; hardware palette latch behavior
+remains unverified.
 Budgets are half-open: a boundary exactly at the target is deferred, while
 already-due current-tick work can return FRAME with zero ticks consumed. Zero
 budget makes no progress. Only FRAME copies output arrays; other guest stops
