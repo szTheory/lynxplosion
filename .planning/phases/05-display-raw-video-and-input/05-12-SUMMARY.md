@@ -13,7 +13,7 @@ provides:
 affects: [Phase 05 security closeout, Phase 06 audio evidence, EVD-02, EVD-05, CON-01]
 
 actuals:
-  tokens: 56370
+  tokens: 56371
   tasks: 2
   commits: 24
 commits: 24
@@ -64,10 +64,10 @@ status: complete
 
 - **Duration:** Approximately 9h 35m elapsed across review and qualification checkpoints.
 - **Started:** `2026-11-12T08:02:47Z` (plan commit-ledger creation; active execution time was not separately measured).
-- **Completed:** `2026-11-12T17:38:04Z` (qualification evidence; metadata commit followed).
+- **Completed:** `2026-11-12T17:38:04Z` (qualification evidence; documentation-only metadata commits followed).
 - **Tasks:** 2.
 - **Files modified:** 35 unique tracked paths across the plan work and final records.
-- **Actuals method:** `tokens` is the realized diff character count divided by four; `commits` is measured from the persisted plan-head ledger and excludes the final metadata commit.
+- **Actuals method:** `tokens` is the realized diff character count divided by four; `commits` is measured from the persisted plan-head ledger and excludes the metadata-only followup commits.
 
 ## Accomplishments
 
@@ -80,7 +80,7 @@ status: complete
 ## Task Commits
 
 - **Task 1:** Preparation and accepted review repairs were committed atomically across 24 commits from `353c018` through tested source head `d3fb002`; `05-REVIEW-RESOLUTION.md` records each repair and review disposition.
-- **Task 2:** Final gates and hosted CI qualified `d3fb002`. The documentation and state updates are committed separately after this summary; that metadata commit was not part of the tested or CI head.
+- **Task 2:** Final gates and hosted CI qualified `d3fb002`. The documentation and state updates are in local metadata-only follow-up commits, separate from the tested/pushed CI head.
 
 ## Verification
 
@@ -103,7 +103,7 @@ Plan 05-12 qualification is complete. The exact page-mode observations remain mi
 
 ## Self-Check
 
-PASSED: qualification, validation, review-resolution, and summary artifacts exist; tested source `d3fb002` is an ancestor of HEAD; 24 task/review commits were measured before the separate metadata commit; README replacement hash matches; the untracked state cache still matches its pre-update backup.
+PASSED: qualification, validation, review-resolution, and summary artifacts exist; tested source `d3fb002` is an ancestor of HEAD; 24 task/review commits were measured before the metadata-only followups; README replacement hash matches; the untracked state cache still matches its pre-update backup.
 
 ---
 *Phase: 05-display-raw-video-and-input*

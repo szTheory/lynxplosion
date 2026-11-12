@@ -22,7 +22,7 @@ closure remains with root.
 The README qualification paragraph and planning records are documentation-only
 followups written after these gates. The final pushed and CI-tested source stays
 `d3fb0024fe6a732b05f9b42122a18c110bed8ae2`; no CI result is claimed for the
-later metadata commit. The README's documentation replacement SHA-256 is
+later metadata commits. The README's documentation replacement SHA-256 is
 `629a416602d47780bee8fdfeb13b64ce9b5e1b9c3c30fab23846f76c2c91a510`. All 54
 other paths in the tested 55-path map, including every product, test, fixture,
 and script path, remain byte-identical.

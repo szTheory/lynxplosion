@@ -303,4 +303,4 @@ metadata. The README replacement SHA-256 is
 `629a416602d47780bee8fdfeb13b64ce9b5e1b9c3c30fab23846f76c2c91a510`. All 54
 other paths from the tested 55-path map, including product/test/script bytes,
 remain identical. Thus the tested/pushed/CI head remains `d3fb0024fe6a732b05f9b42122a18c110bed8ae2`; no CI run is claimed for the later
-documentation-only metadata commit.
+documentation-only metadata commits.
