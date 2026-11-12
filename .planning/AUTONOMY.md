@@ -109,3 +109,34 @@ critical-path jobs, duplicated work, caching and concurrency, and take the
 low-risk wins for speed, iteration time and Actions cost, without losing a
 distinct failure class or proof. Measure before changing. Record what was
 changed and why in the phase summary so the review is not repeated.
+
+## Implementation and orchestration efficiency
+
+Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
+`06-EFFICIENCY-REVIEW.md`.
+
+- Use GSD's supported compact content mode. Read mandatory contracts once
+  per owning context; locate large source files by symbol and bounded sections.
+  Keep each batched tool response within its output budget so truncation does
+  not force repeated reads.
+- Reuse completed advisor/source reports. Give implementation research only
+  the unresolved questions that can change a plan or its acceptance evidence.
+  Finish when those questions are answered or explicitly bounded as unknown.
+  Pattern mapping is opt-in for an unfamiliar architecture or a concrete missing
+  analog; existing pattern maps remain valid planning inputs.
+- At the first public-struct, snapshot or core-source-list change, repair its
+  compile-time ABI assertions and independent readers/build recipes before
+  expanding consumer behavior. Verify that affected group immediately in the
+  supported compiler/lint environments; keep final gates at phase close.
+- Batch review findings into one owned repair handoff with atomic code commits
+  per finding and focused semantic controls. Recheck the changed batch once;
+  reopen review only for a new code change, finding or unresolved concern.
+  Consolidate evidence updates in the owning report and one metadata commit.
+- New integration failures must identify the failing invariant or stage and
+  preserve attributable artifacts. Compare parsed payloads separately from
+  variable metadata; format-valid files alone are insufficient evidence.
+- Track elapsed implementation, research, review and qualification spans
+  separately from measured build/test/CI time. Commit gaps and diff-size token
+  proxies do not establish agent activity or API cost. Preserve configured
+  models and required independent reviews; add concurrency only for measured
+  independent work that the checkout policy permits.

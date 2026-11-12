@@ -187,3 +187,20 @@ qualification evidence.
 
 
 **Separate portable fixture identity from native compiler output identity.** Phase5 consumer checks initially hard-coded macOS-built ca65/ld65 hashes in a fixture manifest, rejecting verified Linux tools before guest execution. Bind the portable manifest to pinned tool source and recipe, validate native executable hashes against each successful local build record, and retain exact source-built guest hashes as cross-platform output oracles. Check the actual Linux consumer slice before the final review tail; source pin equality alone is not a claim of identical native executables.
+
+**Reduce orchestration before optimizing a short CI gate.** The Phase5 final
+plan records 9h35 elapsed across review/qualification, while its canonical gates
+took roughly two to three minutes each. Phase6 also spent about 90 minutes
+between the Phase5 closeout commit and the reviewed plan commit, with repeated
+research and mapping handoffs. These are elapsed spans, not measured active
+agent or API usage. Reuse research, opt into mapping only when a concrete analog
+is missing, batch repair/review deltas and evidence updates, and keep required
+independent acceptance checks. The operational defaults are in AUTONOMY.md;
+Phase6 06-EFFICIENCY-REVIEW.md retains the evidence and limits.
+
+**Compare rendered payloads separately from metadata.** The first audio tracer
+produced valid PPMs with equal raster dimensions but different comment lengths;
+an equal-file-length assertion hid that distinction behind an aggregate error.
+The checker now validates each raster against raw pens/palettes and reports its
+failing stage. Clean captures and pixel/metadata/silence/WAV corruption controls
+establish the remedy without loosening audio or image semantics.

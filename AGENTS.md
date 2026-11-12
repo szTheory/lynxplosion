@@ -35,6 +35,9 @@ requirements. The name is not trademark clearance.
   Approval of a phase includes its planned implementation and required
   verification, reviews, fixes and bounded retests. Do not turn each command
   into another approval request.
+- Keep implementation feedback short. Before planning, execution or closeout,
+  apply the efficiency defaults in `.planning/AUTONOMY.md`; reuse current
+  research and evidence, and batch review repairs and bookkeeping.
 - Preserve explicit stops. This setup does not authorize public publication,
   use or distribution of copyrighted firmware/game content, or physical
   hardware testing. Seek a human decision where required by rights, authority,
