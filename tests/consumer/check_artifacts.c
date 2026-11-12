@@ -1711,6 +1711,131 @@ done:
     return result;
 }
 
+static int frame_directory_has_exact_files(const char *directory)
+{
+    DIR *stream = opendir(directory);
+    struct dirent *entry;
+    unsigned seen = 0u;
+    int valid = stream != NULL;
+    while (valid != 0 && (entry = readdir(stream)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        if (strcmp(entry->d_name, "frame-trace.manifest") == 0) seen |= 1u;
+        else if (strcmp(entry->d_name, "frame-00.raw") == 0) seen |= 1u << 1;
+        else if (strcmp(entry->d_name, "frame-00.ppm") == 0) seen |= 1u << 2;
+        else if (strcmp(entry->d_name, "frame-01.raw") == 0) seen |= 1u << 3;
+        else if (strcmp(entry->d_name, "frame-01.ppm") == 0) seen |= 1u << 4;
+        else if (strcmp(entry->d_name, "frame-02.raw") == 0) seen |= 1u << 5;
+        else if (strcmp(entry->d_name, "frame-02.ppm") == 0) seen |= 1u << 6;
+        else valid = 0;
+    }
+    if (stream == NULL || closedir(stream) != 0 || seen != 0x7Fu) valid = 0;
+    return valid;
+}
+
+static int remove_frame_directory(const char *directory)
+{
+    static const char *const names[] = {
+        "frame-00.raw", "frame-00.ppm", "frame-01.raw", "frame-01.ppm",
+        "frame-02.raw", "frame-02.ppm", "frame-trace.manifest"
+    };
+    char path[4096];
+    if (!frame_directory_has_exact_files(directory)) return 1;
+    for (size_t index = 0u; index < sizeof names / sizeof names[0]; index++) {
+        if (path_join(directory, names[index], path, sizeof path) != 0 || unlink(path) != 0)
+            return 1;
+    }
+    return rmdir(directory) == 0 ? 0 : 1;
+}
+
+static int frame_publication_control(const char *consumer, const char *content,
+                                     const char *symbols, const char *timeline,
+                                     const char *output, const char *expected_input_sha)
+{
+    int gate[2] = {-1, -1};
+    pid_t children[2] = {-1, -1};
+    int exit_codes[2] = {-1, -1};
+    char release[2] = {'r', 'r'};
+    char marker[4096] = {0};
+    char error[256] = {0};
+    unsigned started = 0u;
+    int result = 1;
+
+    if (destination_absent(output) != 0) {
+        fputs("artifact-check: frame publication target unexpectedly exists\n", stderr);
+        return 1;
+    }
+    if (snprintf(marker, sizeof marker, "%s.sibling-marker", output) < 0 ||
+        strlen(output) + sizeof ".sibling-marker" >= sizeof marker ||
+        create_preservation_marker(marker) != 0 || pipe(gate) != 0) {
+        fputs("artifact-check: could not prepare frame publication race control\n", stderr);
+        goto done;
+    }
+    for (started = 0u; started < 2u; started++) {
+        children[started] = fork();
+        if (children[started] == 0) {
+            char ready;
+            (void)close(gate[1]);
+            if (read(gate[0], &ready, 1u) != 1) _exit(126);
+            (void)close(gate[0]);
+            (void)unsetenv("LYNX_TEST_IO_FAILURE");
+            (void)unsetenv("LYNX_TEST_FRAME_ABORT");
+            (void)unsetenv("LYNX_TEST_PUBLICATION_STOP");
+            execl(consumer, consumer, "--mode", "frames", "--content", content,
+                  "--symbols", symbols, "--timeline", timeline, "--out", output,
+                  "--profile", "none", (char *)NULL);
+            _exit(127);
+        }
+        if (children[started] < 0) break;
+    }
+    (void)close(gate[0]);
+    gate[0] = -1;
+    if (started != 2u || write(gate[1], release, sizeof release) != (ssize_t)sizeof release) {
+        fputs("artifact-check: could not release both frame publishers\n", stderr);
+        goto done;
+    }
+    (void)close(gate[1]);
+    gate[1] = -1;
+    for (unsigned index = 0u; index < 2u; index++) {
+        if (wait_for_child(children[index], &exit_codes[index]) != 0) {
+            fputs("artifact-check: frame publisher did not exit normally\n", stderr);
+            goto done;
+        }
+    }
+    if (!((exit_codes[0] == 0 && exit_codes[1] == 1) ||
+          (exit_codes[0] == 1 && exit_codes[1] == 0))) {
+        fputs("artifact-check: frame directory race must yield one publisher and one refusal\n", stderr);
+        goto done;
+    }
+    if (!frame_directory_has_exact_files(output) ||
+        validate_replay_directory(output, "replay_restore", expected_input_sha,
+                                  "1", "none", error, sizeof error, 0) != 0 ||
+        preservation_marker_intact(marker) != 0) {
+        fprintf(stderr, "artifact-check: winning frame publication is incomplete or changed its sibling: %s\n",
+                error[0] == '\0' ? "unexpected output entry or missing artifact" : error);
+        goto done;
+    }
+    if (remove_frame_directory(output) != 0 || unlink(marker) != 0) {
+        fputs("artifact-check: could not clean the exact winning frame publication\n", stderr);
+        goto done;
+    }
+    puts("artifact-check: concurrent frame publishers yielded one complete bundle and one refusal");
+    result = 0;
+done:
+    if (started < 2u && gate[1] >= 0) {
+        (void)write(gate[1], release, started);
+    }
+    for (unsigned index = 0u; index < 2u; index++) {
+        if (children[index] > 0) {
+            int exit_code;
+            (void)wait_for_child(children[index], &exit_code);
+        }
+    }
+    if (gate[0] >= 0) (void)close(gate[0]);
+    if (gate[1] >= 0) (void)close(gate[1]);
+    if (result != 0 && marker[0] != '\0') (void)unlink(marker);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     char error[256] = {0};
@@ -1750,6 +1875,11 @@ int main(int argc, char **argv)
         }
         puts("artifact-check: rejected the deliberately corrupted transition pixel color");
         return 0;
+    }
+    if (argc == 8 && strcmp(argv[1], "frame-publication") == 0) {
+        if (frame_publication_control(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]) == 0)
+            return 0;
+        return 1;
     }
     if (argc == 6 && strcmp(argv[1], "publication") == 0) {
         if (publication_control(argv[2], argv[3], argv[4], argv[5]) != 0) {

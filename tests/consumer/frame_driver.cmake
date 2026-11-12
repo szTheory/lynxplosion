@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 cmake_policy(VERSION 3.25)
-foreach(required CASE ROOT WORK SCRATCH_ROOT CONSUMER ARTIFACT_CHECKER ENV_EXECUTABLE)
+foreach(required CASE ROOT WORK SCRATCH_ROOT CONSUMER TEST_CONSUMER ARTIFACT_CHECKER ENV_EXECUTABLE)
   if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
     message(FATAL_ERROR "frame_driver: -D${required} is required")
   endif()
@@ -53,6 +53,12 @@ elseif(CASE STREQUAL "replay_restore")
 elseif(CASE STREQUAL "frame_replay")
   file(WRITE "${WORK}/input.timeline"
     "LYNX-INPUT 1\n0 0\n108545 16\n217089 32\n325633 1\n434177 2\n542721 4\n651265 8\n759809 64\n868353 128\n976897 256\n1085441 511\n1193985 0\n")
+elseif(CASE STREQUAL "replay_controls")
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n0 0\n108545 16\n")
+elseif(CASE STREQUAL "frame_publication_controls")
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n108544 16\n")
+elseif(CASE STREQUAL "frame_response_controls")
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n0 0\n108545 16\n")
 else()
   message(FATAL_ERROR "frame_driver: unknown CASE ${CASE}")
 endif()
@@ -262,6 +268,147 @@ else()
   endif()
 endif()
 file(REMOVE "${WORK}/input_probe.o")
+if(CASE STREQUAL "frame_publication_controls")
+  file(SHA256 "${WORK}/input.timeline" timeline_sha)
+  run_replay("${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"
+    "${WORK}/input.timeline" "${WORK}/publication-positive-before" replay_restore 1 none FALSE)
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" frame-publication
+      "${TEST_CONSUMER}" "${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"
+      "${WORK}/input.timeline" "${WORK}/publication-race" "${timeline_sha}"
+    TIMEOUT 90 RESULT_VARIABLE race_rc OUTPUT_VARIABLE race_out ERROR_VARIABLE race_err)
+  if(NOT race_rc STREQUAL "0" OR NOT race_out MATCHES "one complete bundle and one refusal")
+    message(FATAL_ERROR "frame_driver: concurrent frame publication did not yield one verified winner\n${race_out}${race_err}")
+  endif()
+  set(decoy "${WORK}/decoy.lynxplosion-frame-stage-UNOWND")
+  file(MAKE_DIRECTORY "${decoy}")
+  file(WRITE "${decoy}/.lynx-owner" "other-invocation\n")
+  file(WRITE "${decoy}/outside.marker" "preserve this unowned stage\n")
+  foreach(failure IN ITEMS
+      "write:frame-00.raw" "write:frame-00.ppm" "write:frame-trace.manifest"
+      "close:frame-00.raw" "close:frame-00.ppm" "close:frame-trace.manifest")
+    string(REPLACE ":" "-" failure_name "${failure}")
+    set(failed_output "${WORK}/failure-${failure_name}")
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+        "LYNX_TEST_IO_FAILURE=${failure}" "${TEST_CONSUMER}" --mode frames
+        --content "${WORK}/input_probe.bll" --symbols "${WORK}/input_probe.lbl"
+        --timeline "${WORK}/input.timeline" --out "${failed_output}" --profile none
+      TIMEOUT 60 RESULT_VARIABLE failure_rc OUTPUT_VARIABLE failure_out ERROR_VARIABLE failure_err)
+    file(GLOB leftover_stages "${failed_output}.lynxplosion-frame-stage-*")
+    if(NOT failure_rc STREQUAL "1" OR NOT failure_out STREQUAL "" OR
+       EXISTS "${failed_output}" OR leftover_stages OR
+       NOT failure_err MATCHES "cannot write the complete frame output")
+      message(FATAL_ERROR "frame_driver: ${failure} failure did not clean only its owned unpublished stage\n${failure_out}${failure_err}")
+    endif()
+    file(READ "${decoy}/.lynx-owner" decoy_owner)
+    file(READ "${decoy}/outside.marker" decoy_marker)
+    if(NOT decoy_owner STREQUAL "other-invocation\n" OR
+       NOT decoy_marker STREQUAL "preserve this unowned stage\n")
+      message(FATAL_ERROR "frame_driver: failed frame publication modified a stale stage without its nonce")
+    endif()
+  endforeach()
+  set(aborted_output "${WORK}/failure-before-publish")
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "LYNX_TEST_FRAME_ABORT=before-publish" "${TEST_CONSUMER}" --mode frames
+      --content "${WORK}/input_probe.bll" --symbols "${WORK}/input_probe.lbl"
+      --timeline "${WORK}/input.timeline" --out "${aborted_output}" --profile none
+    TIMEOUT 60 RESULT_VARIABLE abort_rc OUTPUT_VARIABLE abort_out ERROR_VARIABLE abort_err)
+  file(GLOB aborted_stages "${aborted_output}.lynxplosion-frame-stage-*")
+  if(NOT abort_rc STREQUAL "1" OR NOT abort_out STREQUAL "" OR
+     EXISTS "${aborted_output}" OR aborted_stages OR
+     NOT abort_err MATCHES "cannot write the complete frame output")
+    message(FATAL_ERROR "frame_driver: prepublish interruption did not preserve the absent destination and clean its owned stage\n${abort_out}${abort_err}")
+  endif()
+  run_replay("${WORK}/input_probe.bll" "${WORK}/input_probe.lbl"
+    "${WORK}/input.timeline" "${WORK}/publication-positive-after" replay_restore 1 none FALSE)
+  message(STATUS "${race_out}frame_publication_controls: all frame writes/close and prepublish faults cleaned their nonce-owned stage")
+  return()
+endif()
+if(CASE STREQUAL "replay_controls")
+  function(expect_frame_refusal binary content labels timeline output expected)
+    execute_process(COMMAND "${binary}" --mode frames
+        --content "${content}" --symbols "${labels}"
+        --timeline "${timeline}" --out "${output}" --profile none
+      TIMEOUT 30 RESULT_VARIABLE child_rc
+      OUTPUT_VARIABLE child_out ERROR_VARIABLE child_err)
+    if(NOT child_rc STREQUAL "1" OR NOT child_out STREQUAL "" OR
+       EXISTS "${output}" OR NOT child_err MATCHES "${expected}")
+      message(FATAL_ERROR
+        "frame_driver: refusal assertion expected exit=1, no stdout, no output, and '${expected}'\n"
+        "actual exit=${child_rc}\n${child_out}${child_err}")
+    endif()
+  endfunction()
+  set(content "${WORK}/input_probe.bll")
+  set(labels "${WORK}/input_probe.lbl")
+  set(timeline "${WORK}/input.timeline")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${content}"
+    "${WORK}/alias-output" "frame input paths must refer to distinct files")
+  file(WRITE "${WORK}/bad-mask.timeline" "LYNX-INPUT 1\n1 512\n")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/bad-mask.timeline"
+    "${WORK}/bad-mask-output" "timeline is not canonical LYNX-INPUT 1 ASCII")
+  file(WRITE "${WORK}/bad-decimal.timeline" "LYNX-INPUT 1\n00 0\n")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/bad-decimal.timeline"
+    "${WORK}/bad-decimal-output" "timeline is not canonical LYNX-INPUT 1 ASCII")
+  file(WRITE "${WORK}/duplicate-zero.timeline" "LYNX-INPUT 1\n0 0\n0 16\n")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/duplicate-zero.timeline"
+    "${WORK}/duplicate-zero-output" "timeline is not canonical LYNX-INPUT 1 ASCII")
+  file(WRITE "${WORK}/missing-lf.timeline" "LYNX-INPUT 1\n1 0")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/missing-lf.timeline"
+    "${WORK}/missing-lf-output" "timeline is not canonical LYNX-INPUT 1 ASCII")
+  file(WRITE "${WORK}/carriage-return.timeline" "LYNX-INPUT 1\r\n")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/carriage-return.timeline"
+    "${WORK}/carriage-return-output" "timeline is not canonical LYNX-INPUT 1 ASCII")
+  file(WRITE "${WORK}/records-4097.timeline" "LYNX-INPUT 1\n")
+  foreach(index RANGE 0 4096)
+    file(APPEND "${WORK}/records-4097.timeline" "${index} 0\n")
+  endforeach()
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/records-4097.timeline"
+    "${WORK}/records-4097-output" "timeline is not canonical LYNX-INPUT 1 ASCII")
+  file(WRITE "${WORK}/records-4096.timeline" "LYNX-INPUT 1\n")
+  foreach(index RANGE 0 4095)
+    file(APPEND "${WORK}/records-4096.timeline" "${index} 0\n")
+  endforeach()
+  execute_process(COMMAND "${CONSUMER}" --mode frames
+      --content "${content}" --symbols "${labels}"
+      --timeline "${WORK}/records-4096.timeline" --out "${WORK}/records-4096-output" --profile none
+    TIMEOUT 60 RESULT_VARIABLE boundary_rc OUTPUT_VARIABLE boundary_out ERROR_VARIABLE boundary_err)
+  if(NOT boundary_rc STREQUAL "0" OR NOT boundary_out MATCHES "replayed 4096 canonical input events" OR
+     NOT EXISTS "${WORK}/records-4096-output/frame-trace.manifest")
+    message(FATAL_ERROR "frame_driver: exact 4096-record canonical boundary did not publish a complete output\n${boundary_out}${boundary_err}")
+  endif()
+  string(REPEAT "x" 131072 exact_limit_bytes)
+  file(WRITE "${WORK}/timeline-128k.timeline" "${exact_limit_bytes}")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/timeline-128k.timeline"
+    "${WORK}/timeline-128k-output" "timeline is not canonical LYNX-INPUT 1 ASCII")
+  string(APPEND exact_limit_bytes "x")
+  file(WRITE "${WORK}/timeline-over-128k.timeline" "${exact_limit_bytes}")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/timeline-over-128k.timeline"
+    "${WORK}/timeline-over-128k-output" "input timeline exceeds its 131072-byte bound")
+  file(READ "${labels}" label_text)
+  string(REGEX MATCH "al [0-9A-Fa-f]+ [. ]probe_result\n" probe_result_line "${label_text}")
+  if(probe_result_line STREQUAL "")
+    message(FATAL_ERROR "frame_driver: source fixture omitted its unique probe_result symbol")
+  endif()
+  string(REPLACE "${probe_result_line}" "" missing_symbol_labels "${label_text}")
+  file(WRITE "${WORK}/missing-symbol.lbl" "${missing_symbol_labels}")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${WORK}/missing-symbol.lbl" "${timeline}"
+    "${WORK}/missing-symbol-output" "input-probe BLL or linked probe_result symbol is invalid")
+  file(WRITE "${WORK}/duplicate-symbol.lbl" "${label_text}${probe_result_line}")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${WORK}/duplicate-symbol.lbl" "${timeline}"
+    "${WORK}/duplicate-symbol-output" "input-probe BLL or linked probe_result symbol is invalid")
+  string(REGEX REPLACE "al [0-9A-Fa-f]+ [. ]probe_result" "al 10000 .probe_result" out_of_range_labels "${label_text}")
+  file(WRITE "${WORK}/out-of-range-symbol.lbl" "${out_of_range_labels}")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${WORK}/out-of-range-symbol.lbl" "${timeline}"
+    "${WORK}/out-of-range-symbol-output" "input-probe BLL or linked probe_result symbol is invalid")
+  file(MAKE_DIRECTORY "${WORK}/output-real-parent")
+  file(CREATE_LINK "${WORK}/output-real-parent" "${WORK}/output-link-parent" SYMBOLIC RESULT link_result)
+  if(NOT link_result STREQUAL "0")
+    message(FATAL_ERROR "frame_driver: could not create symlink-parent control: ${link_result}")
+  endif()
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${timeline}"
+    "${WORK}/output-link-parent/symlink-output" "symbolic-link parent")
+  message(STATUS "replay_controls: successful source build followed by canonical bounds, symbols, and alias refusals")
+  return()
+endif()
 if(CASE STREQUAL "replay_edges")
   file(WRITE "${WORK}/input.invalid" "LYNX-INPUT 1\n0 16\n0 0\n")
   execute_process(COMMAND "${CONSUMER}" --mode frames

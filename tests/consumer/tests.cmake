@@ -48,14 +48,17 @@ function(lynx_frame_test name scenario timeout)
       -DWORK=${LYNX_SCRATCH_DIR}/consumer/${name}
       -DSCRATCH_ROOT=${LYNX_SCRATCH_DIR}/consumer
       -DCONSUMER=$<TARGET_FILE:lynx-consume>
+      -DTEST_CONSUMER=$<TARGET_FILE:lynx-consume-test>
       -DARTIFACT_CHECKER=$<TARGET_FILE:lynx-check-artifacts>
       -DENV_EXECUTABLE=${LYNX_ENV_EXECUTABLE}
       -P ${CMAKE_CURRENT_LIST_DIR}/frame_driver.cmake
     LABELS consumer TIMEOUT ${timeout})
 endfunction()
+lynx_frame_test(consumer.frame_publication_controls frame_publication_controls 180)
 lynx_frame_test(consumer.frame_replay frame_replay 240)
 lynx_frame_test(consumer.frame_tracer frame_tracer 120)
 lynx_frame_test(consumer.replay_edges replay_edges 120)
+lynx_frame_test(consumer.replay_controls replay_controls 180)
 lynx_frame_test(consumer.replay_restore replay_restore 120)
 lynx_consumer_test(consumer.snapshot_ppm snapshot_ppm none 60)
 lynx_consumer_test(consumer.silence_wav silence_wav none 60)
