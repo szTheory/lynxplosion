@@ -639,6 +639,8 @@ static int validate_replay_directory(const char *directory, const char *scenario
                                      const char *expected_input_sha,
                                      const char *expected_handedness,
                                      const char *expected_profile,
+                                     const char *expected_content_sha,
+                                     const char *expected_policy,
                                      char *error, size_t error_cap,
                                      int corrupt_transition_color)
 {
@@ -691,14 +693,22 @@ static int validate_replay_directory(const char *directory, const char *scenario
 #define EXPECT_REPLAY(text) do { if (!has_exact_line(manifest, manifest_len, (text))) goto invalid; } while (0)
     EXPECT_REPLAY("artifact = FRAME_TRACE");
     (void)snprintf(line, sizeof line, "profile = %s", expected_profile);
-    EXPECT_REPLAY(line);
+    if (!has_exact_line(manifest, manifest_len, line)) goto profile_identity_invalid;
     EXPECT_REPLAY("startup = A");
-    EXPECT_REPLAY("timing_policy = video-policy1-unverified");
+    (void)snprintf(line, sizeof line, "timing_policy = %s",
+        expected_policy == NULL ? "video-policy1-unverified" : expected_policy);
+    if (!has_exact_line(manifest, manifest_len, line)) goto policy_identity_invalid;
     EXPECT_REPLAY("raw_pen_order = high nibble first; no host rotation");
-    if (expected_input_sha == NULL || !valid_sha256(expected_input_sha) ||
-        !has_sha_field(manifest, manifest_len, "content_sha256 = ")) goto invalid;
+    if (expected_input_sha == NULL || !valid_sha256(expected_input_sha)) goto invalid;
     (void)snprintf(line, sizeof line, "input_sha256 = %s", expected_input_sha);
-    EXPECT_REPLAY(line);
+    if (!has_exact_line(manifest, manifest_len, line)) goto input_identity_invalid;
+    if (expected_content_sha == NULL) {
+        if (!has_sha_field(manifest, manifest_len, "content_sha256 = ")) goto invalid;
+    } else {
+        (void)snprintf(line, sizeof line, "content_sha256 = %s", expected_content_sha);
+        if (!valid_sha256(expected_content_sha) ||
+            !has_exact_line(manifest, manifest_len, line)) goto content_identity_invalid;
+    }
     (void)snprintf(line, sizeof line, "frame_count = %zu", expected_frames);
     EXPECT_REPLAY(line);
     if (strcmp(scenario, "replay_edges") == 0) {
@@ -733,7 +743,7 @@ static int validate_replay_directory(const char *directory, const char *scenario
         (void)snprintf(ppm_name, sizeof ppm_name, "frame-%02zu.ppm", i);
         if (path_join(directory, raw_name, path, sizeof path) != 0 ||
             read_bounded(path, 102u * 120u, &raw, &raw_len, error, error_cap) != 0 ||
-            raw_len != 102u * 120u) { free(raw); goto invalid; }
+            raw_len != 102u * 120u) { free(raw); free(ppm); goto raw_metadata_invalid; }
         if (path_join(directory, ppm_name, path, sizeof path) != 0 ||
             read_bounded(path, FRAME_PPM_LIMIT, &ppm, &ppm_len, error, error_cap) != 0 ||
             ppm_len < 3u || memcmp(ppm, "P6\n", 3u) != 0) { free(raw); free(ppm); goto invalid; }
@@ -786,9 +796,9 @@ static int validate_replay_directory(const char *directory, const char *scenario
                 for (size_t button = 0u; button < 9u; button++) {
                     const uint8_t expected_byte = (masks[i] & pattern_bits[button]) != 0u ? 0x22u : 0x11u;
                     if (row == 0u && (i % 2u) != 0u) {
-                        if (record[button] != 0x11u && record[button] != 0x22u) { free(raw); free(ppm); goto invalid; }
+                        if (record[button] != 0x11u && record[button] != 0x22u) { free(raw); free(ppm); goto raw_response_invalid; }
                     } else if (record[button] != (row == 0u ? expected_byte : 0u)) {
-                        free(raw); free(ppm); goto invalid;
+                        free(raw); free(ppm); goto raw_response_invalid;
                     }
                 }
             } else {
@@ -805,8 +815,31 @@ static int validate_replay_directory(const char *directory, const char *scenario
                 } else if (replay_all_inputs == 0 && row == 0u && pixel < 18u) {
                     wanted = pixel < 2u && samples[i] != 0u ? red : green;
                 }
-                if (memcmp(pixels + pixel * 3u, wanted, 3u) != 0) { free(raw); free(ppm); goto invalid; }
+                if (memcmp(pixels + pixel * 3u, wanted, 3u) != 0) { free(raw); free(ppm); goto rendered_color_invalid; }
             }
+        }
+        {
+            int rendered_mismatch = 0;
+            for (size_t row = 0u; row < 102u && rendered_mismatch == 0; row++) {
+                const uint8_t *record = raw + row * 120u;
+                const uint8_t *pixels = ppm + header_end + sizeof ppm_marker - 1u + row * 160u * 3u;
+                for (size_t pixel = 0u; pixel < 160u; pixel++) {
+                    const uint8_t pair = record[pixel / 2u];
+                    const uint8_t pen = (pixel & 1u) == 0u ? (uint8_t)(pair >> 4) : (uint8_t)(pair & 15u);
+                    const uint8_t green_value = (uint8_t)(record[80u + pen] & 15u);
+                    const uint8_t blue_red = record[80u + 16u + pen];
+                    const uint8_t expected_rgb[3] = {
+                        (uint8_t)((blue_red & 15u) * 17u),
+                        (uint8_t)(green_value * 17u),
+                        (uint8_t)((blue_red >> 4) * 17u)
+                    };
+                    if (memcmp(pixels + pixel * 3u, expected_rgb, sizeof expected_rgb) != 0) {
+                        rendered_mismatch = 1;
+                        break;
+                    }
+                }
+            }
+            if (rendered_mismatch != 0) { free(raw); free(ppm); goto rendered_color_invalid; }
         }
         if (replay_all_inputs != 0) {
             const uint32_t joy = expected_joystick(masks[i], handedness), switches = masks[i] & 256u ? 1u : 0u;
@@ -827,6 +860,34 @@ static int validate_replay_directory(const char *directory, const char *scenario
 invalid:
     free(manifest);
     set_error(error, error_cap, "replay transcript, exact input digest, raw pen/palette/ticks or representative rendered pixels are invalid");
+    return 1;
+profile_identity_invalid:
+    free(manifest);
+    set_error(error, error_cap, "frame trace profile identity differs from the expected profile");
+    return 1;
+policy_identity_invalid:
+    free(manifest);
+    set_error(error, error_cap, "frame trace timing-policy identity differs from the expected policy");
+    return 1;
+input_identity_invalid:
+    free(manifest);
+    set_error(error, error_cap, "frame trace input identity differs from the canonical timeline");
+    return 1;
+content_identity_invalid:
+    free(manifest);
+    set_error(error, error_cap, "frame trace content identity differs from the source-built guest");
+    return 1;
+raw_metadata_invalid:
+    free(manifest);
+    set_error(error, error_cap, "raw frame row metadata or byte length is incomplete");
+    return 1;
+rendered_color_invalid:
+    free(manifest);
+    set_error(error, error_cap, "rendered PPM color differs from its raw pen and palette records");
+    return 1;
+raw_response_invalid:
+    free(manifest);
+    set_error(error, error_cap, "raw guest input response differs from the recorded logical input");
     return 1;
 missing_guest_samples:
     free(manifest);
@@ -1808,7 +1869,7 @@ static int frame_publication_control(const char *consumer, const char *content,
     }
     if (!frame_directory_has_exact_files(output) ||
         validate_replay_directory(output, "replay_restore", expected_input_sha,
-                                  "1", "none", error, sizeof error, 0) != 0 ||
+                                  "1", "none", NULL, NULL, error, sizeof error, 0) != 0 ||
         preservation_marker_intact(marker) != 0) {
         fprintf(stderr, "artifact-check: winning frame publication is incomplete or changed its sibling: %s\n",
                 error[0] == '\0' ? "unexpected output entry or missing artifact" : error);
@@ -1836,6 +1897,29 @@ done:
     return result;
 }
 
+static int partial_row_negative(const char *directory, const char *scenario,
+                                const char *input_sha, const char *handedness,
+                                const char *profile, const char *content_sha)
+{
+    char path[4096];
+    char error[256] = {0};
+    struct stat info;
+    if (path_join(directory, "frame-00.raw", path, sizeof path) != 0 ||
+        stat(path, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 1 ||
+        truncate(path, info.st_size - 1) != 0) {
+        fputs("artifact-check: could not build the partial raw row control\n", stderr);
+        return 1;
+    }
+    if (validate_replay_directory(directory, scenario, input_sha, handedness,
+                                  profile, content_sha, NULL, error, sizeof error, 0) == 0 ||
+        strcmp(error, "raw frame row metadata or byte length is incomplete") != 0) {
+        fprintf(stderr, "artifact-check: partial raw row control had the wrong result: %s\n", error);
+        return 1;
+    }
+    puts("artifact-check: rejected truncated raw frame row metadata");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     char error[256] = {0};
@@ -1853,7 +1937,7 @@ int main(int argc, char **argv)
         return 1;
     }
     if (argc == 5 && strcmp(argv[1], "frames") == 0) {
-        if (validate_replay_directory(argv[2], argv[3], argv[4], "1", "none", error, sizeof error, 0) == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], "1", "none", NULL, NULL, error, sizeof error, 0) == 0) {
             puts("artifact-check: canonical replay raw/rendered frame transcript is valid");
             return 0;
         }
@@ -1861,15 +1945,34 @@ int main(int argc, char **argv)
         return 1;
     }
     if (argc == 7 && strcmp(argv[1], "frames") == 0) {
-        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], error, sizeof error, 0) == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], NULL, NULL, error, sizeof error, 0) == 0) {
             puts("artifact-check: canonical replay raw/rendered frame transcript is valid");
             return 0;
         }
         fprintf(stderr, "artifact-check: %s\n", error);
         return 1;
     }
+    if (argc == 8 && strcmp(argv[1], "frames") == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], NULL, error, sizeof error, 0) == 0) {
+            puts("artifact-check: canonical replay raw/rendered frame transcript and source identity are valid");
+            return 0;
+        }
+        fprintf(stderr, "artifact-check: %s\n", error);
+        return 1;
+    }
+    if (argc == 9 && strcmp(argv[1], "frames-identity") == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8], error, sizeof error, 0) == 0) {
+            puts("artifact-check: replay identity matches the supplied source and policy expectations");
+            return 0;
+        }
+        fprintf(stderr, "artifact-check: %s\n", error);
+        return 1;
+    }
+    if (argc == 8 && strcmp(argv[1], "frames-partial-negative") == 0) {
+        return partial_row_negative(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]);
+    }
     if (argc == 7 && strcmp(argv[1], "frames-color-negative") == 0) {
-        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], error, sizeof error, 1) == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], NULL, NULL, error, sizeof error, 1) == 0) {
             fputs("artifact-check: accepted a deliberately corrupted transition pixel color\n", stderr);
             return 1;
         }

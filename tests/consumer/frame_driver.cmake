@@ -81,8 +81,9 @@ function(run_replay bll labels timeline output scenario handedness profile inter
     message(FATAL_ERROR "frame_driver: ${scenario} public-only frame consumer failed (${consumer_rc})\n${consumer_out}${consumer_err}\nArtifacts retained under ${output}")
   endif()
   file(SHA256 "${timeline}" timeline_sha)
+  file(SHA256 "${bll}" content_sha)
   execute_process(COMMAND "${ARTIFACT_CHECKER}" frames "${output}" "${scenario}"
-      "${timeline_sha}" "${handedness}" "${profile}"
+      "${timeline_sha}" "${handedness}" "${profile}" "${content_sha}"
     TIMEOUT 30 RESULT_VARIABLE check_rc OUTPUT_VARIABLE check_out ERROR_VARIABLE check_err)
   if(NOT check_rc STREQUAL "0")
     message(FATAL_ERROR "frame_driver: independent ${scenario} check failed (${check_rc})\n${check_out}${check_err}\nArtifacts retained under ${output}")
@@ -207,7 +208,7 @@ if(CASE STREQUAL "frame_replay")
             "${baseline_timeline_sha}" "${handedness}" "${profile}"
           TIMEOUT 30 RESULT_VARIABLE negative_rc
           OUTPUT_VARIABLE negative_out ERROR_VARIABLE negative_err)
-        if(negative_rc STREQUAL "0" OR NOT negative_err MATCHES "replay transcript")
+        if(negative_rc STREQUAL "0" OR NOT negative_err MATCHES "raw guest input response differs from the recorded logical input")
           message(FATAL_ERROR "frame_driver: independent checker accepted an invalid transition pen byte\n${negative_out}${negative_err}")
         endif()
       endif()
@@ -337,6 +338,19 @@ if(CASE STREQUAL "replay_controls")
         "actual exit=${child_rc}\n${child_out}${child_err}")
     endif()
   endfunction()
+  function(expect_existing_destination_refusal binary content labels timeline output expected)
+    execute_process(COMMAND "${binary}" --mode frames
+        --content "${content}" --symbols "${labels}"
+        --timeline "${timeline}" --out "${output}" --profile none
+      TIMEOUT 30 RESULT_VARIABLE child_rc
+      OUTPUT_VARIABLE child_out ERROR_VARIABLE child_err)
+    if(NOT child_rc STREQUAL "1" OR NOT child_out STREQUAL "" OR
+       NOT EXISTS "${output}" OR NOT child_err MATCHES "${expected}")
+      message(FATAL_ERROR
+        "frame_driver: existing-destination refusal expected exit=1, empty stdout, preserved path, and '${expected}'\n"
+        "actual exit=${child_rc}\n${child_out}${child_err}")
+    endif()
+  endfunction()
   set(content "${WORK}/input_probe.bll")
   set(labels "${WORK}/input_probe.lbl")
   set(timeline "${WORK}/input.timeline")
@@ -383,6 +397,31 @@ if(CASE STREQUAL "replay_controls")
   file(WRITE "${WORK}/timeline-over-128k.timeline" "${exact_limit_bytes}")
   expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/timeline-over-128k.timeline"
     "${WORK}/timeline-over-128k-output" "input timeline exceeds its 131072-byte bound")
+  file(CREATE_LINK "${content}" "${WORK}/content-symlink" SYMBOLIC RESULT content_symlink_result)
+  if(NOT content_symlink_result STREQUAL "0")
+    message(FATAL_ERROR "frame_driver: could not create a same-file symlink alias: ${content_symlink_result}")
+  endif()
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/content-symlink"
+    "${WORK}/symlink-alias-output" "frame input paths must refer to distinct files")
+  file(CREATE_LINK "${content}" "${WORK}/content-hardlink" RESULT content_hardlink_result)
+  if(NOT content_hardlink_result STREQUAL "0")
+    message(FATAL_ERROR "frame_driver: could not create a same-file hardlink alias: ${content_hardlink_result}")
+  endif()
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${WORK}/content-hardlink"
+    "${WORK}/hardlink-alias-output" "frame input paths must refer to distinct files")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${content}" "${timeline}"
+    "${WORK}/symbols-content-alias-output" "frame input paths must refer to distinct files")
+  expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${labels}"
+    "${WORK}/symbols-timeline-alias-output" "frame input paths must refer to distinct files")
+  file(SHA256 "${content}" content_before_output_alias)
+  expect_existing_destination_refusal("${CONSUMER}" "${content}" "${labels}" "${timeline}"
+    "${content}" "output directory already exists")
+  file(SHA256 "${content}" content_after_output_alias)
+  if(NOT content_before_output_alias STREQUAL content_after_output_alias)
+    message(FATAL_ERROR "frame_driver: output alias refusal modified the content input")
+  endif()
+  expect_existing_destination_refusal("${CONSUMER}" "${content}" "${labels}" "${timeline}"
+    "${timeline}" "output directory already exists")
   file(READ "${labels}" label_text)
   string(REGEX MATCH "al [0-9A-Fa-f]+ [. ]probe_result\n" probe_result_line "${label_text}")
   if(probe_result_line STREQUAL "")
@@ -406,6 +445,74 @@ if(CASE STREQUAL "replay_controls")
   endif()
   expect_frame_refusal("${CONSUMER}" "${content}" "${labels}" "${timeline}"
     "${WORK}/output-link-parent/symlink-output" "symbolic-link parent")
+  file(MAKE_DIRECTORY "${WORK}/existing-output")
+  file(WRITE "${WORK}/existing-output/outside.marker" "existing caller output\n")
+  file(SHA256 "${WORK}/existing-output/outside.marker" existing_marker_before)
+  expect_existing_destination_refusal("${CONSUMER}" "${content}" "${labels}" "${timeline}"
+    "${WORK}/existing-output" "output directory already exists")
+  file(CREATE_LINK "${WORK}/existing-output" "${WORK}/final-output-symlink" SYMBOLIC RESULT final_link_result)
+  if(NOT final_link_result STREQUAL "0")
+    message(FATAL_ERROR "frame_driver: could not create final-output symlink: ${final_link_result}")
+  endif()
+  expect_existing_destination_refusal("${CONSUMER}" "${content}" "${labels}" "${timeline}"
+    "${WORK}/final-output-symlink" "output directory already exists")
+  file(SHA256 "${WORK}/existing-output/outside.marker" existing_marker_after)
+  if(NOT existing_marker_before STREQUAL existing_marker_after)
+    message(FATAL_ERROR "frame_driver: output refusal modified existing caller content")
+  endif()
+  file(WRITE "${WORK}/identity.timeline" "LYNX-INPUT 1\n108544 16\n")
+  file(SHA256 "${WORK}/identity.timeline" identity_timeline_sha)
+  file(SHA256 "${content}" identity_content_sha)
+  run_replay("${content}" "${labels}" "${WORK}/identity.timeline"
+    "${WORK}/identity-positive" replay_restore 1 none FALSE)
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" frames "${WORK}/identity-positive"
+      replay_restore "${identity_timeline_sha}" 1 none
+      0000000000000000000000000000000000000000000000000000000000000000
+    TIMEOUT 30 RESULT_VARIABLE content_id_rc OUTPUT_VARIABLE content_id_out ERROR_VARIABLE content_id_err)
+  if(NOT content_id_rc STREQUAL "1" OR NOT content_id_out STREQUAL "" OR
+     NOT content_id_err MATCHES "content identity differs from the source-built guest")
+    message(FATAL_ERROR "frame_driver: wrong source content identity was not rejected specifically\n${content_id_out}${content_id_err}")
+  endif()
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" frames "${WORK}/identity-positive"
+      replay_restore "${identity_timeline_sha}" 1 lynx1 "${identity_content_sha}"
+    TIMEOUT 30 RESULT_VARIABLE profile_id_rc OUTPUT_VARIABLE profile_id_out ERROR_VARIABLE profile_id_err)
+  if(NOT profile_id_rc STREQUAL "1" OR NOT profile_id_out STREQUAL "" OR
+     NOT profile_id_err MATCHES "profile identity differs from the expected profile")
+    message(FATAL_ERROR "frame_driver: wrong profile identity was not rejected specifically\n${profile_id_out}${profile_id_err}")
+  endif()
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" frames "${WORK}/identity-positive"
+      replay_restore
+      0000000000000000000000000000000000000000000000000000000000000000
+      1 none "${identity_content_sha}"
+    TIMEOUT 30 RESULT_VARIABLE script_id_rc OUTPUT_VARIABLE script_id_out ERROR_VARIABLE script_id_err)
+  if(NOT script_id_rc STREQUAL "1" OR NOT script_id_out STREQUAL "" OR
+     NOT script_id_err MATCHES "input identity differs from the canonical timeline")
+    message(FATAL_ERROR "frame_driver: wrong replay script identity was not rejected specifically\n${script_id_out}${script_id_err}")
+  endif()
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" frames-identity "${WORK}/identity-positive"
+      replay_restore "${identity_timeline_sha}" 1 none "${identity_content_sha}" video-policy2-unverified
+    TIMEOUT 30 RESULT_VARIABLE policy_id_rc OUTPUT_VARIABLE policy_id_out ERROR_VARIABLE policy_id_err)
+  if(NOT policy_id_rc STREQUAL "1" OR NOT policy_id_out STREQUAL "" OR
+     NOT policy_id_err MATCHES "timing-policy identity differs from the expected policy")
+    message(FATAL_ERROR "frame_driver: wrong timing-policy identity was not rejected specifically\n${policy_id_out}${policy_id_err}")
+  endif()
+  file(COPY "${WORK}/identity-positive/" DESTINATION "${WORK}/partial-row")
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" frames-partial-negative "${WORK}/partial-row"
+      replay_restore "${identity_timeline_sha}" 1 none "${identity_content_sha}"
+    TIMEOUT 30 RESULT_VARIABLE partial_rc OUTPUT_VARIABLE partial_out ERROR_VARIABLE partial_err)
+  if(NOT partial_rc STREQUAL "0" OR NOT partial_out MATCHES "rejected truncated raw frame row metadata")
+    message(FATAL_ERROR "frame_driver: invalid partial-row metadata did not have its own rejection\n${partial_out}${partial_err}")
+  endif()
+  set(restore_output "${WORK}/wrong-restore-identity")
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "LYNX_TEST_REPLAY_RESTORE=1" "LYNX_TEST_REPLAY_RESTORE_BAD_SCRIPT=1" "${TEST_CONSUMER}" --mode frames
+      --content "${content}" --symbols "${labels}" --timeline "${WORK}/identity.timeline"
+      --out "${restore_output}" --profile none
+    TIMEOUT 60 RESULT_VARIABLE restore_rc OUTPUT_VARIABLE restore_out ERROR_VARIABLE restore_err)
+  if(NOT restore_rc STREQUAL "1" OR NOT restore_out STREQUAL "" OR EXISTS "${restore_output}" OR
+     NOT restore_err MATCHES "pre-edge checkpoint restore failed script digest")
+    message(FATAL_ERROR "frame_driver: wrong restore script identity was not rejected before publication\n${restore_out}${restore_err}")
+  endif()
   message(STATUS "replay_controls: successful source build followed by canonical bounds, symbols, and alias refusals")
   return()
 endif()
