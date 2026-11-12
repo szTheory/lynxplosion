@@ -6176,6 +6176,248 @@ static void case_timer_shared_phase(void)
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+/* Test the documented Epyx Timer 0/2 presets against guest ticks. Timer 0's
+   source is one microsecond (16 master ticks); Timer 2 receives Timer 0
+   borrows and clocks once per configured line. */
+static void configure_video_cadence(lynx_machine *m, uint8_t timer0_backup,
+                                    uint8_t timer2_backup)
+{
+    CHECK(lynx__timer_write(&m->timer_bank, 0xFD00u, timer0_backup));
+    CHECK(lynx__timer_write(&m->timer_bank, 0xFD02u, timer0_backup));
+    CHECK(lynx__timer_write(&m->timer_bank, 0xFD08u, timer2_backup));
+    CHECK(lynx__timer_write(&m->timer_bank, 0xFD0Au, timer2_backup));
+    CHECK(lynx__timer_write(&m->timer_bank, 0xFD09u, 0x1Fu)); /* count, reload, linked */
+    CHECK(lynx__timer_write(&m->timer_bank, 0xFD01u, 0x18u)); /* count and reload */
+}
+
+/* The source presets are programmed through guest stores, so the assertions
+   cover the real mapped register path and preserve timer phase. Stop the CPU
+   before the shortest first underflow while device time remains live. */
+static void configure_video_cadence_guest(lynx_machine *m, uint8_t timer0_backup,
+                                          uint8_t timer2_backup)
+{
+    uint8_t program[48];
+    size_t n = 0u;
+    program[n++] = 0xA9u; program[n++] = 0x0Cu; /* MAPCTL keeps device overlays */
+    program[n++] = 0x8Du; program[n++] = 0xF9u; program[n++] = 0xFFu;
+    program[n++] = 0xA9u; program[n++] = 0x01u; /* enable video DMA */
+    program[n++] = 0x8Du; program[n++] = 0x92u; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = timer0_backup;
+    program[n++] = 0x8Du; program[n++] = 0x00u; program[n++] = 0xFDu;
+    program[n++] = 0x8Du; program[n++] = 0x02u; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = timer2_backup;
+    program[n++] = 0x8Du; program[n++] = 0x08u; program[n++] = 0xFDu;
+    program[n++] = 0x8Du; program[n++] = 0x0Au; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = 0x1Fu; /* count, reload, linked */
+    program[n++] = 0x8Du; program[n++] = 0x09u; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = 0x18u; /* start Timer 0 last */
+    program[n++] = 0x8Du; program[n++] = 0x01u; program[n++] = 0xFDu;
+    const uint16_t loop = (uint16_t)(0x0200u + (uint16_t)n);
+    program[n++] = 0x4Cu;
+    program[n++] = (uint8_t)loop;
+    program[n++] = (uint8_t)(loop >> 8);
+    CHECK_EQ_U64(load_bll_at(m, program, n, 0x0200u), LYNX_OK);
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, 512u, &consumed, &stop), LYNX_OK);
+    CHECK_NAMED(consumed == 512u && stop == LYNX_STOP_BUDGET && ticks_of(m) == 512u,
+                "video.guest-program-starts-cadence");
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+}
+
+static void init_video_frame_buffers(lynx_frame_buffers *buffers, uint8_t *pens,
+                                     uint8_t *palettes, uint64_t *line_ticks)
+{
+    memset(buffers, 0, sizeof *buffers);
+    buffers->struct_size = (uint32_t)sizeof *buffers;
+    buffers->pens = pens;
+    buffers->pens_capacity = LYNX_FRAME_PENS_CAPACITY;
+    buffers->palettes = palettes;
+    buffers->palettes_capacity = LYNX_FRAME_PALETTE_CAPACITY;
+    buffers->line_ticks = line_ticks;
+    buffers->line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+}
+
+static void init_video_frame_result(lynx_frame_result *result)
+{
+    memset(result, 0, sizeof *result);
+    result->struct_size = (uint32_t)sizeof *result;
+}
+
+static void case_video_cadence(void)
+{
+    const int failures_before = check_failures;
+    static const struct {
+        uint8_t timer0_backup;
+        const char *name;
+    } presets[] = {
+        {190u, "video.cadence.50hz"},
+        {158u, "video.cadence.60hz"},
+        {126u, "video.cadence.75hz"},
+    };
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_frame_buffers buffers;
+
+    for (size_t preset = 0u; preset < sizeof presets / sizeof presets[0]; preset++) {
+        lynx_config cfg;
+        lynx_config_default(&cfg);
+        cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+        lynx_machine *m = init_in(machine_buf, &cfg);
+        if (m == NULL) {
+            break;
+        }
+        configure_video_cadence_guest(m, presets[preset].timer0_backup, 104u);
+        init_video_frame_buffers(&buffers, pens, palettes, line_ticks);
+
+        const uint64_t line_ticks_expected =
+            ((uint64_t)presets[preset].timer0_backup + 1u) * 16u;
+        const uint64_t frame_ticks_expected = line_ticks_expected * 105u;
+        memset(pens, 0xA5, sizeof pens);
+        memset(palettes, 0xA5, sizeof palettes);
+        memset(line_ticks, 0xA5, sizeof line_ticks);
+        lynx_frame_result result;
+        init_video_frame_result(&result);
+
+        CHECK_EQ_U64(lynx_advance_frame(m, 0u, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET && result.ticks_consumed == 0u &&
+                        ticks_of(m) == 512u && pens[0] == 0xA5u && palettes[0] == 0xA5u &&
+                        line_ticks[0] == UINT64_C(0xA5A5A5A5A5A5A5A5),
+                    "video.zero-budget-preserves-progress-and-buffers");
+        CHECK_EQ_U64(lynx_advance_frame(m, 2u * frame_ticks_expected, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.row_count == 0u &&
+                        result.frame_end_tick > ticks_of(m) - result.ticks_consumed,
+                    "video.first-edge-policy-frame");
+        const uint64_t first_frame_tick = result.frame_end_tick;
+        memset(pens, 0xA5, sizeof pens);
+        memset(palettes, 0xA5, sizeof palettes);
+        memset(line_ticks, 0xA5, sizeof line_ticks);
+
+        CHECK_EQ_U64(lynx_advance_frame(m, frame_ticks_expected - 1u, &buffers, &result),
+                     LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET &&
+                        ticks_of(m) == first_frame_tick + frame_ticks_expected - 1u,
+                    "video.steady-frame-period-minus-one");
+        CHECK_NAMED(pens[0] == 0xA5u && pens[sizeof pens - 1u] == 0xA5u &&
+                        palettes[0] == 0xA5u && palettes[sizeof palettes - 1u] == 0xA5u &&
+                        line_ticks[0] == UINT64_C(0xA5A5A5A5A5A5A5A5),
+                    "video.no-frame-preserves-output-sentinels");
+        CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET &&
+                        ticks_of(m) == first_frame_tick + frame_ticks_expected,
+                    "video.steady-frame-exact-target");
+        CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.ticks_consumed == 0u &&
+                        result.frame_start_tick == first_frame_tick &&
+                        result.frame_end_tick == first_frame_tick + frame_ticks_expected &&
+                        result.sequence == 1u && result.row_count == LYNX_FRAME_MAX_ROWS &&
+                        result.flags == 0u,
+                    "video.source-preset-steady-period-and-rows");
+        CHECK_NAMED(line_ticks[0] == first_frame_tick + 3u * line_ticks_expected &&
+                        line_ticks[101] == first_frame_tick + 104u * line_ticks_expected,
+                    "video.standard-row-start-ticks");
+        lynx_machine_deinit(m);
+    }
+
+    /* A deliberately short Timer 0/2 period starts only partial rows. They
+       are not counted as visible output rows, while their consumed DMA grants
+       still set the explicit partial-frame flag. */
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+        CHECK(lynx__video_write(&m->video, 0xFD92u, 1u));
+        m->ram[0] = 0xABu;
+        m->ram[1] = 0xCDu;
+        configure_video_cadence(m, 0u, 4u);
+        init_video_frame_buffers(&buffers, pens, palettes, line_ticks);
+        memset(pens, 0xA5, sizeof pens);
+        memset(palettes, 0xA5, sizeof palettes);
+        memset(line_ticks, 0xA5, sizeof line_ticks);
+        lynx_frame_result result;
+        init_video_frame_result(&result);
+        CHECK_EQ_U64(lynx_advance_frame(m, 80u, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_BUDGET && ticks_of(m) == 80u,
+                    "video.short-frame-sync-edge-half-open");
+        CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.ticks_consumed == 0u,
+                    "video.short-frame-sync-event");
+        CHECK_EQ_U64(lynx_advance_frame(m, 81u, &buffers, &result), LYNX_OK);
+        if (result.row_count != 0u || result.flags != LYNX_FRAME_PARTIAL || pens[0] != 0u) {
+            fprintf(stderr, "OBSERVED short frame row_count=%u flags=%u pen0=%u\n",
+                    (unsigned)result.row_count, (unsigned)result.flags, (unsigned)pens[0]);
+        }
+        CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.frame_start_tick == 80u &&
+                        result.frame_end_tick == 160u && result.row_count == 0u &&
+                        result.flags == LYNX_FRAME_PARTIAL && pens[0] == 0u &&
+                        line_ticks[0] == 0u,
+                    "video.incomplete-rows-omitted-from-short-frame");
+        lynx_machine_deinit(m);
+    }
+
+    printf("TAP version 13\n1..1\n%s 1 - api.video_cadence\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_frame_edges(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        goto done;
+    }
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_frame_buffers buffers;
+    init_video_frame_buffers(&buffers, pens, palettes, line_ticks);
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    configure_video_cadence(m, 158u, 104u);
+    const uint64_t first_frame_tick = UINT64_C(159) * 16u * 105u;
+    memset(pens, 0x5Au, sizeof pens);
+    memset(palettes, 0x5Au, sizeof palettes);
+    memset(line_ticks, 0x5Au, sizeof line_ticks);
+    lynx_frame_result result;
+    init_video_frame_result(&result);
+
+    CHECK_EQ_U64(lynx_advance_frame(m, 0u, &buffers, &result), LYNX_OK);
+    CHECK_NAMED(result.stop == LYNX_STOP_BUDGET && result.ticks_consumed == 0u &&
+                    ticks_of(m) == 0u && pens[0] == 0x5Au,
+                "video.zero-budget-does-no-work");
+    CHECK_EQ_U64(lynx_advance_frame(m, first_frame_tick - 1u, &buffers, &result), LYNX_OK);
+    CHECK_NAMED(result.stop == LYNX_STOP_BUDGET &&
+                    result.ticks_consumed == first_frame_tick - 1u,
+                "video.frame-minus-one");
+    CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+    CHECK_NAMED(result.stop == LYNX_STOP_BUDGET && result.ticks_consumed == 1u &&
+                    ticks_of(m) == first_frame_tick,
+                "video.frame-event-at-exclusive-target");
+    CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+    CHECK_NAMED(result.stop == LYNX_STOP_FRAME && result.ticks_consumed == 0u &&
+                    result.frame_end_tick == first_frame_tick,
+                "video.frame-event-after-target");
+
+    memset(pens, 0x5Au, sizeof pens);
+    CHECK_EQ_U64(lynx_advance_frame(m, 1u, &buffers, &result), LYNX_OK);
+    CHECK_NAMED(result.stop == LYNX_STOP_BUDGET && result.ticks_consumed == 1u &&
+                    result.frame_end_tick == 0u && pens[0] == 0x5Au,
+                "video.frame-event-consumed-once");
+    lynx_machine_deinit(m);
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.frame_edges\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void case_timer_pending_after_disable(void)
 {
     const int failures_before = check_failures;
@@ -6228,6 +6470,7 @@ static const struct {
     {"bll_tracer", case_bll_tracer},
     {"build_id", case_build_id},
     {"cost_model", case_cost_model},
+    {"frame_edges", case_frame_edges},
     {"cpu_program", case_cpu_program},
     {"identity", case_identity},
     {"init_refusal", case_init_refusal},
@@ -6264,6 +6507,7 @@ static const struct {
     {"timer_done_gate", case_timer_done_gate},
     {"timer_reset_done_held", case_timer_reset_done_held},
     {"timer_shared_phase", case_timer_shared_phase},
+    {"video_cadence", case_video_cadence},
     {"timer_pending_after_disable", case_timer_pending_after_disable},
     {"watch_controls", case_watch_controls},
     {"watch_independent", case_watch_independent},

@@ -13,6 +13,7 @@ api.build_id.refresh	api
 api.cost_model	api
 api.cost_model.self_test	api
 api.cpu_program	api
+api.frame_edges	api
 api.header_selfcontained	api
 api.identity	api
 api.init_refusal	api
@@ -47,6 +48,7 @@ api.timer_snapshot_controls	api
 api.timer_standalone	api
 api.timer_tracer	api
 api.timer_unavailable	api
+api.video_cadence	api
 api.watch_controls	api
 api.watch_controls.self_test	api
 api.watch_independent	api

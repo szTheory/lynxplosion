@@ -1,0 +1,11 @@
+{
+  "command": "./build/check/tests/lynx-test-api video_cadence",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.video_cadence\n",
+  "stderr": "OBSERVED short frame row_count=2 flags=1 pen0=171\nASSERT video.incomplete-rows-omitted-from-short-frame failed\n",
+  "targetTest": "api.video_cadence",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "short partial frame reports row_count=0 and LYNX_FRAME_PARTIAL",
+  "actual": "row_count=2 flags=1 pen0=171 at frame ticks 80-160",
+  "semanticAssessment": "The target API case executed and failed on the planned incomplete-row assertion after configuring the documented 50/60/75 presets through guest stores. The deliberately short Timer0/2 cadence reports two unfinished rows and publishes the first partial DMA byte (0xAB), instead of omitting incomplete rows while retaining the partial flag. The process compiled and loaded successfully, and the exact TAP report contains one failing target assertion."
+}
