@@ -36,9 +36,11 @@ after a successful load. If a frame event is pending exactly at an edge tick,
 the returned zero-consumption frame describes the pre-edge guest image; the
 edge then controls subsequent CPU reads and frames. A zero-consumed `BUDGET`
 is a guest-time limit error. `WATCH`, `UNDEFINED`, and `UNAVAILABLE` stops
-abort frame replay without applying an edge early. At most 16 renderable frames
+abort frame replay without applying an edge early. At most 32 renderable frames
 are retained; reaching that output bound is a visible error and never drops a
-frame silently.
+frame silently. After the final edge, replay retains two frame periods of
+bounded observation time so a held final input state has a complete frame to
+appear in the captured output.
 
 Replay checkpoints are host metadata. They bind the complete timeline digest,
 guest tick, cursor phase, cursor index and currently applied mask. Before an
@@ -52,10 +54,23 @@ resuming.
 
 Each retained frame has a PPM and a separate raw observation file. The raw
 file stores each row as 80 pen bytes, 32 palette bytes and one little-endian
-64-bit line tick. The manifest records the full script digest, frame sequence,
-start/end tick, rows, flags, input mask at capture, guest A sample and separate
-SHA-256 digests of the raw bytes and rendered PPM bytes. The PPM applies the
-documented nibble conversion only; it does not rotate the guest output.
+64-bit line tick. The manifest records the full script digest, build and
+content identity, fixture schema and handedness, frame sequence, start/end
+tick, row count, flags, input mask at capture, guest JOYSTICK and SWITCHES
+samples, progress/error/done state, and separate SHA-256 digests of the raw
+bytes and rendered PPM bytes. The PPM carries the frame-local sample and raw
+digest; its pixels apply the documented nibble conversion only and do not
+rotate guest output.
+
+The project-authored `LXI5` version-3 input probe reports its latest guest
+JOYSTICK/SWITCHES sample, a saturating guest-poll counter, and explicit error
+and done bits through the linked `probe_result` symbol. Its nine-byte display
+pattern independently marks Up, Down, Left, Right, A, B, Option 1, Option 2,
+and Pause. The fixture is built with each `$FC92` Lefthand orientation and
+qualified under both named software profiles. Fresh runs, interleaved public
+API instances, and a controlled last-edge mutation are compared by the
+headless test harness. These checks establish repeatability and observable
+input response for the fixture, not hardware accuracy.
 
 ## Guest register view
 

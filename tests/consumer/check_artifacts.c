@@ -460,6 +460,32 @@ static int has_exact_line(const uint8_t *bytes, size_t length, const char *line)
     return 0;
 }
 
+static int decimal_line_value(const uint8_t *bytes, size_t length,
+                              const char *prefix, uint32_t *value)
+{
+    const size_t prefix_len = strlen(prefix);
+    size_t offset = 0u;
+    while (offset < length) {
+        size_t end = offset, at;
+        uint32_t parsed = 0u;
+        while (end < length && bytes[end] != (uint8_t)'\n') end++;
+        if (end - offset >= prefix_len && memcmp(bytes + offset, prefix, prefix_len) == 0) {
+            at = offset + prefix_len;
+            if (at == end) return 1;
+            for (; at < end; at++) {
+                const uint8_t byte = bytes[at];
+                if (byte < (uint8_t)'0' || byte > (uint8_t)'9' ||
+                    parsed > (UINT32_MAX - (uint32_t)(byte - (uint8_t)'0')) / 10u) return 1;
+                parsed = parsed * 10u + (uint32_t)(byte - (uint8_t)'0');
+            }
+            *value = parsed;
+            return 0;
+        }
+        offset = end < length ? end + 1u : end;
+    }
+    return 1;
+}
+
 static int line_has_fragments(const uint8_t *bytes, size_t length,
                               const char *prefix, const char *fragment)
 {
@@ -613,28 +639,42 @@ static int validate_replay_directory(const char *directory, const char *scenario
                                      const char *expected_input_sha,
                                      const char *expected_handedness,
                                      const char *expected_profile,
-                                     char *error, size_t error_cap)
+                                     char *error, size_t error_cap,
+                                     int corrupt_transition_color)
 {
     uint8_t *manifest = NULL;
     size_t manifest_len = 0u;
     size_t expected_frames;
-    uint64_t starts[9] = {UINT64_C(54272),UINT64_C(108544),UINT64_C(162816),UINT64_C(217088),UINT64_C(271360),UINT64_C(325632),UINT64_C(379904),UINT64_C(434176),UINT64_C(488448)};
-    uint64_t ends[9] = {UINT64_C(108544),UINT64_C(162816),UINT64_C(217088),UINT64_C(271360),UINT64_C(325632),UINT64_C(379904),UINT64_C(434176),UINT64_C(488448),UINT64_C(542720)};
-    uint32_t masks[9] = {0u,0u,16u,0u,0u,0u,0u,0u,0u};
-    uint32_t samples[9] = {0u,0u,1u,0u,0u,0u,0u,0u,0u};
-    const int replay_all_inputs = strcmp(scenario, "frame_replay") == 0;
+    uint64_t starts[32], ends[32];
+    uint32_t masks[32] = {0u};
+    uint32_t samples[32] = {0u};
+    static const uint32_t pattern_bits[9] = {16u,32u,1u,2u,4u,8u,64u,128u,256u};
+    const int replay_all_inputs = strcmp(scenario, "frame_replay") == 0 ||
+        strcmp(scenario, "frame_replay_sensitivity") == 0;
     unsigned handedness = 1u;
     char path[4096], line[512];
+    for (size_t i = 0u; i < 32u; i++) {
+        starts[i] = UINT64_C(54272) + (uint64_t)i * UINT64_C(54272);
+        ends[i] = UINT64_C(108544) + (uint64_t)i * UINT64_C(54272);
+    }
     if (strcmp(scenario, "replay_edges") == 0) {
-        expected_frames = 3u;
+        expected_frames = 4u;
+        masks[2] = 16u; masks[3] = 16u; samples[2] = 1u; samples[3] = 1u;
     } else if (strcmp(scenario, "replay_restore") == 0) {
-        expected_frames = 2u; masks[1] = 16u; samples[1] = 1u;
+        expected_frames = 3u; masks[1] = 16u; masks[2] = 16u; samples[1] = 1u; samples[2] = 1u;
     } else if (strcmp(scenario, "frame_tracer") == 0) {
         expected_frames = 2u; masks[1] = 16u; samples[1] = 1u;
     } else if (replay_all_inputs != 0) {
-        static const uint32_t scenario_masks[9] = {16u,32u,1u,64u,64u,128u,256u,52u,0u};
-        expected_frames = 9u;
+        static const uint32_t scenario_masks[23] = {
+            0u,16u,16u,32u,32u,1u,1u,2u,2u,4u,4u,8u,8u,64u,64u,128u,
+            128u,256u,256u,511u,511u,0u,0u
+        };
+        expected_frames = 23u;
         memcpy(masks, scenario_masks, sizeof scenario_masks);
+        if (strcmp(scenario, "frame_replay_sensitivity") == 0) {
+            masks[21] = 16u;
+            masks[22] = 16u;
+        }
         for (size_t i = 0u; i < expected_frames; i++) samples[i] = (masks[i] & 16u) != 0u ? 1u : 0u;
     } else if (strcmp(scenario, "empty") == 0) {
         expected_frames = 1u;
@@ -663,16 +703,20 @@ static int validate_replay_directory(const char *directory, const char *scenario
     EXPECT_REPLAY(line);
     if (strcmp(scenario, "replay_edges") == 0) {
         EXPECT_REPLAY("event_count = 5");
-        EXPECT_REPLAY("finish_tick = 217089");
+        EXPECT_REPLAY("finish_tick = 271361");
     } else if (strcmp(scenario, "replay_restore") == 0) {
         EXPECT_REPLAY("event_count = 1");
-        EXPECT_REPLAY("finish_tick = 162817");
+        EXPECT_REPLAY("finish_tick = 217089");
     } else if (strcmp(scenario, "frame_tracer") == 0) {
         EXPECT_REPLAY("event_count = 1");
         EXPECT_REPLAY("finish_tick = 163594");
     } else if (replay_all_inputs != 0) {
-        EXPECT_REPLAY("event_count = 9");
-        EXPECT_REPLAY("finish_tick = 578561");
+        EXPECT_REPLAY("event_count = 12");
+        EXPECT_REPLAY("finish_tick = 1302530");
+        EXPECT_REPLAY("fixture_schema = LXI5-v3");
+        (void)snprintf(line, sizeof line, "handedness = %u", handedness);
+        EXPECT_REPLAY(line);
+        EXPECT_REPLAY("repeatability = test harness compares raw and rendered digests across fresh and interleaved runs");
     } else {
         EXPECT_REPLAY("event_count = 0");
         EXPECT_REPLAY("finish_tick = 108545");
@@ -680,6 +724,7 @@ static int validate_replay_directory(const char *directory, const char *scenario
     for (size_t i = 0u; i < expected_frames; i++) {
         uint8_t *raw = NULL, *ppm = NULL;
         size_t raw_len = 0u, ppm_len = 0u, header_end = SIZE_MAX;
+        uint32_t progress = 0u;
         char raw_name[40], ppm_name[40];
         const char ppm_marker[] = "\n160 102\n255\n";
         const uint8_t green[3] = {0u,255u,0u}, red[3] = {255u,0u,0u}, black[3] = {0u,0u,0u};
@@ -696,6 +741,10 @@ static int validate_replay_directory(const char *directory, const char *scenario
             if (memcmp(ppm + pos, ppm_marker, sizeof ppm_marker - 1u) == 0) { header_end = pos; break; }
         if (header_end == SIZE_MAX || ppm_len - (header_end + sizeof ppm_marker - 1u) != 160u * 102u * 3u) {
             free(raw); free(ppm); goto invalid;
+        }
+        if (corrupt_transition_color != 0 && replay_all_inputs != 0 && i == 1u) {
+            const size_t raster_start = header_end + sizeof ppm_marker - 1u;
+            ppm[raster_start] ^= 0xFFu;
         }
         (void)snprintf(line, sizeof line, "# sequence = %zu", i + 1u);
         if (!has_exact_line(ppm, header_end, "# artifact = FRAME") || !has_exact_line(ppm, header_end, line)) {
@@ -715,15 +764,19 @@ static int validate_replay_directory(const char *directory, const char *scenario
             if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto missing_guest_samples; }
             (void)snprintf(line, sizeof line, "# sample_switches = %u", masks[i] & 256u ? 1u : 0u);
             if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto missing_guest_samples; }
+            if (decimal_line_value(ppm, header_end, "# poll_progress = ", &progress) != 0 ||
+                progress < 2u || progress > 63u ||
+                !has_exact_line(ppm, header_end, "# error = 0") ||
+                !has_exact_line(ppm, header_end, "# done = 1")) { free(raw); free(ppm); goto invalid; }
+            (void)snprintf(line, sizeof line, "# handedness = %u", handedness);
+            if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
         }
-        (void)snprintf(line, sizeof line, "# input_sha256 = %s", expected_input_sha);
-        if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
         for (size_t row = 0u; row < 102u; row++) {
             const uint8_t *record = raw + row * 120u;
             const uint8_t *pixels = ppm + header_end + sizeof ppm_marker - 1u + row * 160u * 3u;
             uint64_t tick = 0u;
             for (size_t byte = 0u; byte < 8u; byte++) tick |= (uint64_t)record[112u + byte] << (8u * byte);
-            if (record[0] != (row == 0u ? (samples[i] != 0u ? 0x22u : 0x11u) : 0u) ||
+            if ((replay_all_inputs == 0 && record[0] != (row == 0u ? (samples[i] != 0u ? 0x22u : 0x11u) : 0u)) ||
                 record[80u + 1u] != 0x0Fu || record[80u + 17u] != 0u ||
                 record[80u + 2u] != 0u || record[80u + 18u] != 0x0Fu ||
                 tick < starts[i] || tick >= ends[i] || (row != 0u && tick <= previous_tick)) {
@@ -731,9 +784,16 @@ static int validate_replay_directory(const char *directory, const char *scenario
             }
             if (replay_all_inputs != 0) {
                 for (size_t button = 0u; button < 9u; button++) {
-                    const uint32_t bit = button == 8u ? 256u : (1u << button);
-                    const uint8_t expected_byte = (masks[i] & bit) != 0u ? 0x22u : 0x11u;
-                    if (record[button] != (row == 0u ? expected_byte : 0u)) { free(raw); free(ppm); goto invalid; }
+                    const uint8_t expected_byte = (masks[i] & pattern_bits[button]) != 0u ? 0x22u : 0x11u;
+                    if (row == 0u && (i % 2u) != 0u) {
+                        if (record[button] != 0x11u && record[button] != 0x22u) { free(raw); free(ppm); goto invalid; }
+                    } else if (record[button] != (row == 0u ? expected_byte : 0u)) {
+                        free(raw); free(ppm); goto invalid;
+                    }
+                }
+            } else {
+                for (size_t button = 1u; button < 9u; button++) {
+                    if (record[button] != (row == 0u ? 0x11u : 0u)) { free(raw); free(ppm); goto invalid; }
                 }
             }
             previous_tick = tick;
@@ -741,10 +801,9 @@ static int validate_replay_directory(const char *directory, const char *scenario
                 const uint8_t *wanted = black;
                 if (replay_all_inputs != 0 && row == 0u && pixel < 18u) {
                     const size_t button = pixel / 2u;
-                    const uint32_t bit = button == 8u ? 256u : (1u << button);
-                    wanted = (masks[i] & bit) != 0u ? red : green;
-                } else if (replay_all_inputs == 0 && row == 0u && pixel < 2u) {
-                    wanted = samples[i] != 0u ? red : green;
+                    wanted = record[button] == 0x22u ? red : green;
+                } else if (replay_all_inputs == 0 && row == 0u && pixel < 18u) {
+                    wanted = pixel < 2u && samples[i] != 0u ? red : green;
                 }
                 if (memcmp(pixels + pixel * 3u, wanted, 3u) != 0) { free(raw); free(ppm); goto invalid; }
             }
@@ -756,8 +815,8 @@ static int validate_replay_directory(const char *directory, const char *scenario
                 i, i + 1u, starts[i], ends[i], masks[i]);
             char fragment[192];
             (void)snprintf(fragment, sizeof fragment,
-                "joy:%u,switches:%u,progress:63,error:0,done:1,handedness:%u,",
-                joy, switches, handedness);
+                "joy:%u,switches:%u,progress:%u,error:0,done:1,handedness:%u,",
+                joy, switches, progress, handedness);
             if (!line_has_fragments(manifest, manifest_len, line, fragment)) { free(raw); free(ppm); goto invalid; }
         }
         free(raw); free(ppm);
@@ -1669,7 +1728,7 @@ int main(int argc, char **argv)
         return 1;
     }
     if (argc == 5 && strcmp(argv[1], "frames") == 0) {
-        if (validate_replay_directory(argv[2], argv[3], argv[4], "1", "none", error, sizeof error) == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], "1", "none", error, sizeof error, 0) == 0) {
             puts("artifact-check: canonical replay raw/rendered frame transcript is valid");
             return 0;
         }
@@ -1677,12 +1736,20 @@ int main(int argc, char **argv)
         return 1;
     }
     if (argc == 7 && strcmp(argv[1], "frames") == 0) {
-        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], error, sizeof error) == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], error, sizeof error, 0) == 0) {
             puts("artifact-check: canonical replay raw/rendered frame transcript is valid");
             return 0;
         }
         fprintf(stderr, "artifact-check: %s\n", error);
         return 1;
+    }
+    if (argc == 7 && strcmp(argv[1], "frames-color-negative") == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], error, sizeof error, 1) == 0) {
+            fputs("artifact-check: accepted a deliberately corrupted transition pixel color\n", stderr);
+            return 1;
+        }
+        puts("artifact-check: rejected the deliberately corrupted transition pixel color");
+        return 0;
     }
     if (argc == 6 && strcmp(argv[1], "publication") == 0) {
         if (publication_control(argv[2], argv[3], argv[4], argv[5]) != 0) {

@@ -43,16 +43,24 @@ enum {
     TIMELINE_RECORD_LIMIT = 4096,
     FRAME_PPM_LIMIT = 50000,
     FRAME_MANIFEST_CAP = 8192,
-    FRAME_OUTPUT_LIMIT = 16,
+    FRAME_OUTPUT_LIMIT = 32,
     FRAME_RAW_BYTES_PER_ROW = 120
 };
 
 typedef struct input_event { uint64_t tick; uint32_t mask; } input_event;
 typedef struct input_timeline { input_event *events; size_t count; } input_timeline;
+typedef struct guest_probe {
+    uint32_t joystick;
+    uint32_t switches;
+    uint32_t progress;
+    uint32_t error;
+    uint32_t done;
+} guest_probe;
 typedef struct frame_capture {
     lynx_frame_result result;
     uint32_t input_mask;
-    uint32_t sampled_a;
+    guest_probe sample;
+    uint32_t handedness;
     uint8_t *raw;
     size_t raw_len;
     uint8_t *ppm;
@@ -1194,8 +1202,21 @@ static int read_probe_result(lynx_machine *machine, uint32_t address,
 {
     uint8_t result[8];
     if (lynx_read_memory(machine, address, result, sizeof result) != LYNX_OK ||
-        memcmp(result, "LXI5", 4u) != 0 || result[4] != 2u || result[5] != expected_a ||
+        memcmp(result, "LXI5", 4u) != 0 || result[4] != 3u || (result[5] & 1u) != expected_a ||
         lynx_read_memory(machine, 0x4000u, framebuffer_byte, 1u) != LYNX_OK) return 1;
+    return 0;
+}
+
+static int read_guest_probe(lynx_machine *machine, uint32_t address, guest_probe *out)
+{
+    uint8_t bytes[8];
+    if (lynx_read_memory(machine, address, bytes, sizeof bytes) != LYNX_OK ||
+        memcmp(bytes, "LXI5", 4u) != 0 || bytes[4] != 3u) return 1;
+    out->joystick = bytes[5];
+    out->switches = bytes[6];
+    out->progress = (uint32_t)(bytes[7] & 0x3Fu);
+    out->done = (uint32_t)((bytes[7] >> 6) & 1u);
+    out->error = (uint32_t)((bytes[7] >> 7) & 1u);
     return 0;
 }
 
@@ -1350,12 +1371,23 @@ static int run_frame_consumer_legacy(const char *content_path, const char *symbo
         pressed.sequence != 2u || pressed.frame_start_tick != released.frame_end_tick ||
         pressed.flags != 0u || pressed.frame_end_tick <= pressed.frame_start_tick ||
         pressed.frame_end_tick - pressed.frame_start_tick !=
-            released.frame_end_tick - released.frame_start_tick ||
-        read_probe_result(storage.machine, probe_address, 1u, &result_sample) != 0 ||
-        result_sample != 0x22u || pressed_pens[0] != 0x22u ||
+            released.frame_end_tick - released.frame_start_tick) {
+        (void)report_error("A-pressed frame timing or sequence differs from the independent timer expectation");
+        goto done;
+    }
+    if (read_probe_result(storage.machine, probe_address, 1u, &result_sample) != 0) {
+        (void)report_error("A-pressed guest result block did not report the sampled A level");
+        goto done;
+    }
+    if (result_sample != 0x22u || pressed_pens[0] != 0x22u ||
         pressed_palettes[1] != 0x0Fu || pressed_palettes[17] != 0u ||
         pressed_palettes[2] != 0u || pressed_palettes[18] != 0x0Fu) {
-        (void)report_error("A-pressed frame did not match the independent pen, palette, input and progress expectations");
+        char message[192];
+        (void)snprintf(message, sizeof message,
+            "A-pressed visual expectation differs (guest=%02x raw=%02x/%02x/%02x/%02x/%02x/%02x/%02x/%02x/%02x)",
+            result_sample, pressed_pens[0], pressed_pens[1], pressed_pens[2], pressed_pens[3],
+            pressed_pens[4], pressed_pens[5], pressed_pens[6], pressed_pens[7], pressed_pens[8]);
+        (void)report_error(message);
         goto done;
     }
     for (size_t row = 0u; row < pressed.row_count; row++) {
@@ -1509,8 +1541,53 @@ static int replay_raw_bytes(const lynx_frame_result *frame, const uint8_t *pens,
     return 0;
 }
 
+static uint32_t replay_expected_joystick(uint32_t mask, uint32_t lefthand)
+{
+    uint32_t value = (mask & LYNX_INPUT_A ? 0x01u : 0u) |
+        (mask & LYNX_INPUT_B ? 0x02u : 0u) |
+        (mask & LYNX_INPUT_OPTION2 ? 0x04u : 0u) |
+        (mask & LYNX_INPUT_OPTION1 ? 0x08u : 0u);
+    if (lefthand != 0u) {
+        value |= (mask & LYNX_INPUT_UP ? 0x80u : 0u) |
+            (mask & LYNX_INPUT_DOWN ? 0x40u : 0u) |
+            (mask & LYNX_INPUT_LEFT ? 0x20u : 0u) |
+            (mask & LYNX_INPUT_RIGHT ? 0x10u : 0u);
+    } else {
+        value |= (mask & LYNX_INPUT_UP ? 0x40u : 0u) |
+            (mask & LYNX_INPUT_DOWN ? 0x80u : 0u) |
+            (mask & LYNX_INPUT_LEFT ? 0x10u : 0u) |
+            (mask & LYNX_INPUT_RIGHT ? 0x20u : 0u);
+    }
+    return value;
+}
+
+static int replay_guest_observation(lynx_machine *machine, uint32_t result_address,
+                                   uint32_t handedness_address, uint32_t expected_mask,
+                                   uint32_t *handedness_out, guest_probe *sample)
+{
+    static const uint32_t logical_bits[9] = {
+        LYNX_INPUT_A, LYNX_INPUT_B, LYNX_INPUT_UP, LYNX_INPUT_DOWN,
+        LYNX_INPUT_LEFT, LYNX_INPUT_RIGHT, LYNX_INPUT_OPTION1,
+        LYNX_INPUT_OPTION2, LYNX_INPUT_PAUSE
+    };
+    uint8_t pattern[9];
+    uint8_t handedness = 0u;
+    if (lynx_read_memory(machine, handedness_address, &handedness, 1u) != LYNX_OK || handedness > 1u ||
+        read_guest_probe(machine, result_address, sample) != 0 ||
+        sample->joystick != replay_expected_joystick(expected_mask, handedness) ||
+        sample->switches != ((expected_mask & LYNX_INPUT_PAUSE) != 0u ? 1u : 0u) ||
+        sample->progress < 2u || sample->error != 0u || sample->done != 1u ||
+        lynx_read_memory(machine, 0x4000u, pattern, 9u) != LYNX_OK) return 1;
+    for (size_t index = 0u; index < 9u; index++) {
+        const uint8_t wanted = (expected_mask & logical_bits[index]) != 0u ? 0x22u : 0x11u;
+        if (pattern[index] != wanted) return 1;
+    }
+    *handedness_out = handedness;
+    return 0;
+}
+
 static int replay_render_ppm(frame_capture *capture, const uint8_t *pens,
-                             const uint8_t *palettes, const char *input_hash)
+                             const uint8_t *palettes)
 {
     const lynx_frame_result *frame = &capture->result;
     const size_t raster_len = (size_t)LYNX_FRAME_WIDTH * frame->row_count * 3u;
@@ -1521,10 +1598,15 @@ static int replay_render_ppm(frame_capture *capture, const uint8_t *pens,
     if (frame->row_count > LYNX_FRAME_MAX_ROWS || raster_len > FRAME_PPM_LIMIT - sizeof header) return 1;
     header_len = snprintf(header, sizeof header,
         "P6\n# artifact = FRAME\n# sequence = %" PRIu64 "\n# frame_start_tick = %" PRIu64 "\n"
-        "# frame_end_tick = %" PRIu64 "\n# rows = %u\n# input_mask_at_end = %u\n# sample_a = %u\n"
-        "# input_sha256 = %s\n# raw_frame_sha256 = %s\n160 %u\n255\n",
+        "# frame_end_tick = %" PRIu64 "\n# rows = %u\n# input_mask_at_end = %u\n"
+        "# sample_a = %u\n# sample_joystick = %u\n# sample_switches = %u\n"
+        "# poll_progress = %u\n# error = %u\n# done = %u\n# handedness = %u\n"
+        "# raw_frame_sha256 = %s\n160 %u\n255\n",
         frame->sequence, frame->frame_start_tick, frame->frame_end_tick, frame->row_count,
-        capture->input_mask, capture->sampled_a, input_hash, capture->raw_sha256, frame->row_count);
+        capture->input_mask, capture->sample.joystick & 1u, capture->sample.joystick,
+        capture->sample.switches, capture->sample.progress, capture->sample.error,
+        capture->sample.done, capture->handedness, capture->raw_sha256,
+        frame->row_count);
     if (header_len < 0 || (size_t)header_len >= sizeof header ||
         (size_t)header_len + raster_len > FRAME_PPM_LIMIT) return 1;
     capture->ppm = malloc((size_t)header_len + raster_len);
@@ -1562,16 +1644,161 @@ static int replay_append(char *manifest, size_t cap, size_t *length,
     return 0;
 }
 
+static void replay_transcript_update(host_sha256 *transcript,
+                                     const lynx_frame_result *frame,
+                                     const uint8_t *pens,
+                                     const uint8_t *palettes,
+                                     const uint64_t *ticks)
+{
+    host_sha_update(transcript, &frame->frame_start_tick, sizeof frame->frame_start_tick);
+    host_sha_update(transcript, &frame->frame_end_tick, sizeof frame->frame_end_tick);
+    host_sha_update(transcript, &frame->sequence, sizeof frame->sequence);
+    host_sha_update(transcript, &frame->row_count, sizeof frame->row_count);
+    host_sha_update(transcript, &frame->flags, sizeof frame->flags);
+    for (size_t row = 0u; row < frame->row_count; row++) {
+        uint8_t encoded_tick[8];
+        host_sha_update(transcript, pens + row * LYNX_FRAME_ROW_BYTES, LYNX_FRAME_ROW_BYTES);
+        host_sha_update(transcript, palettes + row * 32u, 32u);
+        for (size_t byte = 0u; byte < sizeof encoded_tick; byte++)
+            encoded_tick[byte] = (uint8_t)(ticks[row] >> (8u * byte));
+        host_sha_update(transcript, encoded_tick, sizeof encoded_tick);
+    }
+}
+
+static int interleaved_step(lynx_machine *machine, uint64_t request,
+                            host_sha256 *transcript, uint64_t *last_sequence,
+                            uint64_t *last_end, uint64_t *now)
+{
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY], palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_frame_buffers buffers = {0};
+    lynx_frame_result frame = {0};
+    uint64_t after = 0u;
+    buffers.struct_size = (uint32_t)sizeof buffers;
+    buffers.pens = pens; buffers.pens_capacity = sizeof pens;
+    buffers.palettes = palettes; buffers.palettes_capacity = sizeof palettes;
+    buffers.line_ticks = ticks; buffers.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+    frame.struct_size = (uint32_t)sizeof frame;
+    if (lynx_advance_frame(machine, request, &buffers, &frame) != LYNX_OK ||
+        frame.ticks_consumed > request || lynx_guest_ticks(machine, &after) != LYNX_OK ||
+        after < *now || after - *now != frame.ticks_consumed) return 1;
+    if (frame.stop == LYNX_STOP_FRAME) {
+        if (frame.frame_end_tick != after || frame.row_count > LYNX_FRAME_MAX_ROWS ||
+            (*last_sequence != UINT64_MAX && frame.sequence <= *last_sequence) ||
+            (*last_end != 0u && frame.frame_end_tick <= *last_end)) return 1;
+        *last_sequence = frame.sequence; *last_end = frame.frame_end_tick;
+        replay_transcript_update(transcript, &frame, pens, palettes, ticks);
+    } else if (frame.stop == LYNX_STOP_BUDGET) {
+        if (frame.ticks_consumed == 0u || frame.ticks_consumed != request) return 1;
+    } else {
+        return 1;
+    }
+    if (after == *now && frame.stop != LYNX_STOP_FRAME) return 1;
+    *now = after;
+    return 0;
+}
+
+static int interleaved_advance_to(machine_storage *first, machine_storage *second,
+                                 uint64_t target, host_sha256 *first_transcript,
+                                 host_sha256 *second_transcript, uint64_t *first_sequence,
+                                 uint64_t *second_sequence, uint64_t *first_end,
+                                 uint64_t *second_end, uint64_t *first_now,
+                                 uint64_t *second_now)
+{
+    unsigned turn = 0u;
+    if (lynx_guest_ticks(first->machine, first_now) != LYNX_OK ||
+        lynx_guest_ticks(second->machine, second_now) != LYNX_OK ||
+        *first_now != *second_now || target < *first_now) return 1;
+    while (*first_now < target || *second_now < target) {
+        uint64_t *now = turn == 0u ? first_now : second_now;
+        const uint64_t request_limit = turn == 0u ? UINT64_C(60000) : UINT64_C(8191);
+        if (*now < target) {
+            const uint64_t request = target - *now < request_limit ? target - *now : request_limit;
+            if (turn == 0u) {
+                if (interleaved_step(first->machine, request, first_transcript,
+                                     first_sequence, first_end, first_now) != 0) return 1;
+            } else if (interleaved_step(second->machine, request, second_transcript,
+                                        second_sequence, second_end, second_now) != 0) return 1;
+        }
+        turn ^= 1u;
+    }
+    if (*first_now != target || *second_now != target) return 1;
+    {
+        uint8_t first_digest[32], second_digest[32];
+        if (lynx_state_digest(first->machine, first_digest) != LYNX_OK ||
+            lynx_state_digest(second->machine, second_digest) != LYNX_OK ||
+            memcmp(first_digest, second_digest, sizeof first_digest) != 0) return 1;
+    }
+    return 0;
+}
+
+static int verify_interleaved_replay(const uint8_t *bll, size_t bll_len,
+                                     uint32_t profile, const input_timeline *timeline,
+                                     uint64_t finish_tick,
+                                     const uint8_t expected_transcript[32])
+{
+    machine_storage first = {0}, second = {0};
+    lynx_identity first_identity, second_identity;
+    host_sha256 first_transcript, second_transcript;
+    uint64_t first_sequence = UINT64_MAX, second_sequence = UINT64_MAX;
+    uint64_t first_end = 0u, second_end = 0u, first_now = 0u, second_now = 0u;
+    size_t cursor = 0u;
+    uint32_t mask = 0u;
+    int result = 1;
+    host_sha_init(&first_transcript); host_sha_init(&second_transcript);
+    if (create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1,
+                       &first, &first_identity) != 0 ||
+        create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1,
+                       &second, &second_identity) != 0) goto done;
+    if (timeline->count != 0u && timeline->events[0].tick == 0u) {
+        if (lynx_set_input(first.machine, timeline->events[0].mask) != LYNX_OK ||
+            lynx_set_input(second.machine, timeline->events[0].mask) != LYNX_OK) goto done;
+        mask = timeline->events[0].mask; cursor = 1u;
+    }
+    while (cursor < timeline->count) {
+        const input_event *event = &timeline->events[cursor];
+        if (interleaved_advance_to(&first, &second, event->tick,
+                &first_transcript, &second_transcript, &first_sequence, &second_sequence,
+                &first_end, &second_end, &first_now, &second_now) != 0 ||
+            lynx_set_input(first.machine, event->mask) != LYNX_OK ||
+            lynx_set_input(second.machine, event->mask) != LYNX_OK) goto done;
+        mask = event->mask; cursor++;
+        {
+            uint8_t first_digest[32], second_digest[32];
+            if (lynx_state_digest(first.machine, first_digest) != LYNX_OK ||
+                lynx_state_digest(second.machine, second_digest) != LYNX_OK ||
+                memcmp(first_digest, second_digest, sizeof first_digest) != 0) goto done;
+        }
+    }
+    (void)mask;
+    if (interleaved_advance_to(&first, &second, finish_tick,
+            &first_transcript, &second_transcript, &first_sequence, &second_sequence,
+            &first_end, &second_end, &first_now, &second_now) != 0) goto done;
+    {
+        uint8_t first_hash[32], second_hash[32];
+        host_sha_final(&first_transcript, first_hash); host_sha_final(&second_transcript, second_hash);
+        if (memcmp(first_hash, second_hash, sizeof first_hash) != 0 ||
+            memcmp(first_hash, expected_transcript, sizeof first_hash) != 0) goto done;
+    }
+    result = 0;
+done:
+    destroy_machine(&first); destroy_machine(&second);
+    return result;
+}
+
 static int run_frame_consumer(const char *content_path, const char *symbols_path,
                               const char *timeline_path, const char *output_directory,
                               uint32_t profile)
 {
     uint8_t *bll = NULL, *labels = NULL, *timeline_bytes = NULL, script_digest[32];
     size_t bll_len = 0u, labels_len = 0u, timeline_len = 0u, cursor = 0u, frame_count = 0u;
-    uint32_t probe_address = 0u, current_mask = 0u;
+    uint32_t probe_address = 0u, handedness_address = 0u, current_mask = 0u;
+    uint32_t source_handedness = 0u;
     uint64_t previous_sequence = UINT64_MAX, previous_frame_end = 0u, finish_tick, last_tick;
     uint64_t pending_edge_tick = UINT64_MAX;
     uint32_t pending_prior_mask = 0u;
+    host_sha256 active_transcript;
+    uint8_t active_transcript_digest[32];
     char input_hash[65], content_hash[65];
     char *manifest = NULL;
     size_t manifest_len = 0u;
@@ -1579,7 +1806,12 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
     frame_capture frames[FRAME_OUTPUT_LIMIT] = {{0}};
     machine_storage active = {0}, restore_target = {0};
     lynx_identity identity, restore_identity;
-    int checkpoint_test = 0, target_created = 0, result = 1;
+    int checkpoint_test = 0, target_created = 0, interleaved_test = 0, result = 1;
+    host_sha_init(&active_transcript);
+    {
+        const char *requested = getenv("LYNX_TEST_REPLAY_INTERLEAVED");
+        interleaved_test = requested != NULL && strcmp(requested, "1") == 0;
+    }
     if (replay_sha_vectors() != 0) { (void)report_error("independent SHA-256 vectors failed"); goto done; }
     if (read_bounded(timeline_path, TIMELINE_LIMIT, &timeline_bytes, &timeline_len, "input timeline") != 0 ||
         parse_input_timeline(timeline_bytes, timeline_len, &timeline) != 0) {
@@ -1587,8 +1819,8 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
     }
     host_sha_digest(timeline_bytes, timeline_len, script_digest); host_sha_hex(script_digest, input_hash);
     last_tick = timeline.count == 0u ? 0u : timeline.events[timeline.count - 1u].tick;
-    if (last_tick > UINT64_MAX - UINT64_C(65536) - UINT64_C(54273)) finish_tick = last_tick;
-    else finish_tick = last_tick + UINT64_C(54273);
+    if (last_tick > UINT64_MAX - UINT64_C(108545)) finish_tick = last_tick;
+    else finish_tick = last_tick + UINT64_C(108545);
     if (finish_tick < UINT64_C(108545)) finish_tick = UINT64_C(108545);
     {
         char normalized[4096];
@@ -1599,10 +1831,19 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
     if (read_bounded(content_path, BLL_LIMIT, &bll, &bll_len, "BLL content") != 0 || bll_len < 11u ||
         read_bounded(symbols_path, SYMBOL_LIMIT, &labels, &labels_len, "ld65 -Ln symbols") != 0 ||
         parse_named_symbol(labels, labels_len, "probe_result", &probe_address) != 0 ||
-        probe_address > LYNX_ADDRESS_SPACE - 8u) {
+        probe_address > LYNX_ADDRESS_SPACE - 8u ||
+        parse_named_symbol(labels, labels_len, "probe_lefthand", &handedness_address) != 0 ||
+        handedness_address >= LYNX_ADDRESS_SPACE) {
         (void)report_error("input-probe BLL or linked probe_result symbol is invalid; rebuild source with the pinned fixture recipe"); goto done;
     }
     if (create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1, &active, &identity) != 0) goto done;
+    {
+        uint8_t handedness = 0u;
+        if (lynx_read_memory(active.machine, handedness_address, &handedness, 1u) != LYNX_OK || handedness > 1u) {
+            (void)report_error("source-linked input-probe handedness symbol is outside its declared 0/1 range"); goto done;
+        }
+        source_handedness = handedness;
+    }
     encode_hex(identity.content_sha256, content_hash);
     {
         const char *requested = getenv("LYNX_TEST_REPLAY_RESTORE");
@@ -1638,11 +1879,14 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
                     (void)report_error("duplicate or nonmonotone frame sequence/tick stopped replay"); goto done;
                 }
                 previous_sequence = frame.sequence; previous_frame_end = frame.frame_end_tick;
+                replay_transcript_update(&active_transcript, &frame, pens, palettes, ticks);
                 if (frame.row_count == 0u) {
                     if (frame.sequence != 0u) { (void)report_error("only sequence zero may synchronize without rows"); goto done; }
                 } else {
-                    uint8_t guest_result[8], framebuffer_byte = 0u, digest[32];
+                    uint8_t digest[32];
                     frame_capture *capture;
+                    guest_probe sample = {0};
+                    uint32_t handedness = 0u;
                     uint32_t frame_mask = current_mask;
                     if (frame.ticks_consumed == 0u && pending_edge_tick == frame.frame_end_tick) {
                         frame_mask = pending_prior_mask;
@@ -1651,20 +1895,18 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
                         pending_edge_tick = UINT64_MAX;
                     }
                     if (frame_count >= FRAME_OUTPUT_LIMIT || frame.row_count > LYNX_FRAME_MAX_ROWS ||
-                        lynx_read_memory(active.machine, probe_address, guest_result, sizeof guest_result) != LYNX_OK ||
-                        memcmp(guest_result, "LXI5", 4u) != 0 || guest_result[4] != 2u || guest_result[5] > 1u ||
-                        guest_result[5] != ((frame_mask & LYNX_INPUT_A) != 0u ? 1u : 0u) ||
-                        lynx_read_memory(active.machine, 0x4000u, &framebuffer_byte, 1u) != LYNX_OK ||
-                        framebuffer_byte != (guest_result[5] != 0u ? 0x22u : 0x11u)) {
-                        (void)report_error("frame output bound or source-linked input/framebuffer result check failed"); goto done;
+                        replay_guest_observation(active.machine, probe_address, handedness_address,
+                            frame_mask, &handedness, &sample) != 0 || handedness != source_handedness) {
+                        (void)report_error("frame output bound or source-linked joystick/switch/result/pattern assertion failed"); goto done;
                     }
                     capture = &frames[frame_count]; memset(capture, 0, sizeof *capture);
-                    capture->result = frame; capture->input_mask = frame_mask; capture->sampled_a = guest_result[5];
+                    capture->result = frame; capture->input_mask = frame_mask;
+                    capture->sample = sample; capture->handedness = handedness;
                     if (replay_raw_bytes(&frame, pens, palettes, ticks, &capture->raw, &capture->raw_len) != 0) {
                         (void)report_error("raw pen/palette/tick capture failed its exact bounds"); goto done;
                     }
                     host_sha_digest(capture->raw, capture->raw_len, digest); host_sha_hex(digest, capture->raw_sha256);
-                    if (replay_render_ppm(capture, pens, palettes, input_hash) != 0) { (void)report_error("raw frame rendering exceeded its bounded PPM surface"); goto done; }
+                    if (replay_render_ppm(capture, pens, palettes) != 0) { (void)report_error("raw frame rendering exceeded its bounded PPM surface"); goto done; }
                     frame_count++;
                 }
             } else if (frame.stop == LYNX_STOP_BUDGET) {
@@ -1724,8 +1966,11 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
                 if ((previous_sequence != UINT64_MAX && frame.sequence <= previous_sequence) || frame.frame_end_tick != after ||
                     (previous_frame_end != 0u && frame.frame_end_tick <= previous_frame_end)) { (void)report_error("final frame sequence or tick is not monotone"); goto done; }
                 previous_sequence = frame.sequence; previous_frame_end = frame.frame_end_tick;
+                replay_transcript_update(&active_transcript, &frame, pens, palettes, ticks);
                 if (frame.row_count != 0u) {
-                    uint8_t guest_result[8], framebuffer_byte = 0u, digest[32]; frame_capture *capture;
+                    uint8_t digest[32]; frame_capture *capture;
+                    guest_probe sample = {0};
+                    uint32_t handedness = 0u;
                     uint32_t frame_mask = current_mask;
                     if (frame.ticks_consumed == 0u && pending_edge_tick == frame.frame_end_tick) {
                         frame_mask = pending_prior_mask;
@@ -1734,27 +1979,15 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
                         pending_edge_tick = UINT64_MAX;
                     }
                     if (frame_count >= FRAME_OUTPUT_LIMIT || frame.row_count > LYNX_FRAME_MAX_ROWS) { (void)report_error("final frame exceeded the bounded output count or row count"); goto done; }
-                    if (lynx_read_memory(active.machine, probe_address, guest_result, sizeof guest_result) != LYNX_OK ||
-                        memcmp(guest_result, "LXI5", 4u) != 0 || guest_result[4] != 2u || guest_result[5] > 1u) {
-                        (void)report_error("final frame could not read the supported source-linked result schema"); goto done;
-                    }
-                    if (guest_result[5] != ((frame_mask & LYNX_INPUT_A) != 0u ? 1u : 0u)) {
-                        char mismatch[160];
-                        (void)snprintf(mismatch, sizeof mismatch,
-                            "final frame guest A sample %u differs from host mask %u at tick %" PRIu64 " (seq %" PRIu64 ", rows %u)",
-                            (unsigned)guest_result[5], current_mask, frame.frame_end_tick,
-                            frame.sequence, frame.row_count);
-                        (void)report_error(mismatch); goto done;
-                    }
-                    if (lynx_read_memory(active.machine, 0x4000u, &framebuffer_byte, 1u) != LYNX_OK ||
-                        framebuffer_byte != (guest_result[5] != 0u ? 0x22u : 0x11u)) {
-                        (void)report_error("final frame first framebuffer byte differs from its source-linked A sample"); goto done;
+                    if (replay_guest_observation(active.machine, probe_address, handedness_address,
+                            frame_mask, &handedness, &sample) != 0 || handedness != source_handedness) {
+                        (void)report_error("final frame guest joystick/switch sample or source-linked result/pattern is invalid"); goto done;
                     }
                     capture = &frames[frame_count]; memset(capture, 0, sizeof *capture); capture->result = frame;
-                    capture->input_mask = frame_mask; capture->sampled_a = guest_result[5];
+                    capture->input_mask = frame_mask; capture->sample = sample; capture->handedness = handedness;
                     if (replay_raw_bytes(&frame, pens, palettes, ticks, &capture->raw, &capture->raw_len) != 0) { (void)report_error("final raw capture failed bounds"); goto done; }
                     host_sha_digest(capture->raw, capture->raw_len, digest); host_sha_hex(digest, capture->raw_sha256);
-                    if (replay_render_ppm(capture, pens, palettes, input_hash) != 0) { (void)report_error("final raw frame rendering failed bounds"); goto done; }
+                    if (replay_render_ppm(capture, pens, palettes) != 0) { (void)report_error("final raw frame rendering failed bounds"); goto done; }
                     frame_count++;
                 } else if (frame.sequence != 0u) { (void)report_error("unexpected zero-row final frame"); goto done; }
             } else if (frame.stop == LYNX_STOP_BUDGET) {
@@ -1764,21 +1997,34 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
             now = after;
         }
     }
+    host_sha_final(&active_transcript, active_transcript_digest);
+    if (interleaved_test != 0 &&
+        verify_interleaved_replay(bll, bll_len, profile, &timeline, finish_tick,
+                                  active_transcript_digest) != 0) {
+        (void)report_error("interleaved fresh-instance raw frame transcript differs from sequential replay at the common event ticks");
+        goto done;
+    }
     manifest = malloc(FRAME_MANIFEST_CAP);
     if (manifest == NULL) { (void)report_error("cannot allocate bounded replay manifest"); goto done; }
     if (replay_append(manifest, FRAME_MANIFEST_CAP, &manifest_len,
         "artifact = FRAME_TRACE\nprofile = %s\nstartup = A\ntiming_policy = video-policy1-unverified\nbuild_id = %s\n"
-        "content_sha256 = %s\ninput_sha256 = %s\nevent_count = %zu\nfinish_tick = %" PRIu64 "\nframe_count = %zu\n"
+        "fixture_schema = LXI5-v3\nhandedness = %u\ncontent_sha256 = %s\ninput_sha256 = %s\n"
+        "event_count = %zu\nfinish_tick = %" PRIu64 "\nframe_count = %zu\n"
+        "repeatability = test harness compares raw and rendered digests across fresh and interleaved runs\n"
         "raw_pen_order = high nibble first; no host rotation\npalette_policy = per-line GREEN then BLUERED raw nibbles; intra-line color accuracy unverified\n",
-        lynx_profile_name(profile), lynx_build_id(), content_hash, input_hash, timeline.count, finish_tick, frame_count) != 0) {
+        lynx_profile_name(profile), lynx_build_id(), source_handedness, content_hash, input_hash,
+        timeline.count, finish_tick, frame_count) != 0) {
         (void)report_error("replay manifest exceeded its fixed bound"); goto done;
     }
     for (size_t i = 0u; i < frame_count; i++) {
         const lynx_frame_result *f = &frames[i].result;
         if (replay_append(manifest, FRAME_MANIFEST_CAP, &manifest_len,
-            "frame[%zu] = sequence:%" PRIu64 ",start:%" PRIu64 ",end:%" PRIu64 ",rows:%u,flags:%u,mask:%u,sample_a:%u,raw_sha256:%s,rendered_sha256:%s\n",
+            "frame[%zu] = sequence:%" PRIu64 ",start:%" PRIu64 ",end:%" PRIu64 ",rows:%u,flags:%u,mask:%u,sample_a:%u,joy:%u,switches:%u,progress:%u,error:%u,done:%u,handedness:%u,raw_sha256:%s,rendered_sha256:%s\n",
             i, f->sequence, f->frame_start_tick, f->frame_end_tick, f->row_count,
-            f->flags, frames[i].input_mask, frames[i].sampled_a,
+            f->flags, frames[i].input_mask, frames[i].sample.joystick & 1u,
+            frames[i].sample.joystick, frames[i].sample.switches,
+            frames[i].sample.progress, frames[i].sample.error,
+            frames[i].sample.done, frames[i].handedness,
             frames[i].raw_sha256, frames[i].rendered_sha256) != 0) { (void)report_error("frame transcript exceeded its bound"); goto done; }
     }
     if (publish_frame_outputs_generic(output_directory, frames, frame_count, manifest, manifest_len) != 0) goto done;
