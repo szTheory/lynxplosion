@@ -210,7 +210,7 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
 - [x] 04-12-PLAN.md
 
 ### Phase 5: Display, Raw Video and Input
-**Goal**: An original homebrew drives timer-generated frames that the host receives as raw video and that respond to a recorded logical input timeline.
+**Goal**: As a public API host, I want to receive timer-generated raw frames from an original homebrew responding to a recorded logical input timeline, so that I can render and reproduce its input-responsive frames.
 **Mode:** mvp
 **Depends on**: Phase 4
 **Requirements**: VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01 (real-frame consumer slice), EVD-02 (remaining timer agreement), EVD-05 (DMA fault slice)
@@ -226,7 +226,42 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
   5. An original homebrew direct-load image, driven by a recorded input timeline, shows input-responsive frames that the consumer renders. The same recording yields the same raw-frame digest, labelled as repeatability.
 **Owner gates**: O9 before the canonical raw video form is frozen, if the form affects LibFuturo. O1 for any `page-mode` claim.
 **Research flag**: Deeper research needed before planning: DMA burst timing and refresh period and cost (open; do not import another emulator's constants); per-line versus per-frame palette contract; frame-complete definition (Disagreement 10); palette byte order versus LCD latch order.
-**Plans**: TBD
+**Plans**: 0/12 plans executed
+**Wave 1**
+- [ ] 05-01-PLAN.md
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 05-02-PLAN.md
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 05-03-PLAN.md
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 05-04-PLAN.md
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 05-05-PLAN.md
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 05-06-PLAN.md
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 05-07-PLAN.md
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 05-08-PLAN.md
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [ ] 05-09-PLAN.md
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 05-10-PLAN.md
+
+**Wave 11** *(blocked on Wave 10 completion)*
+- [ ] 05-11-PLAN.md
+
+**Wave 12** *(blocked on Wave 11 completion)*
+- [ ] 05-12-PLAN.md
 
 ### Phase 6: Audio and Playable Checkpoint
 **Goal**: The homebrew plays sound in response to input, and progress, input, video and audio line up on one guest-tick timeline. The v1 public-suite inventory and a throughput baseline are recorded.
@@ -269,5 +304,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. CPU Profiles and Per-Opcode Vectors | 11/11 | Complete    | 2026-11-10 |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 9/9 | Complete    | 2026-11-10 |
 | 4. Timers, Interrupts and First Public Suites | 12/12 | Complete    | 2026-11-11 |
-| 5. Display, Raw Video and Input | 0/TBD | Not started | - |
+| 5. Display, Raw Video and Input | 0/12 | Planned     | - |
 | 6. Audio and Playable Checkpoint | 0/TBD | Not started | - |
