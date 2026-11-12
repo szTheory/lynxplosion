@@ -1357,7 +1357,7 @@ static void case_video_paths(char **args)
     instance paths[PATH_COUNT] = {{0}};
     instance blank_restore = {0};
     instance row_restore = {0};
-    video_packet packets[PATH_COUNT] = {{0}};
+    video_packet packets[PATH_COUNT] = {0};
     video_packet blank_packet = {0};
     video_packet row_packet = {0};
     uint64_t sync_ticks[PATH_COUNT] = {0};

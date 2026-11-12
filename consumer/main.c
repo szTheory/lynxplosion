@@ -825,10 +825,10 @@ static int destination_is_absent(const char *directory)
     return 0;
 }
 
-static int frame_input_paths_are_distinct(const char *content, const char *symbols,
+static int frame_input_paths_are_distinct(const char *content, const char *symbols_path,
                                           const char *timeline)
 {
-    const char *paths[3] = {content, symbols, timeline};
+    const char *paths[3] = {content, symbols_path, timeline};
     struct stat info[3];
     int have[3] = {0, 0, 0};
     for (size_t index = 0u; index < 3u; index++)
@@ -1974,7 +1974,7 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
     char *manifest = NULL;
     size_t manifest_len = 0u;
     input_timeline timeline = {0};
-    frame_capture frames[FRAME_OUTPUT_LIMIT] = {{0}};
+    frame_capture frames[FRAME_OUTPUT_LIMIT] = {0};
     machine_storage active = {0}, restore_target = {0};
     lynx_identity identity, restore_identity;
     int checkpoint_test = 0, target_created = 0, interleaved_test = 0, result = 1;
