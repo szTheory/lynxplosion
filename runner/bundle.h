@@ -1,9 +1,9 @@
 /* Artifact bundle writer for the headless runner (host side only).
 
    A bundle is a directory of text files: run.manifest, obs.ram.hex,
-   obs.regs.hex, obs.time.hex and digests.txt. Nothing in it carries a
-   timestamp, host name, path, wall time, flag or pointer value, so two runs of
-   the same build with the same inputs write the same bytes.
+   obs.regs.hex, obs.state.hex, obs.time.hex and digests.txt. Nothing in it
+   carries a timestamp, host name, path, wall time, flag or pointer value, so
+   two runs of the same build with the same inputs write the same bytes.
 
    Every digest here measures repeatability (R), not accuracy. */
 #ifndef LYNX_RUNNER_BUNDLE_H

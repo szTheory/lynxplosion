@@ -380,6 +380,16 @@ typedef struct lynx_identity {
    on success. */
 lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out);
 
+/* Read-only SHA-256 of canonical guest state. The 32-byte result is stable for
+   identical guest state and excludes immutable machine identity, struct
+   padding, derived CPU requests, host watches and replay scripts. Its
+   versioned order is CPU state, MAPCTL/page latch, guest time/readiness, RAM,
+   timer records/current-tick event bit, bus hold, then video/input/capture.
+   NULL arguments or an output span that wraps or overlaps the machine return
+   ARGUMENT; an uninitialised machine returns STATE. Refusal writes no output
+   bytes. Calls on one instance must be caller-serialized. */
+lynx_status lynx_state_digest(const lynx_machine *m, uint8_t out[32]);
+
 /* Identity of this core build, as a NUL-terminated string of the form
    "git=<rev>[+dirty] cc=<id>-<version> sys=<name>-<processor>" (git=nogit
    when the build had no git checkout). Fixed at configure time, shorter than

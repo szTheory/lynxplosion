@@ -6,7 +6,7 @@
 #
 # Workload (fixture fixtures/cpu/churn-loop.hex, content SHA-256
 # dcee7216a88ff2ffaf3e4a2794c3369676fc47493d710f26cd8bbadd19745b77, the 65C02
-# CPU under profile none, cost model flat5 (PLACEHOLDER ticks)):
+# CPU under profile none, cost model flat5 (4096-tick run):
 #   RAM policy splitmix64, seed 0x0123456789abcdef, load address 0x0200,
 #   empty input timeline, tick budget 4096, stop reason budget. The run ends
 #   inside PLA of the sixteenth loop iteration (70 + 15 * 255 + 201 ticks):
@@ -20,4 +20,9 @@
 # a timing refinement of the cost model), after the CPU vectors and the
 # hand-derived program checks are green, and give the reason in the commit
 # message.
-b8bc5a908a4c00be6bb1fc0d5fc8093740b6323ac5fce0cda683ce4e1bad233f
+# Phase 5 expands the observation schema with obs.state.hex, SHA-256 of the
+# public fieldwise guest-state digest. This intentionally changes the oracle
+# while leaving the workload, CPU, RAM, and time observations unchanged; the
+# new API input sensitivity and det.video_sensitivity prove the added stream
+# is nonvacuous.
+b2609348b6a450ba51bb77142461e32552e824dc08423d0c60966145f9464227

@@ -269,6 +269,86 @@ static void video_snapshot_write(uint8_t *out, const lynx__video_state *video)
     for (size_t i = 0u; i < LYNX__VIDEO_CAPTURE_TICKS; i++) put_u64(ticks + i * 8u, video->line_ticks[i]);
 }
 
+/* Stable guest-state digest encoding. This deliberately shares the snapshot's
+   fieldwise video encoder, but excludes the snapshot header, build/content
+   identity and historical timer cursor timestamp. Order: domain/version,
+   CPU registers/latches, MAPCTL and page latch, guest tick/readiness, all RAM,
+   timer records and current-tick event bit, bus hold, then the canonical video
+   record. Struct padding, derived CPU requests/wake state and host observations
+   never enter the hash. */
+static void guest_state_digest_bytes(const lynx_machine *m, uint8_t out[32])
+{
+    static const uint8_t domain[] = "lynxplosion.guest-state.v1";
+    uint8_t cpu[13];
+    uint8_t timer_records[LYNX__TIMER_COUNT * 4u + 4u];
+    uint8_t video[LYNX__VIDEO_SNAPSHOT_LEN];
+    uint8_t digest[32];
+    lynx__sha256 hash;
+
+    put_u16(cpu, m->cpu.pc);
+    cpu[2] = m->cpu.a;
+    cpu[3] = m->cpu.x;
+    cpu[4] = m->cpu.y;
+    cpu[5] = m->cpu.s;
+    cpu[6] = (uint8_t)(m->cpu.p | 0x30u);
+    cpu[7] = m->cpu.flags;
+    cpu[8] = m->cpu.opcode;
+    cpu[9] = m->cpu.step;
+    put_u16(cpu + 10, m->cpu.ea);
+    cpu[12] = m->cpu.tmp;
+
+    for (uint8_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
+        const lynx__timer *timer = &m->timer_bank.timers[i];
+        uint8_t *record = timer_records + (size_t)i * 4u;
+        record[0] = timer->backup;
+        record[1] = timer->count;
+        record[2] = timer->control_a;
+        record[3] = timer->control_b;
+    }
+    timer_records[LYNX__TIMER_COUNT * 4u] = m->timer_bank.pending;
+    timer_records[LYNX__TIMER_COUNT * 4u + 1u] = m->timer_bank.phase_policy;
+    timer_records[LYNX__TIMER_COUNT * 4u + 2u] =
+        (uint8_t)(m->timer_bank.last_event_valid == 1u &&
+                  m->timer_bank.last_event_tick == m->guest_ticks &&
+                  timer_edge_due_now(&m->timer_bank, m->guest_ticks));
+    timer_records[LYNX__TIMER_COUNT * 4u + 3u] = m->bus_hold;
+    video_snapshot_write(video, &m->video);
+
+    lynx__sha256_init(&hash);
+    lynx__sha256_update(&hash, domain, sizeof domain);
+    lynx__sha256_update(&hash, cpu, sizeof cpu);
+    lynx__sha256_update(&hash, &m->mapctl, sizeof m->mapctl);
+    lynx__sha256_update(&hash, &m->cpu_page_latch, sizeof m->cpu_page_latch);
+    uint8_t clock[16];
+    put_u64(clock, m->guest_ticks);
+    put_u64(clock + 8, m->cpu_ready_at);
+    lynx__sha256_update(&hash, clock, sizeof clock);
+    lynx__sha256_update(&hash, m->ram, sizeof m->ram);
+    lynx__sha256_update(&hash, timer_records, sizeof timer_records);
+    lynx__sha256_update(&hash, video, sizeof video);
+    lynx__sha256_final(&hash, digest);
+    memcpy(out, digest, sizeof digest);
+}
+
+lynx_status lynx_state_digest(const lynx_machine *m, uint8_t out[32])
+{
+    uint8_t digest[32];
+    const uintptr_t out_addr = (uintptr_t)out;
+    if (m == NULL || out == NULL) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (!machine_ok(m)) {
+        return LYNX_ERR_STATE;
+    }
+    if (out_addr > UINTPTR_MAX - 31u ||
+        !ranges_disjoint(out, 32u, m, sizeof *m)) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    guest_state_digest_bytes(m, digest);
+    memcpy(out, digest, sizeof digest);
+    return LYNX_OK;
+}
+
 static void video_snapshot_read(lynx__video_state *video, const uint8_t *in)
 {
     memset(video, 0, sizeof *video);

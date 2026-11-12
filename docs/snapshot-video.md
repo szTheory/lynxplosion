@@ -82,3 +82,43 @@ hardware accuracy.
 The focused restore and refusal checks are registered as
 `api.video_snapshot` and `api.video_snapshot_refusal`, beside the existing
 snapshot and timer controls.
+
+## Canonical guest-state digest
+
+`lynx_state_digest` returns 32 SHA-256 bytes for an initialized instance,
+including one that has not loaded content. Its versioned stream is encoded in
+this order: the NUL-terminated tag `lynxplosion.guest-state.v1`; CPU PC as
+little-endian `u16`, A/X/Y/S, P with reserved bits set, flags/opcode/step, EA as
+little-endian `u16`, and TMP; MAPCTL and CPU page latch as bytes; guest ticks
+and CPU-ready tick as little-endian `u64`; all 65,536 RAM bytes; eight timer
+records (backup/count/CTLA/CTLB), pending bits, timer phase policy, the
+current-tick event-applied bit, and bus hold as bytes; then the complete
+fieldwise video record above. Video scalars follow its documented widths and
+little-endian rules. The timer event bit is derived from the current tick; an
+older cursor timestamp is deliberately omitted. The stream contains no C
+structure padding, immutable machine identity (profile, RAM policy/seed,
+content or build), snapshot header, derived CPU request/wake state, host watch
+state, caller pointers, or replay data. Refused calls leave all 32 output bytes
+unchanged; the output span must not wrap or overlap the machine.
+
+The runner writes those 32 public digest bytes as 64 lowercase hex digits in
+`obs.state.hex`; its `digests.txt` entry is SHA-256 of the decoded 32 bytes.
+The observation digest now covers that entry in addition to RAM, public
+registers and time. This changes the observation schema and the CPU-loop
+golden: the added state digest makes input, timer, bus and video state visible
+even when RAM/register/time projections agree. This is repeatability evidence,
+not hardware-accuracy evidence.
+
+Input event scripts and replay cursors remain host-owned. A host checkpoint
+taken at tick `T` before applying event `T` is pre-edge and resumes with the
+first event whose tick is at least `T`. A checkpoint taken after applying the
+event at `T` is post-edge and resumes with the first event strictly after `T`.
+The core has no replay cursor or checkpoint wrapper. Any host checkpoint
+wrapper must carry that phase marker and the complete script digest; the core
+snapshot stores only the current logical input mask. Applying an event and
+taking a checkpoint must be ordered consistently with the chosen marker.
+
+The digest sensitivity target is `det.video_sensitivity`; cross-path raw frame,
+progress and input comparisons are in `det.video_paths`. The public API and
+standalone-header contract are checked by `api.state_digest` and
+`api.header_selfcontained`.

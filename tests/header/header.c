@@ -58,6 +58,8 @@ static lynx_status (*const read_cpu_memory_fn)(const lynx_machine *, uint32_t, u
 static lynx_status (*const guest_ticks_fn)(const lynx_machine *, uint64_t *) = lynx_guest_ticks;
 static lynx_status (*const get_identity_fn)(const lynx_machine *,
                                             lynx_identity *) = lynx_get_identity;
+static lynx_status (*const state_digest_fn)(const lynx_machine *, uint8_t[32]) =
+    lynx_state_digest;
 static const char *(*const build_id_fn)(void) = lynx_build_id;
 static lynx_status (*const snapshot_size_fn)(const lynx_machine *, size_t *) = lynx_snapshot_size;
 static lynx_status (*const snapshot_save_fn)(const lynx_machine *, uint8_t *, size_t,
@@ -88,6 +90,7 @@ int main(void)
     (void)read_cpu_memory_fn;
     (void)guest_ticks_fn;
     (void)get_identity_fn;
+    (void)state_digest_fn;
     (void)build_id_fn;
     (void)snapshot_size_fn;
     (void)snapshot_save_fn;

@@ -7591,14 +7591,59 @@ static void case_state_digest(void)
     if (a == NULL || b == NULL) goto done;
 
     CHECK_EQ_U64(lynx_set_input(a, 0u), LYNX_OK);
-    CHECK_EQ_U64(lynx_set_input(b, LYNX_INPUT_A), LYNX_OK);
+    CHECK_EQ_U64(lynx_set_input(b, 0u), LYNX_OK);
+    uint8_t state_a[32];
+    uint8_t state_b[32];
+    memset(state_a, 0xA5, sizeof state_a);
+    memset(state_b, 0x5A, sizeof state_b);
+    CHECK_EQ_U64(lynx_state_digest(a, state_a), LYNX_OK);
+    CHECK_EQ_U64(lynx_state_digest(b, state_b), LYNX_OK);
+    CHECK_NAMED(memcmp(state_a, state_b, sizeof state_a) == 0,
+                "state_digest.equal-initial-state-agrees");
+
+    CHECK_EQ_U64(lynx_watch_configure(b, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_state_digest(b, state_b), LYNX_OK);
+    CHECK_NAMED(memcmp(state_a, state_b, sizeof state_a) == 0,
+                "state_digest.host-watch-excluded");
+
     const bundle_run run = {"input-sensitivity", 0u, 0u, LYNX_STOP_BUDGET};
     char digest_a[65] = {0};
     char digest_b[65] = {0};
     CHECK_EQ_U64(bundle_observe(a, &run, digest_a), 0u);
     CHECK_EQ_U64(bundle_observe(b, &run, digest_b), 0u);
+    CHECK_NAMED(strcmp(digest_a, digest_b) == 0,
+                "state_digest.host-watch-excluded-from-runner-observation");
+
+    CHECK_EQ_U64(lynx_set_input(b, LYNX_INPUT_A), LYNX_OK);
+    CHECK_EQ_U64(lynx_state_digest(b, state_b), LYNX_OK);
+    CHECK_NAMED(memcmp(state_a, state_b, sizeof state_a) != 0,
+                "state_digest.input-changes-canonical-digest");
+    CHECK_EQ_U64(bundle_observe(a, &run, digest_a), 0u);
+    CHECK_EQ_U64(bundle_observe(b, &run, digest_b), 0u);
     CHECK_NAMED(memcmp(digest_a, digest_b, 64u) != 0,
-                "state_digest.input-changes-observation");
+                "state_digest.input-changes-runner-observation");
+
+    unsigned char before[sizeof(struct lynx_machine)];
+    uint8_t output_canary[32];
+    memcpy(before, a, sizeof before);
+    memset(output_canary, 0xC3, sizeof output_canary);
+    memset(state_b, 0xC3, sizeof state_b);
+    CHECK_EQ_U64(lynx_state_digest(a, NULL), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_state_digest(NULL, state_b), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_state_digest(a, (uint8_t *)a), LYNX_ERR_ARGUMENT);
+    CHECK_EQ_U64(lynx_state_digest(a,
+                                  (uint8_t *)(uintptr_t)(UINTPTR_MAX - 15u)),
+                 LYNX_ERR_ARGUMENT);
+    CHECK_NAMED(memcmp(state_b, output_canary, sizeof state_b) == 0,
+                "state_digest.refusals-preserve-output");
+    CHECK_NAMED(memcmp(before, a, sizeof before) == 0,
+                "state_digest.refusals-preserve-machine");
+
+    lynx_machine_deinit(a);
+    CHECK_EQ_U64(lynx_state_digest(a, state_b), LYNX_ERR_STATE);
+    CHECK_NAMED(memcmp(state_b, output_canary, sizeof state_b) == 0,
+                "state_digest.uninitialised-preserves-output");
+    a = NULL;
 
 done:
     if (a != NULL) lynx_machine_deinit(a);

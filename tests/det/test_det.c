@@ -23,9 +23,16 @@
 #define CHUNK 512u
 #define CHUNKS 8u
 #define BUDGET (CHUNK * CHUNKS)
+#define CHECK_NAMED(cond, name)                                                                     \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            fprintf(stderr, "ASSERT %s failed\n", (name));                                     \
+            check_failures++;                                                                      \
+        }                                                                                          \
+    } while (0)
 
-static const char *const bundle_files[] = {"obs.ram.hex", "obs.regs.hex", "obs.time.hex",
-                                           "run.manifest", "digests.txt"};
+static const char *const bundle_files[] = {"obs.ram.hex", "obs.regs.hex", "obs.state.hex",
+                                           "obs.time.hex", "run.manifest", "digests.txt"};
 
 /* Reads the digest from the last non-comment, non-empty line of the golden. */
 static int read_golden(const char *path, char out[65])
@@ -1139,6 +1146,428 @@ profile_cleanup:
     }
 }
 
+typedef struct video_packet {
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_frame_result result;
+    uint64_t total_ticks;
+    unsigned empty_frames;
+    unsigned watch_hits;
+    int complete;
+} video_packet;
+
+static size_t make_video_guest(uint8_t *program)
+{
+    size_t n = 0u;
+    program[n++] = 0xA9u; program[n++] = 0x0Cu; /* MAPCTL: expose devices */
+    program[n++] = 0x8Du; program[n++] = 0xF9u; program[n++] = 0xFFu;
+    program[n++] = 0xA9u; program[n++] = 0x01u; /* enable video DMA */
+    program[n++] = 0x8Du; program[n++] = 0x92u; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = 0x00u;
+    program[n++] = 0x8Du; program[n++] = 0x94u; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = 0x04u;
+    program[n++] = 0x8Du; program[n++] = 0x95u; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = 0x00u; /* right-hand orientation */
+    program[n++] = 0x8Du; program[n++] = 0x92u; program[n++] = 0xFCu;
+    program[n++] = 0xA9u; program[n++] = 0x1Fu; /* Timer 0 reload/count */
+    program[n++] = 0x8Du; program[n++] = 0x00u; program[n++] = 0xFDu;
+    program[n++] = 0x8Du; program[n++] = 0x02u; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = 0x68u; /* Timer 2 reload/count */
+    program[n++] = 0x8Du; program[n++] = 0x08u; program[n++] = 0xFDu;
+    program[n++] = 0x8Du; program[n++] = 0x0Au; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = 0x1Fu; /* Timer 2 linked mode */
+    program[n++] = 0x8Du; program[n++] = 0x09u; program[n++] = 0xFDu;
+    program[n++] = 0xA9u; program[n++] = 0x18u; /* start Timer 0 last */
+    program[n++] = 0x8Du; program[n++] = 0x01u; program[n++] = 0xFDu;
+    const uint16_t loop = (uint16_t)(LOAD_ADDR + (uint16_t)n);
+    program[n++] = 0xADu; program[n++] = 0xB0u; program[n++] = 0xFCu;
+    program[n++] = 0x8Du; program[n++] = 0x00u; program[n++] = 0x04u;
+    program[n++] = 0x4Cu;
+    program[n++] = (uint8_t)loop;
+    program[n++] = (uint8_t)(loop >> 8);
+    return n;
+}
+
+static int video_instance_make(instance *in, uint32_t input_mask)
+{
+    lynx_config cfg;
+    uint8_t program[128];
+    uint8_t object[sizeof program + 10u];
+    const size_t payload_len = make_video_guest(program);
+    const size_t object_len = payload_len + 10u;
+
+    lynx_config_default(&cfg);
+    cfg.profile = LYNX_PROFILE_NONE;
+    cfg.ram_policy = LYNX_RAM_POLICY_ZERO;
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    memset(in, 0, sizeof *in);
+    in->all_budget_stops = 1;
+    in->mem = malloc(lynx_machine_size());
+    if (in->mem == NULL || (uintptr_t)in->mem % lynx_machine_align() != 0u) return 1;
+    if (lynx_machine_init(in->mem, lynx_machine_size(), &cfg, &in->m) != LYNX_OK) return 1;
+
+    object[0] = 0x80u;
+    object[1] = 0x08u;
+    object[2] = (uint8_t)(LOAD_ADDR >> 8);
+    object[3] = (uint8_t)LOAD_ADDR;
+    object[4] = (uint8_t)(object_len >> 8);
+    object[5] = (uint8_t)object_len;
+    object[6] = 'B'; object[7] = 'S'; object[8] = '9'; object[9] = '3';
+    memcpy(object + 10u, program, payload_len);
+    if (lynx_load_bll(in->m, object, object_len) != LYNX_OK ||
+        lynx_set_input(in->m, input_mask) != LYNX_OK) {
+        lynx_machine_deinit(in->m);
+        free(in->mem);
+        memset(in, 0, sizeof *in);
+        return 1;
+    }
+    return 0;
+}
+
+static void frame_buffers_init(lynx_frame_buffers *buffers, video_packet *packet)
+{
+    memset(buffers, 0, sizeof *buffers);
+    buffers->struct_size = (uint32_t)sizeof *buffers;
+    buffers->pens = packet->pens;
+    buffers->pens_capacity = sizeof packet->pens;
+    buffers->palettes = packet->palettes;
+    buffers->palettes_capacity = sizeof packet->palettes;
+    buffers->line_ticks = packet->line_ticks;
+    buffers->line_ticks_capacity = sizeof packet->line_ticks / sizeof packet->line_ticks[0];
+}
+
+static void video_first_sync(instance *in, uint64_t *tick)
+{
+    video_packet packet = {0};
+    lynx_frame_buffers buffers;
+    frame_buffers_init(&buffers, &packet);
+    packet.result.struct_size = (uint32_t)sizeof packet.result;
+    CHECK_EQ_U64(lynx_advance_frame(in->m, UINT64_C(1000000), &buffers,
+                                   &packet.result), LYNX_OK);
+    if (packet.result.stop != LYNX_STOP_FRAME) {
+        fprintf(stderr, "video_first_sync: stop=%u tick=%llu request=$%04x kind=%u\n",
+                packet.result.stop, (unsigned long long)in->m->guest_ticks,
+                in->m->cpu.req_addr, in->m->cpu.req_kind);
+    }
+    CHECK_EQ_U64(packet.result.stop, LYNX_STOP_FRAME);
+    CHECK_EQ_U64(packet.result.sequence, 0u);
+    CHECK_EQ_U64(packet.result.row_count, 0u);
+    CHECK_EQ_U64(lynx_guest_ticks(in->m, tick), LYNX_OK);
+    CHECK_EQ_U64(*tick, packet.result.frame_end_tick);
+}
+
+static void video_advance_exact(instance *in, uint64_t ticks, int sliced)
+{
+    static const uint64_t pieces[] = {1u, 17u, 257u, 5u, 61u, 509u, 3u};
+    uint64_t remaining = ticks;
+    size_t piece = 0u;
+    while (remaining != 0u) {
+        uint64_t budget = sliced ? pieces[piece++ % (sizeof pieces / sizeof pieces[0])] : remaining;
+        if (budget > remaining) budget = remaining;
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_HALT;
+        CHECK_EQ_U64(lynx_advance(in->m, budget, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, budget);
+        if (consumed == 0u || consumed > remaining) return;
+        remaining -= consumed;
+    }
+}
+
+static void video_frame_step(instance *in, video_packet *packet, uint64_t budget,
+                             int watched)
+{
+    lynx_frame_buffers buffers;
+    frame_buffers_init(&buffers, packet);
+    memset(&packet->result, 0, sizeof packet->result);
+    packet->result.struct_size = (uint32_t)sizeof packet->result;
+    CHECK_EQ_U64(lynx_advance_frame(in->m, budget, &buffers, &packet->result), LYNX_OK);
+    packet->total_ticks += packet->result.ticks_consumed;
+    if (packet->result.stop == LYNX_STOP_WATCH) {
+        lynx_watch_event event;
+        CHECK(watched);
+        CHECK_EQ_U64(lynx_watch_get(in->m, &event), LYNX_OK);
+        CHECK_EQ_U64(event.hit, 1u);
+        CHECK_EQ_U64(event.address, 0x0400u);
+        packet->watch_hits++;
+        if (packet->watch_hits < 4u) {
+            CHECK_EQ_U64(lynx_watch_configure(in->m, 0x0400u, 1u), LYNX_OK);
+        } else {
+            CHECK_EQ_U64(lynx_watch_clear(in->m), LYNX_OK);
+        }
+    } else if (packet->result.stop == LYNX_STOP_FRAME && packet->result.row_count == 0u) {
+        packet->empty_frames++;
+    } else if (packet->result.stop == LYNX_STOP_FRAME) {
+        packet->complete = 1;
+    } else {
+        CHECK(packet->result.stop == LYNX_STOP_BUDGET);
+    }
+}
+
+static void video_collect_frame(instance *in, video_packet *packet, int sliced, int watched)
+{
+    static const uint64_t pieces[] = {1u, 13u, 255u, 7u, 509u, 31u, 1021u};
+    memset(packet, 0, sizeof *packet);
+    for (size_t i = 0u; i < 10000u && !packet->complete; i++) {
+        const uint64_t budget = watched ? UINT64_C(1000000) :
+            (sliced ? pieces[i % (sizeof pieces / sizeof pieces[0])] : UINT64_C(1000000));
+        video_frame_step(in, packet, budget, watched);
+    }
+    CHECK(packet->complete);
+    if (watched) CHECK(packet->watch_hits >= 4u);
+}
+
+static int video_packet_equal(const video_packet *a, const video_packet *b)
+{
+    return a->result.stop == LYNX_STOP_FRAME && b->result.stop == LYNX_STOP_FRAME &&
+           a->result.frame_start_tick == b->result.frame_start_tick &&
+           a->result.frame_end_tick == b->result.frame_end_tick &&
+           a->result.sequence == b->result.sequence &&
+           a->result.row_count == b->result.row_count && a->result.flags == b->result.flags &&
+           memcmp(a->pens, b->pens, sizeof a->pens) == 0 &&
+           memcmp(a->palettes, b->palettes, sizeof a->palettes) == 0 &&
+           memcmp(a->line_ticks, b->line_ticks, sizeof a->line_ticks) == 0;
+}
+
+static void check_video_common_state(const char *name, const lynx_machine *a,
+                                     const lynx_machine *b)
+{
+    uint64_t ticks_a = 0u;
+    uint64_t ticks_b = 0u;
+    uint8_t sample_a = 0u;
+    uint8_t sample_b = 0u;
+    uint8_t digest_a[32];
+    uint8_t digest_b[32];
+    CHECK_EQ_U64(lynx_guest_ticks(a, &ticks_a), LYNX_OK);
+    CHECK_EQ_U64(lynx_guest_ticks(b, &ticks_b), LYNX_OK);
+    CHECK_NAMED(ticks_a == ticks_b, name);
+    CHECK_EQ_U64(lynx_read_memory(a, 0x0400u, &sample_a, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_memory(b, 0x0400u, &sample_b, 1u), LYNX_OK);
+    CHECK_NAMED(sample_a == sample_b, name);
+    CHECK_EQ_U64(lynx_state_digest(a, digest_a), LYNX_OK);
+    CHECK_EQ_U64(lynx_state_digest(b, digest_b), LYNX_OK);
+    CHECK_NAMED(memcmp(digest_a, digest_b, sizeof digest_a) == 0, name);
+}
+
+static void case_video_paths(char **args)
+{
+    (void)args;
+    enum { PLAIN, SLICED, WATCHED, BLANK_SOURCE, ROW_SOURCE, PATH_COUNT };
+    instance paths[PATH_COUNT] = {{0}};
+    instance blank_restore = {0};
+    instance row_restore = {0};
+    video_packet packets[PATH_COUNT] = {{0}};
+    video_packet blank_packet = {0};
+    video_packet row_packet = {0};
+    uint64_t sync_ticks[PATH_COUNT] = {0};
+    const uint64_t line_ticks = 512u;
+    uint8_t *snapshot = NULL;
+    size_t snapshot_size = 0u;
+
+    for (size_t i = 0u; i < PATH_COUNT; i++) {
+        CHECK_EQ_U64(video_instance_make(&paths[i], 0u), 0u);
+        if (paths[i].m == NULL) goto done;
+        video_first_sync(&paths[i], &sync_ticks[i]);
+        if (i != 0u) CHECK_NAMED(sync_ticks[i] == sync_ticks[PLAIN], "video_paths.common-first-sync");
+        CHECK_EQ_U64(lynx_set_input(paths[i].m, LYNX_INPUT_A), LYNX_OK);
+    }
+    CHECK_EQ_U64(video_instance_make(&blank_restore, 0u), 0u);
+    CHECK_EQ_U64(video_instance_make(&row_restore, 0u), 0u);
+    if (blank_restore.m == NULL || row_restore.m == NULL) goto done;
+    CHECK_EQ_U64(lynx_watch_configure(paths[WATCHED].m, 0x0400u, 1u), LYNX_OK);
+
+    video_collect_frame(&paths[PLAIN], &packets[PLAIN], 0, 0);
+    video_collect_frame(&paths[SLICED], &packets[SLICED], 1, 0);
+    video_collect_frame(&paths[WATCHED], &packets[WATCHED], 0, 1);
+
+    /* Save after two blank lines and halfway through the first visible row. */
+    video_advance_exact(&paths[BLANK_SOURCE], 2u * line_ticks + 257u, 0);
+    CHECK_EQ_U64(lynx_snapshot_size(paths[BLANK_SOURCE].m, &snapshot_size), LYNX_OK);
+    snapshot = malloc(snapshot_size);
+    CHECK(snapshot != NULL);
+    if (snapshot != NULL) {
+        size_t written = 0u;
+        CHECK_EQ_U64(lynx_snapshot_save(paths[BLANK_SOURCE].m, snapshot,
+                                        snapshot_size, &written), LYNX_OK);
+        CHECK_EQ_U64(written, snapshot_size);
+        CHECK_EQ_U64(lynx_snapshot_restore(blank_restore.m, snapshot, snapshot_size), LYNX_OK);
+        check_video_common_state("video_paths.mid-blank-restore-state",
+                                 paths[BLANK_SOURCE].m, blank_restore.m);
+    }
+    free(snapshot);
+    snapshot = NULL;
+
+    video_advance_exact(&paths[ROW_SOURCE], 3u * line_ticks + 257u, 1);
+    CHECK_EQ_U64(lynx_snapshot_size(paths[ROW_SOURCE].m, &snapshot_size), LYNX_OK);
+    snapshot = malloc(snapshot_size);
+    CHECK(snapshot != NULL);
+    if (snapshot != NULL) {
+        size_t written = 0u;
+        CHECK_EQ_U64(lynx_snapshot_save(paths[ROW_SOURCE].m, snapshot,
+                                        snapshot_size, &written), LYNX_OK);
+        CHECK_EQ_U64(written, snapshot_size);
+        CHECK_EQ_U64(lynx_snapshot_restore(row_restore.m, snapshot, snapshot_size), LYNX_OK);
+        check_video_common_state("video_paths.mid-row-restore-state",
+                                 paths[ROW_SOURCE].m, row_restore.m);
+    }
+    free(snapshot);
+    snapshot = NULL;
+
+    video_collect_frame(&paths[BLANK_SOURCE], &packets[BLANK_SOURCE], 0, 0);
+    video_collect_frame(&blank_restore, &blank_packet, 1, 0);
+    video_collect_frame(&paths[ROW_SOURCE], &packets[ROW_SOURCE], 0, 0);
+    video_collect_frame(&row_restore, &row_packet, 1, 0);
+
+    for (size_t i = 1u; i < PATH_COUNT; i++) {
+        CHECK_NAMED(video_packet_equal(&packets[PLAIN], &packets[i]),
+                    "video_paths.complete-packet-equality");
+        check_video_common_state("video_paths.guest-progress-input-and-digest",
+                                 paths[PLAIN].m, paths[i].m);
+    }
+    CHECK_NAMED(video_packet_equal(&packets[PLAIN], &blank_packet),
+                "video_paths.mid-blank-restored-packet");
+    CHECK_NAMED(video_packet_equal(&packets[PLAIN], &row_packet),
+                "video_paths.mid-row-restored-packet");
+    check_video_common_state("video_paths.mid-blank-restored-final-state",
+                             paths[PLAIN].m, blank_restore.m);
+    check_video_common_state("video_paths.mid-row-restored-final-state",
+                             paths[PLAIN].m, row_restore.m);
+
+    /* Interleave distinct input streams and frame buffers. The guest writes
+       the sampled joystick byte to the display's first byte and to RAM. */
+    instance input_a = {0}, input_none = {0};
+    instance ref_a = {0}, ref_none = {0};
+    video_packet a_interleaved = {0}, none_interleaved = {0};
+    video_packet a_reference = {0}, none_reference = {0};
+    CHECK_EQ_U64(video_instance_make(&input_a, LYNX_INPUT_A), 0u);
+    CHECK_EQ_U64(video_instance_make(&input_none, 0u), 0u);
+    CHECK_EQ_U64(video_instance_make(&ref_a, LYNX_INPUT_A), 0u);
+    CHECK_EQ_U64(video_instance_make(&ref_none, 0u), 0u);
+    if (input_a.m != NULL && input_none.m != NULL && ref_a.m != NULL && ref_none.m != NULL) {
+        uint64_t unused = 0u;
+        video_first_sync(&input_a, &unused);
+        video_first_sync(&input_none, &unused);
+        video_first_sync(&ref_a, &unused);
+        video_first_sync(&ref_none, &unused);
+        video_collect_frame(&ref_a, &a_reference, 0, 0);
+        video_collect_frame(&ref_none, &none_reference, 0, 0);
+        memset(&a_interleaved, 0, sizeof a_interleaved);
+        memset(&none_interleaved, 0, sizeof none_interleaved);
+        for (size_t i = 0u; i < 10000u &&
+             (!a_interleaved.complete || !none_interleaved.complete); i++) {
+            if (!a_interleaved.complete)
+                video_frame_step(&input_a, &a_interleaved, 257u, 0);
+            if (!none_interleaved.complete)
+                video_frame_step(&input_none, &none_interleaved, 61u, 0);
+        }
+        CHECK(a_interleaved.complete && none_interleaved.complete);
+        CHECK_NAMED(video_packet_equal(&a_reference, &a_interleaved),
+                    "video_paths.interleaved-action-frame-buffer");
+        CHECK_NAMED(video_packet_equal(&none_reference, &none_interleaved),
+                    "video_paths.interleaved-empty-frame-buffer");
+        CHECK_NAMED(!video_packet_equal(&a_reference, &none_reference),
+                    "video_paths.input-responsive-raw-pens");
+        uint8_t sample_a = 0u, sample_none = 0u;
+        CHECK_EQ_U64(lynx_read_memory(input_a.m, 0x0400u, &sample_a, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_read_memory(input_none.m, 0x0400u, &sample_none, 1u), LYNX_OK);
+        CHECK_NAMED(sample_a != sample_none, "video_paths.separate-input-samples");
+        check_video_common_state("video_paths.interleaved-action-final-state",
+                                 ref_a.m, input_a.m);
+        check_video_common_state("video_paths.interleaved-empty-final-state",
+                                 ref_none.m, input_none.m);
+    }
+    if (input_a.m != NULL) lynx_machine_deinit(input_a.m);
+    if (input_none.m != NULL) lynx_machine_deinit(input_none.m);
+    if (ref_a.m != NULL) lynx_machine_deinit(ref_a.m);
+    if (ref_none.m != NULL) lynx_machine_deinit(ref_none.m);
+    free(input_a.mem); free(input_none.mem); free(ref_a.mem); free(ref_none.mem);
+
+    printf("video_paths: sync=%llu rows=%u paths=unsliced,sliced,watched,mid-blank,mid-row interleaved-inputs=2\n",
+           (unsigned long long)sync_ticks[PLAIN], packets[PLAIN].result.row_count);
+done:
+    free(snapshot);
+    for (size_t i = 0u; i < PATH_COUNT; i++) {
+        if (paths[i].m != NULL) lynx_machine_deinit(paths[i].m);
+        free(paths[i].mem);
+    }
+    if (blank_restore.m != NULL) lynx_machine_deinit(blank_restore.m);
+    if (row_restore.m != NULL) lynx_machine_deinit(row_restore.m);
+    free(blank_restore.mem);
+    free(row_restore.mem);
+}
+
+static void case_video_sensitivity(char **args)
+{
+    enum { INPUT, PALETTE, PEN, DMA_OWNER, PAGE_LATCH, HOST_WATCH, FLIP_COUNT };
+    static const char *const names[FLIP_COUNT] = {
+        "input mask", "palette component", "partial pen byte", "DMA owner deadline",
+        "CPU page latch", "host watch"
+    };
+    (void)args;
+    instance base = {0};
+    CHECK_EQ_U64(video_instance_make(&base, 0u), 0u);
+    if (base.m == NULL) {
+        free(base.mem);
+        return;
+    }
+    uint64_t sync_tick = 0u;
+    video_first_sync(&base, &sync_tick);
+    video_advance_exact(&base, 3u * 512u + 6u, 0);
+    CHECK_NAMED(base.m->video.row_active == 1u && base.m->video.dma_cursor == 1u &&
+                    base.m->video.dma_busy_until > base.m->guest_ticks,
+                "video_sensitivity.fixture-is-partial-row-with-active-DMA");
+
+    uint8_t expected[32];
+    CHECK_EQ_U64(lynx_state_digest(base.m, expected), LYNX_OK);
+    uint8_t flips[FLIP_COUNT][32];
+    for (size_t i = 0u; i < FLIP_COUNT; i++) {
+        lynx_machine *copy = malloc(lynx_machine_size());
+        CHECK(copy != NULL);
+        if (copy == NULL) continue;
+        memcpy(copy, base.m, sizeof *copy);
+        switch (i) {
+        case INPUT:
+            CHECK_EQ_U64(lynx_set_input(copy, LYNX_INPUT_A), LYNX_OK);
+            break;
+        case PALETTE:
+            copy->video.palette[3] ^= 1u;
+            break;
+        case PEN:
+            copy->video.pens[0] ^= 1u;
+            break;
+        case DMA_OWNER:
+            copy->video.dma_busy_until++;
+            break;
+        case PAGE_LATCH:
+            copy->cpu_page_latch = 1u;
+            break;
+        case HOST_WATCH:
+            CHECK_EQ_U64(lynx_watch_configure(copy, 0x0400u, 1u), LYNX_OK);
+            break;
+        }
+        CHECK_EQ_U64(lynx_state_digest(copy, flips[i]), LYNX_OK);
+        if (i == HOST_WATCH) {
+            CHECK_NAMED(memcmp(expected, flips[i], sizeof expected) == 0,
+                        "video_sensitivity.host-watch-excluded");
+        } else {
+            CHECK_NAMED(memcmp(expected, flips[i], sizeof expected) != 0, names[i]);
+        }
+        if (i != HOST_WATCH) {
+            for (size_t j = 0u; j < i; j++) {
+                if (j != HOST_WATCH)
+                    CHECK_NAMED(memcmp(flips[i], flips[j], sizeof flips[i]) != 0,
+                                "video_sensitivity.independent-stream-flips");
+            }
+        }
+        free(copy);
+    }
+
+    lynx_machine_deinit(base.m);
+    free(base.mem);
+    printf("video_sensitivity: input,palette,partial-pen,DMA-owner,page-latch sensitive; host-watch excluded\n");
+}
+
 static const struct {
     const char *name;
     int args; /* arguments after the case name */
@@ -1147,6 +1576,8 @@ static const struct {
     {"profile_agreement", 2, case_profile_agreement},
     {"state_sensitivity", 1, case_state_sensitivity},
     {"timer_paths", 0, case_timer_paths},
+    {"video_paths", 0, case_video_paths},
+    {"video_sensitivity", 0, case_video_sensitivity},
     {"two_instances", 3, case_two_instances},
 };
 

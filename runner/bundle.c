@@ -11,6 +11,7 @@
 #define BUNDLE_RAM_LEN LYNX_ADDRESS_SPACE
 #define BUNDLE_REGS_LEN (4u * LYNX_REG_COUNT)
 #define BUNDLE_TIME_LEN 20u
+#define BUNDLE_STATE_LEN 32u
 #define BUNDLE_HEX_PER_LINE 32u
 #define BUNDLE_MAX_CONTENT (1u << 20)
 #define BUNDLE_MAX_NAME 16u
@@ -66,12 +67,12 @@ static int entry_cmp(const void *a, const void *b)
     return strcmp(((const entry *)a)->name, ((const entry *)b)->name);
 }
 
-/* The three canonical guest observation byte strings. RAM, public registers
-   (including MAPCTL), and guest time are included; host watch configuration
-   and events are never read. run metadata records the caller's final aggregate
-   result, so segmented paths must normalize it before comparing digests. */
+/* Canonical guest observation inputs. RAM, public registers (including
+   MAPCTL), guest time, and the core's public guest-state digest are included;
+   host watch configuration and events are never read. Run metadata records the
+   caller's final aggregate result, so segmented paths normalize it separately. */
 static int collect(const lynx_machine *m, const bundle_run *run, uint8_t *ram, uint8_t regs[],
-                   uint8_t tbuf[])
+                   uint8_t tbuf[], uint8_t state[BUNDLE_STATE_LEN])
 {
     uint64_t ticks = 0;
     uint32_t reg;
@@ -94,14 +95,15 @@ static int collect(const lynx_machine *m, const bundle_run *run, uint8_t *ram, u
     put_u64le(tbuf, ticks);
     put_u64le(tbuf + 8, run->ticks_consumed);
     put_u32le(tbuf + 16, run->stop);
-    return 0;
+    return lynx_state_digest(m, state) == LYNX_OK ? 0 : 1;
 }
 
-/* Fills three entries (sorted by name) from the canonical bytes. */
-static int obs_entries(const lynx_machine *m, const bundle_run *run, entry out[3])
+/* Fills four entries (sorted by name) from the canonical bytes. */
+static int obs_entries(const lynx_machine *m, const bundle_run *run, entry out[4])
 {
     uint8_t regs[BUNDLE_REGS_LEN];
     uint8_t tbuf[BUNDLE_TIME_LEN];
+    uint8_t state[BUNDLE_STATE_LEN];
     uint8_t *ram = malloc(BUNDLE_RAM_LEN);
     int rc = 1;
     if (ram == NULL) {
@@ -109,10 +111,11 @@ static int obs_entries(const lynx_machine *m, const bundle_run *run, entry out[3
     }
     memset(regs, 0, sizeof regs);
     memset(tbuf, 0, sizeof tbuf);
-    if (collect(m, run, ram, regs, tbuf) == 0 &&
+    if (collect(m, run, ram, regs, tbuf, state) == 0 &&
         set_entry(&out[0], "obs.ram.hex", ram, BUNDLE_RAM_LEN) == 0 &&
         set_entry(&out[1], "obs.regs.hex", regs, sizeof regs) == 0 &&
-        set_entry(&out[2], "obs.time.hex", tbuf, sizeof tbuf) == 0) {
+        set_entry(&out[2], "obs.state.hex", state, sizeof state) == 0 &&
+        set_entry(&out[3], "obs.time.hex", tbuf, sizeof tbuf) == 0) {
         rc = 0;
     }
     free(ram);
@@ -140,12 +143,12 @@ static void obs_digest(const entry *sorted, size_t count, char hex[65])
 
 int bundle_observe(const lynx_machine *m, const bundle_run *run, char obs_digest_hex[65])
 {
-    entry e[3];
+    entry e[4];
     if (m == NULL || run == NULL || obs_digest_hex == NULL || obs_entries(m, run, e) != 0) {
         return 1;
     }
-    qsort(e, 3, sizeof e[0], entry_cmp);
-    obs_digest(e, 3, obs_digest_hex);
+    qsort(e, 4, sizeof e[0], entry_cmp);
+    obs_digest(e, 4, obs_digest_hex);
     return 0;
 }
 
@@ -317,10 +320,11 @@ int bundle_write(const char *dir, const lynx_machine *m, const bundle_run *run,
 {
     uint8_t regs[BUNDLE_REGS_LEN];
     uint8_t tbuf[BUNDLE_TIME_LEN];
+    uint8_t state[BUNDLE_STATE_LEN];
     uint8_t *ram;
     char manifest[BUNDLE_MANIFEST_CAP];
     char digests[BUNDLE_DIGESTS_CAP];
-    entry e[4];
+    entry e[5];
     size_t manifest_len;
     size_t digests_len = 0;
     size_t i;
@@ -340,16 +344,17 @@ int bundle_write(const char *dir, const lynx_machine *m, const bundle_run *run,
     }
     memset(regs, 0, sizeof regs);
     memset(tbuf, 0, sizeof tbuf);
-    if (collect(m, run, ram, regs, tbuf) != 0 ||
+    if (collect(m, run, ram, regs, tbuf, state) != 0 ||
         set_entry(&e[0], "obs.ram.hex", ram, BUNDLE_RAM_LEN) != 0 ||
         set_entry(&e[1], "obs.regs.hex", regs, sizeof regs) != 0 ||
-        set_entry(&e[2], "obs.time.hex", tbuf, sizeof tbuf) != 0 ||
-        set_entry(&e[3], "run.manifest", manifest, manifest_len) != 0) {
+        set_entry(&e[2], "obs.state.hex", state, sizeof state) != 0 ||
+        set_entry(&e[3], "obs.time.hex", tbuf, sizeof tbuf) != 0 ||
+        set_entry(&e[4], "run.manifest", manifest, manifest_len) != 0) {
         goto done;
     }
     /* Byte-order sort inside the runner: strcmp compares unsigned chars. */
-    qsort(e, 4, sizeof e[0], entry_cmp);
-    for (i = 0; i < 4; i++) {
+    qsort(e, 5, sizeof e[0], entry_cmp);
+    for (i = 0; i < 5; i++) {
         int n = snprintf(digests + digests_len, sizeof digests - digests_len, "%s %s\n",
                          e[i].name, e[i].hex);
         if (n < 0 || (size_t)n >= sizeof digests - digests_len) {
@@ -357,15 +362,16 @@ int bundle_write(const char *dir, const lynx_machine *m, const bundle_run *run,
         }
         digests_len += (size_t)n;
     }
-    obs_digest(e, 4, obs_digest_hex);
+    obs_digest(e, 5, obs_digest_hex);
     hash_hex(digests, digests_len, bundle_digest_hex);
-    /* digests.txt vouches for the other four files, so it and run.manifest go
+    /* digests.txt vouches for the other five files, so it and run.manifest go
        first: a write that fails part way leaves no digests.txt beside new files. */
     if (clear_file(dir, "digests.txt") != 0 || clear_file(dir, "run.manifest") != 0) {
         goto done;
     }
     if (write_hex_file(dir, "obs.ram.hex", ram, BUNDLE_RAM_LEN) != 0 ||
         write_hex_file(dir, "obs.regs.hex", regs, sizeof regs) != 0 ||
+        write_hex_file(dir, "obs.state.hex", state, sizeof state) != 0 ||
         write_hex_file(dir, "obs.time.hex", tbuf, sizeof tbuf) != 0 ||
         write_file(dir, "run.manifest", manifest, manifest_len) != 0 ||
         write_file(dir, "digests.txt", digests, digests_len) != 0) {

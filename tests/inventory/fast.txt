@@ -118,6 +118,8 @@ det.sensitivity_state	det
 det.timer_paths	det
 det.two_instances	det
 det.two_runs	det
+det.video_paths	det
+det.video_sensitivity	det
 diag.result_controls	diag
 diag.result_symbol	diag
 docs.claim_template	docs

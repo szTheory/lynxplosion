@@ -22,7 +22,7 @@ set(expected_keys
   profile content_format startup startup_tier content_sha256 content_load_addr entry_addr object_len
   payload_addr payload_len input_digest tick_budget ticks_consumed stop_reason core_build
   ram_policy ram_seed evidence_tier)
-set(expected_names obs.ram.hex obs.regs.hex obs.time.hex run.manifest)
+set(expected_names obs.ram.hex obs.regs.hex obs.state.hex obs.time.hex run.manifest)
 
 foreach(run a b)
   execute_process(
@@ -72,7 +72,7 @@ foreach(run a b)
     message(FATAL_ERROR "two_runs: run ${run}: manifest keys are\n  ${keys}\nexpected\n  ${expected_keys}")
   endif()
 
-  # digests.txt: byte-sorted, the four files, and the stdout digests agree
+  # digests.txt: byte-sorted, the five files, and the stdout digests agree
   # with an independent recomputation.
   file(STRINGS "${WORK}/${run}/digests.txt" digest_lines)
   set(names "")
@@ -109,7 +109,7 @@ foreach(run a b)
 endforeach()
 
 # The two processes agree on every byte of evidence.
-foreach(name digests.txt run.manifest obs.ram.hex obs.regs.hex obs.time.hex)
+foreach(name digests.txt run.manifest obs.ram.hex obs.regs.hex obs.state.hex obs.time.hex)
   execute_process(
     COMMAND "${CMAKE_COMMAND}" -E compare_files "${WORK}/a/${name}" "${WORK}/b/${name}"
     RESULT_VARIABLE same)

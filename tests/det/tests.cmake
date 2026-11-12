@@ -109,6 +109,14 @@ lynx_add_test(NAME det.timer_paths
   COMMAND lynx-test-det timer_paths
   LABELS det TIMEOUT 60)
 
+lynx_add_test(NAME det.video_paths
+  COMMAND lynx-test-det video_paths
+  LABELS det TIMEOUT 120)
+
+lynx_add_test(NAME det.video_sensitivity
+  COMMAND lynx-test-det video_sensitivity
+  LABELS det TIMEOUT 60)
+
 # The strict key = value validator, over real runner manifests and over built
 # faulty ones. Both tests run under /bin/sh through the CMake-found shell.
 find_program(LYNX_SH sh REQUIRED)
