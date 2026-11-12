@@ -112,3 +112,7 @@ Independent static review at `3aaf004f08fb40d6aad6c9fc126aaa86fefd681f` verified
 ## Shell portability and private-tool restoration review
 
 Independent static review at `735cfa169b0cfcf7f4687d746c87461dc1677e1f` verified all55 hashes (`5de70b75e913919755c198ceef2a989ebd8c636908f37986fedbe17ebbd11dc8`). Explicit inverse conditions preserve option bounds, output/source/tool/recipe checks and owner-marker refusals. The copied fixture tool is restored through a fresh adjacent byte-verified file and rename; no pin, hash or signature check is disabled. Exact hostile diagnostics and final positive brackets remain. T-05-SC/22/25/26/28/29/30 mitigations remain closed, no implementation gap/accepted risk. T-05-34 remains final-source qualification-only open; no new full scan or test execution by auditor is represented.
+
+## Mechanical GCC followup
+
+At `9e1468717c19c827e2d822f51667e45464274788`, only a local path parameter name and equivalent C17 aggregate zero-initializer spelling changed. Independent code review confirms unchanged path/stat/comparison flow and fully zeroed arrays. Root reuses the prior security verdict for identical mitigation behavior; no new security audit is claimed. All55 hashes bind to `a0d5463d3b3e3a87973b076db23187281f9c965fcfe2e721da28ffeb6c543133`; other53 paths unchanged. GCC syntax/full build and macOS focused checks passed; T-05-34 remains pending final environment evidence.
