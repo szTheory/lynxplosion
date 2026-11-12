@@ -29,6 +29,15 @@ how GSD workflows apply it. Update it when the owner changes a default.
   Strict source agreement remains failing and visible; no suite-pass or
   hardware-correctness claim is authorized. See Phase 4 04-09-DISPOSITION.md.
 
+- 2026-11-11: after automatic approval review rejected the checked Phase 5
+  Plan 02 production commit to the default branch, the owner explicitly selected
+  "Commit checked changes on main". The normal task-scoped commits succeeded
+  with hooks. Preserve this branch-authority evidence with the existing
+  `branching_strategy=none` / `allow_default_branch_commits=true` policy so the
+  same authorized action does not become another acknowledgment gate. This is
+  not authority for a release, a new publication channel, rights-bearing
+  content or physical testing. See Phase 5 05-02-COMMIT-BLOCKER.md.
+
 ## Discuss phases: fan out, synthesize, auto-follow
 
 For every discuss phase (and milestone discussion):
