@@ -9,6 +9,54 @@ Option 2 plus Pause. It rejects bits outside the mask. A successful call only
 replaces the instance's input levels: it does not advance guest time, change
 orientation or palette, or retain a caller pointer.
 
+## Canonical host timeline
+
+Frame replay accepts a complete byte file in this versioned ASCII format:
+
+```text
+LYNX-INPUT 1
+<tick> <mask>
+```
+
+Every record is one LF-terminated row with exactly two unsigned decimal
+columns separated by one ASCII space. There are no signs, extra whitespace,
+leading zeroes except for `0`, CR bytes, or trailing bytes. The header alone is
+an empty, all-released recording. The whole file is limited to 128 KiB and
+4,096 records; masks are 0 through `0x1ff`. Ticks must strictly increase,
+duplicates are refused, and each tick stays below the public guest-time
+headroom bound. The consumer parses and hashes the entire original byte file
+before it creates the output directory or private staging area. `input_sha256`
+identifies those exact canonical bytes, including the final LF.
+
+The host advances through `lynx_advance_frame` in bounded intervals ending at
+the next event tick. An earlier `FRAME` is captured and the remaining interval
+is resumed; it never moves the event. The setter runs only after the public
+guest clock equals the recorded tick. A tick-zero event is applied immediately
+after a successful load. If a frame event is pending exactly at an edge tick,
+the returned zero-consumption frame describes the pre-edge guest image; the
+edge then controls subsequent CPU reads and frames. A zero-consumed `BUDGET`
+is a guest-time limit error. `WATCH`, `UNDEFINED`, and `UNAVAILABLE` stops
+abort frame replay without applying an edge early. At most 16 renderable frames
+are retained; reaching that output bound is a visible error and never drops a
+frame silently.
+
+Replay checkpoints are host metadata. They bind the complete timeline digest,
+guest tick, cursor phase, cursor index and currently applied mask. Before an
+edge at `T`, the cursor is `lower_bound(T)` and the current mask reflects only
+earlier records. After applying that edge, the cursor is `upper_bound(T)` and
+the current mask includes it. The public format-5 snapshot contains machine
+state only: no timeline bytes, cursor or host pointer are added to the core.
+The replay restore check restores both checkpoint phases through the public
+snapshot API and compares the public state digest and guest tick before
+resuming.
+
+Each retained frame has a PPM and a separate raw observation file. The raw
+file stores each row as 80 pen bytes, 32 palette bytes and one little-endian
+64-bit line tick. The manifest records the full script digest, frame sequence,
+start/end tick, rows, flags, input mask at capture, guest A sample and separate
+SHA-256 digests of the raw bytes and rendered PPM bytes. The PPM applies the
+documented nibble conversion only; it does not rotate the guest output.
+
 ## Guest register view
 
 Use MAPCTL `0C` in a CPU fixture to expose the Suzy/Mikey device overlays.

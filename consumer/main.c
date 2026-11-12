@@ -42,11 +42,32 @@ enum {
     TIMELINE_LIMIT = 128 * 1024,
     TIMELINE_RECORD_LIMIT = 4096,
     FRAME_PPM_LIMIT = 50000,
-    FRAME_MANIFEST_CAP = 2048
+    FRAME_MANIFEST_CAP = 8192,
+    FRAME_OUTPUT_LIMIT = 16,
+    FRAME_RAW_BYTES_PER_ROW = 120
 };
 
 typedef struct input_event { uint64_t tick; uint32_t mask; } input_event;
 typedef struct input_timeline { input_event *events; size_t count; } input_timeline;
+typedef struct frame_capture {
+    lynx_frame_result result;
+    uint32_t input_mask;
+    uint32_t sampled_a;
+    uint8_t *raw;
+    size_t raw_len;
+    uint8_t *ppm;
+    size_t ppm_len;
+    char raw_sha256[65];
+    char rendered_sha256[65];
+} frame_capture;
+typedef enum checkpoint_phase { CHECKPOINT_PRE_EDGE = 1, CHECKPOINT_POST_EDGE = 2 } checkpoint_phase;
+typedef struct replay_checkpoint {
+    uint8_t script_digest[32];
+    uint64_t tick;
+    size_t cursor;
+    uint32_t current_mask;
+    checkpoint_phase phase;
+} replay_checkpoint;
 
 /* Static host-local copy of the project-owned FIPS 180-4 helper. The consumer
    includes only the public emulator header and hashes canonical script bytes. */
@@ -1064,28 +1085,41 @@ static int frame_ppm(const uint8_t *pens, const uint8_t *palettes,
     return 0;
 }
 
-static int publish_frame_outputs(const char *directory, const uint8_t *released,
-                                 size_t released_len, const uint8_t *pressed,
-                                 size_t pressed_len, const char *manifest,
-                                 size_t manifest_len)
+static int publish_frame_outputs_generic(const char *directory, const frame_capture *frames,
+                                         size_t frame_count, const char *manifest,
+                                         size_t manifest_len)
 {
-    char normalized[4096], staging[4096], path[3][4096], probe[4096];
-    const char *names[3] = {"released.ppm", "pressed.ppm", "frame-trace.manifest"};
-    const void *data[3] = {released, pressed, manifest};
-    size_t lengths[3] = {released_len, pressed_len, manifest_len};
+    char normalized[4096], staging[4096], paths[FRAME_OUTPUT_LIMIT * 2u + 1u][4096] = {{0}};
+    char names[FRAME_OUTPUT_LIMIT * 2u + 1u][32], probe[4096];
+    const void *data[FRAME_OUTPUT_LIMIT * 2u + 1u];
+    size_t lengths[FRAME_OUTPUT_LIMIT * 2u + 1u];
+    size_t files = 0u;
     int n;
     int made = 0;
-    if (normalize_destination(directory, normalized, sizeof normalized) != 0 ||
-        destination_is_absent(normalized) != 0) return report_error("frame output path is unavailable; choose a new absent destination");
-    for (size_t i = 0u; i < 3u; i++) {
-        if (output_path(normalized, names[i], probe, sizeof probe) != 0) return report_error("frame output path exceeds its bound");
+    if (frame_count > FRAME_OUTPUT_LIMIT || normalize_destination(directory, normalized, sizeof normalized) != 0 ||
+        destination_is_absent(normalized) != 0)
+        return report_error("frame output path is unavailable or the bounded frame count was exceeded");
+    for (size_t i = 0u; i < frame_count; i++) {
+        n = snprintf(names[files], sizeof names[files], "frame-%02zu.raw", i);
+        if (n < 0 || (size_t)n >= sizeof names[files]) return report_error("raw frame name exceeds its fixed bound");
+        data[files] = frames[i].raw; lengths[files] = frames[i].raw_len; files++;
+        n = snprintf(names[files], sizeof names[files], "frame-%02zu.ppm", i);
+        if (n < 0 || (size_t)n >= sizeof names[files]) return report_error("rendered frame name exceeds its fixed bound");
+        data[files] = frames[i].ppm; lengths[files] = frames[i].ppm_len; files++;
+    }
+    (void)snprintf(names[files], sizeof names[files], "frame-trace.manifest");
+    data[files] = manifest; lengths[files] = manifest_len; files++;
+    for (size_t i = 0u; i < files; i++) {
+        if (output_path(normalized, names[i], probe, sizeof probe) != 0)
+            return report_error("frame output path exceeds its bound");
     }
     n = snprintf(staging, sizeof staging, "%s.lynxplosion-frame-stage-XXXXXX", normalized);
-    if (n < 0 || (size_t)n >= sizeof staging || mkdtemp(staging) == NULL) return report_error("cannot create a private frame output staging directory");
+    if (n < 0 || (size_t)n >= sizeof staging || mkdtemp(staging) == NULL)
+        return report_error("cannot create a private frame output staging directory");
     made = 1;
-    for (size_t i = 0u; i < 3u; i++) {
-        if (output_path(staging, names[i], path[i], sizeof path[i]) != 0 ||
-            write_exclusive(path[i], data[i], lengths[i]) != 0) goto failed;
+    for (size_t i = 0u; i < files; i++) {
+        if (output_path(staging, names[i], paths[i], sizeof paths[i]) != 0 ||
+            write_exclusive(paths[i], data[i], lengths[i]) != 0) goto failed;
     }
     if (publish_directory_exclusive(staging, normalized) != 0) {
         (void)report_error("cannot publish the complete frame directory without replacement");
@@ -1094,8 +1128,39 @@ static int publish_frame_outputs(const char *directory, const uint8_t *released,
     made = 0;
     return 0;
 failed:
-    for (size_t i = 0u; i < 3u; i++) (void)unlink(path[i]);
+    for (size_t i = 0u; i < files; i++) if (paths[i][0] != '\0') (void)unlink(paths[i]);
     if (made != 0) (void)rmdir(staging);
+    return report_error("cannot write the complete frame output; this invocation removed its private partial files");
+}
+
+static int publish_frame_outputs(const char *directory, const uint8_t *released,
+                                 size_t released_len, const uint8_t *pressed,
+                                 size_t pressed_len, const char *manifest,
+                                 size_t manifest_len)
+{
+    char normalized[4096], staging[4096], path[3][4096] = {{0}}, probe[4096];
+    const char *names[3] = {"released.ppm", "pressed.ppm", "frame-trace.manifest"};
+    const void *data[3] = {released, pressed, manifest};
+    size_t lengths[3] = {released_len, pressed_len, manifest_len};
+    int n;
+    if (normalize_destination(directory, normalized, sizeof normalized) != 0 ||
+        destination_is_absent(normalized) != 0) return report_error("frame output path is unavailable; choose a new absent destination");
+    for (size_t i = 0u; i < 3u; i++)
+        if (output_path(normalized, names[i], probe, sizeof probe) != 0) return report_error("frame output path exceeds its bound");
+    n = snprintf(staging, sizeof staging, "%s.lynxplosion-frame-stage-XXXXXX", normalized);
+    if (n < 0 || (size_t)n >= sizeof staging || mkdtemp(staging) == NULL) return report_error("cannot create a private frame output staging directory");
+    for (size_t i = 0u; i < 3u; i++) {
+        if (output_path(staging, names[i], path[i], sizeof path[i]) != 0 ||
+            write_exclusive(path[i], data[i], lengths[i]) != 0) goto failed;
+    }
+    if (publish_directory_exclusive(staging, normalized) != 0) {
+        (void)report_error("cannot publish the complete frame directory without replacement");
+        goto failed;
+    }
+    return 0;
+failed:
+    for (size_t i = 0u; i < 3u; i++) if (path[i][0] != '\0') (void)unlink(path[i]);
+    (void)rmdir(staging);
     return report_error("cannot write the complete frame output; this invocation removed its private partial files");
 }
 
@@ -1134,9 +1199,9 @@ static int read_probe_result(lynx_machine *machine, uint32_t address,
     return 0;
 }
 
-static int run_frame_consumer(const char *content_path, const char *symbols_path,
-                              const char *timeline_path, const char *output_directory,
-                              uint32_t profile)
+static int run_frame_consumer_legacy(const char *content_path, const char *symbols_path,
+                                     const char *timeline_path, const char *output_directory,
+                                     uint32_t profile)
 {
     uint8_t *bll = NULL, *label_bytes = NULL, *timeline_bytes = NULL;
     uint8_t *released_ppm = NULL, *pressed_ppm = NULL;
@@ -1336,6 +1401,396 @@ done:
     return result;
 }
 
+static int replay_sha_vectors(void)
+{
+    static const struct { const char *input; size_t length; const char *expected; } vectors[] = {
+        {"", 0u, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+        {"abc", 3u, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+        {"The quick brown fox jumps over the lazy dog", 43u,
+         "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"}
+    };
+    uint8_t digest[32];
+    char hex[65];
+    for (size_t i = 0u; i < sizeof vectors / sizeof vectors[0]; i++) {
+        host_sha_digest(vectors[i].input, vectors[i].length, digest);
+        host_sha_hex(digest, hex);
+        if (strcmp(hex, vectors[i].expected) != 0) return 1;
+    }
+    return 0;
+}
+
+static size_t replay_lower_bound(const input_timeline *timeline, uint64_t tick)
+{
+    size_t low = 0u, high = timeline->count;
+    while (low < high) {
+        const size_t mid = low + (high - low) / 2u;
+        if (timeline->events[mid].tick < tick) low = mid + 1u; else high = mid;
+    }
+    return low;
+}
+
+static size_t replay_upper_bound(const input_timeline *timeline, uint64_t tick)
+{
+    size_t low = 0u, high = timeline->count;
+    while (low < high) {
+        const size_t mid = low + (high - low) / 2u;
+        if (timeline->events[mid].tick <= tick) low = mid + 1u; else high = mid;
+    }
+    return low;
+}
+
+static uint32_t replay_mask_at_cursor(const input_timeline *timeline, size_t cursor)
+{
+    return cursor == 0u ? 0u : timeline->events[cursor - 1u].mask;
+}
+
+static int replay_checkpoint_valid(const replay_checkpoint *checkpoint,
+                                   const input_timeline *timeline,
+                                   const uint8_t script_digest[32], uint64_t tick,
+                                   size_t cursor, uint32_t mask,
+                                   checkpoint_phase phase)
+{
+    const size_t expected = phase == CHECKPOINT_PRE_EDGE ?
+        replay_lower_bound(timeline, tick) : replay_upper_bound(timeline, tick);
+    return checkpoint->phase == phase && checkpoint->tick == tick &&
+        checkpoint->cursor == cursor && cursor == expected &&
+        checkpoint->current_mask == mask && mask == replay_mask_at_cursor(timeline, expected) &&
+        memcmp(checkpoint->script_digest, script_digest, 32u) == 0 ? 0 : 1;
+}
+
+static int replay_restore_checkpoint(lynx_machine *source, lynx_machine *target,
+                                     const replay_checkpoint *checkpoint,
+                                     const input_timeline *timeline,
+                                     const uint8_t script_digest[32])
+{
+    uint8_t *snapshot = NULL, source_digest[32], target_digest[32];
+    size_t size = 0u, written = 0u;
+    uint64_t tick = 0u;
+    if (replay_checkpoint_valid(checkpoint, timeline, script_digest,
+                                checkpoint->tick, checkpoint->cursor,
+                                checkpoint->current_mask, checkpoint->phase) != 0 ||
+        lynx_guest_ticks(source, &tick) != LYNX_OK || tick != checkpoint->tick ||
+        lynx_state_digest(source, source_digest) != LYNX_OK ||
+        lynx_snapshot_size(source, &size) != LYNX_OK || size == 0u) return 1;
+    snapshot = malloc(size);
+    if (snapshot == NULL) return 1;
+    if (lynx_snapshot_save(source, snapshot, size, &written) != LYNX_OK || written != size ||
+        lynx_snapshot_restore(target, snapshot, size) != LYNX_OK ||
+        lynx_guest_ticks(target, &tick) != LYNX_OK || tick != checkpoint->tick ||
+        lynx_state_digest(target, target_digest) != LYNX_OK ||
+        memcmp(source_digest, target_digest, sizeof source_digest) != 0) {
+        free(snapshot);
+        return 1;
+    }
+    free(snapshot);
+    return 0;
+}
+
+static int replay_raw_bytes(const lynx_frame_result *frame, const uint8_t *pens,
+                            const uint8_t *palettes, const uint64_t *ticks,
+                            uint8_t **out, size_t *out_len)
+{
+    const size_t row_size = 120u;
+    size_t length;
+    uint8_t *bytes;
+    if (frame->row_count == 0u || frame->row_count > LYNX_FRAME_MAX_ROWS) return 1;
+    length = (size_t)frame->row_count * row_size;
+    bytes = malloc(length);
+    if (bytes == NULL) return 1;
+    for (size_t row = 0u; row < frame->row_count; row++) {
+        uint8_t *dst = bytes + row * row_size;
+        memcpy(dst, pens + row * LYNX_FRAME_ROW_BYTES, LYNX_FRAME_ROW_BYTES);
+        memcpy(dst + 80u, palettes + row * 32u, 32u);
+        for (size_t byte = 0u; byte < 8u; byte++) dst[112u + byte] = (uint8_t)(ticks[row] >> (8u * byte));
+        if (ticks[row] < frame->frame_start_tick || ticks[row] >= frame->frame_end_tick ||
+            (row != 0u && ticks[row] <= ticks[row - 1u])) { free(bytes); return 1; }
+    }
+    *out = bytes; *out_len = length;
+    return 0;
+}
+
+static int replay_render_ppm(frame_capture *capture, const uint8_t *pens,
+                             const uint8_t *palettes, const char *input_hash)
+{
+    const lynx_frame_result *frame = &capture->result;
+    const size_t raster_len = (size_t)LYNX_FRAME_WIDTH * frame->row_count * 3u;
+    char header[512];
+    uint8_t digest[32];
+    int header_len;
+    size_t at;
+    if (frame->row_count > LYNX_FRAME_MAX_ROWS || raster_len > FRAME_PPM_LIMIT - sizeof header) return 1;
+    header_len = snprintf(header, sizeof header,
+        "P6\n# artifact = FRAME\n# sequence = %" PRIu64 "\n# frame_start_tick = %" PRIu64 "\n"
+        "# frame_end_tick = %" PRIu64 "\n# rows = %u\n# input_mask_at_end = %u\n# sample_a = %u\n"
+        "# input_sha256 = %s\n# raw_frame_sha256 = %s\n160 %u\n255\n",
+        frame->sequence, frame->frame_start_tick, frame->frame_end_tick, frame->row_count,
+        capture->input_mask, capture->sampled_a, input_hash, capture->raw_sha256, frame->row_count);
+    if (header_len < 0 || (size_t)header_len >= sizeof header ||
+        (size_t)header_len + raster_len > FRAME_PPM_LIMIT) return 1;
+    capture->ppm = malloc((size_t)header_len + raster_len);
+    if (capture->ppm == NULL) return 1;
+    memcpy(capture->ppm, header, (size_t)header_len); at = (size_t)header_len;
+    for (size_t y = 0u; y < frame->row_count; y++) {
+        const uint8_t *row = pens + y * LYNX_FRAME_ROW_BYTES;
+        const uint8_t *palette = palettes + y * 32u;
+        for (size_t x = 0u; x < LYNX_FRAME_WIDTH; x++) {
+            const uint8_t packed = row[x / 2u];
+            const uint8_t pen = (x & 1u) == 0u ? (uint8_t)(packed >> 4) : (uint8_t)(packed & 15u);
+            const uint8_t green = (uint8_t)(palette[pen] & 15u), blue_red = palette[16u + pen];
+            capture->ppm[at++] = (uint8_t)((blue_red & 15u) * 17u);
+            capture->ppm[at++] = (uint8_t)(green * 17u);
+            capture->ppm[at++] = (uint8_t)((blue_red >> 4) * 17u);
+        }
+    }
+    capture->ppm_len = at;
+    host_sha_digest(capture->ppm, capture->ppm_len, digest);
+    host_sha_hex(digest, capture->rendered_sha256);
+    return 0;
+}
+
+static int replay_append(char *manifest, size_t cap, size_t *length,
+                         const char *format, ...)
+{
+    va_list args;
+    int n;
+    if (*length >= cap) return 1;
+    va_start(args, format);
+    n = vsnprintf(manifest + *length, cap - *length, format, args);
+    va_end(args);
+    if (n < 0 || (size_t)n >= cap - *length) return 1;
+    *length += (size_t)n;
+    return 0;
+}
+
+static int run_frame_consumer(const char *content_path, const char *symbols_path,
+                              const char *timeline_path, const char *output_directory,
+                              uint32_t profile)
+{
+    uint8_t *bll = NULL, *labels = NULL, *timeline_bytes = NULL, script_digest[32];
+    size_t bll_len = 0u, labels_len = 0u, timeline_len = 0u, cursor = 0u, frame_count = 0u;
+    uint32_t probe_address = 0u, current_mask = 0u;
+    uint64_t previous_sequence = UINT64_MAX, previous_frame_end = 0u, finish_tick, last_tick;
+    uint64_t pending_edge_tick = UINT64_MAX;
+    uint32_t pending_prior_mask = 0u;
+    char input_hash[65], content_hash[65];
+    char *manifest = NULL;
+    size_t manifest_len = 0u;
+    input_timeline timeline = {0};
+    frame_capture frames[FRAME_OUTPUT_LIMIT] = {{0}};
+    machine_storage active = {0}, restore_target = {0};
+    lynx_identity identity, restore_identity;
+    int checkpoint_test = 0, target_created = 0, result = 1;
+    if (replay_sha_vectors() != 0) { (void)report_error("independent SHA-256 vectors failed"); goto done; }
+    if (read_bounded(timeline_path, TIMELINE_LIMIT, &timeline_bytes, &timeline_len, "input timeline") != 0 ||
+        parse_input_timeline(timeline_bytes, timeline_len, &timeline) != 0) {
+        (void)report_error("timeline is not canonical LYNX-INPUT 1 ASCII; use strict increasing decimal tick/mask LF rows within the documented bounds"); goto done;
+    }
+    host_sha_digest(timeline_bytes, timeline_len, script_digest); host_sha_hex(script_digest, input_hash);
+    last_tick = timeline.count == 0u ? 0u : timeline.events[timeline.count - 1u].tick;
+    if (last_tick > UINT64_MAX - UINT64_C(65536) - UINT64_C(54273)) finish_tick = last_tick;
+    else finish_tick = last_tick + UINT64_C(54273);
+    if (finish_tick < UINT64_C(108545)) finish_tick = UINT64_C(108545);
+    {
+        char normalized[4096];
+        if (normalize_destination(output_directory, normalized, sizeof normalized) != 0 || destination_is_absent(normalized) != 0) {
+            (void)report_error("frame output must name a new absent destination"); goto done;
+        }
+    }
+    if (read_bounded(content_path, BLL_LIMIT, &bll, &bll_len, "BLL content") != 0 || bll_len < 11u ||
+        read_bounded(symbols_path, SYMBOL_LIMIT, &labels, &labels_len, "ld65 -Ln symbols") != 0 ||
+        parse_named_symbol(labels, labels_len, "probe_result", &probe_address) != 0 ||
+        probe_address > LYNX_ADDRESS_SPACE - 8u) {
+        (void)report_error("input-probe BLL or linked probe_result symbol is invalid; rebuild source with the pinned fixture recipe"); goto done;
+    }
+    if (create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1, &active, &identity) != 0) goto done;
+    encode_hex(identity.content_sha256, content_hash);
+    {
+        const char *requested = getenv("LYNX_TEST_REPLAY_RESTORE");
+        checkpoint_test = requested != NULL && strcmp(requested, "1") == 0;
+    }
+    if (checkpoint_test != 0 && (timeline.count != 1u || timeline.events[0].tick != UINT64_C(108544) || timeline.events[0].mask != LYNX_INPUT_A)) {
+        (void)report_error("checkpoint probe requires one A edge at tick 108544"); goto done;
+    }
+    if (timeline.count != 0u && timeline.events[0].tick == 0u) {
+        if (lynx_set_input(active.machine, timeline.events[0].mask) != LYNX_OK) { (void)report_error("public input API refused validated tick-zero input"); goto done; }
+        current_mask = timeline.events[0].mask; cursor = 1u;
+    }
+    while (cursor < timeline.count) {
+        const input_event *event = &timeline.events[cursor];
+        uint64_t now = 0u;
+        if (lynx_guest_ticks(active.machine, &now) != LYNX_OK || event->tick < now) { (void)report_error("timeline event precedes current guest time"); goto done; }
+        while (now < event->tick) {
+            uint8_t pens[LYNX_FRAME_PENS_CAPACITY], palettes[LYNX_FRAME_PALETTE_CAPACITY];
+            uint64_t ticks[LYNX_FRAME_LINE_TICKS_CAPACITY], after = 0u;
+            lynx_frame_buffers buffers = {0}; lynx_frame_result frame = {0};
+            const uint64_t budget = event->tick - now < UINT64_C(60000) ? event->tick - now : UINT64_C(60000);
+            buffers.struct_size = (uint32_t)sizeof buffers; buffers.pens = pens; buffers.pens_capacity = sizeof pens;
+            buffers.palettes = palettes; buffers.palettes_capacity = sizeof palettes;
+            buffers.line_ticks = ticks; buffers.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+            frame.struct_size = (uint32_t)sizeof frame;
+            if (lynx_advance_frame(active.machine, budget, &buffers, &frame) != LYNX_OK || frame.ticks_consumed > budget ||
+                lynx_guest_ticks(active.machine, &after) != LYNX_OK || after < now || after > event->tick || after - now != frame.ticks_consumed) {
+                (void)report_error("frame advance violated its exact half-open event interval"); goto done;
+            }
+            if (frame.stop == LYNX_STOP_FRAME) {
+                if ((previous_sequence != UINT64_MAX && frame.sequence <= previous_sequence) || frame.frame_end_tick != after ||
+                    (previous_frame_end != 0u && frame.frame_end_tick <= previous_frame_end)) {
+                    (void)report_error("duplicate or nonmonotone frame sequence/tick stopped replay"); goto done;
+                }
+                previous_sequence = frame.sequence; previous_frame_end = frame.frame_end_tick;
+                if (frame.row_count == 0u) {
+                    if (frame.sequence != 0u) { (void)report_error("only sequence zero may synchronize without rows"); goto done; }
+                } else {
+                    uint8_t guest_result[8], framebuffer_byte = 0u, digest[32];
+                    frame_capture *capture;
+                    uint32_t frame_mask = current_mask;
+                    if (frame.ticks_consumed == 0u && pending_edge_tick == frame.frame_end_tick) {
+                        frame_mask = pending_prior_mask;
+                        pending_edge_tick = UINT64_MAX;
+                    } else if (pending_edge_tick != UINT64_MAX && frame.frame_end_tick > pending_edge_tick) {
+                        pending_edge_tick = UINT64_MAX;
+                    }
+                    if (frame_count >= FRAME_OUTPUT_LIMIT || frame.row_count > LYNX_FRAME_MAX_ROWS ||
+                        lynx_read_memory(active.machine, probe_address, guest_result, sizeof guest_result) != LYNX_OK ||
+                        memcmp(guest_result, "LXI5", 4u) != 0 || guest_result[4] != 2u || guest_result[5] > 1u ||
+                        guest_result[5] != ((frame_mask & LYNX_INPUT_A) != 0u ? 1u : 0u) ||
+                        lynx_read_memory(active.machine, 0x4000u, &framebuffer_byte, 1u) != LYNX_OK ||
+                        framebuffer_byte != (guest_result[5] != 0u ? 0x22u : 0x11u)) {
+                        (void)report_error("frame output bound or source-linked input/framebuffer result check failed"); goto done;
+                    }
+                    capture = &frames[frame_count]; memset(capture, 0, sizeof *capture);
+                    capture->result = frame; capture->input_mask = frame_mask; capture->sampled_a = guest_result[5];
+                    if (replay_raw_bytes(&frame, pens, palettes, ticks, &capture->raw, &capture->raw_len) != 0) {
+                        (void)report_error("raw pen/palette/tick capture failed its exact bounds"); goto done;
+                    }
+                    host_sha_digest(capture->raw, capture->raw_len, digest); host_sha_hex(digest, capture->raw_sha256);
+                    if (replay_render_ppm(capture, pens, palettes, input_hash) != 0) { (void)report_error("raw frame rendering exceeded its bounded PPM surface"); goto done; }
+                    frame_count++;
+                }
+            } else if (frame.stop == LYNX_STOP_BUDGET) {
+                if (frame.ticks_consumed == 0u) { (void)report_error("guest-time limit reached: BUDGET consumed zero before the requested event tick"); goto done; }
+                if (frame.ticks_consumed != budget && after < event->tick) { (void)report_error("guest-time limit stopped replay before the requested event tick"); goto done; }
+            } else if (frame.stop == LYNX_STOP_WATCH) {
+                (void)report_error("WATCH is unsupported in frame replay; no input edge was applied early"); goto done;
+            } else {
+                (void)report_error("UNDEFINED or UNAVAILABLE guest stop occurred before the requested input tick"); goto done;
+            }
+            if (after == now && frame.stop != LYNX_STOP_FRAME) { (void)report_error("frame replay made no progress before the event tick"); goto done; }
+            now = after;
+        }
+        if (lynx_guest_ticks(active.machine, &now) != LYNX_OK || now != event->tick) { (void)report_error("host did not reach exact event tick before setter"); goto done; }
+        if (checkpoint_test != 0) {
+            replay_checkpoint checkpoint = {{0}, event->tick, cursor, current_mask, CHECKPOINT_PRE_EDGE};
+            if (!target_created) {
+                if (create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1, &restore_target, &restore_identity) != 0) goto done;
+                target_created = 1;
+            }
+            memcpy(checkpoint.script_digest, script_digest, sizeof script_digest);
+            if (replay_restore_checkpoint(active.machine, restore_target.machine, &checkpoint, &timeline, script_digest) != 0) {
+                (void)report_error("pre-edge checkpoint restore failed script digest, tick, lower-bound cursor, prior mask or state digest"); goto done;
+            }
+            { machine_storage swap = active; active = restore_target; restore_target = swap; }
+        }
+        const uint32_t prior_mask = current_mask;
+        if (lynx_set_input(active.machine, event->mask) != LYNX_OK) { (void)report_error("public setter rejected a validated event mask at exact tick"); goto done; }
+        pending_edge_tick = event->tick; pending_prior_mask = prior_mask;
+        current_mask = event->mask; cursor++;
+        if (checkpoint_test != 0) {
+            replay_checkpoint checkpoint = {{0}, event->tick, cursor, current_mask, CHECKPOINT_POST_EDGE};
+            memcpy(checkpoint.script_digest, script_digest, sizeof script_digest);
+            if (replay_restore_checkpoint(active.machine, restore_target.machine, &checkpoint, &timeline, script_digest) != 0) {
+                (void)report_error("post-edge checkpoint restore failed script digest, tick, upper-bound cursor, applied mask or state digest"); goto done;
+            }
+            { machine_storage swap = active; active = restore_target; restore_target = swap; }
+        }
+    }
+    {
+        uint64_t now = 0u;
+        if (lynx_guest_ticks(active.machine, &now) != LYNX_OK || finish_tick < now) { (void)report_error("bounded final observation tick precedes guest time"); goto done; }
+        while (now < finish_tick) {
+            uint8_t pens[LYNX_FRAME_PENS_CAPACITY], palettes[LYNX_FRAME_PALETTE_CAPACITY];
+            uint64_t ticks[LYNX_FRAME_LINE_TICKS_CAPACITY], after = 0u;
+            lynx_frame_buffers buffers = {0}; lynx_frame_result frame = {0};
+            const uint64_t budget = finish_tick - now < UINT64_C(60000) ? finish_tick - now : UINT64_C(60000);
+            buffers.struct_size = (uint32_t)sizeof buffers; buffers.pens = pens; buffers.pens_capacity = sizeof pens;
+            buffers.palettes = palettes; buffers.palettes_capacity = sizeof palettes;
+            buffers.line_ticks = ticks; buffers.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+            frame.struct_size = (uint32_t)sizeof frame;
+            if (lynx_advance_frame(active.machine, budget, &buffers, &frame) != LYNX_OK || frame.ticks_consumed > budget ||
+                lynx_guest_ticks(active.machine, &after) != LYNX_OK || after < now || after > finish_tick || after - now != frame.ticks_consumed) {
+                (void)report_error("final frame interval violated exact guest-time bounds"); goto done;
+            }
+            if (frame.stop == LYNX_STOP_FRAME) {
+                if ((previous_sequence != UINT64_MAX && frame.sequence <= previous_sequence) || frame.frame_end_tick != after ||
+                    (previous_frame_end != 0u && frame.frame_end_tick <= previous_frame_end)) { (void)report_error("final frame sequence or tick is not monotone"); goto done; }
+                previous_sequence = frame.sequence; previous_frame_end = frame.frame_end_tick;
+                if (frame.row_count != 0u) {
+                    uint8_t guest_result[8], framebuffer_byte = 0u, digest[32]; frame_capture *capture;
+                    uint32_t frame_mask = current_mask;
+                    if (frame.ticks_consumed == 0u && pending_edge_tick == frame.frame_end_tick) {
+                        frame_mask = pending_prior_mask;
+                        pending_edge_tick = UINT64_MAX;
+                    } else if (pending_edge_tick != UINT64_MAX && frame.frame_end_tick > pending_edge_tick) {
+                        pending_edge_tick = UINT64_MAX;
+                    }
+                    if (frame_count >= FRAME_OUTPUT_LIMIT || frame.row_count > LYNX_FRAME_MAX_ROWS) { (void)report_error("final frame exceeded the bounded output count or row count"); goto done; }
+                    if (lynx_read_memory(active.machine, probe_address, guest_result, sizeof guest_result) != LYNX_OK ||
+                        memcmp(guest_result, "LXI5", 4u) != 0 || guest_result[4] != 2u || guest_result[5] > 1u) {
+                        (void)report_error("final frame could not read the supported source-linked result schema"); goto done;
+                    }
+                    if (guest_result[5] != ((frame_mask & LYNX_INPUT_A) != 0u ? 1u : 0u)) {
+                        char mismatch[160];
+                        (void)snprintf(mismatch, sizeof mismatch,
+                            "final frame guest A sample %u differs from host mask %u at tick %" PRIu64 " (seq %" PRIu64 ", rows %u)",
+                            (unsigned)guest_result[5], current_mask, frame.frame_end_tick,
+                            frame.sequence, frame.row_count);
+                        (void)report_error(mismatch); goto done;
+                    }
+                    if (lynx_read_memory(active.machine, 0x4000u, &framebuffer_byte, 1u) != LYNX_OK ||
+                        framebuffer_byte != (guest_result[5] != 0u ? 0x22u : 0x11u)) {
+                        (void)report_error("final frame first framebuffer byte differs from its source-linked A sample"); goto done;
+                    }
+                    capture = &frames[frame_count]; memset(capture, 0, sizeof *capture); capture->result = frame;
+                    capture->input_mask = frame_mask; capture->sampled_a = guest_result[5];
+                    if (replay_raw_bytes(&frame, pens, palettes, ticks, &capture->raw, &capture->raw_len) != 0) { (void)report_error("final raw capture failed bounds"); goto done; }
+                    host_sha_digest(capture->raw, capture->raw_len, digest); host_sha_hex(digest, capture->raw_sha256);
+                    if (replay_render_ppm(capture, pens, palettes, input_hash) != 0) { (void)report_error("final raw frame rendering failed bounds"); goto done; }
+                    frame_count++;
+                } else if (frame.sequence != 0u) { (void)report_error("unexpected zero-row final frame"); goto done; }
+            } else if (frame.stop == LYNX_STOP_BUDGET) {
+                if (frame.ticks_consumed == 0u) { (void)report_error("guest-time limit reached during final frame window"); goto done; }
+                if (frame.ticks_consumed != budget && after < finish_tick) { (void)report_error("guest-time limit stopped the final frame window early"); goto done; }
+            } else { (void)report_error("unsupported guest stop during final frame window"); goto done; }
+            now = after;
+        }
+    }
+    manifest = malloc(FRAME_MANIFEST_CAP);
+    if (manifest == NULL) { (void)report_error("cannot allocate bounded replay manifest"); goto done; }
+    if (replay_append(manifest, FRAME_MANIFEST_CAP, &manifest_len,
+        "artifact = FRAME_TRACE\nprofile = %s\nstartup = A\ntiming_policy = video-policy1-unverified\nbuild_id = %s\n"
+        "content_sha256 = %s\ninput_sha256 = %s\nevent_count = %zu\nfinish_tick = %" PRIu64 "\nframe_count = %zu\n"
+        "raw_pen_order = high nibble first; no host rotation\npalette_policy = per-line GREEN then BLUERED raw nibbles; intra-line color accuracy unverified\n",
+        lynx_profile_name(profile), lynx_build_id(), content_hash, input_hash, timeline.count, finish_tick, frame_count) != 0) {
+        (void)report_error("replay manifest exceeded its fixed bound"); goto done;
+    }
+    for (size_t i = 0u; i < frame_count; i++) {
+        const lynx_frame_result *f = &frames[i].result;
+        if (replay_append(manifest, FRAME_MANIFEST_CAP, &manifest_len,
+            "frame[%zu] = sequence:%" PRIu64 ",start:%" PRIu64 ",end:%" PRIu64 ",rows:%u,flags:%u,mask:%u,sample_a:%u,raw_sha256:%s,rendered_sha256:%s\n",
+            i, f->sequence, f->frame_start_tick, f->frame_end_tick, f->row_count,
+            f->flags, frames[i].input_mask, frames[i].sampled_a,
+            frames[i].raw_sha256, frames[i].rendered_sha256) != 0) { (void)report_error("frame transcript exceeded its bound"); goto done; }
+    }
+    if (publish_frame_outputs_generic(output_directory, frames, frame_count, manifest, manifest_len) != 0) goto done;
+    printf("lynx-consume: replayed %zu canonical input events and published %zu raw/rendered frames\n", timeline.count, frame_count);
+    result = 0;
+done:
+    free(bll); free(labels); free(timeline_bytes); free(timeline.events); free(manifest);
+    for (size_t i = 0u; i < FRAME_OUTPUT_LIMIT; i++) { free(frames[i].raw); free(frames[i].ppm); }
+    destroy_machine(&active); destroy_machine(&restore_target);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     const char *content = NULL;
@@ -1372,6 +1827,11 @@ int main(int argc, char **argv)
         if (frame_mode == NULL || strcmp(frame_mode, "frames") != 0 || frame_content == NULL || frame_symbols == NULL ||
             frame_timeline == NULL || frame_output == NULL || parse_profile(frame_profile_text, &selected_profile) != 0)
             return usage_error("frame mode requires --mode frames, BLL, linked symbols, a canonical timeline, output directory, and a supported profile");
+        {
+            const char *legacy = getenv("LYNX_TEST_REPLAY_LEGACY");
+            if (legacy != NULL && strcmp(legacy, "1") == 0)
+                return run_frame_consumer_legacy(frame_content, frame_symbols, frame_timeline, frame_output, selected_profile);
+        }
         return run_frame_consumer(frame_content, frame_symbols, frame_timeline, frame_output, selected_profile);
     }
     unsigned seen = 0u;
