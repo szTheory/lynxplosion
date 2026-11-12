@@ -1,0 +1,12 @@
+source = build/pins/lynx-tests/audio2/tests.s (upstream MIT test source; not committed)
+revision = lynx-tests b583dc43d532d3c41563a6fa35420614fbcead89 (archive SHA-256 a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e)
+recipe = sh scripts/build-suites.sh --out DIR; pinned cc65 eebf54af545f4ae52f8489a2f6d4d5f93e7942d2 (archive SHA-256 d3e4bfa57c5a40dd386d1a38b27fffad3bbc296950303f3c9017211465f5c8a1) ca65 --cpu 65C02, then ld65 -C fixtures/suites/bll.cfg -Ln; native tools must match host-local .lynx-build-files; no TGI/CRT
+sha256 = 2fe682487678d67489ff80b82949eddf027fdbdeb54dd5e4109260ea9bf770d8
+wrapper_sha256 = 6dd26bb8b07718b54b1e39342caa81a52a2eb6f0088a6a07af367657405bed6f
+licence = MIT, Copyright (c) 2025 Ignacio Sanchez Gines (upstream input; generated output remains temporary)
+notices = fixtures/suites/NOTICE includes the complete pinned lynx-tests LICENSE text
+allowed_use = local source-built diagnostic test assembly input only; no suite observation or hardware accuracy claim
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/suites/audio2-wrapper.s fixtures/suites/bll.cfg fixtures/suites/NOTICE

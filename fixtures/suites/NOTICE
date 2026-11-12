@@ -3,6 +3,8 @@ Lynxplosion-owned files in this directory:
 - bll.cfg
 - cpu-wrapper.s
 - timers-wrapper.s
+- audio-wrapper.s
+- audio2-wrapper.s
 
 These are original project test material and remain all rights reserved while
 the project licence decision O5 is open. This statement does not grant any
