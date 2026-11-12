@@ -425,6 +425,11 @@ static void case_identity(void)
     CHECK_EQ_U64(id.entry_addr, 0u);
     CHECK_EQ_U64(id.object_len, 0u);
     CHECK_EQ_U64(id.timing_policy, LYNX_TIMING_POLICY_LEGACY_FLAT5);
+    CHECK_EQ_U64(id.audio_policy, LYNX_AUDIO_POLICY_DIGITAL_1);
+    CHECK_EQ_U64(id.audio_rate_num, LYNX_AUDIO_RATE_NUM);
+    CHECK_EQ_U64(id.audio_rate_den, LYNX_AUDIO_RATE_DEN);
+    CHECK_EQ_U64(id.audio_channels, LYNX_AUDIO_PCM_CHANNELS);
+    CHECK_EQ_U64(id.audio_bits, LYNX_AUDIO_PCM_BITS);
 
     CHECK_EQ_U64(load_bll_at(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
     memset(&id, 0xA5, sizeof id);
@@ -441,6 +446,11 @@ static void case_identity(void)
     CHECK_EQ_U64(id.entry_addr, 0x0200u);
     CHECK_EQ_U64(id.object_len, 42u);
     CHECK_EQ_U64(id.timing_policy, LYNX_TIMING_POLICY_LEGACY_FLAT5);
+    CHECK_EQ_U64(id.audio_policy, LYNX_AUDIO_POLICY_DIGITAL_1);
+    CHECK_EQ_U64(id.audio_rate_num, LYNX_AUDIO_RATE_NUM);
+    CHECK_EQ_U64(id.audio_rate_den, LYNX_AUDIO_RATE_DEN);
+    CHECK_EQ_U64(id.audio_channels, LYNX_AUDIO_PCM_CHANNELS);
+    CHECK_EQ_U64(id.audio_bits, LYNX_AUDIO_PCM_BITS);
     char hex[65];
     lynx__sha256_hex(id.content_sha256, hex);
     CHECK(strcmp(hex, "bab6f7ea8d9ba129db7e7a776f61a73162ccd67f2348d3a17a31ae7dda31da4e") == 0);
@@ -2401,7 +2411,7 @@ static void case_reset_power_on(void)
 #define SNAP_OFF_PAYLOAD_SHA 220u
 #define SNAP_SEED 0x0123456789abcdefu
 
-/* Payload offsets of format 5 (white-box, from core/snapshot.c). */
+/* Payload offsets of format 6 (white-box, from core/snapshot.c). */
 enum {
     PAY_PC = 0, PAY_P = 6, PAY_FLAGS = 7, PAY_OPCODE = 8, PAY_STEP = 9, PAY_EA = 10, PAY_TMP = 12,
     PAY_COST_MODEL = 13, PAY_MAPCTL = 14, PAY_PAGE_LATCH = 15, PAY_TICKS = 16, PAY_READY_AT = 24,
@@ -2410,7 +2420,8 @@ enum {
     PAY_TIMER_PHASE = PAY_TIMER_PENDING + 1,
     PAY_TIMER_EVENT_APPLIED = PAY_TIMER_PHASE + 1,
     PAY_BUS_HOLD = PAY_TIMER_EVENT_APPLIED + 1,
-    PAY_VIDEO = PAY_BUS_HOLD + 1
+    PAY_VIDEO = PAY_BUS_HOLD + 1,
+    PAY_AUDIO = PAY_VIDEO + (int)LYNX__VIDEO_SNAPSHOT_LEN
 };
 
 enum {
@@ -2838,8 +2849,136 @@ static void case_timer_snapshot(void)
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void case_av_lattice(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) return;
+    CHECK_EQ_U64(load_bll_at(m, churn_loop, sizeof churn_loop, 0x0200u), LYNX_OK);
+
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY], palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_pcm_frame pcm_first[2], pcm_second[2];
+    lynx_audio_event events_first[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_audio_event events_second[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_av_buffers buffers = {0};
+    lynx_av_result result = {0}, result_before;
+    uint64_t consumed = 0u, ticks = 0u;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    memset(pens, 0xA5, sizeof pens); memset(palettes, 0xA5, sizeof palettes);
+    memset(line_ticks, 0xA5, sizeof line_ticks);
+    memset(pcm_first, 0xA5, sizeof pcm_first); memset(pcm_second, 0xA5, sizeof pcm_second);
+    memset(events_first, 0xA5, sizeof events_first); memset(events_second, 0xA5, sizeof events_second);
+    buffers.struct_size = (uint32_t)sizeof buffers;
+    buffers.frame.struct_size = (uint32_t)sizeof buffers.frame;
+    buffers.frame.pens = pens; buffers.frame.pens_capacity = sizeof pens;
+    buffers.frame.palettes = palettes; buffers.frame.palettes_capacity = sizeof palettes;
+    buffers.frame.line_ticks = line_ticks; buffers.frame.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+    buffers.pcm = pcm_first; buffers.pcm_capacity = 2u;
+    buffers.events = events_first; buffers.event_capacity = LYNX_AV_MIN_EVENT_CAPACITY;
+    result.struct_size = (uint32_t)sizeof result;
+
+    memcpy(snap_a, machine_buf, MSIZE);
+    result.pcm_count = 0xA5A5A5A5u;
+    result_before = result;
+    buffers.pcm_capacity = 0u;
+    CHECK_EQ_U64(lynx_advance_av(m, 400u, &buffers, &result), LYNX_ERR_CAPACITY);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    CHECK(memcmp(&result, &result_before, sizeof result) == 0);
+    CHECK(all_bytes_equal(pens, sizeof pens, 0xA5u));
+    CHECK(all_bytes_equal(palettes, sizeof palettes, 0xA5u));
+    CHECK(all_bytes_equal((const uint8_t *)line_ticks, sizeof line_ticks, 0xA5u));
+    CHECK(all_bytes_equal((const uint8_t *)pcm_first, sizeof pcm_first, 0xA5u));
+    buffers.pcm_capacity = 2u;
+
+    /* Tick 400 is excluded from [0,400); the next call observes ordinal 0. */
+    result.struct_size = (uint32_t)sizeof result;
+    CHECK_EQ_U64(lynx_advance_av(m, 400u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(result.ticks_consumed, 400u);
+    CHECK_EQ_U64(result.first_sample_ordinal, 0u);
+    CHECK_EQ_U64(result.next_sample_ordinal, 0u);
+    CHECK_EQ_U64(result.pcm_count, 0u);
+    CHECK_EQ_U64(result.event_count, 0u);
+    CHECK(all_bytes_equal(pens, sizeof pens, 0xA5u));
+    CHECK_EQ_U64(lynx_advance_av(m, 1u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.first_sample_ordinal, 0u);
+    CHECK_EQ_U64(result.next_sample_ordinal, 1u);
+    CHECK_EQ_U64(result.pcm_count, 1u);
+    CHECK_EQ_U64(pcm_first[0].left, 0u);
+    CHECK_EQ_U64(pcm_first[0].right, 0u);
+
+    /* Repointing to new caller spans writes the next ordinal only there. */
+    buffers.pcm = pcm_second; buffers.events = events_second;
+    CHECK_EQ_U64(lynx_advance_av(m, 399u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.first_sample_ordinal, 1u);
+    CHECK_EQ_U64(result.next_sample_ordinal, 1u);
+    CHECK_EQ_U64(result.pcm_count, 0u);
+    CHECK_EQ_U64(lynx_advance_av(m, 1u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.first_sample_ordinal, 1u);
+    CHECK_EQ_U64(result.next_sample_ordinal, 2u);
+    CHECK_EQ_U64(result.pcm_count, 1u);
+    CHECK_EQ_U64(pcm_second[0].left, 0u);
+    CHECK_EQ_U64(pcm_second[0].right, 0u);
+    CHECK_EQ_U64(pcm_first[0].left, 0u);
+    CHECK_EQ_U64(pcm_first[0].right, 0u);
+
+    /* Legacy advance keeps the sample phase without requesting observations. */
+    CHECK_EQ_U64(lynx_advance(m, 399u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 399u);
+    CHECK_EQ_U64(m->audio.next_sample_ordinal, 2u);
+    CHECK_EQ_U64(lynx_guest_ticks(m, &ticks), LYNX_OK);
+    CHECK_EQ_U64(ticks, 1200u);
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(m->audio.next_sample_ordinal, 3u);
+
+    /* A complete-tick reservation stops before the next transition; resuming
+       with a fresh span captures it once rather than losing it. */
+    const uint64_t setup_tick = m->guest_ticks;
+    CHECK(lynx__audio_write(&m->audio, 0xFD20u, 1u, setup_tick, NULL));
+    CHECK(lynx__audio_write(&m->audio, 0xFD21u, 1u, setup_tick, NULL));
+    CHECK(lynx__audio_write(&m->audio, 0xFD24u, 0u, setup_tick, NULL));
+    CHECK(lynx__audio_write(&m->audio, 0xFD25u, 0x18u, setup_tick, NULL));
+    memcpy(snap_a, machine_buf, MSIZE);
+    {
+        static const uint16_t addresses[] = {0xFD20u, 0xFD21u, 0xFD24u, 0xFD25u};
+        static const uint8_t expected[] = {1u, 1u, 0u, 0x18u};
+        for (size_t i = 0u; i < sizeof addresses / sizeof addresses[0]; i++) {
+            uint8_t value = 0xA5u;
+            CHECK_EQ_U64(lynx_read_cpu_memory(m, addresses[i], &value, 1u), LYNX_OK);
+            CHECK_EQ_U64(value, expected[i]);
+        }
+    }
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    buffers.pcm = pcm_first; buffers.events = events_first;
+    CHECK_EQ_U64(lynx_advance_av(m, 40u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.stop, LYNX_STOP_OUTPUT);
+    CHECK_EQ_U64(result.event_count, 1u);
+    CHECK_EQ_U64(events_first[0].tick, 1216u);
+    CHECK_EQ_U64(events_first[0].sequence, 0u);
+    CHECK_EQ_U64(events_first[0].channel, 0u);
+    CHECK_EQ_U64(events_first[0].cause, LYNX_AUDIO_EVENT_CLOCK);
+    CHECK(events_first[0].before_output == -1);
+    CHECK_EQ_U64(events_first[0].after_output, 1u);
+    buffers.events = events_second;
+    CHECK_EQ_U64(lynx_advance_av(m, 16u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(result.event_count, 1u);
+    CHECK_EQ_U64(events_second[0].tick, 1232u);
+    CHECK_EQ_U64(events_second[0].sequence, 0u);
+    CHECK_EQ_U64(events_second[0].channel, 0u);
+    CHECK_EQ_U64(events_second[0].cause, LYNX_AUDIO_EVENT_CLOCK);
+    CHECK_EQ_U64(events_second[0].before_output, 1u);
+    CHECK(events_second[0].after_output == -1);
+    lynx_machine_deinit(m);
+}
+
 static void case_snapshot_roundtrip(void)
 {
+    case_av_lattice();
     lynx_machine *m = snap_instance(machine_buf, SNAP_SEED, churn_loop, sizeof churn_loop, 0x0200u);
     if (m == NULL) {
         return;
@@ -2866,13 +3005,17 @@ static void case_snapshot_roundtrip(void)
     CHECK_UNCHANGED(machine_buf, snap_a);
     CHECK_EQ_U64(blob_v[SNAP_TOTAL], 0xA5u); /* nothing written past the end */
     CHECK(memcmp(blob_v, "LYNXSNAP", 8u) == 0);
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 5u); /* format 5 */
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 6u); /* format 6 */
     CHECK_EQ_U64(get_le(blob_v + 12u, 4u), LYNX__SNAPSHOT_HEADER_LEN);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
     CHECK_EQ_U64(get_le(blob_v + 208u, 4u), 0x0200u);
     CHECK_EQ_U64(get_le(blob_v + 212u, 4u), sizeof churn_loop + 10u);
     CHECK_EQ_U64(get_le(blob_v + 216u, 4u), LYNX__SNAPSHOT_PAYLOAD_LEN);
+    CHECK_EQ_U64(PAY_AUDIO, 77948);
+    CHECK(all_bytes_equal(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO, 40u, 0u));
+    CHECK_EQ_U64(get_le(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + 66u, 8u), 2400u);
+    CHECK_EQ_U64(get_le(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + 74u, 8u), 5u);
 
     /* Saving twice, over different garbage, gives the same bytes. */
     memset(blob_bad, 0x5A, sizeof blob_bad);
@@ -3034,9 +3177,9 @@ static void case_bll_identity(void)
     CHECK_EQ_U64(m->mapctl, 0x0Cu);
     CHECK_EQ_U64(save_into(m, blob_v), 0u);
 
-    /* Format 5 carries the complete object and timing identity in the LE header and the
+    /* Format 6 carries the complete object and timing identity in the LE header and the
        guest-written MAPCTL latch in the payload. */
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 5u);
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 6u);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
     CHECK_EQ_U64(get_le(blob_v + 208u, 4u), 0x0200u);
@@ -3187,6 +3330,10 @@ static void snapshot_tick_limit(void)
     /* At the limit, with the maximum flat5 public-return residual. */
     put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, limit, 8u);
     put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, limit + 4u, 8u);
+    const uint64_t next_ordinal = limit / UINT64_C(400);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + 74u, next_ordinal, 8u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + 66u,
+           (next_ordinal + 1u) * UINT64_C(400), 8u);
     rehash_payload(blob_bad);
     CHECK_EQ_U64(lynx_snapshot_restore(dst, blob_bad, SNAP_TOTAL), LYNX_OK);
     uint64_t ticks = 0u;
@@ -3248,8 +3395,8 @@ static void case_snapshot_refusal(void)
     RESTORE_EXPECT(m, blob_v, 0u, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
     RESTORE_EXPECT(m, blob_v, LYNX__SNAPSHOT_HEADER_LEN, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
 
-    /* Formats 1 through 4 are unsupported; format 5 is the current positive case. */
-    CHECK_EQ_U64(blob_bad[8], 5u);
+    /* Formats 1 through 5 are unsupported; format 6 is the current positive case. */
+    CHECK_EQ_U64(blob_bad[8], 6u);
     CHECK_EQ_U64(blob_bad[9] | blob_bad[10] | blob_bad[11], 0u);
     blob_bad[8] = 1u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
@@ -3260,6 +3407,8 @@ static void case_snapshot_refusal(void)
     blob_bad[8] = 4u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
     blob_bad[8] = 5u;
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
+    blob_bad[8] = 6u;
 
     /* Another identity: each refused as a MISMATCH, whatever the blob holds. */
     unsigned char other_image[sizeof churn_loop];
@@ -3428,6 +3577,22 @@ static void case_snapshot_refusal(void)
     VALUE_REFUSED(m, blob_v, PAY_TIMER_EVENT_APPLIED, 2u, 1u, snap_a);
     VALUE_REFUSED(m, blob_v, PAY_TIMER_EVENT_APPLIED, 1u, 1u, snap_a); /* no due edge */
     VALUE_REFUSED(m, blob_v, PAY_BUS_HOLD, 2u, 1u, snap_a);
+
+    /* Audio format-6 fields are validated before any candidate is applied. */
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 41u, LYNX__AUDIO_RING_NODE_COUNT, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 42u, LYNX__AUDIO_RING_DEBT_LIMIT + 1u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 50u, 2u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 51u, 2u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 52u, 2u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 53u, 1u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 54u, LYNX_AV_MIN_EVENT_CAPACITY + 1u, 4u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 58u, 1u, 8u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 66u, 2399u, 8u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 74u, 6u, 8u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 82u, 1u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 4u, 0x10u, 1u, snap_a); /* CTLB reserved bits */
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 6u, 0x1000u, 2u, snap_a); /* shifter wider than 12 bits */
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 3u, 0x0Fu, 1u, snap_a); /* unsupported linked count */
 
     /* Control: the untouched blob is accepted and gives the instance as saved,
        so every refusal above was the edit. */

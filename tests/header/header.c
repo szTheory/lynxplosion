@@ -8,7 +8,11 @@
 _Static_assert(sizeof(lynx_status) == 4, "status is 32 bits");
 _Static_assert(sizeof(lynx_stop_reason) == 4, "stop reason is 32 bits");
 _Static_assert(sizeof(lynx_config) == 32, "config layout");
-_Static_assert(sizeof(lynx_identity) == 88, "identity layout");
+_Static_assert(sizeof(lynx_identity) == 104, "identity layout");
+_Static_assert(sizeof(lynx_audio_event) == 16, "audio event layout");
+_Static_assert(sizeof(lynx_pcm_frame) == 4, "PCM frame layout");
+_Static_assert(sizeof(lynx_av_buffers) == 96, "A/V buffers layout");
+_Static_assert(sizeof(lynx_av_result) == 72, "A/V result layout");
 _Static_assert(sizeof(lynx_frame_buffers) == 56, "frame buffers layout");
 _Static_assert(sizeof(lynx_frame_result) == 48, "frame result layout");
 _Static_assert(sizeof(lynx_watch_event) == 32, "watch event layout");
@@ -18,6 +22,7 @@ _Static_assert(LYNX_STOP_HALT == 3, "stop reason HALT value");
 _Static_assert(LYNX_STOP_WATCH == 2, "stop reason WATCH value");
 _Static_assert(LYNX_STOP_UNDEFINED == 4, "stop reason UNDEFINED value");
 _Static_assert(LYNX_STOP_UNAVAILABLE == 5, "stop reason UNAVAILABLE value");
+_Static_assert(LYNX_STOP_OUTPUT == 6, "stop reason OUTPUT value");
 _Static_assert(LYNX_ERR_UNAVAILABLE == 10, "status UNAVAILABLE value");
 _Static_assert(LYNX_PROFILE_NONE == 0, "profile id none");
 _Static_assert(LYNX_PROFILE_LYNX1 == 1, "profile id lynx1");
@@ -44,6 +49,9 @@ static lynx_status (*const set_input_fn)(lynx_machine *, uint32_t) = lynx_set_in
 static lynx_status (*const advance_frame_fn)(lynx_machine *, uint64_t,
                                              const lynx_frame_buffers *,
                                              lynx_frame_result *) = lynx_advance_frame;
+static lynx_status (*const advance_av_fn)(lynx_machine *, uint64_t,
+                                          const lynx_av_buffers *,
+                                          lynx_av_result *) = lynx_advance_av;
 static lynx_status (*const watch_configure_fn)(lynx_machine *, uint32_t, size_t) =
     lynx_watch_configure;
 static lynx_status (*const watch_clear_fn)(lynx_machine *) = lynx_watch_clear;
@@ -82,6 +90,7 @@ int main(void)
     (void)advance_fn;
     (void)set_input_fn;
     (void)advance_frame_fn;
+    (void)advance_av_fn;
     (void)watch_configure_fn;
     (void)watch_clear_fn;
     (void)watch_get_fn;

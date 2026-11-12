@@ -1,7 +1,8 @@
-# Format 5 video snapshot state
+# Format 6 video and audio snapshot state
 
-Format 5 records the machine's current guest video and logical input state so
-an accepted restore can continue the same capture stream. Snapshot restore
+Format 6 records the machine's current guest video, logical input and digital
+audio state so an accepted restore can continue the same deterministic A/V
+stream. Snapshot restore
 requires the same build, CPU profile, RAM policy and seed, loaded content, and
 timing policy. Every scalar is encoded field by field in little-endian order;
 the snapshot does not copy C structure padding.
@@ -39,6 +40,32 @@ entries. The complete video record is 12,344 bytes.
 | 8,264 | 3,264 | captured per-row palettes |
 | 11,528 | 816 | 102 line-start ticks |
 
+The audio envelope begins at payload offset `77948` and is 88 bytes. Its
+fieldwise little-endian layout is:
+
+| Record offset | Width | Field |
+| ---: | ---: | --- |
+| 0 | 10 × 4 | Channel 0..3 records: volume, backup, count, CTLA, CTLB, feedback, shift `u16`, output `i8`, integrator `i8` |
+| 40 | 1 | FD50 stereo-disable register |
+| 41 | 1 | bounded ring cursor |
+| 42 | 8 | bounded pending pulse debt for ring nodes 0..7 |
+| 50 | 1 | same-tick device cursor |
+| 51 | 1 | same-tick sample cursor |
+| 52 | 1 | same-tick event cursor valid flag |
+| 53 | 1 | reserved zero |
+| 54 | 4 | event sequence within the current guest tick |
+| 58 | 8 | event cursor tick |
+| 66 | 8 | next sample guest tick |
+| 74 | 8 | next sample ordinal |
+| 82 | 6 | reserved zero |
+
+The payload therefore ends at 78,036 bytes. The event and sampling cursors are
+guest continuation state so output remains identical when an instance is
+advanced in different host-sized slices. Caller spans, host event-script
+cursors and output-file positions remain host state. The ring fields reserve
+the final layout for later channel-link behavior; the current tracer exercises
+only ordinary channel 0 and refuses enabled link mode.
+
 The current display address is a 16-bit stream position. At blank ordinal 2,
 the backup address is aligned down to a four-byte boundary and transferred to
 it; subsequent DMA increments wrap at 16 bits. A saved current address may
@@ -74,7 +101,7 @@ for the selected timing policy: four ticks for flat-five or video policy, and
 thirteen ticks for the test-skew table. Guest time is bounded below the
 64-bit overflow margin, so future release arithmetic is safe.
 
-These checks establish deterministic format-5 restoration within one exact
+These checks establish deterministic format-6 restoration within one exact
 build identity. The video cadence, palette sampling, refresh period, and input
 mapping remain software policy; snapshot equality does not qualify Lynx
 hardware accuracy.
@@ -87,14 +114,15 @@ snapshot and timer controls.
 
 `lynx_state_digest` returns 32 SHA-256 bytes for an initialized instance,
 including one that has not loaded content. Its versioned stream is encoded in
-this order: the NUL-terminated tag `lynxplosion.guest-state.v1`; CPU PC as
+this order: the NUL-terminated tag `lynxplosion.guest-state.v2`; CPU PC as
 little-endian `u16`, A/X/Y/S, P with reserved bits set, flags/opcode/step, EA as
 little-endian `u16`, and TMP; MAPCTL and CPU page latch as bytes; guest ticks
 and CPU-ready tick as little-endian `u64`; all 65,536 RAM bytes; eight timer
 records (backup/count/CTLA/CTLB), pending bits, timer phase policy, the
 current-tick event-applied bit, and bus hold as bytes; then the complete
-fieldwise video record above. Video scalars follow its documented widths and
-little-endian rules. The timer event bit is derived from the current tick; an
+fieldwise video record above and the 88-byte audio envelope. The NUL-terminated
+domain is `lynxplosion.guest-state.v2`. Video and audio scalars follow their
+documented widths and little-endian rules. The timer event bit is derived from the current tick; an
 older cursor timestamp is deliberately omitted. The stream contains no C
 structure padding, immutable machine identity (profile, RAM policy/seed,
 content or build), snapshot header, derived CPU request/wake state, host watch
@@ -104,8 +132,8 @@ unchanged; the output span must not wrap or overlap the machine.
 The runner writes those 32 public digest bytes as 64 lowercase hex digits in
 `obs.state.hex`; its `digests.txt` entry is SHA-256 of the decoded 32 bytes.
 The observation digest now covers that entry in addition to RAM, public
-registers and time. This changes the observation schema and the CPU-loop
-golden: the added state digest makes input, timer, bus and video state visible
+registers and time. Adding audio state changes the CPU-loop golden: the digest
+makes input, timer, bus, video and audio state visible
 even when RAM/register/time projections agree. This is repeatability evidence,
 not hardware-accuracy evidence.
 

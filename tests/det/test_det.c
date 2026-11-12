@@ -1499,10 +1499,10 @@ done:
 
 static void case_video_sensitivity(char **args)
 {
-    enum { INPUT, PALETTE, PEN, DMA_OWNER, PAGE_LATCH, HOST_WATCH, FLIP_COUNT };
+    enum { INPUT, PALETTE, PEN, DMA_OWNER, PAGE_LATCH, AUDIO_ROUTE, HOST_WATCH, FLIP_COUNT };
     static const char *const names[FLIP_COUNT] = {
         "input mask", "palette component", "partial pen byte", "DMA owner deadline",
-        "CPU page latch", "host watch"
+        "CPU page latch", "audio FD50 route", "host watch"
     };
     (void)args;
     instance base = {0};
@@ -1542,6 +1542,11 @@ static void case_video_sensitivity(char **args)
         case PAGE_LATCH:
             copy->cpu_page_latch = 1u;
             break;
+        case AUDIO_ROUTE:
+            CHECK(lynx__audio_write(&copy->audio, 0xFD50u,
+                                    (uint8_t)(copy->audio.stereo_disable ^ 1u),
+                                    copy->guest_ticks, NULL));
+            break;
         case HOST_WATCH:
             CHECK_EQ_U64(lynx_watch_configure(copy, 0x0400u, 1u), LYNX_OK);
             break;
@@ -1565,7 +1570,7 @@ static void case_video_sensitivity(char **args)
 
     lynx_machine_deinit(base.m);
     free(base.mem);
-    printf("video_sensitivity: input,palette,partial-pen,DMA-owner,page-latch sensitive; host-watch excluded\n");
+    printf("video_sensitivity: input,palette,partial-pen,DMA-owner,page-latch,audio-route sensitive; host-watch excluded\n");
 }
 
 static const struct {

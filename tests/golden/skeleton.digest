@@ -25,4 +25,4 @@
 # while leaving the workload, CPU, RAM, and time observations unchanged; the
 # new API input sensitivity and det.video_sensitivity prove the added stream
 # is nonvacuous.
-b2609348b6a450ba51bb77142461e32552e824dc08423d0c60966145f9464227
+1420aa0aebe840917a2cb0e8789ed5e7c9697c6be5c79a497abc0d990550d3c0
