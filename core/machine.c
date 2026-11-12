@@ -359,12 +359,42 @@ lynx_status lynx__machine_set_bus_hold(struct lynx_machine *m, uint32_t hold)
     return LYNX_OK;
 }
 
-/* Read the instruction byte after the route precheck has established that the
-   CPU sees RAM. This is not a public mapped peek and does not complete a bus
-   request. */
-static uint8_t bus_peek(const struct lynx_machine *m, uint16_t addr)
+/* Side-effect-free CPU-visible byte for the opcode gate and page candidate.
+   It follows the same mapping as bus_access but does not complete a request.
+   Private vector tests intentionally keep their separate flat RAM bus. */
+static bool bus_opcode_peek(const struct lynx_machine *m, uint16_t addr,
+                            uint8_t *result)
 {
-    return m->ram[addr];
+    if (result == NULL) return false;
+    if (m->content_format == LYNX__CONTENT_TEST_FLAT) {
+        *result = m->ram[addr];
+        return true;
+    }
+
+    switch (lynx__bus_decode(m->mapctl, addr)) {
+    case LYNX__BUS_ROUTE_RAM:
+        *result = m->ram[addr];
+        return true;
+    case LYNX__BUS_ROUTE_MIKEY:
+        if (lynx__video_available(addr)) {
+            *result = lynx__video_peek(&m->video, addr);
+            return true;
+        }
+        if (lynx__timer_available(addr)) {
+            *result = lynx__timer_peek(&m->timer_bank, addr);
+            return true;
+        }
+        return false;
+    case LYNX__BUS_ROUTE_SUZY:
+        if (!lynx__input_available(addr)) return false;
+        *result = lynx__input_peek(&m->video, addr);
+        return true;
+    case LYNX__BUS_ROUTE_MAPCTL:
+    case LYNX__BUS_ROUTE_ROM:
+    case LYNX__BUS_ROUTE_VECTOR:
+        return false;
+    }
+    return false;
 }
 
 /* Whether the pending CPU request has an implemented target. The private
@@ -583,18 +613,26 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             *stop = LYNX_STOP_UNAVAILABLE;
             break;
         }
-        if (lynx__cpu_at_boundary(&m->cpu) && m->cpu.req_kind == LYNX__CK_OPCODE &&
-            !lynx__cpu_opcode_defined(m->cpu.profile, bus_peek(m, addr))) {
-            *stop = LYNX_STOP_UNDEFINED;
-            break;
+        if (lynx__cpu_at_boundary(&m->cpu) && m->cpu.req_kind == LYNX__CK_OPCODE) {
+            uint8_t opcode = 0u;
+            if (!bus_opcode_peek(m, addr, &opcode)) {
+                *stop = LYNX_STOP_UNAVAILABLE;
+                break;
+            }
+            if (!lynx__cpu_opcode_defined(m->cpu.profile, opcode)) {
+                *stop = LYNX_STOP_UNDEFINED;
+                break;
+            }
         }
         lynx__bus_timing price;
         if (m->cfg.timing_policy == LYNX_TIMING_POLICY_VIDEO_POLICY1) {
             price.ticks = 5u;
             price.sample = 0u;
+            uint8_t opcode = 0u;
             if (lynx__bus_decode(m->mapctl, addr) == LYNX__BUS_ROUTE_RAM &&
+                bus_opcode_peek(m, addr, &opcode) &&
                 lynx__bus_page_opcode_eligible(m->mapctl, m->cpu_page_latch,
-                                               addr, m->cpu.req_kind, bus_peek(m, addr),
+                                               addr, m->cpu.req_kind, opcode,
                                                m->cpu.profile)) {
                 price.ticks = 4u;
             }

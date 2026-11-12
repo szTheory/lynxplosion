@@ -6267,6 +6267,102 @@ static void init_video_frame_result(lynx_frame_result *result)
     result->struct_size = (uint32_t)sizeof *result;
 }
 
+static void check_mapped_opcode_fetch(uint32_t profile, uint16_t address,
+                                      uint32_t input_mask, uint8_t mapped_opcode,
+                                      uint8_t ram_opcode, int expect_undefined,
+                                      const char *case_name)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.profile = profile;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    if (m == NULL) return;
+
+    if (load_bll_at(m, watch_count_program, sizeof watch_count_program, 0x0200u) != LYNX_OK) {
+        CHECK_NAMED(false, "video.bus.opcode-fetch-load-bll");
+        lynx_machine_deinit(m);
+        return;
+    }
+    m->mapctl = 0u; /* FCxx selects Suzy; FDxx selects Mikey. */
+    m->ram[address] = ram_opcode;
+    if (address == 0xFCB0u) {
+        CHECK_EQ_U64(lynx_set_input(m, input_mask), LYNX_OK);
+        CHECK_EQ_U64(lynx__bus_decode(m->mapctl, address), LYNX__BUS_ROUTE_SUZY);
+        CHECK_EQ_HEX(lynx__input_peek(&m->video, address), mapped_opcode);
+    } else if (address == 0xFDA0u) {
+        CHECK(lynx__video_write(&m->video, address, mapped_opcode));
+        CHECK_EQ_U64(lynx__bus_decode(m->mapctl, address), LYNX__BUS_ROUTE_MIKEY);
+        CHECK_EQ_HEX(lynx__video_peek(&m->video, address), mapped_opcode);
+    } else if (address == 0xFD00u) {
+        CHECK(lynx__timer_write(&m->timer_bank, address, mapped_opcode));
+        CHECK_EQ_U64(lynx__bus_decode(m->mapctl, address), LYNX__BUS_ROUTE_MIKEY);
+        CHECK_EQ_HEX(lynx__timer_peek(&m->timer_bank, address), mapped_opcode);
+    } else {
+        CHECK_NAMED(false, "video.bus.opcode-fetch-supported-device-address");
+    }
+    lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), address);
+    m->cpu_ready_at = m->guest_ticks;
+
+    const uint64_t start = m->guest_ticks;
+    const lynx__cpu posted = m->cpu;
+    const uint16_t input_before = m->video.input_mask;
+    memcpy(snap_a, machine_buf, MSIZE);
+    CHECK_EQ_U64(lynx_advance(m, 5u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(m->video.input_mask, input_before);
+    CHECK_EQ_U64(m->ram[address], ram_opcode);
+    if (expect_undefined) {
+        CHECK_NAMED(stop == LYNX_STOP_UNDEFINED && consumed == 0u, case_name);
+        CHECK_EQ_U64(stop, LYNX_STOP_UNDEFINED);
+        CHECK_EQ_U64(consumed, 0u);
+        CHECK_EQ_U64(m->guest_ticks, start);
+        CHECK(memcmp(&posted, &m->cpu, sizeof posted) == 0);
+        CHECK_UNCHANGED(machine_buf, snap_a);
+
+        /* Repeated refusal remains at the same boundary and does not mutate. */
+        memcpy(snap_a, machine_buf, MSIZE);
+        consumed = UINT64_MAX;
+        stop = LYNX_STOP_HALT;
+        CHECK_EQ_U64(lynx_advance(m, 5u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_UNDEFINED);
+        CHECK_EQ_U64(consumed, 0u);
+        CHECK_UNCHANGED(machine_buf, snap_a);
+    } else {
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 5u);
+        CHECK_EQ_U64(m->guest_ticks, start + 5u);
+        CHECK_EQ_U64(m->cpu.opcode, mapped_opcode);
+        CHECK_EQ_U64(m->cpu.pc, (uint16_t)(address + 1u));
+        CHECK_NAMED(m->cpu.opcode == mapped_opcode, case_name);
+    }
+    lynx_machine_deinit(m);
+}
+
+static void check_mapped_opcode_fetches(void)
+{
+    const uint32_t profiles[] = {
+        LYNX_PROFILE_NONE, LYNX_PROFILE_LYNX1, LYNX_PROFILE_LYNX2
+    };
+    const uint32_t nop_mask = LYNX_INPUT_UP | LYNX_INPUT_DOWN | LYNX_INPUT_RIGHT |
+                              LYNX_INPUT_OPTION1 | LYNX_INPUT_B;
+    const uint32_t bit_opcode_mask = LYNX_INPUT_A | LYNX_INPUT_B | LYNX_INPUT_OPTION2;
+    const uint16_t device_addresses[] = {0xFCB0u, 0xFDA0u, 0xFD00u};
+    for (size_t i = 0u; i < sizeof profiles / sizeof profiles[0]; i++) {
+        for (size_t route = 0u; route < sizeof device_addresses / sizeof device_addresses[0]; route++) {
+            const uint16_t address = device_addresses[route];
+            const uint32_t mask = address == 0xFCB0u ? nop_mask : 0u;
+            const uint32_t undefined_mask = address == 0xFCB0u ? bit_opcode_mask : 0u;
+            const char *route_name = address == 0xFCB0u ? "suzy" :
+                                     address == 0xFDA0u ? "mikey-video" : "mikey-timer";
+            check_mapped_opcode_fetch(profiles[i], address, mask, 0xEAu, 0x07u, 0,
+                                      route_name);
+            check_mapped_opcode_fetch(profiles[i], address, undefined_mask, 0x07u, 0xEAu,
+                                      profiles[i] == LYNX_PROFILE_NONE, route_name);
+        }
+    }
+}
+
 static void case_video_bus(void)
 {
     const int failures_before = check_failures;
@@ -6356,6 +6452,10 @@ static void case_video_bus(void)
         CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
     }
     CHECK_EQ_U64(m->ram[0x0401u], 1u);
+
+    lynx_machine_deinit(m);
+    m = NULL;
+    check_mapped_opcode_fetches();
 
 done:
     if (m != NULL) lynx_machine_deinit(m);
