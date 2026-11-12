@@ -2,9 +2,11 @@
 
 Lynxplosion is an Atari Lynx emulator core in early development. The current
 slice covers explicit CPU profiles, the CPU memory map, direct-load startup
-tier A, an original guest-RAM diagnostic, and headless public CPU/timer suite
-observations. The timer suite retains one source disagreement as pending
-evidence; its strict comparison still fails on that row.
+tier A, an original guest-RAM diagnostic, timer-driven raw video, logical
+input, and headless public CPU/timer suite observations. Phase 5 adds a bounded
+raw-frame API and a public-only consumer that replays guest-tick input against
+an original source-built homebrew. These are deterministic software
+observations; they do not qualify physical Lynx behavior.
 
 ## Current scope and claims
 
@@ -26,6 +28,24 @@ evidence; its strict comparison still fails on that row.
   diagnostic-owned palette and an 800-sample silence WAV labelled as
   placeholder audio. These are not a video frame, hardware scanout or real
   audio output.
+- The Phase 5 consumer records packed 4-bpp pens, one raw palette snapshot per
+  visible line, guest line ticks, and rendered PPM output as separate evidence.
+  Its input timeline is a canonical file of logical masks applied at exact
+  guest ticks and sampled by guest CPU reads. The guest fixture, bus timing,
+  page-mode behavior, palette boundary, refresh cadence and raster output are
+  software policies or observations; none is physical hardware qualification.
+- `LEGACY_FLAT5` remains the default timing policy. In its no-DMA, zero-counter
+  timer environment, the only pending D-10 row is result index 14 (`0c`
+  observed versus unchanged source `0d`). The separate `VIDEO_POLICY1`
+  observation reports `0f` versus `0d` at that index and retains a strict
+  mismatch with no pending exception. Both environments agree on the other
+  15 of 16 timer rows; global EVD-02 and O1 remain open. See the [timer
+  revisit](docs/timer-video-revisit.md).
+- The pinned page-mode source and oracle build are recorded, but its two
+  profile observations stop before the first test result at the unsupported
+  `SERCTL` write of `$06` to `$FD8C`. Both exact profile cases are declared
+  skips with missing raw results; they are not source agreement or profile
+  qualification. See [suite evidence](docs/public-suites.md).
 - Matching digests across runs or compilers establish repeatability only. They
   do not establish hardware accuracy.
 
@@ -43,6 +63,11 @@ content, and contributions must never add any without documented permission.
 - [Exposure record](docs/policy/exposure-record.md)
 - [Provenance notice](docs/provenance.md)
 - [CPU profiles](docs/cpu-profiles.md)
+- [Raw video and input](docs/video-input.md)
+- [Bus and video software policies](docs/bus-video-policy.md)
+- [Input replay](docs/input-replay.md)
+- [Format 5 video snapshot state](docs/snapshot-video.md)
+- [Video and input fault evidence](docs/video-faults.md)
 - [Claim template](docs/claims/claim.template)
 
 A claim is bound to the exact test inventory: it records the SHA-256 of
