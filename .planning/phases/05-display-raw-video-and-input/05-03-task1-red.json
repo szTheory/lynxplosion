@@ -1,0 +1,11 @@
+{
+  "command": "./build/check/tests/lynx-test-api video_bus",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.video_bus\n",
+  "stderr": "tests/api/test_api.c:6301: m->video.refresh_next_tick == start failed: 277 != 21\ntests/api/test_api.c:6302: m->video.refresh_busy_until == start failed: 26 != 21\ntests/api/test_api.c:6310: consumed == 5u failed: 1 != 5\ntests/api/test_api.c:6311: m->guest_ticks == start + 55u failed: 72 != 76\ntests/api/test_api.c:6312: m->video.refresh_busy_until == start + 55u failed: 26 != 76\ntests/api/test_api.c:6314: CHECK(memcmp(&posted, &m->cpu, sizeof posted) == 0) failed\ntests/api/test_api.c:6315: m->ram[0x0400u] == 0u failed: 90 != 0\ntests/api/test_api.c:6316: m->host_observation.watch_event.hit == 0u failed: 1 != 0\n",
+  "targetTest": "api.video_bus",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "A real guest store stays posted with unchanged address/data through ten five-tick video grants and the equal-tick refresh grant, then completes exactly once at the refresh release tick while timer IRQ work continues.",
+  "actual": "With the first DMA grant at tick 21, refresh_next_tick advanced to 277 and refresh_busy_until remained 26 instead of preserving the due request until the video row released at tick 71. The CPU store and watch fired at tick 71, five ticks before the serialized refresh should finish at tick 76.",
+  "semanticAssessment": "The target API case compiled and executed, then failed its exclusive-owner assertions. The observed refresh deadline moving to start+256 proves refresh was applied concurrently with the first video grant; the observed guest store and watch firing at the video release instead of after the refresh-owned interval proves the pending CPU request was not held through that grant. This is a production behavior RED, not a compile, setup, or unrelated test failure."
+}

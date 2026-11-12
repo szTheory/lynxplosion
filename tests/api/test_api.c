@@ -6244,6 +6244,185 @@ static void init_video_frame_result(lynx_frame_result *result)
     result->struct_size = (uint32_t)sizeof *result;
 }
 
+static void case_video_bus(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    if (m == NULL) goto done;
+
+    CHECK_EQ_U64(load_bll_at(m, watch_count_program, sizeof watch_count_program, 0x0200u), LYNX_OK);
+    bool found_store = false;
+    for (uint32_t i = 0u; i < 200u; i++) {
+        if (m->cpu.req_addr == 0x0400u &&
+            (m->cpu.req_flags & LYNX__CF_WRITE) != 0u) {
+            found_store = true;
+            break;
+        }
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, 1u);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    }
+    CHECK_NAMED(found_store, "video.bus.real-guest-store-posted");
+    if (!found_store) goto done;
+
+    const uint64_t start = m->guest_ticks;
+    const lynx__cpu posted = m->cpu;
+    CHECK_EQ_U64(posted.req_addr, 0x0400u);
+    CHECK_EQ_U64(posted.req_data, 0x5Au);
+    CHECK_EQ_U64(posted.req_flags & LYNX__CF_WRITE, LYNX__CF_WRITE);
+    CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
+    m->cpu.p = (uint8_t)(m->cpu.p | 0x04u); /* Keep the timer IRQ pending without entering it. */
+
+    CHECK(lynx__video_write(&m->video, 0xFD92u, 1u));
+    m->video.row_active = 1u;
+    m->video.capture_rows = 0u;
+    m->video.dma_cursor = 70u; /* Ten one-byte grants keep the store pending. */
+    m->video.dma_next_tick = start;
+    m->video.dma_busy_until = start;
+    m->video.refresh_next_tick = start;
+    m->video.refresh_busy_until = start;
+    CHECK(timer_write_required(&m->timer_bank, 0xFD00u, 0u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD02u, 0u));
+    CHECK(timer_write_required(&m->timer_bank, 0xFD01u, 0x88u));
+
+    /* The last video grant lands at start+45 and releases at start+50. The
+       equal-tick refresh request then owns through start+55; half-open calls
+       prove the CPU store is not completed at either exact release boundary. */
+    CHECK_EQ_U64(lynx_advance(m, 50u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 50u);
+    CHECK_EQ_U64(m->guest_ticks, start + 50u);
+    CHECK_EQ_U64(m->video.capture_rows, 1u);
+    CHECK_EQ_U64(m->video.dma_busy_until, start + 50u);
+    CHECK_EQ_U64(m->video.refresh_next_tick, start);
+    CHECK_EQ_U64(m->video.refresh_busy_until, start);
+    CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    CHECK_EQ_U64(m->wake_pending, 1u);
+    CHECK(memcmp(&posted, &m->cpu, sizeof posted) == 0);
+    CHECK_EQ_U64(m->ram[0x0400u], 0u);
+    CHECK_EQ_U64(m->host_observation.watch_event.hit, 0u);
+
+    CHECK_EQ_U64(lynx_advance(m, 5u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 5u);
+    CHECK_EQ_U64(m->guest_ticks, start + 55u);
+    CHECK_EQ_U64(m->video.refresh_busy_until, start + 55u);
+    CHECK_EQ_U64(m->video.refresh_next_tick, start + 256u);
+    CHECK(memcmp(&posted, &m->cpu, sizeof posted) == 0);
+    CHECK_EQ_U64(m->ram[0x0400u], 0u);
+    CHECK_EQ_U64(m->host_observation.watch_event.hit, 0u);
+
+    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(m->host_observation.watch_event.hit, 1u);
+    CHECK_EQ_U64(m->host_observation.watch_event.hit_tick, start + 55u);
+    CHECK_EQ_U64(m->host_observation.watch_event.value, 0x5Au);
+    CHECK_EQ_U64(m->host_observation.watch_event.return_tick, start + 56u);
+    CHECK_EQ_U64(m->ram[0x0400u], 0x5Au);
+    CHECK_NAMED(m->cpu.req_addr != 0x0400u, "video.bus.store-completed-once");
+
+    /* Continue only until the following INC has committed. A replayed held
+       store would leave the CPU at $0400 instead of reaching this increment. */
+    CHECK_EQ_U64(lynx_watch_clear(m), LYNX_OK);
+    for (uint32_t i = 0u; i < 50u && m->ram[0x0401u] == 0u; i++) {
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    }
+    CHECK_EQ_U64(m->ram[0x0401u], 1u);
+
+done:
+    if (m != NULL) lynx_machine_deinit(m);
+    printf("TAP version 13\n1..1\n%s 1 - api.video_bus\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_video_bus_edges(void)
+{
+    const int failures_before = check_failures;
+    lynx__video_state video;
+    uint8_t ram[LYNX_ADDRESS_SPACE];
+    uint64_t next = UINT64_MAX;
+    memset(ram, 0, sizeof ram);
+    lynx__video_init(&video, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+    CHECK(lynx__video_write(&video, 0xFD92u, 1u));
+    video.row_active = 1u;
+    video.capture_rows = 0u;
+    video.dma_cursor = 79u;
+    video.dma_next_tick = 256u;
+    video.refresh_next_tick = 256u;
+    CHECK(lynx__video_next_dma(&video, 256u, &next));
+    CHECK_EQ_U64(next, 256u);
+    lynx__video_dma_apply(&video, ram, 256u);
+    CHECK_EQ_U64(video.capture_rows, 1u);
+    CHECK_EQ_U64(video.dma_busy_until, 261u);
+    next = UINT64_MAX;
+    CHECK(lynx__video_next_refresh(&video, 256u, &next));
+    CHECK_NAMED(next == 261u, "video.bus.video-before-refresh-release");
+    lynx__video_refresh_apply(&video, 261u);
+    CHECK_EQ_U64(video.refresh_busy_until, 266u);
+    CHECK_EQ_U64(video.refresh_next_tick, 512u);
+
+    /* Disabling DMA cancels the unfinished row. Re-enabling does not revive
+       its stale request; the next Timer 0 row edge starts a fresh row. */
+    video.row_active = 1u;
+    video.capture_rows = 0u;
+    video.dma_cursor = 3u;
+    video.dma_next_tick = 300u;
+    video.frame_synced = 1u;
+    video.line_ordinal = 2u;
+    CHECK(lynx__video_write(&video, 0xFD92u, 0u));
+    CHECK_EQ_U64(video.row_active, 0u);
+    CHECK_EQ_U64(video.dma_cursor, 0u);
+    CHECK_EQ_U64(video.dma_next_tick, 0u);
+    CHECK_EQ_U64(video.capture_partial, 1u);
+    CHECK(!lynx__video_next_dma(&video, 300u, &next));
+    CHECK(lynx__video_write(&video, 0xFD92u, 1u));
+    CHECK(!lynx__video_next_dma(&video, 300u, &next));
+    CHECK(lynx__video_timer_apply(&video, 1u, 320u));
+    CHECK_EQ_U64(video.row_active, 1u);
+    CHECK_EQ_U64(video.dma_next_tick, 325u);
+
+    lynx__video_state idle;
+    lynx__video_init(&idle, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+    CHECK(!lynx__video_next_dma(&idle, 0u, &next));
+    CHECK(lynx__video_next_refresh(&idle, 0u, &next));
+    CHECK_EQ_U64(next, 256u);
+
+    /* The scheduler grants work at the current tick, then stops at its
+       headroom limit with a bounded, non-wrapping busy deadline. */
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_HALT;
+        CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+        const uint64_t limit = UINT64_MAX - LYNX__TICK_HEADROOM;
+        m->guest_ticks = limit - 2u;
+        m->cpu_ready_at = m->guest_ticks;
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+        m->video.dispctl = 1u;
+        m->video.row_active = 1u;
+        m->video.capture_rows = 0u;
+        m->video.dma_cursor = 79u;
+        m->video.dma_next_tick = m->guest_ticks;
+        m->video.refresh_next_tick = 0u;
+        CHECK_EQ_U64(lynx_advance(m, 10u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, 2u);
+        CHECK_EQ_U64(m->guest_ticks, limit);
+        CHECK_EQ_U64(m->video.dma_busy_until, limit + 3u);
+        lynx_machine_deinit(m);
+    }
+
+    printf("TAP version 13\n1..1\n%s 1 - api.video_bus_edges\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void case_video_cadence(void)
 {
     const int failures_before = check_failures;
@@ -6786,6 +6965,8 @@ static const struct {
     {"timer_done_gate", case_timer_done_gate},
     {"timer_reset_done_held", case_timer_reset_done_held},
     {"timer_shared_phase", case_timer_shared_phase},
+    {"video_bus", case_video_bus},
+    {"video_bus_edges", case_video_bus_edges},
     {"video_cadence", case_video_cadence},
     {"video_geometry", case_video_geometry},
     {"timer_pending_after_disable", case_timer_pending_after_disable},

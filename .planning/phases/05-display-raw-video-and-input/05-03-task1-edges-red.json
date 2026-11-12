@@ -1,0 +1,11 @@
+{
+  "command": "./build/check/tests/lynx-test-api video_bus_edges",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.video_bus_edges\n",
+  "stderr": "ASSERT video.bus.video-before-refresh-release failed\ntests/api/test_api.c:6366: video.refresh_busy_until == 266u failed: 0 != 266\ntests/api/test_api.c:6367: video.refresh_next_tick == 512u failed: 256 != 512\ntests/api/test_api.c:6378: video.row_active == 0u failed: 1 != 0\ntests/api/test_api.c:6379: video.dma_cursor == 0u failed: 3 != 0\ntests/api/test_api.c:6380: video.dma_next_tick == 0u failed: 300 != 0\ntests/api/test_api.c:6381: video.capture_partial == 1u failed: 0 != 1\n",
+  "targetTest": "api.video_bus_edges",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "After the video grant at tick 256 occupies the bus through 261, the equal-deadline refresh is scheduled at 261 and finishes at 266; disabling DMA cancels the partial row and re-enable waits for the next row edge.",
+  "actual": "The video timing helper returned the refresh's original tick 256, so refresh_apply at the video release tick 261 did nothing. Clearing DISPCTL during a partial row also left the row active and its stale DMA deadline intact.",
+  "semanticAssessment": "The target API case ran and failed on the named grant-order assertion, demonstrating the same-tick ownership overlap. Its independent row cancellation assertions also expose that disable/re-enable can leave a stale incomplete-row request. These are real behaviors in the plan's bus/video task; the binary and target test both executed successfully."
+}

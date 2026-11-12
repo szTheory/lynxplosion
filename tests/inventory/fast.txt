@@ -49,6 +49,8 @@ api.timer_snapshot_controls	api
 api.timer_standalone	api
 api.timer_tracer	api
 api.timer_unavailable	api
+api.video_bus	api
+api.video_bus_edges	api
 api.video_cadence	api
 api.video_geometry	api
 api.watch_controls	api
