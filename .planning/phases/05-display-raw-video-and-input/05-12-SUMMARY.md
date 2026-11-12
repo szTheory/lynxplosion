@@ -13,7 +13,7 @@ provides:
 affects: [Phase 05 security closeout, Phase 06 audio evidence, EVD-02, EVD-05, CON-01]
 
 actuals:
-  tokens: 56362
+  tokens: 56370
   tasks: 2
   commits: 24
 commits: 24
@@ -86,7 +86,7 @@ status: complete
 
 - **macOS:** CTest 110.25s; workflow 110s; artifacts 6s; history 85s; total 204s. 6,361 files scanned, one accepted exact 512-byte fixture.
 - **Self-contained Ubuntu 24.04:** CTest 111.07s; workflow 111s; artifacts 1s; history 13s; total 127s. The 354-commit clone was non-shallow and had no Git alternates. 6,330 files scanned, one accepted exact 512-byte fixture.
-- **Hosted Ubuntu 24.04 CI:** queue about 2s; checkout 2s; canonical command 171s. cc65 build 19s; CMake configure/build about 5s; CTest 105.60s; JUnit 0s; artifact scan 2s; history hygiene 32s. One job, no matrix or duplicate broad gate. Slowest tests: pending timer controls 58.70s, result controls 47.88s, and none-profile seam agreement 24.68s.
+- **Hosted Ubuntu 24.04 CI:** queue about 2s; runner setup under 1s; checkout 2s; canonical command 171s. cc65 build 19s; CMake configure/build about 5s; CTest 105.60s; JUnit 0s; artifact scan 2s; history hygiene 32s. One job, no matrix or duplicate broad gate. Slowest tests: pending timer controls 58.70s, result controls 47.88s, and none-profile seam agreement 24.68s.
 - **Exact skips:** `suite.page_mode.observation.lynx1` and `suite.page_mode.observation.lynx2` stop at the unsupported `$06` write to `$FD8C` before producing a result. Their observations are missing.
 - **Strict comparisons:** `LEGACY_FLAT5` retains only its admitted index-14 `0c` versus source `0d` row. `VIDEO_POLICY1` retains index 14 `0f` versus source `0d` for both profiles and agrees on the other 15/16 rows. Strict source comparisons remain unresolved failures even though observation/control tests pass.
 - The plan-local claim hash check returned `1e74578b2e13db45953c6fd02e4793f0e04623f4d4b3d7158b04a69049bd9c5d`; final CMake configurations matched the exact sorted test inventory.
@@ -103,7 +103,7 @@ Plan 05-12 qualification is complete. The exact page-mode observations remain mi
 
 ## Self-Check
 
-PASSED: qualification, validation, review-resolution, and summary artifacts exist; tested source `d3fb002` is an ancestor of HEAD; the persisted plan ledger reports 24 task/review commits; README replacement hash matches; the untracked state cache still matches its pre-update backup.
+PASSED: qualification, validation, review-resolution, and summary artifacts exist; tested source `d3fb002` is an ancestor of HEAD; 24 task/review commits were measured before the separate metadata commit; README replacement hash matches; the untracked state cache still matches its pre-update backup.
 
 ---
 *Phase: 05-display-raw-video-and-input*

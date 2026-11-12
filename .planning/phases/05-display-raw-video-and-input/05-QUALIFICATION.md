@@ -54,7 +54,7 @@ committed. Their SHA-256 digests are `9c248689c8222002f37f347218a7d3d1595e9c0fe6
 
 The push-triggered workflow used one Ubuntu job and one `scripts/check.sh`
 step, with a full-history checkout (`fetch-depth: 0`). Queue time was about 2s,
-checkout 2s, and the command took 171s. Within that command, the pinned cc65
+runner setup was under 1s, checkout took 2s, and the command took 171s. Within that command, the pinned cc65
 build took 19s, CMake configure about 0.7s, the native C build about 4.6s,
 CTest 105.60s, JUnit checking 0s, artifact scanning 2s, and history hygiene
 32s. The slowest CTests were `suite.timers.pending_controls` (58.70s),
