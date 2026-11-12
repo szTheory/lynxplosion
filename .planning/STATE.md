@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Display, Raw Video and Input
-current_plan: 11
+current_plan: 12
 status: executing
-stopped_at: Completed 05-10-PLAN.md
-last_updated: "2026-11-12T11:32:33.580Z"
+stopped_at: Completed 05-11-PLAN.md
+last_updated: "2026-11-12T12:49:14.164Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 05 execution started
-state_head: 04c4f79c98d0ed9f5db73776e13e1dc430f22e10
+state_head: b60136e6b16ee25a0d500f2c103f62e0fdf2ba56
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 57
-  completed_plans: 55
+  completed_plans: 56
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-11)
 ## Current Position
 
 Phase: 05 (Display, Raw Video and Input) — EXECUTING
-Current Plan: 11
+Current Plan: 12
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-11 — Phase 05 execution started
@@ -115,6 +115,7 @@ Progress: [███████░░░] 67%
 | Phase 05 P08 | 18min | 2 tasks | 6 files |
 | Phase 05 P09 | 41 min | 2 tasks | 6 files |
 | Phase 05 P10 | 71 min | 2 tasks | 16 files |
+| Phase 05 P11 | 53 min from first timestamped work | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -252,6 +253,8 @@ Recent decisions affecting current work:
 - [Phase 05]: Keep page-mode source build/oracle evidence separate from guest agreement; retain six missing results at the exact unsupported request.
 - [Phase 05]: Declare only the two exact page-mode profile observation skips and keep EVD-02 open.
 - [Phase 05]: Allow only the exact page-mode CTest skip property through the no-skip scanner; reject all near-matches.
+- [Phase 05]: Keep D-10 descriptor admission limited to legacy flat5/no-DMA/counter-zero evidence; VIDEO_POLICY1 uses strict all-row comparison and no pending descriptor.
+- [Phase 05]: Freeze DISPCTL=01 before VIDEO_POLICY1 observations; the upstream CRT DISPCTL=0D remains unsupported and no numeric policy was tuned to seek source agreement.
 
 ### Pending Todos
 
@@ -286,6 +289,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-12T11:32:33.207Z
-Stopped at: Completed 05-10-PLAN.md
+Last session: 2026-11-12T12:49:13.790Z
+Stopped at: Completed 05-11-PLAN.md
 Resume file: None

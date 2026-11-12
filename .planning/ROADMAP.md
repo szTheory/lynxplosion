@@ -226,7 +226,7 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
   5. An original homebrew direct-load image, driven by a recorded input timeline, shows input-responsive frames that the consumer renders. The same recording yields the same raw-frame digest, labelled as repeatability.
 **Owner gates**: O9 before the canonical raw video form is frozen, if the form affects LibFuturo. O1 for any `page-mode` claim.
 **Research flag**: Deeper research needed before planning: DMA burst timing and refresh period and cost (open; do not import another emulator's constants); per-line versus per-frame palette contract; frame-complete definition (Disagreement 10); palette byte order versus LCD latch order.
-**Plans**: 10/12 plans executed
+**Plans**: 11/12 plans executed
 **Wave 1**
 - [x] 05-01-PLAN.md
 
@@ -258,7 +258,7 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
 - [x] 05-10-PLAN.md
 
 **Wave 11** *(blocked on Wave 10 completion)*
-- [ ] 05-11-PLAN.md
+- [x] 05-11-PLAN.md
 
 **Wave 12** *(blocked on Wave 11 completion)*
 - [ ] 05-12-PLAN.md
@@ -304,5 +304,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. CPU Profiles and Per-Opcode Vectors | 11/11 | Complete    | 2026-11-10 |
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 9/9 | Complete    | 2026-11-10 |
 | 4. Timers, Interrupts and First Public Suites | 12/12 | Complete    | 2026-11-11 |
-| 5. Display, Raw Video and Input | 10/12 | In Progress | - |
+| 5. Display, Raw Video and Input | 11/12 | In Progress | - |
 | 6. Audio and Playable Checkpoint | 0/TBD | Not started | - |
