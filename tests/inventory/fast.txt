@@ -62,6 +62,7 @@ api.video_geometry	api
 api.video_page_mode	api
 api.video_reset_load	api
 api.video_snapshot	api
+api.video_snapshot_refusal	api
 api.watch_controls	api
 api.watch_controls.self_test	api
 api.watch_independent	api

@@ -8546,6 +8546,50 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void case_video_snapshot_refusal(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *source = init_in(machine_buf, &cfg);
+    lynx_machine *target = init_in(buf_b, &cfg);
+    if (source == NULL || target == NULL) goto done;
+
+    CHECK_EQ_U64(lynx_load_bll(source, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK_EQ_U64(lynx_load_bll(target, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(source, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(target, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_set_input(source, LYNX_INPUT_A), LYNX_OK);
+    CHECK_EQ_U64(lynx_set_input(target, LYNX_INPUT_B), LYNX_OK);
+    CHECK_EQ_U64(save_into(source, blob_v), 0u);
+
+    /* Video and refresh grants own one exclusive bus. These individually
+       in-range release ticks overlap, so a correctly hashed candidate must
+       be refused before changing guest or host observation state. */
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_VIDEO + 24u, 5u, 8u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_VIDEO + 40u, 5u, 8u);
+    rehash_payload(blob_bad);
+    CHECK_EQ_U64(lynx_watch_configure(target, 0x0400u, 1u), LYNX_OK);
+    memcpy(snap_a, target, MSIZE);
+    memcpy(blob_c, blob_bad, SNAP_TOTAL);
+    const lynx_status st = lynx_snapshot_restore(target, blob_bad, SNAP_TOTAL);
+    CHECK_NAMED(st == LYNX_ERR_SNAPSHOT_INVALID,
+                "video_snapshot_refusal.overlapping-owners-refused");
+    CHECK_UNCHANGED(target, snap_a);
+    CHECK_NAMED(target->host_observation.watch_armed == 1u,
+                "video_snapshot_refusal.watch-preserved");
+    CHECK_NAMED(memcmp(blob_bad, blob_c, SNAP_TOTAL) == 0,
+                "video_snapshot_refusal.caller-blob-preserved");
+
+done:
+    if (source != NULL) lynx_machine_deinit(source);
+    if (target != NULL) lynx_machine_deinit(target);
+    printf("TAP version 13\n1..1\n%s 1 - api.video_snapshot_refusal\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -8566,6 +8610,7 @@ static const struct {
     {"input_orientation", case_input_orientation},
     {"input_refusal", case_input_refusal},
     {"video_snapshot", case_video_snapshot},
+    {"video_snapshot_refusal", case_video_snapshot_refusal},
     {"video_reset_load", case_video_reset_load},
     {"cpu_program", case_cpu_program},
     {"identity", case_identity},

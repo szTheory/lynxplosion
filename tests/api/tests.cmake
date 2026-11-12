@@ -75,6 +75,7 @@ lynx_add_test(NAME api.video_bus_edges COMMAND lynx-test-api video_bus_edges LAB
 lynx_add_test(NAME api.video_page_mode COMMAND lynx-test-api video_page_mode LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.video_reset_load COMMAND lynx-test-api video_reset_load LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.video_snapshot COMMAND lynx-test-api video_snapshot LABELS api TIMEOUT 60)
+lynx_add_test(NAME api.video_snapshot_refusal COMMAND lynx-test-api video_snapshot_refusal LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.video_cadence COMMAND lynx-test-api video_cadence LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.video_geometry COMMAND lynx-test-api video_geometry LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.watch_controls COMMAND lynx-test-api watch_controls LABELS api TIMEOUT 30)

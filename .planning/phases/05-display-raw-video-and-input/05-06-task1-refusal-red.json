@@ -1,0 +1,11 @@
+{
+  "command": "build/check/tests/lynx-test-api video_snapshot_refusal 2>/private/tmp/lynx-video-snapshot-refusal-red.stderr",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.video_snapshot_refusal\n",
+  "targetTest": "api.video_snapshot_refusal",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "A rehashed candidate with overlapping future DMA and refresh ownership is refused with LYNX_ERR_SNAPSHOT_INVALID and leaves the target machine, armed watch, and input blob unchanged.",
+  "actual": "The target assertion failed because lynx_snapshot_restore accepted the mutually overlapping owners; the target changed and its armed watch was cleared. The caller blob remained unchanged.",
+  "semanticAssessment": "Valid RED: the TAP target case ran and failed at the planned exclusive-owner refusal assertion. The current validator accepts both individually in-range release deadlines as simultaneous future owners.",
+  "stderr": "ASSERT video_snapshot_refusal.overlapping-owners-refused failed\n~/projects/lynxplosion/tests/api/test_api.c:8580: instance buffer changed by a call that must not change it\nASSERT video_snapshot_refusal.watch-preserved failed\n"
+}
