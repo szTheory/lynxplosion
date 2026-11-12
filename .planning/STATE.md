@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Display, Raw Video and Input
-current_plan: 7
+current_plan: 8
 status: executing
-stopped_at: Completed 05-06-PLAN.md
-last_updated: "2026-11-12T06:22:46.746Z"
+stopped_at: Completed 05-07-PLAN.md
+last_updated: "2026-11-12T08:07:36.456Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 05 execution started
-state_head: 0135ca3dfff5a50b5e9d2230ca3a8704e9deef3f
+state_head: dd993011a39f305ee1b355a8e6226fdb4c770404
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 57
-  completed_plans: 51
+  completed_plans: 52
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-11)
 ## Current Position
 
 Phase: 05 (Display, Raw Video and Input) — EXECUTING
-Current Plan: 7
+Current Plan: 8
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-11 — Phase 05 execution started
@@ -111,6 +111,7 @@ Progress: [███████░░░] 67%
 | Phase 05 P04 | 28min | 2 tasks | 5 files |
 | Phase 05 P05 | 38m | 2 tasks | 7 files |
 | Phase 05 P06 | 61 min | 2 tasks | 19 files |
+| Phase 05 P07 | 55 min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -235,6 +236,10 @@ Recent decisions affecting current work:
 - [Phase 05]: Guest-state digests use a versioned fieldwise dynamic-state stream and exclude immutable identity, padding and host observations.
 - [Phase 05]: The CPU-loop golden changes only because the runner observation schema now includes obs.state.hex; sensitivity controls prove the added stream is nonvacuous.
 - [Phase 05]: VID-04, VID-05, INP-01 and API-06 remain unchecked because zero of four are ready while sibling Phase 05 obligations remain open.
+- [Phase 05]: Preserve consumer.frame_tracer strict positive checks with a separate A-only guest fixture while expanding the nine-input replay diagnostic.
+- [Phase 05]: During software CPU/DMA overlap, require exact input patterns only on settled frames and bound transitional pen/color values with raw-to-PPM checks; this is not hardware tearing qualification.
+- [Phase 05]: Observe two final frame periods with a 32-frame bound so the final held input has a settled endpoint frame.
+- [Phase 05]: Keep API-06, INP-01, HB-02, CON-01, VID-04 and VID-05 partial because the requirements ready-ids query reports remaining Phase 05 obligations.
 
 ### Pending Todos
 
@@ -269,6 +274,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-12T06:22:46.231Z
-Stopped at: Completed 05-06-PLAN.md
+Last session: 2026-11-12T08:07:36.007Z
+Stopped at: Completed 05-07-PLAN.md
 Resume file: None
