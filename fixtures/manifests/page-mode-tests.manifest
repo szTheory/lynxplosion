@@ -1,0 +1,12 @@
+source = build/pins/lynx-tests/page-mode/main.c and page-mode/tests.s (upstream MIT test source; not committed)
+revision = b583dc43d532d3c41563a6fa35420614fbcead89 (archive SHA-256 a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e)
+recipe = sh scripts/build-page-mode.sh --out DIR; pinned cc65 ca65 --cpu 65C02 with lynx.inc, then ld65 -C fixtures/suites/bll.cfg -Ln; no TGI or CRT; tool and recipe SHA-256 identities are recorded per build
+sha256 = 929d0f032a5f1cf36ff55b163abec388adb08159304e56cf25516c705e6410f4
+wrapper_sha256 = 8e8d403eb5b58db1914d3e105a2c5da4ebada05c8aa2a74c7953507e00e4d18d
+licence = MIT, Copyright (c) 2025 Ignacio Sanchez Gines (upstream input; generated output remains temporary)
+notices = invocation output NOTICE is copied byte-for-byte from the pinned lynx-tests LICENSE
+allowed_use = local diagnostic test assembly input and software observation only; no suite pass, hardware accuracy or profile qualification claim
+startup_tier = A
+profile = lynx1,lynx2; detected independently by the wrapper CPU probe
+evidence_tier = R
+files = fixtures/suites/page-mode-wrapper.s fixtures/suites/bll.cfg

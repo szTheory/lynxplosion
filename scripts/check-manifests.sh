@@ -8,7 +8,7 @@
 #   source revision recipe sha256 licence notices allowed_use startup_tier
 #   profile evidence_tier          (required; startup_tier is A or none, because a
 #                                   software-model vector injects state and is not tier A)
-#   files independence wrapper_sha256 (optional)
+#   files independence wrapper_sha256 and the complete input-probe provenance group (optional)
 # and the checks below hold across the whole set:
 #   - no two manifests carry the same sha256 (an ambiguous identity);
 #   - every "files" entry is a relative path under fixtures/ and exists;
@@ -68,7 +68,7 @@ while IFS= read -r manifest; do
   # Key validation: findings arrive on standard error, one per line.
   sh "$validator" --startup-tiers "A none" \
     --required "source revision recipe sha256 licence notices allowed_use startup_tier profile evidence_tier" \
-    --optional "files independence wrapper_sha256" "$root/$manifest" 2>&1 |
+    --optional "files independence wrapper_sha256 config_sha256 ca65_sha256 ld65_sha256 legacy_source legacy_source_sha256 source_built_legacy_tracer_guest_sha256 source_built_legacy_tracer_guest_bytes source_built_guest_sha256_lefthand_0 source_built_guest_bytes_lefthand_0 source_built_guest_sha256_lefthand_1 source_built_guest_bytes_lefthand_1" "$root/$manifest" 2>&1 |
     sed "s|$root/||" |
     sed 's|^validate-kv: |check-manifests: |' >>"$findings"
 

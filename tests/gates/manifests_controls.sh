@@ -67,6 +67,26 @@ write_manifest() {
   } >"$1"
 }
 
+# Add the exact optional provenance extension introduced for the input-probe
+# frame-replay fixture. Hash values exercise the common SHA-256 field contract;
+# byte counts and the authored legacy-source identity are fixed by the captured
+# source-build records in fixtures/manifests/input-probe.manifest.
+append_input_probe_fields() {
+  cat >>"$1" <<EOF2
+config_sha256 = $hash64
+ca65_sha256 = $hash64
+ld65_sha256 = $hash64
+legacy_source = fixtures/diagnostic/input_probe_tracer.s (project-authored)
+legacy_source_sha256 = $hash64
+source_built_legacy_tracer_guest_sha256 = $hash64
+source_built_legacy_tracer_guest_bytes = 172
+source_built_guest_sha256_lefthand_0 = $hash64
+source_built_guest_bytes_lefthand_0 = 201
+source_built_guest_sha256_lefthand_1 = $hash64
+source_built_guest_bytes_lefthand_1 = 201
+EOF2
+}
+
 # run_check DIR: sets rc and out (both streams).
 run_check() {
   rc=0
@@ -253,4 +273,36 @@ rc=0
 (cd "$work/glob" && sh "$repo/scripts/validate-kv.sh" --required "" "$work/glob/empty.kv") >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 2 ] || fail validator_required "an empty required list: expected exit 2, got $rc"
 ok validator_glob
+
+# 17. The complete 05-07 input-probe identity extension is accepted, while its
+# key set, identity types and source-built lengths remain strict.
+make_tree "$t"
+append_input_probe_fields "$t/fixtures/manifests/a.manifest"
+run_check "$t"
+[ "$rc" -eq 0 ] || fail input_probe_extension "complete provenance group was rejected: $out"
+ok input_probe_extension
+
+make_tree "$t"
+append_input_probe_fields "$t/fixtures/manifests/a.manifest"
+sed 's/^source_built_guest_bytes_lefthand_0 = 201$/source_built_guest_bytes_lefthand_0 = 202/' \
+  "$t/fixtures/manifests/a.manifest" >"$work/m"
+cp "$work/m" "$t/fixtures/manifests/a.manifest"
+expect_reject input_probe_wrong_length "$t" "source_built_guest_bytes_lefthand_0: unexpected source-built guest byte count"
+
+make_tree "$t"
+append_input_probe_fields "$t/fixtures/manifests/a.manifest"
+sed 's/^config_sha256 = .*/config_sha256 = 0123/' "$t/fixtures/manifests/a.manifest" >"$work/m"
+cp "$work/m" "$t/fixtures/manifests/a.manifest"
+expect_reject input_probe_bad_hash "$t" "config_sha256: bad sha256"
+
+make_tree "$t"
+append_input_probe_fields "$t/fixtures/manifests/a.manifest"
+sed '/^legacy_source_sha256 = /d' "$t/fixtures/manifests/a.manifest" >"$work/m"
+cp "$work/m" "$t/fixtures/manifests/a.manifest"
+expect_reject input_probe_incomplete "$t" "incomplete input-probe provenance group: missing key: legacy_source_sha256"
+
+make_tree "$t"
+append_input_probe_fields "$t/fixtures/manifests/a.manifest"
+printf 'source_built_guest_sha256_lefthand_2 = %s\n' "$hash64" >>"$t/fixtures/manifests/a.manifest"
+expect_reject input_probe_unknown_key "$t" "source_built_guest_sha256_lefthand_2: unknown key"
 rm -rf "$work"

@@ -24,6 +24,12 @@ O1 remains open and the bytes do not qualify hardware profiles.
 
 The private `--test-source-shape-only` option is used only by negative controls against temporary source copies. It tests grammar failures without changing production pin verification or the source identity chain used by normal runs.
 
+## Page-mode source build
+
+`sh scripts/build-page-mode.sh --out build/check/scratch/<new-owned-output>` assembles the unchanged pinned `page-mode/tests.s` into a temporary tier-A BS93 object. The companion `sh scripts/generate-page-mode-oracle.sh --source build/pins/lynx-tests --out build/check/scratch/<new-oracle.tsv>` derives six expected bytes from pinned `main.c` and `tests.s`: `35 41 69 81 74|75 81`, with offsets `0..5`, one byte per test, and a six-byte result extent. Together with their artifact records, the builder and oracle bind the exact page-mode source, upstream notice, cc65 tools, wrapper, BLL layout, recipe, labels and object identities; existing CPU and timer outputs and descriptors remain independent.
+
+The page wrapper keeps `WaitVBlank`, the MAPCTL accesses, Timer6 measurements and SERCTL trigger writes from upstream source. It configures the source-declared Timer0/Timer2 wait chain and uses the explicit unverified `VIDEO_POLICY1` policy in the host harness. Display DMA remains disabled. This source build establishes assembly and oracle provenance only; it does not claim runtime completion, expected-byte agreement, hardware accuracy or profile qualification.
+
 ## Timer observations and the pending source row
 
 `observe timers PROFILE BUILDDIR ORACLE PENDING_DESCRIPTOR` executes a fresh guest for the requested profile, retains all 16 meaningful raw bytes and source comparisons, and writes a hash-bound pending record. `PROFILE` is exactly `lynx1` or `lynx2`; pass it as one argument without a shell pipe. Its successful observation is deliberately limited to 15 source agreements plus the exact D-10 pending row: result index 14 is `0c` while the unchanged pinned source expects `0d`. The strict `run timers PROFILE BUILDDIR ORACLE` command keeps that disagreement visible and exits 1 with `suite: timer source oracle comparison mismatch`; no accepted-value set or upstream source expectation is changed.

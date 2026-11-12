@@ -19,6 +19,9 @@
 #     evidence_tier is one of T1 T2 T3 T4 T5 T6 T7 R;
 #   - with --no-host-data, a value must not start with "/" or "~", contain a
 #     home-directory path, or contain a YYYY-MM-DD date.
+#   - the optional input-probe provenance extension is all-or-none, names the
+#     known project-authored legacy source, and records the exact verified
+#     source-built guest lengths (172, 201, 201 bytes).
 # Every finding is printed as "validate-kv: <file>: ..." on standard error.
 # The --required list must name at least one key, and --startup-tiers must not
 # hold glob characters (* ? [). Exit status: 0 clean, 1 findings, 2 usage error.
@@ -124,6 +127,16 @@ for file in "$@"; do
     function is_hash_key(k) {
       return k == "sha256" || k == "input_digest" || (length(k) > 7 && substr(k, length(k) - 6) == "_sha256")
     }
+    function is_input_probe_key(k) {
+      return k == "config_sha256" || k == "ca65_sha256" || k == "ld65_sha256" ||
+        k == "legacy_source" || k == "legacy_source_sha256" ||
+        k == "source_built_legacy_tracer_guest_sha256" ||
+        k == "source_built_legacy_tracer_guest_bytes" ||
+        k == "source_built_guest_sha256_lefthand_0" ||
+        k == "source_built_guest_bytes_lefthand_0" ||
+        k == "source_built_guest_sha256_lefthand_1" ||
+        k == "source_built_guest_bytes_lefthand_1"
+    }
     BEGIN {
       file = ENVIRON["KV_FILE"]
       nohost = ENVIRON["KV_NOHOST"] == "1"
@@ -165,6 +178,16 @@ for file in "$@"; do
       if (is_hash_key(key) && (length(value) != 64 || value ~ /[^0-9a-f]/)) {
         bad(NR, key, "bad sha256")
       }
+      if (is_input_probe_key(key)) { input_probe_seen[key] = 1; input_probe_count++ }
+      if (key == "legacy_source" && value != "fixtures/diagnostic/input_probe_tracer.s (project-authored)") {
+        bad(NR, key, "unexpected input-probe legacy source")
+      }
+      if (key == "source_built_legacy_tracer_guest_bytes" && value != "172") {
+        bad(NR, key, "unexpected source-built guest byte count")
+      }
+      if ((key == "source_built_guest_bytes_lefthand_0" || key == "source_built_guest_bytes_lefthand_1") && value != "201") {
+        bad(NR, key, "unexpected source-built guest byte count")
+      }
       if (key == "startup_tier" && !(value in tier_ok)) {
         bad(NR, key, "bad startup_tier")
       }
@@ -187,6 +210,12 @@ for file in "$@"; do
       }
     }
     END {
+      if (input_probe_count > 0) {
+        split("config_sha256 ca65_sha256 ld65_sha256 legacy_source legacy_source_sha256 source_built_legacy_tracer_guest_sha256 source_built_legacy_tracer_guest_bytes source_built_guest_sha256_lefthand_0 source_built_guest_bytes_lefthand_0 source_built_guest_sha256_lefthand_1 source_built_guest_bytes_lefthand_1", probe_keys, " ")
+        for (i = 1; i <= 11; i++) {
+          if (!(probe_keys[i] in input_probe_seen)) bad(0, "", "incomplete input-probe provenance group: missing key: " probe_keys[i])
+        }
+      }
       if (("startup" in seen) && ("startup_tier" in seen) &&
           startup_value != startup_tier_value) {
         bad(startup_line, "startup", "conflicts with startup_tier")
