@@ -116,6 +116,7 @@ void lynx__power_on(lynx_machine *m)
     }
     lynx__cpu_init(&m->cpu, m->cfg.profile);
     m->cost_model = (uint8_t)LYNX__COST_FLAT5;
+    m->cpu_page_latch = 0u;
     m->has_content = 0u;
     m->content_addr = 0u;
     m->content_len = 0u;
@@ -560,11 +561,13 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
         }
         if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_VIDEO_PRIORITY) {
             machine_set_guest_tick(m, next.tick);
+            m->cpu_page_latch = 0u;
             lynx__video_dma_apply(&m->video, m->ram, next.tick);
             continue;
         }
         if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_REFRESH_PRIORITY) {
             machine_set_guest_tick(m, next.tick);
+            m->cpu_page_latch = 0u;
             lynx__video_refresh_apply(&m->video, next.tick);
             continue;
         }
@@ -583,13 +586,33 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             *stop = LYNX_STOP_UNDEFINED;
             break;
         }
-        const lynx__bus_timing price =
-            lynx__bus_timing_of(m->cost_model, lynx__bus_region_of(addr), m->cpu.req_kind);
+        lynx__bus_timing price;
+        if (m->cfg.timing_policy == LYNX_TIMING_POLICY_VIDEO_POLICY1) {
+            price.ticks = 5u;
+            price.sample = 0u;
+            if (lynx__bus_decode(m->mapctl, addr) == LYNX__BUS_ROUTE_RAM &&
+                lynx__bus_page_opcode_eligible(m->mapctl, m->cpu_page_latch,
+                                               addr, m->cpu.req_kind, bus_peek(m, addr),
+                                               m->cpu.profile)) {
+                price.ticks = 4u;
+            }
+        } else {
+            price = lynx__bus_timing_of(m->cost_model, lynx__bus_region_of(addr),
+                                        m->cpu.req_kind);
+        }
         const uint8_t write_value = m->cpu.req_data;
         uint8_t data = 0u;
         if (!bus_access(m, addr, m->cpu.req_data, flags, grant + price.sample, &data)) {
             *stop = LYNX_STOP_UNAVAILABLE;
             break;
+        }
+        if (m->cfg.timing_policy == LYNX_TIMING_POLICY_VIDEO_POLICY1 &&
+            (m->mapctl & 0x80u) == 0u &&
+            lynx__bus_decode(m->mapctl, addr) == LYNX__BUS_ROUTE_RAM &&
+            (addr >> 8) < UINT8_MAX) {
+            m->cpu_page_latch = (uint8_t)((addr >> 8) + 1u);
+        } else {
+            m->cpu_page_latch = 0u;
         }
         machine_update_wake_request(m);
         /* The scan has already established that timer work at this exact tick

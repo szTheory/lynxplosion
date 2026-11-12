@@ -26,7 +26,8 @@
      0  pc u16        2  a      3  x      4  y      5  s
      6  p (bits 4 and 5 set)    7  cpu latches (lynx__cpu.flags)
      8  opcode        9  step (cycle index inside the instruction)
-     10 ea u16        12 tmp    13 cost_model     14 mapctl u8  15 reserved u8, zero
+     10 ea u16        12 tmp    13 cost_model     14 mapctl u8
+     15 CPU page latch: zero invalid, otherwise prior 256-byte RAM page + 1
      16 guest_ticks u64         24 cpu_ready_at u64
      32 ram 65536 bytes
      65568 eight timer records (backup, count, CTLA, CTLB) in timer order
@@ -99,7 +100,7 @@ enum {
     P_TMP = 12,
     P_COST_MODEL = 13,
     P_MAPCTL = 14,
-    P_RESERVED = 15,
+    P_PAGE_LATCH = 15,
     P_TICKS = 16,
     P_READY_AT = 24,
     P_RAM = 32,
@@ -114,7 +115,7 @@ enum {
 
 _Static_assert(OFF_END == (int)LYNX__SNAPSHOT_HEADER_LEN, "snapshot header length");
 _Static_assert(P_END == (int)LYNX__SNAPSHOT_PAYLOAD_LEN, "snapshot payload length");
-_Static_assert(P_RESERVED + 1 == P_TICKS, "snapshot byte fields meet the clock fields");
+_Static_assert(P_PAGE_LATCH + 1 == P_TICKS, "snapshot byte fields meet the clock fields");
 _Static_assert(P_TIMERS == 65568, "timer bank follows RAM without padding");
 
 #define SNAPSHOT_TOTAL ((size_t)LYNX__SNAPSHOT_HEADER_LEN + (size_t)LYNX__SNAPSHOT_PAYLOAD_LEN)
@@ -229,11 +230,12 @@ static int timer_bank_valid(const lynx__timer_bank *bank, uint64_t ticks,
     return 1;
 }
 
-static uint64_t max_public_ready_span(uint8_t cost_model)
+static uint64_t max_public_ready_span(uint8_t cost_model, uint32_t timing_policy)
 {
     /* Every granted cycle returns after at least one tick has elapsed. The
-       table's largest costs are flat5=5 and test_skew=14, so the largest
-       positive remaining span is 4 or 13 respectively. */
+       production video schedule uses at most five ticks; the legacy test
+       table's largest price is test_skew=14. */
+    if (timing_policy == LYNX_TIMING_POLICY_VIDEO_POLICY1) return 4u;
     switch (cost_model) {
     case LYNX__COST_FLAT5:
         return 4u;
@@ -378,7 +380,7 @@ lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, 
     payload[P_TMP] = m->cpu.tmp;
     payload[P_COST_MODEL] = m->cost_model;
     payload[P_MAPCTL] = m->mapctl;
-    payload[P_RESERVED] = 0u;
+    payload[P_PAGE_LATCH] = m->cpu_page_latch;
     put_u64(payload + P_TICKS, m->guest_ticks);
     put_u64(payload + P_READY_AT, m->cpu_ready_at);
     memcpy(payload + P_RAM, m->ram, LYNX_ADDRESS_SPACE);
@@ -509,7 +511,9 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     if (!lynx__cpu_state_valid(&cand, table)) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
-    if (payload[P_RESERVED] != 0u) {
+    const uint8_t cpu_page_latch = payload[P_PAGE_LATCH];
+    if ((m->cfg.timing_policy == LYNX_TIMING_POLICY_LEGACY_FLAT5 ||
+         (payload[P_MAPCTL] & 0x80u) != 0u) && cpu_page_latch != 0u) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
     /* Every MAPCTL bit is stored as the deterministic provisional byte latch;
@@ -524,7 +528,8 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
        price minus one tick already elapsed before a public return. */
     uint64_t ticks = get_u64(payload + P_TICKS);
     uint64_t ready = get_u64(payload + P_READY_AT);
-    if (ready < ticks || ready - ticks > max_public_ready_span(payload[P_COST_MODEL])) {
+    if (ready < ticks ||
+        ready - ticks > max_public_ready_span(payload[P_COST_MODEL], m->cfg.timing_policy)) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
     /* Guest time never passes the limit lynx_advance enforces, so a state
@@ -582,6 +587,7 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     m->guest_ticks = ticks;
     m->cpu_ready_at = ready;
     m->mapctl = payload[P_MAPCTL];
+    m->cpu_page_latch = cpu_page_latch;
     memcpy(m->ram, payload + P_RAM, LYNX_ADDRESS_SPACE);
     m->timer_bank = timer_cand;
     m->video = video_cand;

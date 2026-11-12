@@ -111,6 +111,7 @@ struct lynx_machine {
     uint32_t content_format, startup_tier, entry_addr, object_len;
     uint8_t content_sha256[32]; /* SHA-256 of the accepted image bytes; zero before a load */
     uint8_t mapctl; /* provisional byte latch; all written bits are retained */
+    uint8_t cpu_page_latch; /* zero invalid; page+1 for the latest eligible RAM access */
     uint8_t bus_hold; /* private deterministic grant gate; no public sleep claim */
     uint8_t wake_pending; /* pending IRQ requests wake independently of CPU I */
     uint64_t guest_ticks;       /* the only clock */

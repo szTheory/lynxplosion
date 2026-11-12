@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "bus.h"
+#include "lynxplosion.h"
 
 /* Ticks per cycle, indexed [cost model][region][cycle kind].
 
@@ -68,6 +69,23 @@ uint8_t lynx__bus_region_of(uint16_t addr)
 {
     (void)addr;
     return LYNX__REGION_RAM;
+}
+
+bool lynx__bus_page_opcode_eligible(uint8_t mapctl, uint8_t page_latch,
+                                    uint16_t addr, uint8_t kind, uint8_t opcode,
+                                    uint32_t profile)
+{
+    const uint8_t page = (uint8_t)(addr >> 8);
+    if ((mapctl & 0x80u) != 0u || page_latch == 0u || page == UINT8_MAX ||
+        kind != LYNX__CK_OPCODE || opcode != 0xEAu ||
+        (profile != LYNX_PROFILE_LYNX1 && profile != LYNX_PROFILE_LYNX2) ||
+        lynx__bus_decode(mapctl, addr) != LYNX__BUS_ROUTE_RAM) {
+        return false;
+    }
+    /* Zero is the invalid-state sentinel; a page is stored as page + 1. The
+       final address page is conservatively excluded from this first policy. */
+    return page_latch == (uint8_t)(page + 1u) &&
+           lynx__cpu_opcode_defined(profile, opcode);
 }
 
 bool lynx__bus_cost_model_valid(uint32_t model)

@@ -43,6 +43,29 @@ the middle of a row abandons that partial row and its remaining DMA requests;
 re-enabling waits for the next Timer 0 row event. Already consumed guest time
 and completed byte grants are not rolled back.
 
+## CPU page-mode subset
+
+Only `VIDEO_POLICY1` considers page mode. MAPCTL bit 7 must be clear, the request
+must be an opcode fetch to CPU-mapped RAM in address page `$00`–`$FE`, and the
+last successful CPU RAM access must have been in that same 256-byte page. Any
+CPU RAM access records its page, including operands, data reads and writes; a
+non-RAM CPU access clears the latch. The page `$FF` is excluded by this policy.
+
+The Epyx CPU chapter says opcode decode and other system state can veto a
+same-page opportunity, but does not list every eligible decode. To avoid
+crediting all same-page fetches, this first software policy whitelists only the
+standard `$EA` NOP opcode, which is common to both implemented CPU profiles.
+That whitelist is an explicit conservative, unverified project choice, not a
+source claim about the NOP decode. Other opcode fetches, operand/dummy cycles,
+data reads and writes remain five ticks. An eligible NOP fetch costs four
+ticks. Every video or refresh grant clears the saved page continuation before
+the CPU is reconsidered; the next CPU RAM access establishes a new page.
+
+The one-byte snapshot slot at payload offset 15 stores zero for no page or
+`page + 1` for the prior page, preserving the format-5 payload size. Legacy
+flat5 and MAPCTL-disabled snapshots require zero there. Exact build identity
+continues to govern snapshot compatibility.
+
 ## Evidence boundary
 
 The Epyx Handy specification documents exclusive bus ownership, the
@@ -56,7 +79,7 @@ The source also says page mode applies only to opcode fetches, normal data
 reads and writes use full cycles, MAPCTL bit 7 disables page mode, and other
 opcode/system conditions may exclude an otherwise same-page fetch. The exact
 software eligibility subset and the conservative stream-close rule are
-specified with the page-mode implementation in this document's next section.
+specified in the CPU page-mode section above.
 
 Primary references: Epyx, *Handy Hardware Specification*, [CPU/ROM chapter,
 "RAM Page Mode" and "CPU Cycle Tick Summary"](https://www.monlynx.de/lynx/lynx4.html),

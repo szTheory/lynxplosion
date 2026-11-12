@@ -53,6 +53,14 @@ lynx__bus_route lynx__bus_decode(uint8_t mapctl, uint16_t addr);
 /* The region an address belongs to. Timing stays flat5/PLACEHOLDER here. */
 uint8_t lynx__bus_region_of(uint16_t addr);
 
+/* Narrow VIDEO_POLICY1 page-mode candidate: only a same-page, mapped-RAM
+   opcode fetch for the conservatively whitelisted NOP opcode can be priced at
+   four ticks. page_latch is zero when no prior CPU RAM access is eligible and
+   otherwise stores the previous 256-byte page plus one. */
+bool lynx__bus_page_opcode_eligible(uint8_t mapctl, uint8_t page_latch,
+                                    uint16_t addr, uint8_t kind, uint8_t opcode,
+                                    uint32_t profile);
+
 /* True for a cost model id this build defines. Takes the full-width value so a
    snapshot field or a setter argument is checked before it is narrowed. */
 bool lynx__bus_cost_model_valid(uint32_t model);
