@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Display, Raw Video and Input
-current_plan: 4
+current_plan: 5
 status: executing
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-11-12T03:34:07.404Z"
+stopped_at: Completed 05-04-PLAN.md
+last_updated: "2026-11-12T04:13:51.254Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 05 execution started
-state_head: f94771f4ccad645c70aa5296afeec7dce5894dc7
+state_head: 05faa42fad864b6ce18b4791b59c324c8be0f274
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 57
-  completed_plans: 48
+  completed_plans: 49
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-11)
 ## Current Position
 
 Phase: 05 (Display, Raw Video and Input) — EXECUTING
-Current Plan: 4
+Current Plan: 5
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-11 — Phase 05 execution started
@@ -108,6 +108,7 @@ Progress: [███████░░░] 67%
 | Phase 05 P01 | 55min | 2 tasks | 20 files |
 | Phase 05 P02 | about 35 min; measured from first task commit through closeout | 2 tasks | 8 files |
 | Phase 05 P03 | 35m | 2 tasks | 15 files |
+| Phase 05 P04 | 28min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -224,6 +225,8 @@ Recent decisions affecting current work:
 - [Phase 05]: MAPCTL B7 set disables sequential cycles; only B7-clear candidates are considered.
 - [Phase 05]: Keep page-mode eligibility limited to shared NOP opcode while primary CPU page-mode docs leave decode eligibility unspecified; this remains an unverified software policy.
 - [Phase 05]: Serialize page continuation in existing format-5 payload byte 15, preserving payload size and exact-build compatibility; keep flat5 unchanged.
+- [Phase 05]: Keep the existing frame/input implementation: the full transactional, stop-ordering and reset/load regression matrix passed without a production-code gap.
+- [Phase 05]: Leave VID-04, VID-05 and API-06 unchecked until all sibling plans that declare them have summaries.
 
 ### Pending Todos
 
@@ -258,6 +261,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-12T03:34:06.287Z
-Stopped at: Completed 05-03-PLAN.md
+Last session: 2026-11-12T04:13:50.873Z
+Stopped at: Completed 05-04-PLAN.md
 Resume file: None
