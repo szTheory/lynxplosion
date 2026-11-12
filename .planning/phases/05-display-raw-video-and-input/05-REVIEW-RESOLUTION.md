@@ -216,3 +216,9 @@ No new source path, inventory entry, dependency or authority is introduced. Broa
 ## Final independent repair verdicts
 
 All three independent delta reviewers returned terminal results at source head `78592c38aeb9e2db5a6b0a1d952b8b2dd1cc8fe0`: code review is clean with all five findings resolved; coverage found no missing/vacuous repair check; security found affected mitigations preserved with only T-05-34 final qualification binding open. The initial 51-path and subsequent six/two-path scope provenance are retained. No independent reviewer reran the recorded focused tests. Root authorizes Task 2 qualification after these report commits; this is an internal continuation, not phase completion.
+
+## Qualification preflight repair
+
+The first macOS canonical gate stopped at ShellCheck 0.11 SC1007 before CMake/tests. Four POSIX command-prefix empty assignments in the CR-01 helper used `CDPATH= cd`; commit `ce23448` spells the identical empty value explicitly as `CDPATH='' cd`. No cleanup or containment logic changed. ShellCheck, shell syntax and both registered manifest checks passed after the edit. An independent one-path mechanical delta check is pending before restarting the final gates. Only this scoped path changed; all other 50 hashes remain identical. The full 51-path fingerprint is `b5568b960e8ce7f1c265f106e1d8dbc2e58455081497c8d69c1698742af10ed6`; helper SHA-256 `f24b2b096b788a99e4992bb01528ddb851df9377dc90da27c5f9711c416ff5f2`. No Linux or hosted run started on the preflight-failing source.
+
+The independent one-path review returned clean at `ce2344851c7adebea900d590f34eda31eef25a1e`: all four quoted empty assignments are semantically equivalent and containment, ownership, target selection and cleanup logic are unchanged. Prior security/coverage deltas remain applicable; the two focused manifest tests and ShellCheck passed. Task 2 can resume on this source after the report commit.

@@ -96,3 +96,7 @@ T-05-34 is high severity and blocks final phase advancement. It does not block s
 - [ ] `threats_open: 0` and `status: verified` after qualification.
 
 **Approval:** implementation mitigation review complete; final qualification pending.
+
+## Mechanical qualification-preflight followup
+
+At `ce2344851c7adebea900d590f34eda31eef25a1e`, four command-prefix empty `CDPATH` values are spelled explicitly for ShellCheck 0.11. Independent code review confirms semantic equivalence and unchanged containment/ownership/cleanup logic. Root reuses the security verdict for unchanged mitigations; no additional security scan is represented. Other 50 hashes are unchanged, and the updated full51 fingerprint is `b5568b960e8ce7f1c265f106e1d8dbc2e58455081497c8d69c1698742af10ed6`. ShellCheck and both manifest tests passed. Final qualification remains pending.
