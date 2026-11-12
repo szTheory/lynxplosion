@@ -49,7 +49,7 @@ work_leaf=${requested_abs##*/}
 work_parent=${requested_abs%/*}
 [ -n "$work_leaf" ] && [ -n "$work_parent" ] || refuse_work "path has no final directory name"
 [ -d "$work_parent" ] || refuse_work "parent directory does not exist"
-canonical_parent=$(CDPATH= cd -P "$work_parent" 2>/dev/null && pwd -P) || refuse_work "parent cannot be resolved"
+canonical_parent=$(CDPATH='' cd -P "$work_parent" 2>/dev/null && pwd -P) || refuse_work "parent cannot be resolved"
 work=$canonical_parent/$work_leaf
 
 allowed=0
@@ -57,7 +57,7 @@ case $work/ in
   "$repo"/*)
     repo_scratch=$repo/build/check/scratch
     if [ -d "$repo_scratch" ]; then
-      canonical_repo_scratch=$(CDPATH= cd -P "$repo_scratch" 2>/dev/null && pwd -P) || canonical_repo_scratch=
+      canonical_repo_scratch=$(CDPATH='' cd -P "$repo_scratch" 2>/dev/null && pwd -P) || canonical_repo_scratch=
       if [ "$canonical_repo_scratch" = "$repo_scratch" ] &&
          [ "$work" != "$canonical_repo_scratch" ]; then
         case $work/ in "$canonical_repo_scratch"/*) allowed=1 ;; esac
@@ -68,7 +68,7 @@ case $work/ in
   *)
     for temp_root in "${TMPDIR:-/tmp}" /tmp /private/tmp; do
       [ -d "$temp_root" ] || continue
-      canonical_temp_root=$(CDPATH= cd -P "$temp_root" 2>/dev/null && pwd -P) || continue
+      canonical_temp_root=$(CDPATH='' cd -P "$temp_root" 2>/dev/null && pwd -P) || continue
       if [ "$work" != "$canonical_temp_root" ]; then
         case $work/ in "$canonical_temp_root"/*) allowed=1 ;; esac
       fi
@@ -99,7 +99,7 @@ printf '%s\n' "$owner_token" >"$work_owner"
 
 assert_owned_work() {
   [ -d "$work" ] && [ ! -L "$work" ] || fail ownership "scratch directory changed type"
-  actual_work=$(CDPATH= cd -P "$work" 2>/dev/null && pwd -P) || fail ownership "scratch directory cannot be resolved"
+  actual_work=$(CDPATH='' cd -P "$work" 2>/dev/null && pwd -P) || fail ownership "scratch directory cannot be resolved"
   [ "$actual_work" = "$work" ] || fail ownership "scratch directory no longer has its original identity"
   [ -f "$work_owner" ] && [ ! -L "$work_owner" ] || fail ownership "ownership marker is missing"
   actual_token=$(cat "$work_owner")
