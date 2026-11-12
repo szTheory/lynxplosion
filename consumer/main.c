@@ -1979,10 +1979,12 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
     lynx_identity identity, restore_identity;
     int checkpoint_test = 0, target_created = 0, interleaved_test = 0, result = 1;
     host_sha_init(&active_transcript);
+#if defined(LYNX_CONSUMER_TESTING)
     {
         const char *requested = getenv("LYNX_TEST_REPLAY_INTERLEAVED");
         interleaved_test = requested != NULL && strcmp(requested, "1") == 0;
     }
+#endif
     if (replay_sha_vectors() != 0) { (void)report_error("independent SHA-256 vectors failed"); goto done; }
     if (frame_input_paths_are_distinct(content_path, symbols_path, timeline_path) != 0) goto done;
     if (read_bounded(timeline_path, TIMELINE_LIMIT, &timeline_bytes, &timeline_len, "input timeline") != 0 ||
@@ -2017,10 +2019,12 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
         source_handedness = handedness;
     }
     encode_hex(identity.content_sha256, content_hash);
+#if defined(LYNX_CONSUMER_TESTING)
     {
         const char *requested = getenv("LYNX_TEST_REPLAY_RESTORE");
         checkpoint_test = requested != NULL && strcmp(requested, "1") == 0;
     }
+#endif
     if (checkpoint_test != 0 && (timeline.count != 1u || timeline.events[0].tick != UINT64_C(108544) || timeline.events[0].mask != LYNX_INPUT_A)) {
         (void)report_error("checkpoint probe requires one A edge at tick 108544"); goto done;
     }
@@ -2216,6 +2220,12 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
             frames[i].raw_sha256, frames[i].rendered_sha256) != 0) { (void)report_error("frame transcript exceeded its bound"); goto done; }
     }
     if (publish_frame_outputs_generic(output_directory, frames, frame_count, manifest, manifest_len) != 0) goto done;
+#if defined(LYNX_CONSUMER_TESTING)
+    if (interleaved_test != 0)
+        puts("lynx-consume-test: interleaved replay verification passed");
+    if (checkpoint_test != 0)
+        puts("lynx-consume-test: pre/post-edge checkpoint restore checks passed");
+#endif
     printf("lynx-consume: replayed %zu canonical input events and published %zu raw/rendered frames\n", timeline.count, frame_count);
     result = 0;
 done:

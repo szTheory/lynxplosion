@@ -66,7 +66,7 @@ endif()
 function(run_replay bll labels timeline output scenario handedness profile interleaved)
   if(interleaved)
     execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
-        "LYNX_TEST_REPLAY_INTERLEAVED=1" "${CONSUMER}" --mode frames
+        "LYNX_TEST_REPLAY_INTERLEAVED=1" "${TEST_CONSUMER}" --mode frames
         --content "${bll}" --symbols "${labels}"
         --timeline "${timeline}" --out "${output}" --profile "${profile}"
       TIMEOUT 120 RESULT_VARIABLE consumer_rc
@@ -80,6 +80,9 @@ function(run_replay bll labels timeline output scenario handedness profile inter
   endif()
   if(NOT consumer_rc STREQUAL "0")
     message(FATAL_ERROR "frame_driver: ${scenario} public-only frame consumer failed (${consumer_rc})\n${consumer_out}${consumer_err}\nArtifacts retained under ${output}")
+  endif()
+  if(interleaved AND NOT consumer_out MATCHES "lynx-consume-test: interleaved replay verification passed")
+    message(FATAL_ERROR "frame_driver: test consumer did not confirm the interleaved replay verification\n${consumer_out}${consumer_err}")
   endif()
   file(SHA256 "${timeline}" timeline_sha)
   file(SHA256 "${bll}" content_sha)
@@ -638,7 +641,7 @@ if(CASE STREQUAL "frame_tracer")
     TIMEOUT 60 RESULT_VARIABLE consumer_rc OUTPUT_VARIABLE consumer_out ERROR_VARIABLE consumer_err)
 elseif(CASE STREQUAL "replay_restore")
   execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
-      "LYNX_TEST_REPLAY_RESTORE=1" "${CONSUMER}" --mode frames
+      "LYNX_TEST_REPLAY_RESTORE=1" "${TEST_CONSUMER}" --mode frames
       --content "${WORK}/input_probe.bll" --symbols "${WORK}/input_probe.lbl"
       --timeline "${WORK}/input.timeline" --out "${WORK}/trace"
     TIMEOUT 60 RESULT_VARIABLE consumer_rc OUTPUT_VARIABLE consumer_out ERROR_VARIABLE consumer_err)
@@ -650,6 +653,10 @@ else()
 endif()
 if(NOT consumer_rc STREQUAL "0")
   message(FATAL_ERROR "frame_driver: public-only frame consumer failed (${consumer_rc})\n${consumer_out}${consumer_err}\nArtifacts retained under ${WORK}")
+endif()
+if(CASE STREQUAL "replay_restore" AND
+   NOT consumer_out MATCHES "lynx-consume-test: pre/post-edge checkpoint restore checks passed")
+  message(FATAL_ERROR "frame_driver: test consumer did not confirm both checkpoint restore checks\n${consumer_out}${consumer_err}")
 endif()
 if(CASE STREQUAL "replay_edges")
   file(WRITE "${WORK}/input.empty" "LYNX-INPUT 1\n")
@@ -686,9 +693,10 @@ if(NOT check_rc STREQUAL "0")
 endif()
 if(CASE STREQUAL "frame_tracer")
   # The historical tracer stays on the test-only legacy consumer above. Prove
-  # that the production binary follows the normal replay path even when its old
-  # test-only environment variable is deliberately present.
-  file(WRITE "${WORK}/production.timeline" "LYNX-INPUT 1\n108544 16\n")
+  # that the production binary follows the normal replay path even when each
+  # test-only replay environment variable is deliberately present.
+  file(WRITE "${WORK}/production.timeline"
+    "LYNX-INPUT 1\n0 16\n54271 0\n54272 16\n54273 0\n162816 16\n")
   file(SHA256 "${WORK}/production.timeline" production_timeline_sha)
   set(production_guest "${WORK}/production-guest")
   file(MAKE_DIRECTORY "${production_guest}")
@@ -725,33 +733,26 @@ if(CASE STREQUAL "frame_tracer")
   endif()
 
   set(production_default "${WORK}/production-default")
-  set(production_override "${WORK}/production-override")
-  foreach(run IN ITEMS default override)
-    if(run STREQUAL "override")
-      execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
-          "LYNX_TEST_REPLAY_LEGACY=1" "${CONSUMER}" --mode frames
-          --content "${production_guest}/input_probe.bll"
-          --symbols "${production_guest}/input_probe.lbl"
-          --timeline "${WORK}/production.timeline" --out "${production_override}" --profile none
-        TIMEOUT 60 RESULT_VARIABLE production_rc OUTPUT_VARIABLE production_out
-        ERROR_VARIABLE production_err)
-    else()
-      execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
-          "${CONSUMER}" --mode frames --content "${production_guest}/input_probe.bll"
-          --symbols "${production_guest}/input_probe.lbl"
-          --timeline "${WORK}/production.timeline" --out "${production_default}" --profile none
-        TIMEOUT 60 RESULT_VARIABLE production_rc OUTPUT_VARIABLE production_out
-        ERROR_VARIABLE production_err)
+  foreach(run IN ITEMS default legacy interleaved restore)
+    set(production_output "${WORK}/production-${run}")
+    set(production_env)
+    if(run STREQUAL "legacy")
+      list(APPEND production_env "LYNX_TEST_REPLAY_LEGACY=1")
+    elseif(run STREQUAL "interleaved")
+      list(APPEND production_env "LYNX_TEST_REPLAY_INTERLEAVED=1")
+    elseif(run STREQUAL "restore")
+      list(APPEND production_env "LYNX_TEST_REPLAY_RESTORE=1")
     endif()
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin" ${production_env}
+        "${CONSUMER}" --mode frames --content "${production_guest}/input_probe.bll"
+        --symbols "${production_guest}/input_probe.lbl"
+        --timeline "${WORK}/production.timeline" --out "${production_output}" --profile none
+      TIMEOUT 60 RESULT_VARIABLE production_rc OUTPUT_VARIABLE production_out
+      ERROR_VARIABLE production_err)
     if(NOT production_rc STREQUAL "0")
       message(FATAL_ERROR "frame_driver: production replay ${run} run failed (${production_rc})\n${production_out}${production_err}")
     endif()
-    if(run STREQUAL "default")
-      set(production_output "${production_default}")
-    else()
-      set(production_output "${production_override}")
-    endif()
-    execute_process(COMMAND "${ARTIFACT_CHECKER}" frames "${production_output}" replay_restore
+    execute_process(COMMAND "${ARTIFACT_CHECKER}" frames "${production_output}" replay_edges
         "${production_timeline_sha}" 1 none "${production_guest_sha}"
       TIMEOUT 30 RESULT_VARIABLE production_check_rc OUTPUT_VARIABLE production_check_out
       ERROR_VARIABLE production_check_err)
@@ -765,17 +766,20 @@ if(CASE STREQUAL "frame_tracer")
     message(FATAL_ERROR "frame_driver: production replay manifest has no bounded frame_count")
   endif()
   set(production_frame_count "${CMAKE_MATCH_1}")
-  if(production_frame_count LESS 1)
-    message(FATAL_ERROR "frame_driver: production replay emitted no raw frames")
+  if(NOT production_frame_count STREQUAL "4")
+    message(FATAL_ERROR "frame_driver: production replay did not emit the four frames required by replay_edges")
   endif()
   file(SHA256 "${production_default}/frame-trace.manifest" production_default_manifest_sha)
-  file(SHA256 "${production_override}/frame-trace.manifest" production_override_manifest_sha)
-  if(NOT production_default_manifest_sha STREQUAL production_override_manifest_sha)
-    message(FATAL_ERROR "frame_driver: production legacy override changed the replay manifest")
-  endif()
-  compare_replay_outputs("${production_default}" "${production_override}"
-    "${production_frame_count}" TRUE)
-  message(STATUS "consumer.frame_tracer: legacy assertions ran through the test consumer; production replay ignored LYNX_TEST_REPLAY_LEGACY")
+  foreach(run IN ITEMS legacy interleaved restore)
+    set(production_override "${WORK}/production-${run}")
+    file(SHA256 "${production_override}/frame-trace.manifest" production_override_manifest_sha)
+    if(NOT production_default_manifest_sha STREQUAL production_override_manifest_sha)
+      message(FATAL_ERROR "frame_driver: production ${run} override changed the replay manifest")
+    endif()
+    compare_replay_outputs("${production_default}" "${production_override}"
+      "${production_frame_count}" TRUE)
+  endforeach()
+  message(STATUS "consumer.frame_tracer: legacy assertions ran through the test consumer; production replay ignored all three LYNX_TEST_REPLAY_* variables")
 endif()
 if(NOT CASE STREQUAL "frame_tracer")
   file(STRINGS "${WORK}/trace/frame-trace.manifest" frame_count_line REGEX "^frame_count = ")
