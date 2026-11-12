@@ -1,23 +1,23 @@
 ---
 phase: 05
-fixed_at: 2026-11-12T14:27:44Z
+fixed_at: 2026-11-12T15:03:11Z
 review_path: .planning/phases/05-display-raw-video-and-input/05-REVIEW.md
-iteration: 1
-findings_in_scope: 4
-fixed: 4
+iteration: 2
+findings_in_scope: 5
+fixed: 5
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 05: Code Review Fix Report
 
-**Fixed at:** 2026-11-12T14:27:44Z
+**Fixed at:** 2026-11-12T15:03:11Z
 **Source review:** `.planning/phases/05-display-raw-video-and-input/05-REVIEW.md`
-**Iteration:** 1
+**Iteration:** 2
 
 **Summary:**
-- Findings in scope: 4
-- Fixed: 4
+- Findings in scope: 5
+- Fixed: 5
 - Skipped: 0
 
 All focused builds and checks below ran headlessly in the main project checkout. The broad `check.sh` gate and final phase qualification were not run; root owns that later qualification step.
@@ -72,12 +72,24 @@ All focused builds and checks below ran headlessly in the main project checkout.
 
 **Verification:** Built `lynx-consume`, `lynx-consume-test`, and `lynx-check-artifacts`; CTest `consumer.frame_tracer`, `consumer.frame_replay`, `consumer.snapshot_ppm`, and `consumer.silence_wav` passed.
 
+### WR-04: Test-only replay modes remain selectable in the production consumer
+
+**Files modified:** `consumer/main.c`, `tests/consumer/frame_driver.cmake`
+**Commit:** `78592c38aeb9e2db5a6b0a1d952b8b2dd1cc8fe0`
+**Applied fix:** Gate the interleaved and checkpoint-restore environment reads under `LYNX_CONSUMER_TESTING`. Route positive interleaved and restore replay cases through `TEST_CONSUMER` and require test-only success markers. Extend the production comparison so the unmodified production replay, legacy, interleaved, and restore variables each produce independently validated identical manifests and raw/rendered frames.
+
+**Old/new provenance:** Exact old `consumer/main.c` SHA-256 `a0cdfe145390dea8eb7854ed208ed2ee4341ebce86dbf2ac2814c604e15dabaa`; fixed source at the commit SHA-256 `63abd1788e922697e4dba33d3e6a46f8952f4bd626b372faaa736f8e04bd5871`. Driver before/after SHA-256 `8e63fccfe8f33ce8928a2fed8f2023eb991bb21871e017a2aeea872f80e10387` / `8336afa4bbd5176e18ae101082f766a99c783b00f48cd084271a210bb92bfe1b`.
+
+**Old-behavior proof:** Rebuilt the production consumer against the exact old source in the main checkout, then used a source-built, manifest-verified guest and a valid canonical five-event timeline in fresh owned scratch under `build/check/scratch/consumer/wr04-old-e74df76-86758`. With `LYNX_TEST_REPLAY_RESTORE=1`, the old production binary returned exit 1, emitted no stdout, created no output directory, and reported the specific `checkpoint probe requires one A edge at tick 108544` refusal. The same old source read `LYNX_TEST_REPLAY_INTERLEAVED` and could trigger a second full replay verification; that deterministic verification does not change replay artifacts, so its regression asserts that the test build confirms the verification ran and that production artifacts remain unchanged when the variable is present.
+
+**Verification:** Build targets `lynx-consume`, `lynx-consume-test`, and `lynx-check-artifacts` passed. CTest `consumer.frame_tracer`, `consumer.frame_replay`, `consumer.replay_controls`, and `consumer.replay_restore` passed. The tracer test validates the production baseline and all three environment overrides against `replay_edges`; the replay and restore tests assert the test-only verification markers and retain the bad-script restore negative control.
+
 ## Skipped Issues
 
 None.
 
 ---
 
-_Fixed: 2026-11-12T14:27:44Z_
+_Fixed: 2026-11-12T15:03:11Z_
 _Fixer: the agent (gsd-code-fixer)_
-_Iteration: 1_
+_Iteration: 2_

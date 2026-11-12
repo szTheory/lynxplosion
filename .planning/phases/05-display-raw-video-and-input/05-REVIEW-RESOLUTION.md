@@ -199,3 +199,20 @@ The original 51-path table above remains the initial reviewed snapshot. Only the
 | `tests/api/test_api.c` | `cb1732ba82501c544bdb714d4751b70233e2f0b9b99069f772de205b5ee43770` |
 | `tests/consumer/frame_driver.cmake` | `8e63fccfe8f33ce8928a2fed8f2023eb991bb21871e017a2aeea872f80e10387` |
 | `tests/gates/manifests_controls.sh` | `c62a8d1a94d05bd3fd258129609688a928d04423ce90029ee44895f17c6bde06` |
+
+## Sibling replay-control repair
+
+The first independent delta review resolved the original four findings and found WR-04: the sibling interleaved and restore test environment controls still reached production. Root accepted this same-boundary repair. Commit `78592c38aeb9e2db5a6b0a1d952b8b2dd1cc8fe0` gates both reads and retains explicit test-target mode assertions. The old production source refuses a valid five-event timeline under the restore variable; the corrected production baseline and all three override runs produce independently validated identical artifacts. Focused consumer checks passed; see `05-REVIEW-FIX.md`. Independent final two-path delta verification is pending.
+
+Only `consumer/main.c` and `tests/consumer/frame_driver.cmake` changed since the six-path repaired binding; all other 49 scoped hashes are unchanged. The latest full 51-path fingerprint is `e4fd27130097f8a23c8162403a58e933104bc7a35b160ff646767e402052c732` using sorted `path<TAB>sha256<LF>`. Replacement hashes:
+
+| Path | SHA-256 |
+|---|---|
+| `consumer/main.c` | `63abd1788e922697e4dba33d3e6a46f8952f4bd626b372faaa736f8e04bd5871` |
+| `tests/consumer/frame_driver.cmake` | `8336afa4bbd5176e18ae101082f766a99c783b00f48cd084271a210bb92bfe1b` |
+
+No new source path, inventory entry, dependency or authority is introduced. Broad qualification remains pending.
+
+## Final independent repair verdicts
+
+All three independent delta reviewers returned terminal results at source head `78592c38aeb9e2db5a6b0a1d952b8b2dd1cc8fe0`: code review is clean with all five findings resolved; coverage found no missing/vacuous repair check; security found affected mitigations preserved with only T-05-34 final qualification binding open. The initial 51-path and subsequent six/two-path scope provenance are retained. No independent reviewer reran the recorded focused tests. Root authorizes Task 2 qualification after these report commits; this is an internal continuation, not phase completion.

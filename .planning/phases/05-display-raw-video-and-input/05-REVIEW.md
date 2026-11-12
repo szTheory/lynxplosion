@@ -1,120 +1,51 @@
 ---
 phase: 05-display-raw-video-and-input
-reviewed: 2026-11-12T13:46:30Z
+reviewed: 2026-11-12T15:07:52Z
 depth: standard
-files_reviewed: 51
+files_reviewed: 2
 files_reviewed_list:
-  - CMakeLists.txt
-  - README.md
   - consumer/main.c
-  - core/bus.c
-  - core/bus.h
-  - core/input.c
-  - core/internal.h
-  - core/machine.c
-  - core/snapshot.c
-  - core/timer.c
-  - core/video.c
-  - docs/bus-video-policy.md
-  - docs/claims/skeleton-repeatability.claim
-  - docs/input-replay.md
-  - docs/public-suites.md
-  - docs/snapshot-video.md
-  - docs/timer-video-revisit.md
-  - docs/video-faults.md
-  - docs/video-input.md
-  - fixtures/diagnostic/input_probe.cfg
-  - fixtures/diagnostic/input_probe.s
-  - fixtures/diagnostic/input_probe_tracer.s
-  - fixtures/manifests/input-probe.manifest
-  - fixtures/manifests/page-mode-tests.manifest
-  - fixtures/suites/page-mode-wrapper.s
-  - include/lynxplosion.h
-  - runner/bundle.c
-  - runner/bundle.h
-  - scripts/build-page-mode.sh
-  - scripts/check-manifests.sh
-  - scripts/generate-page-mode-oracle.sh
-  - scripts/validate-kv.sh
-  - tests/api/test_api.c
-  - tests/api/tests.cmake
-  - tests/cmake/no_skip.cmake
-  - tests/consumer/check_artifacts.c
   - tests/consumer/frame_driver.cmake
-  - tests/consumer/tests.cmake
-  - tests/det/test_det.c
-  - tests/det/tests.cmake
-  - tests/det/two_runs.cmake
-  - tests/gates/manifests_controls.sh
-  - tests/gates/page-mode-script-controls.sh
-  - tests/golden/skeleton.digest
-  - tests/header/header.c
-  - tests/inventory/fast.txt
-  - tests/inventory/skips.txt
-  - tests/suites/run.cmake
-  - tests/suites/test_public_suites.c
-  - tests/suites/tests.cmake
-  - tests/video/fault_controls.cmake
 findings:
-  critical: 1
-  warning: 3
+  critical: 0
+  warning: 0
   info: 0
-  total: 4
+  total: 0
   necessity: 0
-status: issues_found
+status: clean
 ---
 
 # Phase 05: Code Review Report
 
-**Reviewed:** 2026-11-12T13:46:30Z
+**Reviewed:** 2026-11-12T15:07:52Z
 **Depth:** standard
-**Files Reviewed:** 51
-**Frozen HEAD:** `013de47ff566ae9c997542ddfba6fe15ff93aebe`
-**Status:** issues_found
+**Files Reviewed:** 2
+**Frozen HEAD:** `78592c38aeb9e2db5a6b0a1d952b8b2dd1cc8fe0`
+**Phase source fingerprint:** `e4fd27130097f8a23c8162403a58e933104bc7a35b160ff646767e402052c732`
+**Status:** clean
 
 ## Summary
 
-Reviewed the 51 explicit product paths at the frozen phase head, including the scheduler and bus routes, video and input state, frame and snapshot APIs, replay consumer, scripts, fixtures, records, and negative controls. Three Phase 5 warnings affect mapped opcode handling, manifest hash validation, and an environment-controlled production replay path. A separate pre-existing test-gate hazard can delete a caller-selected directory before its containment check; it is labeled outside the Phase 5 changes. No tests or builds were run for this read-only review. The dispatched broad macOS/Linux exact-head CI remains pending.
+This final bounded delta review inspected `consumer/main.c` and `tests/consumer/frame_driver.cmake` at the frozen head. It continues the standard-depth review of the original 51-path scope, following the first repair review of six changed paths; the current 51-path fingerprint records that the other 49 paths are unchanged since that review. All five accepted findings from the original and repair reviews are resolved. The final repair gates every `LYNX_TEST_*` environment read behind `LYNX_CONSUMER_TESTING`, routes positive interleaved and checkpoint-restore controls through the test consumer, asserts their success markers, and compares production behavior with each replay override against an independently validated canonical five-event baseline. No new correctness or security findings were found. I did not rerun tests; the focused build and four consumer checks are recorded in `05-REVIEW-FIX.md`. Final exact-source and broad phase qualification remain pending.
 
 ## Narrative Findings (AI reviewer)
 
-## Critical Issues
+No new findings. WR-04 is resolved: the two formerly unguarded reads are now compile-time test-only, and the production regression runs each override with a fresh environment, validates the baseline and override artifacts independently, requires four frames, compares manifests and raw/rendered outputs, and retains the dedicated test-consumer success markers for interleaved and restore checks. A sweep of all `getenv`/`LYNX_TEST_*` reads in `consumer/main.c` found the other test controls already within `LYNX_CONSUMER_TESTING` guards or test-only functions. The test driver retains the bad restore-script negative control and the production replay control.
 
-### CR-01: Test gate deletes the supplied WORK path before validating it (pre-existing; outside Phase 5 diff)
+## Resolved Findings
 
-**File:** `tests/gates/manifests_controls.sh:22-30`
-**Classification:** BLOCKER
-**Issue:** The script recursively removes `$work` at line 22, then checks whether the canonical path is inside checked repository trees at lines 24-30. For example, passing `$repo/fixtures` as `WORK` deletes the fixture tree before the later guard detects that path and exits. This is a direct data-loss hazard in the test gate; the destructive line predates the Phase 5 diff.
-**Fix:** Validate the resolved parent and final target before any recursive removal. Restrict `WORK` to a dedicated invocation scratch subtree (the registered caller already uses `build/check/scratch`), reject the repository root and its source directories, and create a fresh owned directory with an exclusive `mkdir` before writing into it.
+| Prior finding | Verdict | Independent review of fix and regression proof |
+|---|---|---|
+| CR-01: unsafe manifest-control `WORK` cleanup | Resolved; pre-existing and outside the Phase 5 diff | The script canonicalizes and bounds the target before mutation, rejects existing targets, creates an exclusive directory with a private marker, and limits recursive child cleanup to that owned directory. Synthetic guard controls exercise repository/source paths, aliases, traversal, and stale targets; the fix report records a passing legitimate control run. |
+| WR-01: opcode legality used backing RAM for mapped fetches | Resolved | `bus_opcode_peek` follows the RAM, Mikey video/timer, and Suzy input routes used by `bus_access`, with side-effect-free device peeks. Regression controls cover both mapped/RAM mismatch directions and preserve private flat-test content, zero-tick refusal, and page behavior. The focused checks are recorded as passing; this does not claim hardware accuracy. |
+| WR-02: left/right source-built guest hashes bypassed validation | Resolved | Both exact field names now use the existing 64-character lowercase-hex validation. Controls reject short and non-hex values for each handedness field while retaining valid, incomplete-group, and unknown-key cases. Focused manifest checks are recorded as passing. |
+| WR-03: legacy replay switch reached production | Resolved | Legacy implementation and dispatch are enclosed by `LYNX_CONSUMER_TESTING`; historical tracer assertions run through `TEST_CONSUMER`. The production control uses a provenance-checked guest and verifies equivalent validated manifests and raw/rendered frames with and without the legacy variable. Focused consumer checks are recorded as passing. |
+| WR-04: interleaved and checkpoint-restore switches reached production | Resolved | Both environment reads are now enclosed by `LYNX_CONSUMER_TESTING`. The frame driver routes positive controls through `TEST_CONSUMER` and requires success markers; the production comparison covers baseline, legacy, interleaved, and restore-variable runs against the same validated canonical timeline, checker, manifest, and frame outputs. The bad-script negative remains. Focused consumer checks are recorded as passing. |
 
-## Warnings
-
-### WR-01: Undefined-opcode check reads backing RAM for mapped video/input fetches
-
-**File:** `core/machine.c:586-588`
-**Classification:** WARNING
-**Issue:** `bus_request_available` now accepts mapped Mikey video and Suzy input targets, and `bus_access` fetches their actual values through `lynx__video_peek` or `lynx__input_peek`. The opcode-boundary check still calls `bus_peek`, which always reads `m->ram[addr]`. If the CPU fetches an opcode from one of these supported device addresses, the undefined-opcode decision can be made from a different byte than the CPU will receive. Backing RAM contents can therefore make the core stop with `LYNX_STOP_UNDEFINED` for a device-provided defined opcode, or allow a device-provided undefined opcode through the precheck.
-
-**Fix:** Use a side-effect-free, route-aware opcode peek that returns the same mapped byte as the granted read, or reject device opcode fetches consistently before the CPU boundary check. Add a test where the backing RAM byte and mapped device value differ.
-
-### WR-02: Two source-built guest identity fields bypass SHA-256 validation
-
-**File:** `scripts/validate-kv.sh:127-138,178-180`
-**Classification:** WARNING
-**Issue:** `is_hash_key` recognizes `sha256`, `input_digest`, and keys ending in `_sha256`. The optional provenance names `source_built_guest_sha256_lefthand_0` and `source_built_guest_sha256_lefthand_1` do not end in `_sha256`, so truncated or non-hex values for both source-built guest identities are accepted. The new negative control only corrupts `config_sha256`, leaving this gap untested.
-
-**Fix:** Explicitly include both left-hand guest identity keys in the hash predicate (or rename them to end in `_sha256`) and add reject controls for malformed values in each field.
-
-### WR-03: Test-only environment variable selects legacy replay in the production consumer
-
-**File:** `consumer/main.c:2257-2260`; `tests/consumer/frame_driver.cmake:633-638`
-**Classification:** WARNING
-**Issue:** The shipped `lynx-consume` target honors `LYNX_TEST_REPLAY_LEGACY=1` and silently dispatches frame mode to `run_frame_consumer_legacy`. The name and only use identify this as a test switch, but the branch is outside `LYNX_CONSUMER_TESTING`; the frame-tracer test currently sets it on the production consumer. An inherited or deliberately set environment variable can therefore make production replay use the older path instead of the normal replay implementation.
-
-**Fix:** Compile the legacy function and environment dispatch only under `LYNX_CONSUMER_TESTING`, and have the frame-tracer baseline invoke `TEST_CONSUMER` for that case.
+The report covers two paths in this final delta. Provenance is the initial 51-path review at `013de47ff566ae9c997542ddfba6fe15ff93aebe`, the six-path repaired review at `e74df76b8616cf9daaffc3f90de2ffb36ba0d1f0` (45 unchanged), and this two-path repair at the frozen head above (49 unchanged since the prior review). This review did not rerun builds or tests and does not complete Task 12 or phase qualification.
 
 ---
 
-_Reviewed: 2026-11-12T13:46:30Z_
+_Reviewed: 2026-11-12T15:07:52Z_
 _Reviewer: the agent (gsd-code-reviewer)_
 _Depth: standard_
