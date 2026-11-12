@@ -158,3 +158,18 @@ focused checks, and refreshes the source manifest if a listed path changes.
 Task 2 may resume only after the required reviews and accepted fixes are
 resolved. The final macOS, self-contained Linux, and hosted exact-head gates
 belong to Task 2; no broad qualification or later phase is claimed here.
+
+## Independent review handoff results
+
+Reviewed source head: `013de47ff566ae9c997542ddfba6fe15ff93aebe`; the 51-path fingerprint above remains unchanged. The full standard-depth initial report is retained in `05-REVIEW-INITIAL.md` and current `05-REVIEW.md`. Coverage review found no missing/vacuous software tests; Task 12 final environment qualification remains pending. The independent ASVS1 authored-threat review found 36/37 mitigations present and one high-severity open lifecycle obligation, T-05-34, for final reviewed-source/pushed-head/CI binding. No risks were accepted. It permits collecting qualification evidence but blocks final phase advancement until that evidence exists. Its static mitigation-presence audit is not a claim of exhaustive vulnerability testing.
+
+Root verified each cited code path and accepts all four code findings for repair before Task 2. The destructive manifest-control cleanup is pre-existing and outside the phase diff, but it is a concrete blocking safety defect in a modified, required gate. Its repair is explicitly included in the Plan 12 source scope.
+
+| Finding | Disposition | Required proof |
+|---|---|---|
+| CR-01 cleanup before containment | accepted; fix pending | Refuse dangerous/stale/aliased WORK before mutation; prove on synthetic owned replicas, never actual source directories; preserve a legitimate successful control run |
+| WR-01 backing-RAM opcode precheck | accepted; fix pending | Device/RAM disagreement in both defined/undefined directions uses the actual mapped byte without side effects; preserve private flat bus and RAM/page behavior |
+| WR-02 handedness guest hash shape | accepted; fix pending | Both exact guest identity fields reject truncated/nonhex values while valid existing manifests and other unknown-key guards remain accepted/rejected correctly |
+| WR-03 production legacy test switch | accepted; fix pending | Production replay ignores test-only legacy override; historical tracer remains a strict positive through the test-only target; ordinary production replay stays green |
+
+Each accepted fix requires a focused regression that exposes the old behavior and passes the corrected behavior, with exact source provenance and isolated synthetic hazards. Root will re-review the repaired scope, refresh this source manifest and security/coverage evidence as needed, then explicitly resume Task 2. No broad qualification has started.
