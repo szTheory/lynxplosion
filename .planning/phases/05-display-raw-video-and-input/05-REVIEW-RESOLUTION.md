@@ -173,3 +173,29 @@ Root verified each cited code path and accepts all four code findings for repair
 | WR-03 production legacy test switch | accepted; fix pending | Production replay ignores test-only legacy override; historical tracer remains a strict positive through the test-only target; ordinary production replay stays green |
 
 Each accepted fix requires a focused regression that exposes the old behavior and passes the corrected behavior, with exact source provenance and isolated synthetic hazards. Root will re-review the repaired scope, refresh this source manifest and security/coverage evidence as needed, then explicitly resume Task 2. No broad qualification has started.
+
+## Applied fixes awaiting independent delta verification
+
+All four accepted findings have focused old/new regression proof and individual normal-hook commits. Source head after repairs is `ec38c34f233168c15a6049ef5768b1989fee6353`. The fixer report is `05-REVIEW-FIX.md`; final independent delta review remains pending, so Task 2 is still gated.
+
+| Finding | Repair commit | Recorded verification |
+|---|---|---|
+| CR-01 | `620e7c2` | Exact old script deletes only a synthetic private marker; safe preflight/ownership guard controls and registered manifest self-test pass |
+| WR-02 | `f61a82f` | Old validator accepts short/nonhex variants of both keys; all four corrected refusals and valid/unknown/incomplete manifest cases pass |
+| WR-01 | `358874d` | Exact old machine fails mapped/RAM disagreement in both directions; mapped input/video/timer across all profiles, zero-tick refusal, private flat bus, page and profile regressions pass |
+| WR-03 | `ec38c34` | Old production override diverts a valid timeline; corrected production outputs match with/without test env, historical test-only tracer remains strict, replay/snapshot/silence pass |
+
+The fixer's generic human-verification flag on WR-01 is not treated as a claim that a human reviewed it or as a new owner decision. Project AUTONOMY requires automating software verification where possible. Root's independent source/logic review plus the old/new executable regression and final qualification will adjudicate this deterministic logic change; no rights, physical or subjective gate is being bypassed.
+
+### Repaired source binding
+
+The original 51-path table above remains the initial reviewed snapshot. Only the six replacement hashes below changed; every other source path/hash is identical. The complete repaired 51-path fingerprint is `4016d03fbd62cced5328c9d283878d087792cc1e91cc9e85cfaaa3f1a599ca6d`, computed with the same sorted `path<TAB>sha256<LF>` convention. No new or deleted product path was introduced by these fixes.
+
+| Repaired path | Current SHA-256 |
+|---|---|
+| `consumer/main.c` | `a0cdfe145390dea8eb7854ed208ed2ee4341ebce86dbf2ac2814c604e15dabaa` |
+| `core/machine.c` | `74dc654c2a5292680058d2f0d046015f847bdd6a934cd3b0194d2cd86b6faa7c` |
+| `scripts/validate-kv.sh` | `82778e9233b9a77232ae094ccb297e744071e7f28a0c472f65c1084228ada811` |
+| `tests/api/test_api.c` | `cb1732ba82501c544bdb714d4751b70233e2f0b9b99069f772de205b5ee43770` |
+| `tests/consumer/frame_driver.cmake` | `8e63fccfe8f33ce8928a2fed8f2023eb991bb21871e017a2aeea872f80e10387` |
+| `tests/gates/manifests_controls.sh` | `c62a8d1a94d05bd3fd258129609688a928d04423ce90029ee44895f17c6bde06` |
