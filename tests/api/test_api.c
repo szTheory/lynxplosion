@@ -7145,6 +7145,400 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void check_refused_frame(lynx_machine *machine, const lynx_frame_buffers *buffers,
+                                lynx_frame_result *result, lynx_status expected,
+                                const char *name, bool check_payloads)
+{
+    static uint8_t machine_before[sizeof(struct lynx_machine)];
+    static uint8_t descriptor_before[sizeof(lynx_frame_buffers)];
+    static uint8_t result_before[sizeof(lynx_frame_result)];
+    static uint8_t pens_before[LYNX_FRAME_PENS_CAPACITY];
+    static uint8_t palettes_before[LYNX_FRAME_PALETTE_CAPACITY];
+    static uint8_t ticks_before[LYNX_FRAME_LINE_TICKS_CAPACITY * sizeof(uint64_t)];
+    if (machine != NULL) memcpy(machine_before, machine, sizeof *machine);
+    if (buffers != NULL) memcpy(descriptor_before, buffers, sizeof *buffers);
+    if (result != NULL) memcpy(result_before, result, sizeof *result);
+    if (check_payloads && buffers != NULL) {
+        memcpy(pens_before, buffers->pens, sizeof pens_before);
+        memcpy(palettes_before, buffers->palettes, sizeof palettes_before);
+        memcpy(ticks_before, buffers->line_ticks, sizeof ticks_before);
+    }
+
+    CHECK_EQ_U64(lynx_advance_frame(machine, 1u, buffers, result), expected);
+    if (machine != NULL) {
+        CHECK_NAMED(memcmp(machine, machine_before, sizeof *machine) == 0,
+                    name);
+    }
+    if (buffers != NULL) {
+        CHECK_NAMED(memcmp(buffers, descriptor_before, sizeof *buffers) == 0,
+                    name);
+    }
+    if (result != NULL) {
+        CHECK_NAMED(memcmp(result, result_before, sizeof *result) == 0,
+                    name);
+    }
+    if (check_payloads && buffers != NULL) {
+        CHECK_NAMED(memcmp(buffers->pens, pens_before, sizeof pens_before) == 0,
+                    name);
+        CHECK_NAMED(memcmp(buffers->palettes, palettes_before, sizeof palettes_before) == 0,
+                    name);
+        CHECK_NAMED(memcmp(buffers->line_ticks, ticks_before, sizeof ticks_before) == 0,
+                    name);
+    }
+}
+
+static void case_frame_refusal(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_frame_buffers buffers;
+    lynx_frame_result result;
+    init_video_frame_buffers(&buffers, pens, palettes, line_ticks);
+    init_video_frame_result(&result);
+    memset(pens, 0xA5, sizeof pens);
+    memset(palettes, 0x5A, sizeof palettes);
+    memset(line_ticks, 0xC3, sizeof line_ticks);
+    result.stop = LYNX_STOP_HALT;
+    result.ticks_consumed = 17u;
+    result.frame_start_tick = 19u;
+    result.frame_end_tick = 23u;
+    result.sequence = 29u;
+    result.row_count = 31u;
+    result.flags = 37u;
+
+    if (m == NULL) goto done;
+    CHECK_EQ_U64(lynx_advance_frame(NULL, 1u, &buffers, &result), LYNX_ERR_ARGUMENT);
+    CHECK_NAMED(pens[0] == 0xA5u && palettes[0] == 0x5Au &&
+                    line_ticks[0] == UINT64_C(0xC3C3C3C3C3C3C3C3) &&
+                    result.stop == LYNX_STOP_HALT && result.ticks_consumed == 17u,
+                "frame_refusal.null-machine-preserves-outputs");
+    check_refused_frame(m, NULL, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.null-descriptor-transactional", true);
+    check_refused_frame(m, &buffers, NULL, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.null-result-transactional", true);
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_STATE,
+                        "frame_refusal.no-content-state-precedence", true);
+
+    CHECK_EQ_U64(lynx_load_bll(m, bll_tracer, sizeof bll_tracer), LYNX_OK);
+    buffers.struct_size--;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.descriptor-size", true);
+    buffers.struct_size = (uint32_t)sizeof buffers;
+    buffers.reserved = 1u;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.descriptor-reserved", true);
+    buffers.reserved = 0u;
+    result.struct_size--;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.result-size", true);
+    result.struct_size = (uint32_t)sizeof result;
+
+    uint8_t *saved_pens = buffers.pens;
+    size_t saved_pens_capacity = buffers.pens_capacity;
+    buffers.pens = NULL;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.null-pens", false);
+    buffers.pens = saved_pens;
+    buffers.pens_capacity = saved_pens_capacity;
+    uint8_t *saved_palettes = buffers.palettes;
+    buffers.palettes = NULL;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.null-palettes", false);
+    buffers.palettes = saved_palettes;
+    uint64_t *saved_ticks = buffers.line_ticks;
+    buffers.line_ticks = NULL;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.null-line-ticks", false);
+    buffers.line_ticks = saved_ticks;
+
+    buffers.pens_capacity = LYNX_FRAME_PENS_CAPACITY - 1u;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_CAPACITY,
+                        "frame_refusal.pen-capacity", true);
+    buffers.pens_capacity = LYNX_FRAME_PENS_CAPACITY;
+    buffers.palettes_capacity = LYNX_FRAME_PALETTE_CAPACITY - 1u;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_CAPACITY,
+                        "frame_refusal.palette-capacity", true);
+    buffers.palettes_capacity = LYNX_FRAME_PALETTE_CAPACITY;
+    buffers.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY - 1u;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_CAPACITY,
+                        "frame_refusal.tick-capacity", true);
+    buffers.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+
+    _Alignas(uint64_t) uint8_t misaligned_ticks[sizeof line_ticks + _Alignof(uint64_t)];
+    buffers.line_ticks = (uint64_t *)(void *)(misaligned_ticks + 1u);
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ALIGNMENT,
+                        "frame_refusal.tick-alignment", false);
+    buffers.line_ticks = saved_ticks;
+
+    buffers.pens = (uint8_t *)(uintptr_t)(UINTPTR_MAX -
+                                          (LYNX_FRAME_PENS_CAPACITY - 1u));
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.pen-span-overflow", false);
+    buffers.pens = saved_pens;
+    buffers.palettes = (uint8_t *)(uintptr_t)(UINTPTR_MAX -
+                                              (LYNX_FRAME_PALETTE_CAPACITY - 1u));
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.palette-span-overflow", false);
+    buffers.palettes = saved_palettes;
+    buffers.line_ticks = (uint64_t *)(uintptr_t)(UINTPTR_MAX -
+                                                  (sizeof line_ticks - 1u));
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.tick-span-overflow", false);
+    buffers.line_ticks = saved_ticks;
+    buffers.line_ticks_capacity = SIZE_MAX / sizeof(uint64_t) + 1u;
+    buffers.line_ticks = (uint64_t *)(uintptr_t)0x1000u;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.tick-size-overflow", false);
+    buffers.line_ticks = saved_ticks;
+    buffers.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+
+    union {
+        max_align_t alignment;
+        uint8_t bytes[LYNX_FRAME_PENS_CAPACITY];
+    } aliases;
+    memset(&aliases, 0x6D, sizeof aliases);
+    buffers.pens = aliases.bytes;
+    buffers.palettes = aliases.bytes;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.pen-palette-overlap", true);
+    buffers.pens = saved_pens;
+    buffers.palettes = saved_palettes;
+    buffers.pens = aliases.bytes;
+    buffers.line_ticks = (uint64_t *)(void *)aliases.bytes;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.pen-ticks-overlap", true);
+    buffers.pens = saved_pens;
+    buffers.line_ticks = saved_ticks;
+    buffers.palettes = aliases.bytes;
+    buffers.line_ticks = (uint64_t *)(void *)aliases.bytes;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.palette-ticks-overlap", true);
+    buffers.palettes = saved_palettes;
+    buffers.line_ticks = saved_ticks;
+
+    union {
+        max_align_t alignment;
+        uint8_t bytes[LYNX_FRAME_PENS_CAPACITY];
+        lynx_frame_buffers descriptor;
+    } descriptor_alias;
+    memset(&descriptor_alias, 0, sizeof descriptor_alias);
+    init_video_frame_buffers(&descriptor_alias.descriptor, descriptor_alias.bytes,
+                             palettes, line_ticks);
+    check_refused_frame(m, &descriptor_alias.descriptor, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.descriptor-in-pens", true);
+
+    union {
+        max_align_t alignment;
+        uint8_t bytes[LYNX_FRAME_PENS_CAPACITY];
+        lynx_frame_result result;
+    } result_alias;
+    memset(&result_alias, 0xA5, sizeof result_alias);
+    init_video_frame_result(&result_alias.result);
+    init_video_frame_buffers(&buffers, result_alias.bytes, palettes, line_ticks);
+    check_refused_frame(m, &buffers, &result_alias.result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.result-in-pens", true);
+
+    union {
+        max_align_t alignment;
+        uint8_t bytes[LYNX_FRAME_PALETTE_CAPACITY];
+        lynx_frame_buffers descriptor;
+    } palette_descriptor_alias;
+    memset(&palette_descriptor_alias, 0, sizeof palette_descriptor_alias);
+    init_video_frame_buffers(&palette_descriptor_alias.descriptor, pens,
+                             palette_descriptor_alias.bytes, line_ticks);
+    check_refused_frame(m, &palette_descriptor_alias.descriptor, &result,
+                        LYNX_ERR_ARGUMENT,
+                        "frame_refusal.descriptor-in-palettes", true);
+
+    union {
+        max_align_t alignment;
+        uint64_t ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+        lynx_frame_buffers descriptor;
+    } ticks_descriptor_alias;
+    memset(&ticks_descriptor_alias, 0, sizeof ticks_descriptor_alias);
+    init_video_frame_buffers(&ticks_descriptor_alias.descriptor, pens, palettes,
+                             ticks_descriptor_alias.ticks);
+    check_refused_frame(m, &ticks_descriptor_alias.descriptor, &result,
+                        LYNX_ERR_ARGUMENT, "frame_refusal.descriptor-in-ticks", true);
+
+    union {
+        max_align_t alignment;
+        uint8_t bytes[LYNX_FRAME_PALETTE_CAPACITY];
+        lynx_frame_result result;
+    } result_palette_alias;
+    memset(&result_palette_alias, 0, sizeof result_palette_alias);
+    init_video_frame_result(&result_palette_alias.result);
+    init_video_frame_buffers(&buffers, pens, result_palette_alias.bytes, line_ticks);
+    check_refused_frame(m, &buffers, &result_palette_alias.result,
+                        LYNX_ERR_ARGUMENT, "frame_refusal.result-in-palettes", true);
+
+    union {
+        max_align_t alignment;
+        uint64_t ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+        lynx_frame_result result;
+    } result_ticks_alias;
+    memset(&result_ticks_alias, 0, sizeof result_ticks_alias);
+    init_video_frame_result(&result_ticks_alias.result);
+    init_video_frame_buffers(&buffers, pens, palettes, result_ticks_alias.ticks);
+    check_refused_frame(m, &buffers, &result_ticks_alias.result,
+                        LYNX_ERR_ARGUMENT, "frame_refusal.result-in-ticks", true);
+
+    struct frame_spare_view {
+        uint8_t fixed_pens[LYNX_FRAME_PENS_CAPACITY];
+        lynx_frame_result result;
+    };
+    union {
+        max_align_t alignment;
+        uint8_t bytes[LYNX_FRAME_PENS_CAPACITY + sizeof(lynx_frame_result)];
+        struct frame_spare_view view;
+    } spare_alias;
+    _Static_assert(offsetof(struct frame_spare_view, result) == LYNX_FRAME_PENS_CAPACITY,
+                   "pen capacity keeps the result aligned in the spare-capacity alias");
+    memset(&spare_alias, 0x3C, sizeof spare_alias);
+    init_video_frame_result(&spare_alias.view.result);
+    init_video_frame_buffers(&buffers, spare_alias.bytes, palettes, line_ticks);
+    buffers.pens_capacity = sizeof spare_alias.bytes;
+    check_refused_frame(m, &buffers, &spare_alias.view.result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.result-in-spare-pen-capacity", false);
+
+    init_video_frame_buffers(&buffers, pens, palettes, line_ticks);
+    check_refused_frame(m, (lynx_frame_buffers *)(void *)m, &result,
+                        LYNX_ERR_ARGUMENT, "frame_refusal.descriptor-in-machine", false);
+    check_refused_frame(m, &buffers, (lynx_frame_result *)(void *)m,
+                        LYNX_ERR_ARGUMENT, "frame_refusal.result-in-machine", false);
+    buffers.pens = (uint8_t *)(void *)m;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.pens-in-machine", false);
+    buffers.pens = saved_pens;
+    buffers.palettes = (uint8_t *)(void *)m;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.palettes-in-machine", false);
+    buffers.palettes = saved_palettes;
+    buffers.line_ticks = (uint64_t *)(void *)m;
+    check_refused_frame(m, &buffers, &result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.ticks-in-machine", false);
+    buffers.line_ticks = saved_ticks;
+
+    union {
+        max_align_t alignment;
+        lynx_frame_buffers buffers;
+        lynx_frame_result result;
+    } descriptor_result_alias;
+    memset(&descriptor_result_alias, 0xA5, sizeof descriptor_result_alias);
+    check_refused_frame(m, &descriptor_result_alias.buffers,
+                        &descriptor_result_alias.result, LYNX_ERR_ARGUMENT,
+                        "frame_refusal.descriptor-result-overlap", false);
+
+    lynx_config legacy_cfg;
+    lynx_config_default(&legacy_cfg);
+    _Alignas(max_align_t) uint8_t legacy_machine_storage[sizeof(struct lynx_machine)];
+    lynx_machine *legacy = init_in(legacy_machine_storage, &legacy_cfg);
+    if (legacy != NULL) {
+        CHECK_EQ_U64(lynx_load_bll(legacy, bll_tracer, sizeof bll_tracer), LYNX_OK);
+        init_video_frame_buffers(&buffers, pens, palettes, line_ticks);
+        memset(pens, 0xA5, sizeof pens);
+        memset(palettes, 0x5A, sizeof palettes);
+        memset(line_ticks, 0xC3, sizeof line_ticks);
+        init_video_frame_result(&result);
+        result.sequence = 29u;
+        check_refused_frame(legacy, &buffers, &result, LYNX_ERR_UNAVAILABLE,
+                            "frame_refusal.legacy-policy-unavailable", true);
+        lynx_machine_deinit(legacy);
+    }
+
+    struct guarded_frame_ticks {
+        uint64_t entries[LYNX_FRAME_LINE_TICKS_CAPACITY];
+        uint64_t canary[2];
+    } guarded_ticks;
+    uint8_t accepted_pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t accepted_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    lynx_frame_buffers accepted_buffers;
+    lynx_frame_result accepted_result;
+    init_video_frame_buffers(&accepted_buffers, accepted_pens, accepted_palettes,
+                             guarded_ticks.entries);
+    init_video_frame_result(&accepted_result);
+    memset(accepted_pens, 0xA5, sizeof accepted_pens);
+    memset(accepted_palettes, 0x5A, sizeof accepted_palettes);
+    memset(&guarded_ticks, 0xC3, sizeof guarded_ticks);
+    guarded_ticks.canary[0] = UINT64_C(0x123456789ABCDEF0);
+    guarded_ticks.canary[1] = UINT64_C(0x0FEDCBA987654321);
+    CHECK_EQ_U64(lynx__machine_set_bus_hold(m, 1u), LYNX_OK);
+    configure_video_cadence(m, 158u, 104u);
+    const uint64_t first_frame_tick = UINT64_C(159) * 16u * 105u;
+    CHECK_EQ_U64(lynx_advance_frame(m, first_frame_tick + 1u, &accepted_buffers,
+                                   &accepted_result), LYNX_OK);
+    CHECK_NAMED(accepted_result.stop == LYNX_STOP_FRAME &&
+                    accepted_result.ticks_consumed == first_frame_tick &&
+                    accepted_result.frame_end_tick == first_frame_tick &&
+                    accepted_result.sequence == 0u && accepted_result.row_count == 0u,
+                "frame_refusal.accepted-frame-progresses-and-publishes");
+    bool accepted_payload_zero = true;
+    for (size_t i = 0u; i < sizeof accepted_pens; i++) {
+        if (accepted_pens[i] != 0u) accepted_payload_zero = false;
+    }
+    for (size_t i = 0u; i < sizeof accepted_palettes; i++) {
+        if (accepted_palettes[i] != 0u) accepted_payload_zero = false;
+    }
+    for (size_t i = 0u; i < sizeof guarded_ticks.entries / sizeof guarded_ticks.entries[0]; i++) {
+        if (guarded_ticks.entries[i] != 0u) accepted_payload_zero = false;
+    }
+    CHECK_NAMED(accepted_payload_zero,
+                "frame_refusal.accepted-frame-publishes-zero-sync-payload");
+    CHECK_NAMED(guarded_ticks.canary[0] == UINT64_C(0x123456789ABCDEF0) &&
+                    guarded_ticks.canary[1] == UINT64_C(0x0FEDCBA987654321),
+                "frame_refusal.tick-capacity-canaries");
+
+    lynx_machine_deinit(m);
+    m = NULL;
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.frame_refusal\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_input_refusal(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) goto done;
+
+    static uint8_t before[sizeof(struct lynx_machine)];
+    memcpy(before, m, sizeof *m);
+    CHECK_EQ_U64(lynx_set_input(m, LYNX_INPUT_MASK + 1u), LYNX_ERR_ARGUMENT);
+    CHECK_NAMED(memcmp(before, m, sizeof *m) == 0,
+                "input_refusal.unknown-bits-preserve-machine");
+    CHECK_EQ_U64(lynx_set_input(NULL, LYNX_INPUT_A), LYNX_ERR_ARGUMENT);
+    CHECK_NAMED(memcmp(before, m, sizeof *m) == 0,
+                "input_refusal.null-machine-preserves-instance");
+
+    CHECK_EQ_U64(lynx_set_input(m, LYNX_INPUT_MASK), LYNX_OK);
+    CHECK_EQ_U64(m->video.input_mask, LYNX_INPUT_MASK);
+    CHECK_EQ_U64(ticks_of(m), 0u);
+    memcpy(before, m, sizeof *m);
+    CHECK_EQ_U64(lynx_set_input(m, 0x200u), LYNX_ERR_ARGUMENT);
+    CHECK_NAMED(memcmp(before, m, sizeof *m) == 0,
+                "input_refusal.invalid-after-valid-preserves-machine");
+
+    lynx_machine_deinit(m);
+    memcpy(before, m, sizeof *m);
+    CHECK_EQ_U64(lynx_set_input(m, LYNX_INPUT_A), LYNX_ERR_STATE);
+    CHECK_NAMED(memcmp(before, m, sizeof *m) == 0,
+                "input_refusal.deinitialized-preserves-machine");
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.input_refusal\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static const struct {
     const char *name;
     void (*run)(void);
@@ -7158,6 +7552,8 @@ static const struct {
     {"build_id", case_build_id},
     {"cost_model", case_cost_model},
     {"frame_edges", case_frame_edges},
+    {"frame_refusal", case_frame_refusal},
+    {"input_refusal", case_input_refusal},
     {"cpu_program", case_cpu_program},
     {"identity", case_identity},
     {"init_refusal", case_init_refusal},

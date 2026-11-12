@@ -14,9 +14,11 @@ api.cost_model	api
 api.cost_model.self_test	api
 api.cpu_program	api
 api.frame_edges	api
+api.frame_refusal	api
 api.header_selfcontained	api
 api.identity	api
 api.init_refusal	api
+api.input_refusal	api
 api.inspect_pure	api
 api.instances_independent	api
 api.irq_pending	api

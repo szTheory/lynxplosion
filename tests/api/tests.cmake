@@ -26,6 +26,8 @@ lynx_add_test(NAME api.cost_model.self_test
     -P ${PROJECT_SOURCE_DIR}/tests/cmake/expect_fail.cmake
   LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.frame_edges COMMAND lynx-test-api frame_edges LABELS api TIMEOUT 60)
+lynx_add_test(NAME api.frame_refusal COMMAND lynx-test-api frame_refusal LABELS api TIMEOUT 60)
+lynx_add_test(NAME api.input_refusal COMMAND lynx-test-api input_refusal LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.palette_boundary COMMAND lynx-test-api palette_boundary LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.cpu_program COMMAND lynx-test-api cpu_program LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.build_id COMMAND lynx-test-api build_id LABELS api TIMEOUT 30)
