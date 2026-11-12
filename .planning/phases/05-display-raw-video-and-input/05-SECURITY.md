@@ -116,3 +116,7 @@ Independent static review at `735cfa169b0cfcf7f4687d746c87461dc1677e1f` verified
 ## Mechanical GCC followup
 
 At `9e1468717c19c827e2d822f51667e45464274788`, only a local path parameter name and equivalent C17 aggregate zero-initializer spelling changed. Independent code review confirms unchanged path/stat/comparison flow and fully zeroed arrays. Root reuses the prior security verdict for identical mitigation behavior; no new security audit is claimed. All55 hashes bind to `a0d5463d3b3e3a87973b076db23187281f9c965fcfe2e721da28ffeb6c543133`; other53 paths unchanged. GCC syntax/full build and macOS focused checks passed; T-05-34 remains pending final environment evidence.
+
+## Portable fixture provenance review
+
+Independent static five-path review at `931fa030d514a8084132159afa44b7ace50567b5` verified all55 identities (`ea140006093038be023cdceeb67c4c1468576c940f0aa942b1b4b69bbcf1a1f3`). One well-formed archive pin is checked against fetched marker, successful stamp, build-files header and manifest, with recipe1 throughout. Native executable bytes remain SHA-verified against per-platform successful records; exact source/config/legacy/guest identities remain cross-platform checks. The strict eleven-field extension, hash shape and recipe/unknown/missing/duplicate refusals remain enforced. T-05-SC/02/23/25 remain closed, no gap/risk accepted. The auditor inspected static assertions without rerunning focused tests; T-05-34 remains final qualification-only open.

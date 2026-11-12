@@ -1,11 +1,14 @@
 ---
 phase: 05-display-raw-video-and-input
-reviewed: 2026-11-12T16:51:20Z
+reviewed: 2026-11-12T17:08:49Z
 depth: standard
-files_reviewed: 2
+files_reviewed: 5
 files_reviewed_list:
-  - consumer/main.c
-  - tests/det/test_det.c
+  - fixtures/manifests/input-probe.manifest
+  - scripts/check-manifests.sh
+  - scripts/validate-kv.sh
+  - tests/consumer/frame_driver.cmake
+  - tests/gates/manifests_controls.sh
 findings:
   critical: 0
   warning: 0
@@ -17,20 +20,20 @@ status: clean
 
 # Phase 05: Code Review Report
 
-**Reviewed:** 2026-11-12T16:51:20Z
+**Reviewed:** 2026-11-12T17:08:49Z
 **Depth:** standard
-**Files Reviewed:** 2
-**Frozen HEAD:** `9e1468717c19c827e2d822f51667e45464274788`
-**Phase source fingerprint:** `a0d5463d3b3e3a87973b076db23187281f9c965fcfe2e721da28ffeb6c543133`
+**Files Reviewed:** 5
+**Frozen HEAD:** `931fa030d514a8084132159afa44b7ace50567b5`
+**Phase source fingerprint:** `ea140006093038be023cdceeb67c4c1468576c940f0aa942b1b4b69bbcf1a1f3`
 **Status:** clean
 
 ## Summary
 
-This bounded delta review inspected two mechanical compiler-warning fixes. The local path parameter in `frame_input_paths_are_distinct` was renamed from `symbols` to `symbols_path` at its declaration and sole use; this removes the shadowing diagnostic without changing the argument or control flow. The frame-capture and video-packet arrays now use standard C17 aggregate zero initialization (`{0}`), which continues to zero every element and member. The five accepted findings remain resolved. No new behavioral findings were found. I did not rerun builds or tests; GCC 13.3 warning-clean syntax checks and the affected macOS rebuild/focused tests are recorded in `05-GCC-REPAIR.md`. Final-source macOS, Linux, and hosted CI qualification remains pending.
+This bounded delta review inspected five fixture-provenance changes. The fixture manifest now identifies the portable cc65 archive pin and build recipe, while the driver binds that identity through `pins.txt`, the fetched pin marker, and both successful-build record headers. It separately checks the current platform's actual ca65/ld65 executable hashes against the build record, and still verifies the original source/config/legacy-source and source-built guest hash/size identities. The manifest validator and its caller now require the exact all-or-none 11-field group, hash shape, and recipe `1`; controls reject malformed pin and wrong recipe values. Historical macOS executable hashes remain evidence about that build rather than portable fixture identities. The five accepted findings remain resolved. No new provenance or behavior findings were found. I did not rerun tests; nine focused cases on macOS and Ubuntu, seven isolated refusal controls, and both ShellCheck versions are recorded in `05-PROVENANCE-REPAIR.md`. Final-source macOS, Linux, and hosted CI qualification remains pending.
 
 ## Narrative Findings (AI reviewer)
 
-No new findings. The rename changes only the parameter identifier and its pointer in the three-element input-path array; it leaves the `stat` calls, path comparison loop, argument order, and callers unchanged. C17 `{0}` aggregate initialization initializes the full arrays to zero, matching the prior nested-brace initialization while avoiding GCC's missing-braces warning.
+No new findings. In the frame driver, the cc65 pin row must be unique and parse to 64 lowercase hex characters; its trimmed marker, stamp pin/recipe rows, build-files pin/recipe headers, and manifest pin/recipe rows must each match exactly. The driver then compares each native executable's current SHA-256 to its corresponding build-files entry. The later source-build checks still compare both handedness outputs and the legacy tracer output against unchanged manifest hashes and byte counts, and the production replay control independently checks its source-built guest. The validator recognizes the two replacement fields as a strict 11-field group, validates the pin as SHA-256, and rejects any recipe other than `1`; the manifest caller's allowed-field list matches. The added controls preserve the complete valid group and reject short/non-hex pins and recipe `2`.
 
 ## Resolved Findings
 
@@ -42,10 +45,10 @@ No new findings. The rename changes only the parameter identifier and its pointe
 | WR-03: legacy replay switch reached production | Resolved | Legacy implementation and dispatch are enclosed by `LYNX_CONSUMER_TESTING`; historical tracer assertions run through `TEST_CONSUMER`. The production control uses a provenance-checked guest and verifies equivalent validated manifests and raw/rendered frames with and without the legacy variable. Focused consumer checks are recorded as passing. |
 | WR-04: interleaved and checkpoint-restore switches reached production | Resolved | Both environment reads are now enclosed by `LYNX_CONSUMER_TESTING`. The frame driver routes positive controls through `TEST_CONSUMER` and requires success markers; the production comparison covers baseline, legacy, interleaved, and restore-variable runs against the same validated canonical timeline, checker, manifest, and frame outputs. The bad-script negative remains. Focused consumer checks are recorded as passing. |
 
-The report covers two changed paths in this delta, within the expanded 55-path phase scope. Provenance includes the initial 51-path review at `013de47ff566ae9c997542ddfba6fe15ff93aebe`, the six-path repair at `e74df76b8616cf9daaffc3f90de2ffb36ba0d1f0` (45 unchanged), the two-path replay-control repair at `78592c38aeb9e2db5a6b0a1d952b8b2dd1cc8fe0` (49 unchanged), the one-path ShellCheck repair at `ce2344851c7adebea900d590f34eda31eef25a1e` (50 unchanged), the four-path harness repair at `9290c743e67e9a8aabc60aff841c831c17186410` (all 51 prior paths unchanged, expanding scope to 55), the one-path scratch repair at `3aaf004f08fb40d6aad6c9fc126aaa86fefd681f` (54 unchanged), and the four-path portability repair at `735cfa169b0cfcf7f4687d746c87461dc1677e1f` (51 unchanged). This GCC warning repair changes `consumer/main.c` and `tests/det/test_det.c`; the other 53 paths are unchanged. The current 55-path fingerprint is `a0d5463d3b3e3a87973b076db23187281f9c965fcfe2e721da28ffeb6c543133`. This review did not rerun builds or tests and does not complete Task 12 or phase qualification.
+The report covers five changed paths within the existing 55-path phase scope. Provenance includes the initial 51-path review at `013de47ff566ae9c997542ddfba6fe15ff93aebe`, the six-path repair at `e74df76b8616cf9daaffc3f90de2ffb36ba0d1f0` (45 unchanged), the two-path replay-control repair at `78592c38aeb9e2db5a6b0a1d952b8b2dd1cc8fe0` (49 unchanged), the one-path ShellCheck repair at `ce2344851c7adebea900d590f34eda31eef25a1e` (50 unchanged), the four-path harness repair at `9290c743e67e9a8aabc60aff841c831c17186410` (all 51 prior paths unchanged, expanding scope to 55), the one-path scratch repair at `3aaf004f08fb40d6aad6c9fc126aaa86fefd681f` (54 unchanged), the four-path portability repair at `735cfa169b0cfcf7f4687d746c87461dc1677e1f` (51 unchanged), and the two-path GCC warning repair at `9e1468717c19c827e2d822f51667e45464274788` (53 unchanged). This provenance repair changes the five listed paths; the other 50 paths are unchanged. The current 55-path fingerprint is `ea140006093038be023cdceeb67c4c1468576c940f0aa942b1b4b69bbcf1a1f3`. This review did not rerun builds or tests and does not complete Task 12 or phase qualification.
 
 ---
 
-_Reviewed: 2026-11-12T16:51:20Z_
+_Reviewed: 2026-11-12T17:08:49Z_
 _Reviewer: the agent (gsd-code-reviewer)_
 _Depth: standard_

@@ -184,3 +184,6 @@ qualification evidence.
 
 
 **Validate supported lint versions before final gates.** Phase5 macOS ShellCheck0.11 accepted compound shell fallback expressions that Ubuntu0.9 rejected. Use explicit conditional refusals and check both supported environments during script work; do not disable the diagnostics. For copied-executable mutation controls on macOS, byte restoration over the same inode can still leave a process killed while a byte-identical fresh inode executes; restore the private fixture through a verified fresh file and atomic rename, retaining identity checks and positive brackets. The observed inode differential is evidence; the OS termination reason was not established by logs.
+
+
+**Separate portable fixture identity from native compiler output identity.** Phase5 consumer checks initially hard-coded macOS-built ca65/ld65 hashes in a fixture manifest, rejecting verified Linux tools before guest execution. Bind the portable manifest to pinned tool source and recipe, validate native executable hashes against each successful local build record, and retain exact source-built guest hashes as cross-platform output oracles. Check the actual Linux consumer slice before the final review tail; source pin equality alone is not a claim of identical native executables.
