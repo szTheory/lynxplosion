@@ -84,6 +84,13 @@ This one command is also what CI runs. It prints tool versions, lints the shell
 scripts, then runs `cmake --workflow --preset check` (configure, build with
 warnings as errors and sanitizers, test), and reports each step's wall time.
 
+At reviewed source `d3fb002`, the canonical gate passed on macOS 26.6.2 arm64,
+a self-contained Ubuntu 24.04 arm64 checkout, and hosted Ubuntu 24.04 CI. Each
+accounted for 202 tests: 200 passed and the two declared page-mode observations
+were skipped. The strict timer-source disagreements and missing page-mode
+observations documented above remain unresolved; these checks do not qualify
+hardware behavior.
+
 Prerequisites: a C17 compiler, CMake 3.25 or newer, Ninja, shellcheck, make,
 curl, git and iconv.
 

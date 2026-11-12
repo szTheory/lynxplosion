@@ -1,76 +1,101 @@
-# Phase 5 Qualification Record — Review Handoff
+# Phase 5 Qualification Record
 
-**Status:** preparation only. The local focused Task 1 checks below passed on
-the current implementation. This is not final qualification: independent code,
-security/threat, and goal/coverage reviews, any accepted fixes, and Plan 05-12
-Task 2 remain pending. Root owns those reviews and the continuation.
+**Status:** Plan 05-12 final-source qualification passed. Product and test
+source at `d3fb0024fe6a732b05f9b42122a18c110bed8ae2` was tested on macOS and
+self-contained Ubuntu, pushed normally to `origin/main`, and passed the exact
+head's hosted CI run. This records software behavior only; phase/security
+closure remains with root.
 
-## Focused Task 1 observation
+## Reviewed source and inventory
 
-The exact C121 command from `05-12-PLAN.md` completed on macOS arm64 with
-AppleClang `21.0.0.21000101`. CMake reported build identity
-`git=0ac23d1260ae1e3ddd1a1d5f2a9c4a815a9a071f`.
+- **Tested, pushed, and CI source:** `d3fb0024fe6a732b05f9b42122a18c110bed8ae2`
+- **Source scope:** 55 reviewed product, test, script, fixture, and build paths;
+  fingerprint `ea140006093038be023cdceeb67c4c1468576c940f0aa942b1b4b69bbcf1a1f3`.
+  The same 55 hashes were verified in the host and independent Linux clone.
+- **Linux Git history:** 354 commits, non-shallow, with no alternates outside
+  the pinned Ubuntu 24.04 image.
+- **Fast inventory and repeatability claim:** every final configure matched the
+  sorted `tests/inventory/fast.txt` set. The claim check returned
+  `1e74578b2e13db45953c6fd02e4793f0e04623f4d4b3d7158b04a69049bd9c5d`, matching
+  `docs/claims/skeleton-repeatability.claim`.
 
-The configure and build passed. The exact selected CTest set contained nine
-tests and all nine passed in 9.50 seconds of CTest wall time:
+The README qualification paragraph and planning records are documentation-only
+followups written after these gates. The final pushed and CI-tested source stays
+`d3fb0024fe6a732b05f9b42122a18c110bed8ae2`; no CI result is claimed for the
+later metadata commit. The README's documentation replacement SHA-256 is
+`629a416602d47780bee8fdfeb13b64ce9b5e1b9c3c30fab23846f76c2c91a510`. All 54
+other paths in the tested 55-path map, including every product, test, fixture,
+and script path, remain byte-identical.
 
-| Test | Result |
-|---|---|
-| `consumer.frame_tracer` | passed |
-| `consumer.frame_replay` | passed |
-| `consumer.frame_response_controls` | passed |
-| `consumer.replay_controls` | passed |
-| `consumer.frame_publication_controls` | passed |
-| `api.frame_refusal` | passed |
-| `api.video_snapshot_refusal` | passed |
-| `suite.page_mode.controls` | passed |
-| `suite.timers.video_revisit_controls` | passed |
+## Final canonical gates
 
-The following checks then passed in the same command: `sh scripts/check-claims.sh`,
-`sh scripts/check-manifests.sh`, and `sh scripts/hygiene.sh --tree`. The
-manifest check reported 11 manifests covering 22 fixture files. `sh
-scripts/check-claims.sh --inventory-sha256` reported
-`1e74578b2e13db45953c6fd02e4793f0e04623f4d4b3d7158b04a69049bd9c5d`, matching
-the claim's existing digest. `tests/inventory/fast.txt` was not changed; the
-claim remains profile `none`, evidence tier `R`, and a repeatability claim.
-After writing the preparation artifacts, tree hygiene, `git diff --check`, the
-claims check, and the manifest check were rerun and passed.
+All three environments ran `sh scripts/check.sh` against the same source head.
+Each gate accounted for all 202 registered CTest/JUnit rows exactly once: 200
+tests passed, two declared page-mode observations were skipped, and none
+failed. JUnit, artifact scanning, and full-history hygiene all passed.
 
-The source path and SHA-256 manifest for the full Phase 5 delta is in
-[`05-REVIEW-RESOLUTION.md`](./05-REVIEW-RESOLUTION.md). It is scoped from the
-Phase 4 closeout `1d9c9356f1a880dd949b4560fcee918d4073f14` and excludes
-`.planning` files from product/source review paths; planning context is listed
-separately in that ledger.
+| Environment | Toolchain and identity | CTest / JUnit | Artifacts | History / total |
+|---|---|---|---|---|
+| macOS local | macOS 26.6.2 arm64; AppleClang 21.0.0.21000101; CMake 4.4.3; Ninja 1.13.2; ShellCheck 0.11.0; Git 2.50.1 | 200 passed + 2 declared skips (202 JUnit rows); 0 failed; CTest 110.25s | 6,361 files scanned; the only accepted binary was exactly 512 bytes | 85s / 204s |
+| Self-contained Linux | Pinned `ubuntu@sha256:19cad59657037cffa0ac9a48107019b768900ff1071140965827513ac866bd5e`; Ubuntu 24.04 arm64; GCC 13.3.0; CMake 3.28.3; Ninja 1.11.1; ShellCheck 0.9.0; Git 2.43.0 | 200 passed + 2 declared skips (202 JUnit rows); 0 failed; CTest 111.07s | 6,330 files scanned; the only accepted binary was exactly 512 bytes | 13s / 127s |
+| Hosted CI | [Run 43268267738](https://github.com/szTheory/lynxplosion/actions/runs/43268267738), push event on `main`, exact head `d3fb0024fe6a732b05f9b42122a18c110bed8ae2`; Ubuntu 24.04.5 x64; GCC 13.3.0; CMake 3.31.6; Ninja 1.13.2; ShellCheck 0.9.0; Git 2.56.0 | 200 passed + 2 declared skips (202 JUnit rows); 0 failed; CTest 105.60s | 6,329 files scanned; the only accepted binary was exactly 512 bytes | 32s / 171s for the canonical command |
 
-## Evidence interpretation and limits
+The exact skips in every environment were `suite.page_mode.observation.lynx1`
+and `suite.page_mode.observation.lynx2`. Both stop at the unsupported `$06`
+write to `$FD8C` before producing any result. Their raw observations are
+missing; neither skip establishes profile agreement or qualification.
 
-- Raw frame bytes, guest progress, logical input, line ticks, per-row palette
-  snapshots, and rendered PPM output remain separate observations. Passing
-  software controls establish behavior for this implementation and its named
-  policies; they are not physical Lynx calibration.
-- `LEGACY_FLAT5` remains the default. Its exact no-DMA, zero-counter D-10
-  descriptor admits only timer result index 14 at observed `0c` versus source
-  `0d`. The separate `VIDEO_POLICY1` records have no pending descriptor: both
-  profiles report `0f` versus source `0d` at index 14 and agree on the other
-  15 of 16 rows. Strict comparison remains failing in both environments.
-- The pinned page-mode source and oracle are built and identified. The two
-  profile observation runs stop at the first unsupported write of `$06` to
-  `$FD8C`, before the test body writes any result. Their exact CTest skips are
-  declared; both raw observations are missing and comparison was not run.
-- The two exact page-mode skips do not qualify a profile, prove source
-  agreement, or establish raw frame/input behavior. See
-  [`docs/public-suites.md`](../../../docs/public-suites.md) and
-  [`docs/timer-video-revisit.md`](../../../docs/timer-video-revisit.md).
-- O1, O5, O6 and O9 remain open. No firmware or commercial content, physical
-  testing, shared LibFuturo change, release, or new publication authority is
-  implied. EVD-02 remains open; recurring EVD-05 and CON-01 remain partial
-  while their Phase 6 audio obligations remain.
+The final local raw logs are retained outside the repository and were not
+committed. Their SHA-256 digests are `9c248689c8222002f37f347218a7d3d1595e9c0fe615f2bd32aec05b252a4a26`
+(macOS) and `9dafb765f63d82b0c4277e24c712fae64f17050ebe7264e7dc6d81c2e160526a`
+(Linux). Hosted evidence is available from the linked GitHub run.
 
-## Still required before phase qualification
+## Hosted critical path
 
-Root must record the independent code review, security/threat review, and
-goal/coverage review; disposition every finding; apply accepted fixes and run
-their focused retests; then resume Task 2. Only after that may the exact final
-source receive its macOS gate, self-contained Linux gate, and authorized
-exact-head hosted CI qualification. This preparation record does not claim any
-of those gates passed.
+The push-triggered workflow used one Ubuntu job and one `scripts/check.sh`
+step, with a full-history checkout (`fetch-depth: 0`). Queue time was about 2s,
+checkout 2s, and the command took 171s. Within that command, the pinned cc65
+build took 19s, CMake configure about 0.7s, the native C build about 4.6s,
+CTest 105.60s, JUnit checking 0s, artifact scanning 2s, and history hygiene
+32s. The slowest CTests were `suite.timers.pending_controls` (58.70s),
+`suite.timers.result_controls` (47.88s), and
+`api.seam_agreement.none` (24.68s). There was no job matrix or duplicate broad
+gate. These measurements do not support adding a cache, concurrency, or a
+narrower test set: CTest is the main cost and the full-history scan is the
+next-largest distinct check.
+
+## Semantic outcomes and limits
+
+- `LEGACY_FLAT5` remains the default. In its no-DMA, zero-counter D-10
+  environment, the single admitted timer row is index 14: observed `0c` versus
+  source `0d`.
+- `VIDEO_POLICY1` has no pending descriptor. Both profiles retain the strict
+  index-14 mismatch `0f` versus source `0d` and agree on the other 15 of 16
+  rows. The strict source comparisons remain unresolved failures; green
+  observation/control CTests do not turn those comparisons green.
+- These results are software observations and repeatability evidence, not
+  physical Lynx calibration. EVD-02 remains open. Recurring EVD-05 and CON-01
+  remain partial for their Phase 6 audio obligations.
+- O1, O5, O6, and O9 remain open. No BIOS or commercial content, physical
+  testing, shared LibFuturo change, release, or broader publication authority
+  is implied.
+
+## Resolved qualification blockers
+
+Earlier attempts at intermediate reviewed source heads are recorded as
+failures, not green final gates. The macOS ShellCheck preflight and 12
+test-harness failures, the stale successful-consumer scratch artifact finding,
+Ubuntu ShellCheck 0.9 diagnostics, GCC 13 warning failures, and seven Ubuntu
+consumer provenance refusals were fixed at their causes and independently
+reviewed before the final gates above. See
+[`05-REVIEW-RESOLUTION.md`](./05-REVIEW-RESOLUTION.md),
+[`05-QUALIFICATION-REPAIRS.md`](./05-QUALIFICATION-REPAIRS.md),
+[`05-CLEANUP-REPAIR.md`](./05-CLEANUP-REPAIR.md),
+[`05-PORTABILITY-REPAIR.md`](./05-PORTABILITY-REPAIR.md),
+[`05-GCC-REPAIR.md`](./05-GCC-REPAIR.md), and
+[`05-PROVENANCE-REPAIR.md`](./05-PROVENANCE-REPAIR.md).
+
+The qualification evidence now binds the exact reviewed, pushed, and CI-tested
+source. Root retains the separate final security-ledger and phase-closeout
+actions; this record does not advance the roadmap or close phase-wide
+requirements.

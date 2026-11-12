@@ -54,7 +54,7 @@ Task format is phase-plan-task. SC is T-05-SC; numeric threats are unique phase-
 | 05-11-1 | 11 | EVD-02, VID-02 | T-05-31, T-05-32, T-05-33, SC | suite.timers.video_revisit; suite.timers.observation.lynx1; suite.timers.observation.lynx2; suite.timers.strict_comparison_controls; suite.timers.cascade_model | C111 | 05-10 | new cases created/registered in owning task before verify; inherited cases exist | passed per 05-11-SUMMARY: all 5 tests; strict index-14 mismatch retained |
 | 05-11-2 | 11 | EVD-02, VID-02 | T-05-31, T-05-32, T-05-33, SC | suite.timers.video_revisit_controls; suite.timers.pending_controls; suite.timers.result_controls; suite.timers.model_controls | C112 | 05-11-1 | new cases created/registered in owning task before verify; inherited cases exist | passed per 05-11-SUMMARY: all 4 controls |
 | 05-12-1 | 12 | VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01, EVD-02, EVD-05 | T-05-34, T-05-35, T-05-36, SC | consumer.frame_tracer; consumer.frame_replay; consumer.frame_response_controls; consumer.replay_controls; consumer.frame_publication_controls; api.frame_refusal; api.video_snapshot_refusal; suite.page_mode.controls; suite.timers.video_revisit_controls; claim/manifest/hygiene checks | C121 | 05-11 | existing after01–11; reviews before final gate | passed C121 focused gate: 9/9 tests; claim, manifests (11 manifests/22 files), tree hygiene, and post-write diff check passed; parent reviews/fixes still pending |
-| 05-12-2 | 12 | VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01, EVD-02, EVD-05 | T-05-34, T-05-35, T-05-36, SC | entire exact tests/inventory/fast.txt; JUnit/no-skip/artifact/history; macOS/Linux/exact-head CI records | C122 | 05-12-1 | existing after01–11; reviews before final gate | pending parent review, accepted fixes and Task 2 final qualification |
+| 05-12-2 | 12 | VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01, EVD-02, EVD-05 | T-05-34, T-05-35, T-05-36, SC | entire exact tests/inventory/fast.txt; JUnit/no-skip/artifact/history; macOS/Linux/exact-head CI records | C122 | 05-12-1 | existing after01–11; reviews before final gate | passed at reviewed/pushed/CI head `d3fb002`: macOS, self-contained Ubuntu 24.04 and hosted Ubuntu CI each accounted for 202 rows (200 passed, two declared page-mode skips, zero failures); JUnit, artifact scan, history hygiene passed; exact source fingerprint and retained timer/page-mode limits in `05-QUALIFICATION.md` |
 
 ## Wave 0 Requirements
 
@@ -65,7 +65,7 @@ Task format is phase-plan-task. SC is T-05-SC; numeric threats are unique phase-
 - Mutants require a unique changed source anchor, successful build, exact intended semantic/timing diagnostic and fresh positives. Crashes, sanitizer, timeout, missing output or generic nonzero do not prove detection.
 - Apps/tests remain headless/backgrounded, with finite guest/frame/record limits and current-invocation contained/nonce-owned scratch. No orphan watch loop. Clean only verified successful invocation outputs; failed evidence stays attributable.
 - Buffer/snapshot cases compare whole-machine/all-output sentinels and canaries, full capacity spans and metadata. All17 probe items are recorded in05-SOURCE-AUDIT.md (9 explicit predicates,8 flagged classifier assumptions); no unclassified backstop invented.
-- Feedback times remain pending. Routine groups target<60s; source mutation/suite batches use measured finite bounds. One final canonical gate per reviewed-source environment, no broad duplicate reruns or irrelevant2GB vector rerun.
+- Feedback times are recorded for C121 and C122. Routine groups target<60s; source mutation/suite batches use measured finite bounds. One final canonical gate per reviewed-source environment; no duplicate broad rerun or irrelevant 2GB vector rerun was made.
 
 ## Exact command registry
 
@@ -316,7 +316,7 @@ None for scoped software behavior. Physical calibration, baseline adoption, lice
 - [x] Each new test is created/registered before its owning verification; later users depend on that producer.
 - [ ] Planned tests are implemented and meaningful semantic failures observed.
 - [ ] No watch-mode/background orphan process.
-- [ ] Actual feedback times recorded and broad verification reused appropriately.
+- [x] Actual feedback times recorded and broad verification reused appropriately.
 - [ ] nyquist_compliant true only after final coverage audit.
 
-Wave 0 is complete: the planned tests are implemented and registered, and the owning task evidence is recorded above or in its linked summary. Nyquist compliance remains false until parent reviews, accepted fixes, final qualification and the phase coverage audit are complete. This preparation handoff does not mark Plan 05-12 complete.
+Wave 0 and the C122 final-source qualification are complete. Nyquist compliance and phase-wide requirement status remain under root's final coverage/security closeout; this Task 2 record does not advance the roadmap or close phase-wide requirements.

@@ -263,3 +263,44 @@ The independent GCC mechanical review returned terminal clean at `9e1468717c19c8
 Linux at `d09503c` failed seven consumer cases because the fixture required native macOS tool hashes. Commit `931fa03` binds portable source pin/recipe through fetched marker, successful stamp and build-files header, while retaining actual-native-tool hash checks and exact original guest identities. Strict manifest/schema controls and seven isolated driver refusals pass. Nine affected cases pass on macOS and Ubuntu; full new-source gates remain pending. See `05-PROVENANCE-REPAIR.md`. Latest55 fingerprint `ea140006093038be023cdceeb67c4c1468576c940f0aa942b1b4b69bbcf1a1f3`; five paths changed, other50 unchanged. Independent affected review pending.
 
 Independent five-path code and security reviews returned terminal clean/preserved verdicts at `931fa030d514a8084132159afa44b7ace50567b5`: portable pin/recipe binding, local native-tool hashes, original guest oracle identities, strict field group and semantic negatives remain enforced. The55 current identities match. No risk accepted; final environment gates remain pending.
+
+## Final Plan 05-12 Task 2 qualification
+
+The previously pending final gates are complete at source head
+`d3fb0024fe6a732b05f9b42122a18c110bed8ae2`. The final 55-path source map
+fingerprint is `ea140006093038be023cdceeb67c4c1468576c940f0aa942b1b4b69bbcf1a1f3`.
+Every mapped path was verified on the macOS host and in the independent
+354-commit, non-shallow Ubuntu clone with no Git alternates.
+
+`sh scripts/check.sh` passed once on macOS 26.6.2 arm64 (CTest 110.25s; total
+204s) and once in the pinned Ubuntu 24.04 arm64 environment (CTest 111.07s;
+total 127s). Both accounted for 202 CTest/JUnit rows exactly once: 200 passed,
+two declared page-mode observation skips, and zero failures. Artifact scanning
+accepted only the exact 512-byte fixture, and full-history hygiene passed.
+The two exact skips are `suite.page_mode.observation.lynx1` and
+`suite.page_mode.observation.lynx2`.
+
+The normal push advanced `origin/main` to the same source head. Hosted run
+[43268267738](https://github.com/szTheory/lynxplosion/actions/runs/43268267738)
+was a successful push-triggered Ubuntu 24.04 job on that exact SHA. It accounted
+for 202 rows (200 passed, two declared skips, zero failures); JUnit, artifact,
+and full-history checks passed. Its canonical command took 171s: 19s for the
+pinned cc65 build, about 5s for native configure/build, 105.60s for CTest, 2s
+for artifact scanning, and 32s for history hygiene. There was one job and no
+duplicate broad gate. See [`05-QUALIFICATION.md`](./05-QUALIFICATION.md) for
+all environment/tool identities, timings, and raw-observation boundaries.
+
+The strict timer comparisons remain unresolved failures despite passing
+observation/control CTests. The only page-mode observation skips remain the
+two exact unsupported `$06` writes to `$FD8C`; their raw results are missing.
+This final binding does not close hardware agreement, phase-wide requirements,
+or owner decisions. Root owns the final security-ledger and phase-closeout
+actions.
+
+After the final gates, the README gained only a qualification/count paragraph;
+the qualification, validation, and this resolution record are planning
+metadata. The README replacement SHA-256 is
+`629a416602d47780bee8fdfeb13b64ce9b5e1b9c3c30fab23846f76c2c91a510`. All 54
+other paths from the tested 55-path map, including product/test/script bytes,
+remain identical. Thus the tested/pushed/CI head remains `d3fb0024fe6a732b05f9b42122a18c110bed8ae2`; no CI run is claimed for the later
+documentation-only metadata commit.
