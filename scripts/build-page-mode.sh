@@ -12,7 +12,7 @@ usage() {
 }
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --out) [ "$#" -ge 2 ] && [ -z "$OUT_ARG" ] || usage; OUT_ARG=$2; shift 2 ;;
+    --out) if [ "$#" -lt 2 ] || [ -n "$OUT_ARG" ]; then usage; fi; OUT_ARG=$2; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -38,7 +38,7 @@ SCRATCH_ROOT="$ROOT/build/check/scratch"
 SCRATCH_REAL=$(CDPATH='' cd -P -- "$SCRATCH_ROOT" && pwd -P)
 case "$PARENT_REAL" in "$SCRATCH_REAL"|"$SCRATCH_REAL"/*) ;; *) printf 'page-mode build: output is outside invocation-owned scratch\n' >&2; exit 1 ;; esac
 OUT="$PARENT_REAL/$OUT_BASE"
-[ ! -e "$OUT" ] && [ ! -L "$OUT" ] || { printf 'page-mode build: output already exists; refusing unowned reuse\n' >&2; exit 1; }
+if [ -e "$OUT" ] || [ -L "$OUT" ]; then printf 'page-mode build: output already exists; refusing unowned reuse\n' >&2; exit 1; fi
 
 sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
 pin_value() { awk -v name="$1" '$1 == name { print $4; found++ } END { if (found != 1) exit 1 }' "$ROOT/pins.txt"; }
@@ -66,7 +66,7 @@ LYNX_URL=$(pin_url lynx-tests)
 LYNX_REVISION=$(printf '%s\n' "$LYNX_URL" | sed 's#.*/archive/##; s/\.tar\.gz$//')
 [ "$(cat "$SUITES_DIR/.lynx-pin")" = "$LYNX_PIN" ] || { printf 'page-mode build: lynx-tests pin marker mismatch\n' >&2; exit 1; }
 [ "$(cat "$CC65_DIR/.lynx-pin")" = "$CC65_PIN" ] || { printf 'page-mode build: cc65 pin marker mismatch\n' >&2; exit 1; }
-[ -f "$CC65_DIR/.lynx-build" ] && [ -f "$CC65_DIR/.lynx-build-files" ] || { printf 'page-mode build: verified cc65 build records are missing\n' >&2; exit 1; }
+if [ ! -f "$CC65_DIR/.lynx-build" ] || [ ! -f "$CC65_DIR/.lynx-build-files" ]; then printf 'page-mode build: verified cc65 build records are missing\n' >&2; exit 1; fi
 CA65_SHA=$(verify_tool bin/ca65)
 LD65_SHA=$(verify_tool bin/ld65)
 MAIN_BEFORE=$(verify_pinned_file page-mode/main.c)
@@ -95,24 +95,24 @@ cmp "$SUITES_DIR/LICENSE" "$OUT/NOTICE" || { printf 'page-mode build: source not
 env -i PATH=/usr/bin:/bin LC_ALL=C CC65_HOME="$CC65_DIR" \
   "$CC65_DIR/bin/ld65" -C "$ROOT/fixtures/suites/bll.cfg" \
     -Ln "$OUT/page-mode.lbl" -o "$OUT/page-mode.bll" "$OUT/page-mode.o"
-[ -s "$OUT/page-mode.bll" ] && [ -s "$OUT/page-mode.lbl" ] || { printf 'page-mode build: linked BLL or labels missing\n' >&2; exit 1; }
+if [ ! -s "$OUT/page-mode.bll" ] || [ ! -s "$OUT/page-mode.lbl" ]; then printf 'page-mode build: linked BLL or labels missing\n' >&2; exit 1; fi
 MAIN_AFTER=$(verify_pinned_file page-mode/main.c)
 TESTS_AFTER=$(verify_pinned_file page-mode/tests.s)
 NOTICE_AFTER=$(verify_pinned_file LICENSE)
-[ "$MAIN_BEFORE" = "$MAIN_AFTER" ] && [ "$TESTS_BEFORE" = "$TESTS_AFTER" ] && [ "$NOTICE_SHA" = "$NOTICE_AFTER" ] || {
+if [ "$MAIN_BEFORE" != "$MAIN_AFTER" ] || [ "$TESTS_BEFORE" != "$TESTS_AFTER" ] || [ "$NOTICE_SHA" != "$NOTICE_AFTER" ]; then
   printf 'page-mode build: pinned source changed during build\n' >&2; exit 1;
-}
+fi
 CA65_AFTER=$(verify_tool bin/ca65)
 LD65_AFTER=$(verify_tool bin/ld65)
-[ "$CA65_SHA" = "$CA65_AFTER" ] && [ "$LD65_SHA" = "$LD65_AFTER" ] || {
+if [ "$CA65_SHA" != "$CA65_AFTER" ] || [ "$LD65_SHA" != "$LD65_AFTER" ]; then
   printf 'page-mode build: pinned tools changed during build\n' >&2; exit 1;
-}
-[ "$WRAPPER_SHA" = "$(sha256 "$ROOT/fixtures/suites/page-mode-wrapper.s")" ] &&
-  [ "$MANIFEST_SHA" = "$(sha256 "$ROOT/fixtures/manifests/page-mode-tests.manifest")" ] &&
-  [ "$LAYOUT_SHA" = "$(sha256 "$ROOT/fixtures/suites/bll.cfg")" ] &&
-  [ "$RECIPE_SHA" = "$(sha256 "$ROOT/scripts/build-page-mode.sh")" ] || {
+fi
+if [ "$WRAPPER_SHA" != "$(sha256 "$ROOT/fixtures/suites/page-mode-wrapper.s")" ] ||
+   [ "$MANIFEST_SHA" != "$(sha256 "$ROOT/fixtures/manifests/page-mode-tests.manifest")" ] ||
+   [ "$LAYOUT_SHA" != "$(sha256 "$ROOT/fixtures/suites/bll.cfg")" ] ||
+   [ "$RECIPE_SHA" != "$(sha256 "$ROOT/scripts/build-page-mode.sh")" ]; then
   printf 'page-mode build: recipe, wrapper, manifest, or layout changed during build\n' >&2; exit 1;
-}
+fi
 
 {
   printf 'lynx_tests_revision=%s\n' "$LYNX_REVISION"

@@ -47,7 +47,7 @@ case $requested_work in
 esac
 work_leaf=${requested_abs##*/}
 work_parent=${requested_abs%/*}
-[ -n "$work_leaf" ] && [ -n "$work_parent" ] || refuse_work "path has no final directory name"
+if [ -z "$work_leaf" ] || [ -z "$work_parent" ]; then refuse_work "path has no final directory name"; fi
 [ -d "$work_parent" ] || refuse_work "parent directory does not exist"
 canonical_parent=$(CDPATH='' cd -P "$work_parent" 2>/dev/null && pwd -P) || refuse_work "parent cannot be resolved"
 work=$canonical_parent/$work_leaf
@@ -98,10 +98,10 @@ owner_token=$$-$(date +%s)
 printf '%s\n' "$owner_token" >"$work_owner"
 
 assert_owned_work() {
-  [ -d "$work" ] && [ ! -L "$work" ] || fail ownership "scratch directory changed type"
+  if [ ! -d "$work" ] || [ -L "$work" ]; then fail ownership "scratch directory changed type"; fi
   actual_work=$(CDPATH='' cd -P "$work" 2>/dev/null && pwd -P) || fail ownership "scratch directory cannot be resolved"
   [ "$actual_work" = "$work" ] || fail ownership "scratch directory no longer has its original identity"
-  [ -f "$work_owner" ] && [ ! -L "$work_owner" ] || fail ownership "ownership marker is missing"
+  if [ ! -f "$work_owner" ] || [ -L "$work_owner" ]; then fail ownership "ownership marker is missing"; fi
   actual_token=$(cat "$work_owner")
   [ "$actual_token" = "$owner_token" ] || fail ownership "ownership marker does not match this invocation"
 }

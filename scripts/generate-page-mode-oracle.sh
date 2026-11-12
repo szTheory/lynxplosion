@@ -8,8 +8,8 @@ SHAPE_ONLY=0
 usage() { printf 'usage: sh scripts/generate-page-mode-oracle.sh --source DIR --out FILE [--test-source-shape-only]\n' >&2; exit 2; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --source) [ "$#" -ge 2 ] && [ -z "$SOURCE_ARG" ] || usage; SOURCE_ARG=$2; shift 2 ;;
-    --out) [ "$#" -ge 2 ] && [ -z "$OUT_ARG" ] || usage; OUT_ARG=$2; shift 2 ;;
+    --source) if [ "$#" -lt 2 ] || [ -n "$SOURCE_ARG" ]; then usage; fi; SOURCE_ARG=$2; shift 2 ;;
+    --out) if [ "$#" -lt 2 ] || [ -n "$OUT_ARG" ]; then usage; fi; OUT_ARG=$2; shift 2 ;;
     --test-source-shape-only) [ "$SHAPE_ONLY" -eq 0 ] || usage; SHAPE_ONLY=1; shift ;;
     *) usage ;;
   esac
@@ -111,16 +111,16 @@ PARSED=$(awk -v mainfile="$SOURCE/page-mode/main.c" -v asmfile="$SOURCE/page-mod
 ' "$SOURCE/page-mode/main.c" "$SOURCE/page-mode/tests.s") || exit 1
 
 if [ "$SHAPE_ONLY" -eq 0 ]; then
-  [ "$MAIN_SHA" = "$(verify_source page-mode/main.c)" ] &&
-    [ "$TESTS_SHA" = "$(verify_source page-mode/tests.s)" ] &&
-    [ "$NOTICE_SHA" = "$(verify_source LICENSE)" ] || {
+  if [ "$MAIN_SHA" != "$(verify_source page-mode/main.c)" ] ||
+     [ "$TESTS_SHA" != "$(verify_source page-mode/tests.s)" ] ||
+     [ "$NOTICE_SHA" != "$(verify_source LICENSE)" ]; then
     printf 'page-mode oracle: pinned source changed during parsing\n' >&2; exit 1;
-  }
+  fi
   CA65_AFTER=$(sha256 "$CC65_DIR/bin/ca65")
   LD65_AFTER=$(sha256 "$CC65_DIR/bin/ld65")
-  [ "$CA65_BEFORE" = "$CA65_AFTER" ] && [ "$LD65_BEFORE" = "$LD65_AFTER" ] || {
+  if [ "$CA65_BEFORE" != "$CA65_AFTER" ] || [ "$LD65_BEFORE" != "$LD65_AFTER" ]; then
     printf 'page-mode oracle: pinned tools changed during parsing\n' >&2; exit 1;
-  }
+  fi
   [ "$RECIPE_SHA" = "$(sha256 "$ROOT/scripts/generate-page-mode-oracle.sh")" ] || {
     printf 'page-mode oracle: recipe changed during parsing\n' >&2; exit 1;
   }
@@ -142,7 +142,7 @@ SCRATCH_ROOT="$ROOT/build/check/scratch"
 SCRATCH_REAL=$(CDPATH='' cd -P -- "$SCRATCH_ROOT" && pwd -P)
 case "$PARENT_REAL" in "$SCRATCH_REAL"|"$SCRATCH_REAL"/*) ;; *) printf 'page-mode oracle: output is outside invocation-owned scratch\n' >&2; exit 1 ;; esac
 OUT="$PARENT_REAL/$(basename -- "$OUT_PATH")"
-[ ! -e "$OUT" ] && [ ! -L "$OUT" ] && [ ! -e "$OUT.owner" ] || { printf 'page-mode oracle: refusing existing output or owner marker\n' >&2; exit 1; }
+if [ -e "$OUT" ] || [ -L "$OUT" ] || [ -e "$OUT.owner" ]; then printf 'page-mode oracle: refusing existing output or owner marker\n' >&2; exit 1; fi
 nonce=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
 [ "${#nonce}" -eq 48 ] || { printf 'page-mode oracle: invocation nonce unavailable\n' >&2; exit 1; }
 tmp="$OUT.tmp-$nonce"

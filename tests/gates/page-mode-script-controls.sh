@@ -124,7 +124,16 @@ cp "$main_saved" "$main"
 printf '\n; isolated tool mutation\n' >> "$ca65"
 run_build_failure "modified tool" "pinned cc65 tool hash mismatch: bin/ca65" "$SCRATCH/modified-tool-build"
 run_oracle_failure "modified tool" "pinned cc65 tool mismatch: bin/ca65" "$SCRATCH/modified-tool-oracle.tsv"
-cp "$ca65_saved" "$ca65"
+# Restoring bytes over the modified executable's inode can leave macOS killing
+# it even when codesign verifies the bytes. An identical fresh-inode copy was
+# observed to execute successfully; replace the private fixture atomically.
+restored_tool="$ca65.restored"
+if [ -e "$restored_tool" ] || [ -L "$restored_tool" ]; then
+  fail "restored tool temporary path already exists"
+fi
+cp "$ca65_saved" "$restored_tool"
+cmp -s "$ca65_saved" "$restored_tool" || fail "restored tool bytes differ"
+mv "$restored_tool" "$ca65"
 
 pin_files="$SOURCE/.lynx-pin-files"
 pin_files_saved="$WORK/lynx-pin-files.saved"
