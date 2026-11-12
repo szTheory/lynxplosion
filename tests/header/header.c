@@ -7,8 +7,10 @@
 
 _Static_assert(sizeof(lynx_status) == 4, "status is 32 bits");
 _Static_assert(sizeof(lynx_stop_reason) == 4, "stop reason is 32 bits");
-_Static_assert(sizeof(lynx_config) == 24, "config layout");
-_Static_assert(sizeof(lynx_identity) == 80, "identity layout");
+_Static_assert(sizeof(lynx_config) == 32, "config layout");
+_Static_assert(sizeof(lynx_identity) == 88, "identity layout");
+_Static_assert(sizeof(lynx_frame_buffers) == 56, "frame buffers layout");
+_Static_assert(sizeof(lynx_frame_result) == 48, "frame result layout");
 _Static_assert(sizeof(lynx_watch_event) == 32, "watch event layout");
 _Static_assert(LYNX_CONTENT_BS93 == 2, "BS93 content format id");
 _Static_assert(LYNX_STARTUP_A == 1, "tier A startup id");
@@ -38,6 +40,10 @@ static lynx_status (*const reset_fn)(lynx_machine *) = lynx_reset;
 static lynx_status (*const load_bll_fn)(lynx_machine *, const uint8_t *, size_t) = lynx_load_bll;
 static lynx_status (*const advance_fn)(lynx_machine *, uint64_t, uint64_t *,
                                        lynx_stop_reason *) = lynx_advance;
+static lynx_status (*const set_input_fn)(lynx_machine *, uint32_t) = lynx_set_input;
+static lynx_status (*const advance_frame_fn)(lynx_machine *, uint64_t,
+                                             const lynx_frame_buffers *,
+                                             lynx_frame_result *) = lynx_advance_frame;
 static lynx_status (*const watch_configure_fn)(lynx_machine *, uint32_t, size_t) =
     lynx_watch_configure;
 static lynx_status (*const watch_clear_fn)(lynx_machine *) = lynx_watch_clear;
@@ -72,6 +78,8 @@ int main(void)
     (void)reset_fn;
     (void)load_bll_fn;
     (void)advance_fn;
+    (void)set_input_fn;
+    (void)advance_frame_fn;
     (void)watch_configure_fn;
     (void)watch_clear_fn;
     (void)watch_get_fn;
