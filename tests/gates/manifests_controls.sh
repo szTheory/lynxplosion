@@ -1,33 +1,123 @@
 #!/bin/sh
 # Negative controls for scripts/check-manifests.sh, run as
-#   tests/gates/manifests_controls.sh REPO_ROOT WORK
+#   tests/gates/manifests_controls.sh REPO_ROOT WORK [--guard-probe]
 #
 # Fault prevented: a manifest check that accepts a missing, malformed, repeated
 # or ambiguous manifest, or a fixture nobody has recorded. Every tree is built
-# under WORK (replaced on each run) from the two real scripts, one text fixture
-# and a good manifest, and every file written here is text. Each reject case
-# asserts exit 1 and the finding's wording.
+# under a fresh, exclusive WORK directory from the two real scripts, one text
+# fixture and a good manifest, and every file written here is text. Each reject
+# case asserts exit 1 and the finding's wording.
 set -eu
 
-if [ $# -ne 2 ]; then
-  echo "usage: manifests_controls.sh REPO_ROOT WORK" >&2
-  exit 2
-fi
-repo=$(cd "$1" && pwd -P)
-work=$2
-if [ -z "$work" ] || [ "$work" = "/" ]; then
-  echo "manifests_controls: WORK must be a directory path" >&2
-  exit 2
-fi
-rm -rf "$work"
-mkdir -p "$work"
-work=$(cd "$work" && pwd -P)
-case $work/ in
-  "$repo"/fixtures/* | "$repo"/scripts/*)
-    echo "manifests_controls: WORK $work is inside a checked directory" >&2
-    exit 1
+guard_probe=0
+case $# in
+  2) ;;
+  3)
+    [ "$3" = "--guard-probe" ] || {
+      echo "usage: manifests_controls.sh REPO_ROOT WORK [--guard-probe]" >&2
+      exit 2
+    }
+    guard_probe=1
+    ;;
+  *)
+    echo "usage: manifests_controls.sh REPO_ROOT WORK [--guard-probe]" >&2
+    exit 2
     ;;
 esac
+
+repo=$(cd "$1" && pwd -P)
+requested_work=$2
+
+refuse_work() {
+  printf 'manifests_controls: refusing unsafe WORK %s: %s\n' "$requested_work" "$1" >&2
+  exit 2
+}
+
+# Resolve and validate WORK before creating or removing anything. CTest uses
+# build/check/scratch/gates/manifests; direct invocations can use a fresh child
+# of the system temporary directory. Existing targets are caller-owned and are
+# never cleared or reused.
+case $requested_work in
+  ''|/|.|..|*/|*//*|./*|../*|*/./*|*/../*|*/.|*/..) refuse_work "path is empty, aliased, or contains traversal" ;;
+esac
+caller_dir=$(pwd -P)
+case $requested_work in
+  /*) requested_abs=$requested_work ;;
+  *) requested_abs=$caller_dir/$requested_work ;;
+esac
+work_leaf=${requested_abs##*/}
+work_parent=${requested_abs%/*}
+[ -n "$work_leaf" ] && [ -n "$work_parent" ] || refuse_work "path has no final directory name"
+[ -d "$work_parent" ] || refuse_work "parent directory does not exist"
+canonical_parent=$(CDPATH= cd -P "$work_parent" 2>/dev/null && pwd -P) || refuse_work "parent cannot be resolved"
+work=$canonical_parent/$work_leaf
+
+allowed=0
+case $work/ in
+  "$repo"/*)
+    repo_scratch=$repo/build/check/scratch
+    if [ -d "$repo_scratch" ]; then
+      canonical_repo_scratch=$(CDPATH= cd -P "$repo_scratch" 2>/dev/null && pwd -P) || canonical_repo_scratch=
+      if [ "$canonical_repo_scratch" = "$repo_scratch" ] &&
+         [ "$work" != "$canonical_repo_scratch" ]; then
+        case $work/ in "$canonical_repo_scratch"/*) allowed=1 ;; esac
+      fi
+    fi
+    [ "$allowed" -eq 1 ] || refuse_work "repository and source paths are not scratch"
+    ;;
+  *)
+    for temp_root in "${TMPDIR:-/tmp}" /tmp /private/tmp; do
+      [ -d "$temp_root" ] || continue
+      canonical_temp_root=$(CDPATH= cd -P "$temp_root" 2>/dev/null && pwd -P) || continue
+      if [ "$work" != "$canonical_temp_root" ]; then
+        case $work/ in "$canonical_temp_root"/*) allowed=1 ;; esac
+      fi
+      [ "$allowed" -eq 1 ] && break
+    done
+    [ "$allowed" -eq 1 ] || refuse_work "WORK must be below a dedicated project or system temporary scratch root"
+    ;;
+esac
+
+if [ -e "$work" ] || [ -L "$work" ]; then
+  refuse_work "target already exists; stale or caller-owned scratch is not reusable"
+fi
+
+# The optional probe mode runs only the same validation path and creates
+# nothing. It lets the control below exercise unsafe inputs in a synthetic
+# repository without ever directing a destructive command at the real tree.
+if [ "$guard_probe" -eq 1 ]; then
+  exit 0
+fi
+
+umask 077
+if ! mkdir "$work"; then
+  refuse_work "exclusive directory creation failed"
+fi
+work_owner=$work/.manifests-controls-owner
+owner_token=$$-$(date +%s)
+printf '%s\n' "$owner_token" >"$work_owner"
+
+assert_owned_work() {
+  [ -d "$work" ] && [ ! -L "$work" ] || fail ownership "scratch directory changed type"
+  actual_work=$(CDPATH= cd -P "$work" 2>/dev/null && pwd -P) || fail ownership "scratch directory cannot be resolved"
+  [ "$actual_work" = "$work" ] || fail ownership "scratch directory no longer has its original identity"
+  [ -f "$work_owner" ] && [ ! -L "$work_owner" ] || fail ownership "ownership marker is missing"
+  actual_token=$(cat "$work_owner")
+  [ "$actual_token" = "$owner_token" ] || fail ownership "ownership marker does not match this invocation"
+}
+
+remove_owned_child() {
+  child=$1
+  assert_owned_work
+  case $child in
+    "$work"/*)
+      child_leaf=${child#"$work"/}
+      case $child_leaf in ''|*/*|.|..) fail ownership "refusing non-child scratch removal: $child" ;; esac
+      rm -rf "$child"
+      ;;
+    *) fail ownership "refusing scratch removal outside invocation directory: $child" ;;
+  esac
+}
 
 fail() {
   echo "manifests_controls: $1: FAILED: $2" >&2
@@ -43,11 +133,59 @@ other64=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
 # make_tree DIR: a clean tree whose one fixture a.txt is covered by a.manifest.
 make_tree() {
   dir=$1
-  rm -rf "$dir"
+  remove_owned_child "$dir"
   mkdir -p "$dir/scripts" "$dir/fixtures/manifests"
   cp "$repo/scripts/validate-kv.sh" "$repo/scripts/check-manifests.sh" "$dir/scripts/"
   printf 'text fixture a\n' >"$dir/fixtures/a.txt"
   write_manifest "$dir/fixtures/manifests/a.manifest" "$hash64" fixtures/a.txt
+}
+
+# Black-box controls for the cleanup guard. Every marker lives in a synthetic
+# replica inside this invocation-owned scratch. The child calls exit during
+# path validation, before it can create or remove its WORK target.
+run_work_guard_controls() {
+  guard_repo=$work/guard-repo
+  mkdir -p "$guard_repo/scripts" "$guard_repo/fixtures"
+  cp "$repo/scripts/validate-kv.sh" "$repo/scripts/check-manifests.sh" "$guard_repo/scripts/"
+  printf 'synthetic-root-marker\n' >"$guard_repo/root.marker"
+  printf 'synthetic-fixture-marker\n' >"$guard_repo/fixtures/marker.txt"
+  printf 'synthetic-script-marker\n' >"$guard_repo/scripts/marker.txt"
+
+  expect_guard_refusal() {
+    guard_name=$1
+    guard_root=$2
+    guard_target=$3
+    marker=$4
+    rc=0
+    sh "$script_path" "$guard_root" "$guard_target" --guard-probe \
+      >"$work/guard-$guard_name.out" 2>&1 || rc=$?
+    [ "$rc" -eq 2 ] || fail "work_guard_$guard_name" "expected safe refusal 2, got $rc"
+    grep -qF 'refusing unsafe WORK' "$work/guard-$guard_name.out" ||
+      fail "work_guard_$guard_name" "guard refusal did not identify unsafe WORK"
+    [ -f "$marker" ] || fail "work_guard_$guard_name" "synthetic marker was changed or removed"
+    ok "work_guard_$guard_name"
+  }
+
+  expect_guard_refusal repo_root "$guard_repo" "$guard_repo" "$guard_repo/root.marker"
+  expect_guard_refusal source_fixtures "$guard_repo" "$guard_repo/fixtures" "$guard_repo/fixtures/marker.txt"
+  expect_guard_refusal source_scripts "$guard_repo" "$guard_repo/scripts" "$guard_repo/scripts/marker.txt"
+
+  stale=$work/stale-caller-scratch
+  mkdir "$stale"
+  printf 'stale-caller-marker\n' >"$stale/marker.txt"
+  expect_guard_refusal stale_target "$repo" "$stale" "$stale/marker.txt"
+
+  expect_guard_refusal traversal_alias "$guard_repo" "$guard_repo/fixtures/../fixtures" \
+    "$guard_repo/fixtures/marker.txt"
+  ln -s "$guard_repo/fixtures" "$work/fixture-alias"
+  expect_guard_refusal symlink_alias "$guard_repo" "$work/fixture-alias/new-work" \
+    "$guard_repo/fixtures/marker.txt"
+
+  positive=$work/fresh-positive
+  sh "$script_path" "$repo" "$positive" --guard-probe >"$work/guard-positive.out" 2>&1 ||
+    fail work_guard_positive "fresh project scratch was rejected: $(cat "$work/guard-positive.out")"
+  [ ! -e "$positive" ] || fail work_guard_positive "probe mode created its candidate"
+  ok work_guard_positive
 }
 
 # write_manifest FILE SHA256 FILES
@@ -102,6 +240,15 @@ expect_reject() {
 }
 
 t=$work/t
+
+script_path=$0
+case $script_path in
+  /*) ;;
+  *) script_path=$(pwd -P)/$script_path ;;
+esac
+if [ "$guard_probe" -eq 0 ]; then
+  run_work_guard_controls
+fi
 
 # 1. A clean tree passes.
 make_tree "$t"
@@ -305,4 +452,5 @@ make_tree "$t"
 append_input_probe_fields "$t/fixtures/manifests/a.manifest"
 printf 'source_built_guest_sha256_lefthand_2 = %s\n' "$hash64" >>"$t/fixtures/manifests/a.manifest"
 expect_reject input_probe_unknown_key "$t" "source_built_guest_sha256_lefthand_2: unknown key"
+assert_owned_work
 rm -rf "$work"
