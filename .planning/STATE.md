@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Display, Raw Video and Input
-current_plan: 3
+current_plan: 4
 status: executing
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-11-12T02:30:56.836Z"
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-11-12T03:34:07.404Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 05 execution started
-state_head: f8b6527c56b7d7f1b11ff958ae46d0448233dd4d
+state_head: f94771f4ccad645c70aa5296afeec7dce5894dc7
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 57
-  completed_plans: 47
+  completed_plans: 48
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-11)
 ## Current Position
 
 Phase: 05 (Display, Raw Video and Input) — EXECUTING
-Current Plan: 3
+Current Plan: 4
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-11 — Phase 05 execution started
@@ -107,6 +107,7 @@ Progress: [███████░░░] 67%
 | Phase 04 P12 | 4h 14m | 2 tasks | 5 files |
 | Phase 05 P01 | 55min | 2 tasks | 20 files |
 | Phase 05 P02 | about 35 min; measured from first task commit through closeout | 2 tasks | 8 files |
+| Phase 05 P03 | 35m | 2 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -220,6 +221,9 @@ Recent decisions affecting current work:
 - [Phase 05]: The effective normal display address is aligned down at the third-blank transfer; unsupported flip, color and two-bit modes refuse atomically.
 - [Phase 05]: Per-row palette snapshots occur after timer work and before same-tick CPU stores; this is software policy, not hardware latch evidence.
 - [Phase 05]: Baseline-green palette behavior is recorded as a positive regression, never as fabricated RED evidence.
+- [Phase 05]: MAPCTL B7 set disables sequential cycles; only B7-clear candidates are considered.
+- [Phase 05]: Keep page-mode eligibility limited to shared NOP opcode while primary CPU page-mode docs leave decode eligibility unspecified; this remains an unverified software policy.
+- [Phase 05]: Serialize page continuation in existing format-5 payload byte 15, preserving payload size and exact-build compatibility; keep flat5 unchanged.
 
 ### Pending Todos
 
@@ -254,6 +258,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-12T02:29:24.532Z
-Stopped at: Completed 05-02-PLAN.md
+Last session: 2026-11-12T03:34:06.287Z
+Stopped at: Completed 05-03-PLAN.md
 Resume file: None

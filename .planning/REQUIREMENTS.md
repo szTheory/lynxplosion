@@ -78,7 +78,7 @@ sequence, not a ceiling on the project goal.
 ### Display and input
 
 - [ ] **VID-01**: Timers 0 and 2 drive a line and frame generator with programmable timing (not a fixed 60 Hz)
-- [ ] **VID-02**: Display DMA reads the framebuffer as a bus requestor that costs ticks and interacts with page-mode fetches
+- [x] **VID-02**: Display DMA reads the framebuffer as a bus requestor that costs ticks and interacts with page-mode fetches
 - [ ] **VID-03**: The 16-entry, 12-bit palette is emulated with its per-line latch behavior
 - [ ] **VID-04**: Host receives raw video carrying pen data, palette state per line and timing metadata, separate from any scaling, rotation or color presentation (canonical form decided in-phase; LibFuturo implications are owner decision O9)
 - [ ] **VID-05**: Host can stop advancement on a defined frame-complete event, with the event definition documented
@@ -218,7 +218,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TIM-03 | Phase 4 | Complete |
 | TIM-04 | Phase 4 | Complete |
 | VID-01 | Phase 5 | Pending |
-| VID-02 | Phase 5 | Pending |
+| VID-02 | Phase 5 | Complete |
 | VID-03 | Phase 5 | Pending |
 | VID-04 | Phase 5 | Pending |
 | VID-05 | Phase 5 | Pending |
