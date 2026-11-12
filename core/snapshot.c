@@ -1,4 +1,4 @@
-/* Snapshot save and restore, format version 5.
+/* Snapshot save and restore, format version 6.
 
    A snapshot is a header followed by a payload. Every integer is
    little-endian and is written and read one field at a time, never by copying
@@ -6,7 +6,7 @@
 
    Header (256 bytes), in order:
      0    magic          8 bytes  "LYNXSNAP"
-     8    format_version u32      5
+     8    format_version u32      6
      12   header_len     u32      256
      16   build_id       128      lynx__build_id, NUL-padded to 128
      144  profile        u32
@@ -19,10 +19,10 @@
      204  startup_tier   u32
      208  entry_addr     u32
      212  object_len     u32
-     216  payload_len    u32      77948
+     216  payload_len    u32      78036
      220  payload_sha256 32       SHA-256 of the payload
      252  timing_policy  u32
-   Payload (77948 bytes), offsets relative to its start:
+   Payload (78036 bytes), offsets relative to its start:
      0  pc u16        2  a      3  x      4  y      5  s
      6  p (bits 4 and 5 set)    7  cpu latches (lynx__cpu.flags)
      8  opcode        9  step (cycle index inside the instruction)
@@ -35,7 +35,9 @@
      65601 fixed timer phase policy
      65602 event-already-applied-at-guest-tick (0 or 1)
      65603 bus ownership hold (0 or 1)
-     65604 video/input runtime header and bounded raw capture (format 5)
+     65604 video/input runtime header and bounded raw capture (format 5 layout)
+     77948 audio state: fieldwise 88-byte format-6 envelope documented in
+       docs/snapshot-video.md
    The profile is not in the payload: it is part of the header identity. The
    CPU request and wake_pending are derived state and are never stored; restore
    recomputes them from CPU state and timer pending bits. Divider phase and
@@ -51,7 +53,7 @@
    cannot fail. A refused restore leaves the instance byte-identical. After
    that guest-state apply succeeds, host-only watch configuration and hit
    reporting are cleared; callers must explicitly rearm after restore.
-   Formats 1 through 4 are refused as version errors.
+   Formats 1 through 5 are refused as version errors.
 
    Reversibility: restore needs the same build, so no old snapshot is ever
    accepted and the format may change in any later build without migration. */
@@ -110,7 +112,8 @@ enum {
     P_TIMER_EVENT_APPLIED = P_TIMER_PHASE_POLICY + 1,
     P_BUS_HOLD = P_TIMER_EVENT_APPLIED + 1,
     P_VIDEO = P_BUS_HOLD + 1,
-    P_END = P_VIDEO + (int)LYNX__VIDEO_SNAPSHOT_LEN
+    P_AUDIO = P_VIDEO + (int)LYNX__VIDEO_SNAPSHOT_LEN,
+    P_END = P_AUDIO + (int)LYNX__AUDIO_SNAPSHOT_LEN
 };
 
 _Static_assert(OFF_END == (int)LYNX__SNAPSHOT_HEADER_LEN, "snapshot header length");
@@ -269,19 +272,48 @@ static void video_snapshot_write(uint8_t *out, const lynx__video_state *video)
     for (size_t i = 0u; i < LYNX__VIDEO_CAPTURE_TICKS; i++) put_u64(ticks + i * 8u, video->line_ticks[i]);
 }
 
+static void audio_snapshot_write(uint8_t *out, const lynx__audio_state *audio)
+{
+    memset(out, 0, LYNX__AUDIO_SNAPSHOT_LEN);
+    for (size_t i = 0u; i < LYNX__AUDIO_CHANNEL_COUNT; i++) {
+        const lynx__audio_channel *channel = &audio->channels[i];
+        uint8_t *record = out + i * 10u;
+        record[0] = channel->volume;
+        record[1] = channel->backup;
+        record[2] = channel->count;
+        record[3] = channel->control_a;
+        record[4] = channel->control_b;
+        record[5] = channel->feedback;
+        put_u16(record + 6, channel->shift);
+        record[8] = (uint8_t)channel->output;
+        record[9] = (uint8_t)channel->integrator;
+    }
+    out[40] = audio->stereo_disable;
+    out[41] = audio->ring_cursor;
+    memcpy(out + 42, audio->ring_debt, sizeof audio->ring_debt);
+    out[50] = audio->same_tick_device_cursor;
+    out[51] = audio->same_tick_sample_cursor;
+    out[52] = audio->event_cursor_valid;
+    put_u32(out + 54, audio->event_sequence);
+    put_u64(out + 58, audio->event_tick);
+    put_u64(out + 66, audio->next_sample_tick);
+    put_u64(out + 74, audio->next_sample_ordinal);
+}
+
 /* Stable guest-state digest encoding. This deliberately shares the snapshot's
    fieldwise video encoder, but excludes the snapshot header, build/content
    identity and historical timer cursor timestamp. Order: domain/version,
    CPU registers/latches, MAPCTL and page latch, guest tick/readiness, all RAM,
    timer records and current-tick event bit, bus hold, then the canonical video
-   record. Struct padding, derived CPU requests/wake state and host observations
-   never enter the hash. */
+   and audio records. Struct padding, derived CPU requests/wake state and host
+   observations never enter the hash. */
 static void guest_state_digest_bytes(const lynx_machine *m, uint8_t out[32])
 {
-    static const uint8_t domain[] = "lynxplosion.guest-state.v1";
+    static const uint8_t domain[] = "lynxplosion.guest-state.v2";
     uint8_t cpu[13];
     uint8_t timer_records[LYNX__TIMER_COUNT * 4u + 4u];
     uint8_t video[LYNX__VIDEO_SNAPSHOT_LEN];
+    uint8_t audio[LYNX__AUDIO_SNAPSHOT_LEN];
     uint8_t digest[32];
     lynx__sha256 hash;
 
@@ -313,6 +345,7 @@ static void guest_state_digest_bytes(const lynx_machine *m, uint8_t out[32])
                   timer_edge_due_now(&m->timer_bank, m->guest_ticks));
     timer_records[LYNX__TIMER_COUNT * 4u + 3u] = m->bus_hold;
     video_snapshot_write(video, &m->video);
+    audio_snapshot_write(audio, &m->audio);
 
     lynx__sha256_init(&hash);
     lynx__sha256_update(&hash, domain, sizeof domain);
@@ -326,6 +359,7 @@ static void guest_state_digest_bytes(const lynx_machine *m, uint8_t out[32])
     lynx__sha256_update(&hash, m->ram, sizeof m->ram);
     lynx__sha256_update(&hash, timer_records, sizeof timer_records);
     lynx__sha256_update(&hash, video, sizeof video);
+    lynx__sha256_update(&hash, audio, sizeof audio);
     lynx__sha256_final(&hash, digest);
     memcpy(out, digest, sizeof digest);
 }
@@ -372,9 +406,73 @@ static void video_snapshot_read(lynx__video_state *video, const uint8_t *in)
     for (size_t i = 0u; i < LYNX__VIDEO_CAPTURE_TICKS; i++) video->line_ticks[i] = get_u64(ticks + i * 8u);
 }
 
+static int8_t decode_i8(uint8_t value)
+{
+    const int16_t signed_value = value < 0x80u ? (int16_t)value : (int16_t)value - 256;
+    return (int8_t)signed_value;
+}
+
+static void audio_snapshot_read(lynx__audio_state *audio, const uint8_t *in)
+{
+    memset(audio, 0, sizeof *audio);
+    for (size_t i = 0u; i < LYNX__AUDIO_CHANNEL_COUNT; i++) {
+        lynx__audio_channel *channel = &audio->channels[i];
+        const uint8_t *record = in + i * 10u;
+        channel->volume = record[0];
+        channel->backup = record[1];
+        channel->count = record[2];
+        channel->control_a = record[3];
+        channel->control_b = record[4];
+        channel->feedback = record[5];
+        channel->shift = get_u16(record + 6);
+        channel->output = decode_i8(record[8]);
+        channel->integrator = decode_i8(record[9]);
+    }
+    audio->stereo_disable = in[40];
+    audio->ring_cursor = in[41];
+    memcpy(audio->ring_debt, in + 42, sizeof audio->ring_debt);
+    audio->same_tick_device_cursor = in[50];
+    audio->same_tick_sample_cursor = in[51];
+    audio->event_cursor_valid = in[52];
+    audio->event_sequence = get_u32(in + 54);
+    audio->event_tick = get_u64(in + 58);
+    audio->next_sample_tick = get_u64(in + 66);
+    audio->next_sample_ordinal = get_u64(in + 74);
+}
+
 static int bytes_zero(const uint8_t *bytes, size_t count)
 {
     for (size_t i = 0u; i < count; i++) if (bytes[i] != 0u) return 0;
+    return 1;
+}
+
+static int audio_state_valid(const lynx__audio_state *audio, const uint8_t *raw,
+                             uint64_t ticks)
+{
+    if (audio->ring_cursor >= LYNX__AUDIO_RING_NODE_COUNT ||
+        audio->same_tick_device_cursor > 1u || audio->same_tick_sample_cursor > 1u ||
+        audio->event_cursor_valid > 1u || audio->event_sequence > LYNX_AV_MIN_EVENT_CAPACITY ||
+        !bytes_zero(raw + 53, 1u) || !bytes_zero(raw + 82, 6u)) return 0;
+    for (size_t i = 0u; i < LYNX__AUDIO_RING_NODE_COUNT; i++) {
+        if (audio->ring_debt[i] > LYNX__AUDIO_RING_DEBT_LIMIT) return 0;
+    }
+    for (size_t i = 0u; i < LYNX__AUDIO_CHANNEL_COUNT; i++) {
+        const lynx__audio_channel *channel = &audio->channels[i];
+        if (channel->shift > 0x0FFFu || (channel->control_b & 0xF0u) != 0u ||
+            ((channel->control_a & 0x07u) == 0x07u && (channel->control_a & 0x08u) != 0u)) {
+            return 0;
+        }
+    }
+    if (audio->event_cursor_valid != 0u) {
+        if (audio->event_tick != ticks) return 0;
+    } else if (audio->event_tick != 0u || audio->event_sequence != 0u ||
+               audio->same_tick_device_cursor != 0u) {
+        return 0;
+    }
+    if (audio->same_tick_sample_cursor != 0u && (ticks == 0u || ticks % 400u != 0u)) return 0;
+    if (audio->next_sample_ordinal >= UINT64_MAX / 400u) return 0;
+    const uint64_t expected_next = (audio->next_sample_ordinal + 1u) * UINT64_C(400);
+    if (audio->next_sample_tick != expected_next || audio->next_sample_tick < ticks) return 0;
     return 1;
 }
 
@@ -538,6 +636,7 @@ lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, 
                   timer_edge_due_now(&m->timer_bank, m->guest_ticks));
     payload[P_BUS_HOLD] = m->bus_hold;
     video_snapshot_write(payload + P_VIDEO, &m->video);
+    audio_snapshot_write(payload + P_AUDIO, &m->audio);
 
     memcpy(buf + OFF_MAGIC, LYNX__SNAPSHOT_MAGIC, LYNX__SNAPSHOT_MAGIC_LEN);
     put_u32(buf + OFF_FORMAT, LYNX__SNAPSHOT_FORMAT);
@@ -708,6 +807,11 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
                            payload[P_MAPCTL], cpu_page_latch)) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
+    lynx__audio_state audio_cand;
+    audio_snapshot_read(&audio_cand, payload + P_AUDIO);
+    if (!audio_state_valid(&audio_cand, payload + P_AUDIO, ticks)) {
+        return LYNX_ERR_SNAPSHOT_INVALID;
+    }
 
     /* Apply: one step, field by field, no failure path. The pending bus
        request is recomputed from the restored state. */
@@ -729,6 +833,7 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     m->cpu_page_latch = cpu_page_latch;
     memcpy(m->ram, payload + P_RAM, LYNX_ADDRESS_SPACE);
     m->timer_bank = timer_cand;
+    m->audio = audio_cand;
     m->video = video_cand;
     m->bus_hold = bus_hold;
     m->wake_pending = timer_cand.pending != 0u ? 1u : 0u;

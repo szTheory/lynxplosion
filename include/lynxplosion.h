@@ -39,9 +39,9 @@ enum {
     LYNX_ERR_UNAVAILABLE = 10       /* requested mapped observation is unavailable */
 };
 
-/* Why an advance returned. lynx_advance_frame can stop at FRAME. WATCH
-   reports a completed matching CPU write. UNAVAILABLE leaves the pending
-   CPU request uncompleted at its grant. */
+/* Why an advance returned. Frame and A/V calls can stop at FRAME. WATCH
+   reports a completed matching CPU write. OUTPUT is bounded caller-span
+   back-pressure; UNAVAILABLE leaves the pending CPU request uncompleted. */
 typedef uint32_t lynx_stop_reason;
 enum {
     LYNX_STOP_BUDGET = 0,   /* the half-open tick budget was used up */
@@ -49,7 +49,8 @@ enum {
     LYNX_STOP_WATCH = 2,    /* a matching CPU write completed */
     LYNX_STOP_HALT = 3,     /* reserved */
     LYNX_STOP_UNDEFINED = 4, /* profile NONE reached an opcode the Lynx profiles disagree on */
-    LYNX_STOP_UNAVAILABLE = 5 /* the pending CPU bus route has no implemented target */
+    LYNX_STOP_UNAVAILABLE = 5, /* the pending CPU bus route has no implemented target */
+    LYNX_STOP_OUTPUT = 6 /* a caller-owned A/V span cannot accept the next complete record */
 };
 
 /* Hardware profile, fixed per instance at init. Ids are append-only and are
@@ -303,6 +304,84 @@ lynx_status lynx_advance_frame(lynx_machine *m, uint64_t budget,
                               const lynx_frame_buffers *buffers,
                               lynx_frame_result *result);
 
+enum {
+    LYNX_AUDIO_POLICY_DIGITAL_1 = 1,
+    LYNX_AUDIO_CHANNELS = 4,
+    LYNX_AUDIO_RATE_NUM = 40000,
+    LYNX_AUDIO_RATE_DEN = 1,
+    LYNX_AUDIO_PCM_CHANNELS = 2,
+    LYNX_AUDIO_PCM_BITS = 16,
+    /* One complete tick may contain four channel transitions and one CPU
+       register write transition. This minimum lets a host resume without
+       losing an event at a same-tick boundary. */
+    LYNX_AV_MIN_EVENT_CAPACITY = 5
+};
+
+enum {
+    LYNX_AUDIO_EVENT_WRITE = 1,
+    LYNX_AUDIO_EVENT_CLOCK = 2
+};
+
+typedef struct lynx_audio_event {
+    uint64_t tick;
+    uint32_t sequence;
+    uint8_t channel;
+    uint8_t cause;
+    int8_t before_output;
+    int8_t after_output;
+} lynx_audio_event;
+
+typedef struct lynx_pcm_frame {
+    int16_t left;
+    int16_t right;
+} lynx_pcm_frame;
+
+typedef struct lynx_av_buffers {
+    uint32_t struct_size;
+    uint32_t reserved;
+    lynx_frame_buffers frame;
+    lynx_pcm_frame *pcm;
+    size_t pcm_capacity;
+    lynx_audio_event *events;
+    size_t event_capacity;
+} lynx_av_buffers;
+
+typedef struct lynx_av_result {
+    uint32_t struct_size;
+    lynx_stop_reason stop;
+    uint64_t ticks_consumed;
+    uint64_t frame_start_tick;
+    uint64_t frame_end_tick;
+    uint64_t frame_sequence;
+    uint32_t row_count;
+    uint32_t frame_flags;
+    uint64_t first_sample_ordinal;
+    uint64_t next_sample_ordinal;
+    uint32_t pcm_count;
+    uint32_t event_count;
+} lynx_av_result;
+
+/* Advances on the shared guest clock and returns at most one completed raw
+   frame plus fixed-rate PCM and ordered channel events in caller-owned spans.
+   VIDEO_POLICY1 is required. Audio output is a digital software policy, not a
+   hardware sample-rate or stereo qualification. The exact lattice is
+   40,000/1 frames per second: ordinal 0 is sampled at tick 400, then every
+   400 ticks. Timer/audio/video/refresh device work precedes sampling, which
+   precedes the CPU grant; work at the half-open target remains pending.
+
+   Both descriptors require exact sizes and zero reserved fields. All frame,
+   PCM and event pointers/capacities are required, checked for alignment,
+   integer wrap and pairwise overlap with the descriptors, result and machine
+   before progress. Frame capacities meet the fixed maxima. Event capacity is
+   at least LYNX_AV_MIN_EVENT_CAPACITY. On LYNX_OK, result reports FRAME,
+   BUDGET, OUTPUT, or the same CPU stop as lynx_advance; OUTPUT is a valid
+   partial-progress stop and resumes at the exact pending record. The core
+   retains no caller pointers and never drops enabled observations. Calls on
+   one instance must be caller-serialized. */
+lynx_status lynx_advance_av(lynx_machine *m, uint64_t budget,
+                            const lynx_av_buffers *buffers,
+                            lynx_av_result *result);
+
 /* A one-shot write-watch event. hit is 1 when a CPU bus write matched the
    configured range; otherwise all fields are zero. hit_tick is the access
    sample tick (currently the grant tick), and return_tick is one tick later. */
@@ -373,6 +452,11 @@ typedef struct lynx_identity {
     uint32_t entry_addr;
     uint32_t object_len;
     uint32_t timing_policy; /* LYNX_TIMING_POLICY_* */
+    uint32_t audio_policy; /* LYNX_AUDIO_POLICY_*; immutable output policy */
+    uint32_t audio_rate_num;
+    uint32_t audio_rate_den;
+    uint32_t audio_channels;
+    uint32_t audio_bits;
 } lynx_identity;
 
 /* Side-effect-free inspect. NULL m or out gives LYNX_ERR_ARGUMENT; a
@@ -384,7 +468,9 @@ lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out);
    identical guest state and excludes immutable machine identity, struct
    padding, derived CPU requests, host watches and replay scripts. Its
    versioned order is CPU state, MAPCTL/page latch, guest time/readiness, RAM,
-   timer records/current-tick event bit, bus hold, then video/input/capture.
+   timer records/current-tick event bit, bus hold, then video/input/capture and
+   audio state. The immutable audio observation policy/rate/channel/bit fields
+   are reported by lynx_get_identity.
    NULL arguments or an output span that wraps or overlaps the machine return
    ARGUMENT; an uninitialised machine returns STATE. Refusal writes no output
    bytes. Calls on one instance must be caller-serialized. */

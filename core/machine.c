@@ -90,6 +90,15 @@ static void machine_set_guest_tick(struct lynx_machine *m, uint64_t tick)
         m->timer_bank.last_event_valid = 0u;
         m->timer_bank.last_event_tick = 0u;
     }
+    if (tick > m->guest_ticks) {
+        m->audio.same_tick_device_cursor = 0u;
+        m->audio.same_tick_sample_cursor = 0u;
+        if (m->audio.event_cursor_valid != 0u && tick > m->audio.event_tick) {
+            m->audio.event_cursor_valid = 0u;
+            m->audio.event_sequence = 0u;
+            m->audio.event_tick = 0u;
+        }
+    }
     m->guest_ticks = tick;
     if (m->cpu_ready_at < tick) {
         m->cpu_ready_at = tick;
@@ -131,6 +140,7 @@ void lynx__power_on(lynx_machine *m)
     m->guest_ticks = 0u;
     m->cpu_ready_at = m->guest_ticks;
     lynx__timer_init(&m->timer_bank);
+    lynx__audio_init(&m->audio);
     lynx__video_init(&m->video, m->cfg.timing_policy);
     memset(&m->host_observation, 0, sizeof m->host_observation);
 }
@@ -384,6 +394,10 @@ static bool bus_opcode_peek(const struct lynx_machine *m, uint16_t addr,
             *result = lynx__timer_peek(&m->timer_bank, addr);
             return true;
         }
+        if (lynx__audio_available(addr)) {
+            *result = lynx__audio_peek(&m->audio, addr);
+            return true;
+        }
         return false;
     case LYNX__BUS_ROUTE_SUZY:
         if (!lynx__input_available(addr)) return false;
@@ -409,7 +423,8 @@ static bool bus_request_available(const struct lynx_machine *m, uint16_t addr, u
         return true;
     }
     if (route == LYNX__BUS_ROUTE_MIKEY) {
-        return lynx__timer_available(addr) || lynx__video_available(addr);
+        return lynx__timer_available(addr) || lynx__video_available(addr) ||
+               lynx__audio_available(addr);
     }
     if (route == LYNX__BUS_ROUTE_SUZY) return lynx__input_available(addr);
     return route == LYNX__BUS_ROUTE_MAPCTL && (flags & LYNX__CF_WRITE) != 0u;
@@ -418,9 +433,9 @@ static bool bus_request_available(const struct lynx_machine *m, uint16_t addr, u
 /* Performs one granted CPU bus cycle through the same MAPCTL decoder used by
    the opcode precheck. Unsupported targets never read or write hidden RAM. */
 static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint8_t flags,
-                       uint64_t stamp, uint8_t *result)
+                       uint64_t stamp, uint8_t *result,
+                       lynx__audio_event_sink *audio_events)
 {
-    (void)stamp;
     const bool write = (flags & LYNX__CF_WRITE) != 0u;
     if (m->content_format == LYNX__CONTENT_TEST_FLAT) {
         if (write) {
@@ -450,7 +465,8 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
         *result = data;
         return true;
     case LYNX__BUS_ROUTE_MIKEY:
-        if (!lynx__timer_available(addr) && !lynx__video_available(addr)) {
+        if (!lynx__timer_available(addr) && !lynx__video_available(addr) &&
+            !lynx__audio_available(addr)) {
             return false;
         }
         if (lynx__video_available(addr)) {
@@ -459,6 +475,15 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
                 *result = data;
             } else {
                 *result = lynx__video_peek(&m->video, addr);
+            }
+            return true;
+        }
+        if (lynx__audio_available(addr)) {
+            if (write) {
+                if (!lynx__audio_write(&m->audio, addr, data, stamp, audio_events)) return false;
+                *result = data;
+            } else {
+                *result = lynx__audio_peek(&m->audio, addr);
             }
             return true;
         }
@@ -505,8 +530,16 @@ bool lynx__machine_event_before(lynx__machine_event a, lynx__machine_event b)
    after target is not. A cycle granted before target is performed even when
    its duration ends past target; cpu_ready_at records when the next one may
    start, and the clock stops at target. */
+typedef struct machine_av_capture {
+    lynx_pcm_frame *pcm;
+    size_t pcm_capacity;
+    size_t pcm_count;
+    lynx__audio_event_sink events;
+} machine_av_capture;
+
 static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
-                                   lynx_stop_reason *stop, bool stop_on_frame)
+                                   lynx_stop_reason *stop, bool stop_on_frame,
+                                   machine_av_capture *capture)
 {
     if (m == NULL || consumed == NULL || stop == NULL) {
         return LYNX_ERR_ARGUMENT;
@@ -533,6 +566,17 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             next.sequence = (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE;
             has_event = true;
         }
+        uint64_t audio_tick = 0u;
+        if (lynx__audio_next(&m->audio, m->guest_ticks, &audio_tick) &&
+            audio_tick < target) {
+            const lynx__machine_event audio_event = {
+                audio_tick, (uint8_t)LYNX__MACHINE_EVENT_AUDIO_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
+            if (!has_event || lynx__machine_event_before(audio_event, next)) {
+                next = audio_event;
+                has_event = true;
+            }
+        }
         uint64_t video_tick = 0u;
         if (lynx__video_next_dma(&m->video, m->guest_ticks, &video_tick) &&
             video_tick < target) {
@@ -552,6 +596,16 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
                 (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
             if (!has_event || lynx__machine_event_before(refresh_event, next)) {
                 next = refresh_event;
+                has_event = true;
+            }
+        }
+        if (m->audio.next_sample_tick < target) {
+            const lynx__machine_event sample_event = {
+                m->audio.next_sample_tick,
+                (uint8_t)LYNX__MACHINE_EVENT_SAMPLE_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
+            if (!has_event || lynx__machine_event_before(sample_event, next)) {
+                next = sample_event;
                 has_event = true;
             }
         }
@@ -591,6 +645,17 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             }
             continue;
         }
+        if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_AUDIO_PRIORITY) {
+            if (capture != NULL &&
+                capture->events.capacity - capture->events.count < LYNX_AV_MIN_EVENT_CAPACITY) {
+                *stop = LYNX_STOP_OUTPUT;
+                break;
+            }
+            machine_set_guest_tick(m, next.tick);
+            lynx__audio_event_sink *sink = capture != NULL ? &capture->events : NULL;
+            (void)lynx__audio_apply(&m->audio, next.tick, sink);
+            continue;
+        }
         if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_VIDEO_PRIORITY) {
             machine_set_guest_tick(m, next.tick);
             m->cpu_page_latch = 0u;
@@ -601,6 +666,21 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             machine_set_guest_tick(m, next.tick);
             m->cpu_page_latch = 0u;
             lynx__video_refresh_apply(&m->video, next.tick);
+            continue;
+        }
+        if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_SAMPLE_PRIORITY) {
+            if (capture != NULL && capture->pcm_count >= capture->pcm_capacity) {
+                *stop = LYNX_STOP_OUTPUT;
+                break;
+            }
+            machine_set_guest_tick(m, next.tick);
+            lynx_pcm_frame sample;
+            if (!lynx__audio_sample(&m->audio, next.tick, &sample)) {
+                *stop = LYNX_STOP_UNAVAILABLE;
+                break;
+            }
+            if (capture != NULL) capture->pcm[capture->pcm_count++] = sample;
+            lynx__audio_mark_sample(&m->audio);
             continue;
         }
         if (next.tick > m->guest_ticks) {
@@ -642,7 +722,15 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
         }
         const uint8_t write_value = m->cpu.req_data;
         uint8_t data = 0u;
-        if (!bus_access(m, addr, m->cpu.req_data, flags, grant + price.sample, &data)) {
+        if (capture != NULL && (flags & LYNX__CF_WRITE) != 0u &&
+            lynx__bus_decode(m->mapctl, addr) == LYNX__BUS_ROUTE_MIKEY &&
+            lynx__audio_available(addr) &&
+            capture->events.capacity - capture->events.count < LYNX_AV_MIN_EVENT_CAPACITY) {
+            *stop = LYNX_STOP_OUTPUT;
+            break;
+        }
+        lynx__audio_event_sink *sink = capture != NULL ? &capture->events : NULL;
+        if (!bus_access(m, addr, m->cpu.req_data, flags, grant + price.sample, &data, sink)) {
             *stop = LYNX_STOP_UNAVAILABLE;
             break;
         }
@@ -686,7 +774,7 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
 lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
                          lynx_stop_reason *stop)
 {
-    return machine_advance(m, budget, consumed, stop, false);
+    return machine_advance(m, budget, consumed, stop, false, NULL);
 }
 
 static bool span_valid(const void *ptr, size_t size)
@@ -758,7 +846,7 @@ lynx_status lynx_advance_frame(lynx_machine *m, uint64_t budget,
 
     uint64_t consumed = 0u;
     lynx_stop_reason stop = LYNX_STOP_BUDGET;
-    const lynx_status status = machine_advance(m, budget, &consumed, &stop, true);
+    const lynx_status status = machine_advance(m, budget, &consumed, &stop, true, NULL);
     if (status != LYNX_OK) return status;
     const uint64_t frame_start = stop == LYNX_STOP_FRAME ? m->video.frame_start_tick : 0u;
     const uint64_t frame_end = stop == LYNX_STOP_FRAME ? m->video.frame_end_tick : 0u;
@@ -777,6 +865,93 @@ lynx_status lynx_advance_frame(lynx_machine *m, uint64_t budget,
     result->sequence = sequence;
     result->row_count = rows;
     result->flags = flags;
+    return LYNX_OK;
+}
+
+static bool av_spans_disjoint(const lynx_machine *m, const lynx_av_buffers *buffers,
+                              const lynx_av_result *result)
+{
+    if (buffers->frame.line_ticks_capacity > SIZE_MAX / sizeof(uint64_t) ||
+        buffers->pcm_capacity > SIZE_MAX / sizeof(lynx_pcm_frame) ||
+        buffers->event_capacity > SIZE_MAX / sizeof(lynx_audio_event)) return false;
+    const struct { const void *ptr; size_t size; } spans[] = {
+        {m, sizeof *m},
+        {buffers, sizeof *buffers},
+        {result, sizeof *result},
+        {buffers->frame.pens, buffers->frame.pens_capacity},
+        {buffers->frame.palettes, buffers->frame.palettes_capacity},
+        {buffers->frame.line_ticks, buffers->frame.line_ticks_capacity * sizeof(uint64_t)},
+        {buffers->pcm, buffers->pcm_capacity * sizeof(lynx_pcm_frame)},
+        {buffers->events, buffers->event_capacity * sizeof(lynx_audio_event)}
+    };
+    for (size_t i = 0u; i < sizeof spans / sizeof spans[0]; i++) {
+        if (!span_valid(spans[i].ptr, spans[i].size)) return false;
+    }
+    for (size_t i = 0u; i < sizeof spans / sizeof spans[0]; i++) {
+        for (size_t j = i + 1u; j < sizeof spans / sizeof spans[0]; j++) {
+            if (span_overlap(spans[i].ptr, spans[i].size, spans[j].ptr, spans[j].size)) return false;
+        }
+    }
+    return true;
+}
+
+lynx_status lynx_advance_av(lynx_machine *m, uint64_t budget,
+                            const lynx_av_buffers *buffers,
+                            lynx_av_result *result)
+{
+    if (m == NULL || buffers == NULL || result == NULL) return LYNX_ERR_ARGUMENT;
+    if (!machine_valid(m) || m->has_content == 0u) return LYNX_ERR_STATE;
+    if (m->cfg.timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1) return LYNX_ERR_UNAVAILABLE;
+    if (!span_valid(buffers, sizeof *buffers) || !span_valid(result, sizeof *result) ||
+        span_overlap(m, sizeof *m, buffers, sizeof *buffers) ||
+        span_overlap(m, sizeof *m, result, sizeof *result) ||
+        span_overlap(buffers, sizeof *buffers, result, sizeof *result)) return LYNX_ERR_ARGUMENT;
+    if (buffers->struct_size != (uint32_t)sizeof *buffers || buffers->reserved != 0u ||
+        buffers->frame.struct_size != (uint32_t)sizeof buffers->frame ||
+        buffers->frame.reserved != 0u || result->struct_size != (uint32_t)sizeof *result ||
+        buffers->frame.pens == NULL || buffers->frame.palettes == NULL ||
+        buffers->frame.line_ticks == NULL || buffers->pcm == NULL || buffers->events == NULL) {
+        return LYNX_ERR_ARGUMENT;
+    }
+    if (buffers->frame.pens_capacity < LYNX_FRAME_PENS_CAPACITY ||
+        buffers->frame.palettes_capacity < LYNX_FRAME_PALETTE_CAPACITY ||
+        buffers->frame.line_ticks_capacity < LYNX_FRAME_LINE_TICKS_CAPACITY ||
+        buffers->pcm_capacity == 0u ||
+        buffers->event_capacity < LYNX_AV_MIN_EVENT_CAPACITY) return LYNX_ERR_CAPACITY;
+    if (((uintptr_t)buffers->frame.line_ticks % _Alignof(uint64_t)) != 0u ||
+        ((uintptr_t)buffers->pcm % _Alignof(lynx_pcm_frame)) != 0u ||
+        ((uintptr_t)buffers->events % _Alignof(lynx_audio_event)) != 0u) return LYNX_ERR_ALIGNMENT;
+    if (!av_spans_disjoint(m, buffers, result)) return LYNX_ERR_ARGUMENT;
+
+    const uint64_t first_sample = m->audio.next_sample_ordinal;
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    machine_av_capture capture = {
+        buffers->pcm, buffers->pcm_capacity, 0u,
+        {buffers->events, buffers->event_capacity, 0u}};
+    const lynx_status status = machine_advance(m, budget, &consumed, &stop, true, &capture);
+    if (status != LYNX_OK) return status;
+    const uint64_t frame_start = stop == LYNX_STOP_FRAME ? m->video.frame_start_tick : 0u;
+    const uint64_t frame_end = stop == LYNX_STOP_FRAME ? m->video.frame_end_tick : 0u;
+    const uint64_t frame_sequence = stop == LYNX_STOP_FRAME ? m->video.frame_sequence : 0u;
+    const uint32_t rows = stop == LYNX_STOP_FRAME ? m->video.capture_rows : 0u;
+    const uint32_t flags = stop == LYNX_STOP_FRAME && m->video.capture_partial != 0u ?
+                               LYNX_FRAME_PARTIAL : 0u;
+    if (stop == LYNX_STOP_FRAME) {
+        lynx__video_copy_frame(&m->video, &buffers->frame);
+        lynx__video_discard_frame(&m->video, frame_end);
+    }
+    result->stop = stop;
+    result->ticks_consumed = consumed;
+    result->frame_start_tick = frame_start;
+    result->frame_end_tick = frame_end;
+    result->frame_sequence = frame_sequence;
+    result->row_count = rows;
+    result->frame_flags = flags;
+    result->first_sample_ordinal = first_sample;
+    result->next_sample_ordinal = m->audio.next_sample_ordinal;
+    result->pcm_count = (uint32_t)capture.pcm_count;
+    result->event_count = (uint32_t)capture.events.count;
     return LYNX_OK;
 }
 
@@ -884,7 +1059,8 @@ lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *
         const lynx__bus_route route = lynx__bus_decode(m->mapctl, current);
         if (route != LYNX__BUS_ROUTE_RAM &&
             !((route == LYNX__BUS_ROUTE_MIKEY &&
-               (lynx__timer_available(current) || lynx__video_available(current))) ||
+               (lynx__timer_available(current) || lynx__video_available(current) ||
+                lynx__audio_available(current))) ||
               (route == LYNX__BUS_ROUTE_SUZY && lynx__input_available(current)))) {
             return LYNX_ERR_UNAVAILABLE;
         }
@@ -898,6 +1074,8 @@ lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *
             out[i] = lynx__input_peek(&m->video, current);
         } else if (lynx__video_available(current)) {
             out[i] = lynx__video_peek(&m->video, current);
+        } else if (lynx__audio_available(current)) {
+            out[i] = lynx__audio_peek(&m->audio, current);
         } else {
             out[i] = lynx__timer_peek(&m->timer_bank, current);
         }
@@ -939,6 +1117,11 @@ lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out)
     out->startup_tier = m->startup_tier;
     out->entry_addr = m->entry_addr;
     out->object_len = m->object_len;
+    out->audio_policy = LYNX_AUDIO_POLICY_DIGITAL_1;
+    out->audio_rate_num = LYNX_AUDIO_RATE_NUM;
+    out->audio_rate_den = LYNX_AUDIO_RATE_DEN;
+    out->audio_channels = LYNX_AUDIO_PCM_CHANNELS;
+    out->audio_bits = LYNX_AUDIO_PCM_BITS;
     return LYNX_OK;
 }
 

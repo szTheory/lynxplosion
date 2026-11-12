@@ -40,6 +40,19 @@ function(lynx_consumer_test name scenario profile timeout)
 endfunction()
 
 lynx_consumer_test(consumer.public_api public_api none 60)
+function(lynx_av_test name timeout)
+  lynx_add_test(NAME ${name}
+    COMMAND ${CMAKE_COMMAND}
+      -DROOT=${PROJECT_SOURCE_DIR}
+      -DWORK=${LYNX_SCRATCH_DIR}/consumer/${name}
+      -DSCRATCH_ROOT=${LYNX_SCRATCH_DIR}/consumer
+      -DCONSUMER=$<TARGET_FILE:lynx-consume>
+      -DARTIFACT_CHECKER=$<TARGET_FILE:lynx-check-artifacts>
+      -DENV_EXECUTABLE=${LYNX_ENV_EXECUTABLE}
+      -P ${CMAKE_CURRENT_LIST_DIR}/av_driver.cmake
+    LABELS consumer TIMEOUT ${timeout})
+endfunction()
+lynx_av_test(consumer.av_tracer 120)
 function(lynx_frame_test name scenario timeout)
   lynx_add_test(NAME ${name}
     COMMAND ${CMAKE_COMMAND}

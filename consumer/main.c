@@ -44,7 +44,11 @@ enum {
     FRAME_PPM_LIMIT = 50000,
     FRAME_MANIFEST_CAP = 8192,
     FRAME_OUTPUT_LIMIT = 32,
-    FRAME_RAW_BYTES_PER_ROW = 120
+    FRAME_RAW_BYTES_PER_ROW = 120,
+    AV_PCM_CAPACITY = 512,
+    AV_EVENT_CAPACITY = 8192,
+    AV_RAW_HEADER_BYTES = 24,
+    AV_WAV_HEADER_BYTES = 44
 };
 
 typedef struct input_event { uint64_t tick; uint32_t mask; } input_event;
@@ -186,7 +190,7 @@ static int usage_error(const char *reason)
 {
     fprintf(stderr, "lynx-consume: %s\n"
                     "Usage: lynx-consume --content BLL --symbols LABELS --out NEW-DIRECTORY [--profile none|lynx1|lynx2]\n"
-                    "   or: lynx-consume --mode frames --content BLL --symbols LABELS --timeline FILE --out NEW-DIRECTORY [--profile none|lynx1|lynx2]\n"
+                    "   or: lynx-consume --mode frames|av-replay --content BLL --symbols LABELS --timeline FILE --out NEW-DIRECTORY [--profile none|lynx1|lynx2]\n"
                     "Provide a complete BS93 BLL and the matching ld65 -Ln symbol file.\n",
             reason);
     return 2;
@@ -2235,6 +2239,389 @@ done:
     return result;
 }
 
+static void av_store_u16le(uint8_t *out, uint16_t value)
+{
+    out[0] = (uint8_t)value;
+    out[1] = (uint8_t)(value >> 8);
+}
+
+static void av_store_u32le(uint8_t *out, uint32_t value)
+{
+    for (size_t i = 0u; i < 4u; i++) out[i] = (uint8_t)(value >> (8u * i));
+}
+
+static void av_store_u64le(uint8_t *out, uint64_t value)
+{
+    for (size_t i = 0u; i < 8u; i++) out[i] = (uint8_t)(value >> (8u * i));
+}
+
+static int av_build_raw(const uint8_t *pens, const uint8_t *palettes,
+                        const uint64_t *ticks, const lynx_frame_result *frame,
+                        uint8_t **out, size_t *out_len)
+{
+    if (frame->row_count == 0u || frame->row_count > LYNX_FRAME_MAX_ROWS) return 1;
+    const size_t row_bytes = 80u + 32u + 8u;
+    const size_t length = AV_RAW_HEADER_BYTES + (size_t)frame->row_count * row_bytes;
+    uint8_t *raw = malloc(length);
+    if (raw == NULL) return 1;
+    memcpy(raw, "LXAVRAW1", 8u);
+    av_store_u32le(raw + 8u, frame->row_count);
+    av_store_u64le(raw + 12u, frame->sequence);
+    av_store_u32le(raw + 20u, frame->flags);
+    size_t at = AV_RAW_HEADER_BYTES;
+    for (size_t row = 0u; row < frame->row_count; row++) {
+        memcpy(raw + at, pens + row * LYNX_FRAME_ROW_BYTES, 80u); at += 80u;
+        memcpy(raw + at, palettes + row * 32u, 32u); at += 32u;
+        av_store_u64le(raw + at, ticks[row]); at += 8u;
+    }
+    *out = raw;
+    *out_len = length;
+    return 0;
+}
+
+static int av_build_pcm_bytes(const lynx_pcm_frame *pcm, size_t count,
+                              uint8_t **out, size_t *out_len)
+{
+    if (count > AV_PCM_CAPACITY || count > (SIZE_MAX - AV_WAV_HEADER_BYTES) / 4u) return 1;
+    const size_t length = count * 4u;
+    uint8_t *bytes = malloc(length == 0u ? 1u : length);
+    if (bytes == NULL) return 1;
+    for (size_t i = 0u; i < count; i++) {
+        av_store_u16le(bytes + i * 4u, (uint16_t)pcm[i].left);
+        av_store_u16le(bytes + i * 4u + 2u, (uint16_t)pcm[i].right);
+    }
+    *out = bytes;
+    *out_len = length;
+    return 0;
+}
+
+static int av_build_wav(const uint8_t *pcm_bytes, size_t pcm_bytes_len,
+                        uint8_t **out, size_t *out_len)
+{
+    if (pcm_bytes_len > UINT32_MAX || pcm_bytes_len % 4u != 0u ||
+        pcm_bytes_len > SIZE_MAX - AV_WAV_HEADER_BYTES) return 1;
+    const size_t length = AV_WAV_HEADER_BYTES + pcm_bytes_len;
+    uint8_t *wav = calloc(length, 1u);
+    if (wav == NULL) return 1;
+    memcpy(wav, "RIFF", 4u); av_store_u32le(wav + 4u, (uint32_t)(length - 8u));
+    memcpy(wav + 8u, "WAVEfmt ", 8u); av_store_u32le(wav + 16u, 16u);
+    av_store_u16le(wav + 20u, 1u); av_store_u16le(wav + 22u, 2u);
+    av_store_u32le(wav + 24u, LYNX_AUDIO_RATE_NUM);
+    av_store_u32le(wav + 28u, LYNX_AUDIO_RATE_NUM * 4u);
+    av_store_u16le(wav + 32u, 4u); av_store_u16le(wav + 34u, 16u);
+    memcpy(wav + 36u, "data", 4u); av_store_u32le(wav + 40u, (uint32_t)pcm_bytes_len);
+    memcpy(wav + AV_WAV_HEADER_BYTES, pcm_bytes, pcm_bytes_len);
+    *out = wav; *out_len = length;
+    return 0;
+}
+
+static int av_build_event_text(const lynx_audio_event *events, size_t count,
+                               char **out, size_t *out_len)
+{
+    const size_t capacity = 64u + count * 96u;
+    char *text = malloc(capacity);
+    size_t at;
+    if (text == NULL) return 1;
+    int n = snprintf(text, capacity, "LYNX-AUDIO-EVENTS 1\n");
+    if (n < 0 || (size_t)n >= capacity) { free(text); return 1; }
+    at = (size_t)n;
+    for (size_t i = 0u; i < count; i++) {
+        const char *cause = events[i].cause == LYNX_AUDIO_EVENT_WRITE ? "write" :
+                            events[i].cause == LYNX_AUDIO_EVENT_CLOCK ? "clock" : "unknown";
+        n = snprintf(text + at, capacity - at,
+            "%" PRIu64 " %u %u %s %d %d\n", events[i].tick, events[i].sequence,
+            events[i].channel, cause, (int)events[i].before_output,
+            (int)events[i].after_output);
+        if (n < 0 || (size_t)n >= capacity - at) { free(text); return 1; }
+        at += (size_t)n;
+    }
+    *out = text; *out_len = at;
+    return 0;
+}
+
+typedef struct av_output_file {
+    const char *name;
+    const void *bytes;
+    size_t length;
+} av_output_file;
+
+static int publish_av_outputs(const char *directory, const av_output_file *files,
+                              size_t file_count)
+{
+    char normalized[4096], staging[4096], probe[4096], path[4096];
+    char staged_paths[10][4096] = {{0}};
+    int stage_length;
+    size_t written = 0u;
+    if (file_count == 0u || file_count > sizeof staged_paths / sizeof staged_paths[0] ||
+        normalize_destination(directory, normalized, sizeof normalized) != 0 ||
+        destination_is_absent(normalized) != 0)
+        return report_error("A/V output must name a bounded new destination directory");
+    for (size_t i = 0u; i < file_count; i++) {
+        if (output_path(normalized, files[i].name, probe, sizeof probe) != 0) return 1;
+    }
+    stage_length = snprintf(staging, sizeof staging, "%s.lynxplosion-av-stage-XXXXXX", normalized);
+    if (stage_length < 0 || (size_t)stage_length >= sizeof staging || mkdtemp(staging) == NULL)
+        return report_error("cannot create a private sibling A/V staging directory");
+    for (size_t i = 0u; i < file_count; i++) {
+        if (output_path(staging, files[i].name, path, sizeof path) != 0 ||
+            write_exclusive(path, files[i].bytes, files[i].length) != 0) goto failed;
+        memcpy(staged_paths[i], path, strlen(path) + 1u);
+        written++;
+    }
+    if (publish_directory_exclusive(staging, normalized) != 0) {
+        (void)report_error(errno == EEXIST ?
+            "A/V output directory already exists; choose a new destination" :
+            "cannot publish the complete A/V directory without replacement");
+        goto failed;
+    }
+    return 0;
+failed:
+    for (size_t i = 0u; i < written; i++) (void)unlink(staged_paths[i]);
+    (void)rmdir(staging);
+    return report_error("could not write the complete A/V artifact bundle exclusively");
+}
+
+typedef struct av_capture_totals {
+    lynx_pcm_frame *pcm;
+    lynx_audio_event *events;
+    size_t pcm_count;
+    size_t event_count;
+    uint64_t next_ordinal;
+} av_capture_totals;
+
+static int av_step(lynx_machine *machine, uint64_t budget,
+                   uint8_t *pens, uint8_t *palettes, uint64_t *line_ticks,
+                   av_capture_totals *totals, lynx_av_result *result)
+{
+    lynx_av_buffers buffers = {0};
+    uint64_t before = 0u, after = 0u;
+    if (totals->pcm_count >= AV_PCM_CAPACITY || totals->event_count > AV_EVENT_CAPACITY ||
+        lynx_guest_ticks(machine, &before) != LYNX_OK) return 1;
+    buffers.struct_size = (uint32_t)sizeof buffers;
+    buffers.frame.struct_size = (uint32_t)sizeof buffers.frame;
+    buffers.frame.pens = pens; buffers.frame.pens_capacity = LYNX_FRAME_PENS_CAPACITY;
+    buffers.frame.palettes = palettes; buffers.frame.palettes_capacity = LYNX_FRAME_PALETTE_CAPACITY;
+    buffers.frame.line_ticks = line_ticks; buffers.frame.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+    buffers.pcm = totals->pcm + totals->pcm_count;
+    buffers.pcm_capacity = AV_PCM_CAPACITY - totals->pcm_count;
+    buffers.events = totals->events + totals->event_count;
+    buffers.event_capacity = AV_EVENT_CAPACITY - totals->event_count;
+    result->struct_size = (uint32_t)sizeof *result;
+    if (lynx_advance_av(machine, budget, &buffers, result) != LYNX_OK ||
+        result->ticks_consumed > budget || result->pcm_count > buffers.pcm_capacity ||
+        result->event_count > buffers.event_capacity ||
+        result->first_sample_ordinal != totals->next_ordinal ||
+        result->next_sample_ordinal < result->first_sample_ordinal ||
+        result->next_sample_ordinal - result->first_sample_ordinal != result->pcm_count ||
+        lynx_guest_ticks(machine, &after) != LYNX_OK || after < before ||
+        after - before != result->ticks_consumed || result->stop == LYNX_STOP_OUTPUT) return 1;
+    totals->pcm_count += result->pcm_count;
+    totals->event_count += result->event_count;
+    totals->next_ordinal = result->next_sample_ordinal;
+    return 0;
+}
+
+static int av_frame_result(const lynx_av_result *source, lynx_frame_result *out)
+{
+    if (source->stop != LYNX_STOP_FRAME || source->row_count > LYNX_FRAME_MAX_ROWS) return 1;
+    memset(out, 0, sizeof *out);
+    out->struct_size = (uint32_t)sizeof *out;
+    out->stop = source->stop;
+    out->ticks_consumed = source->ticks_consumed;
+    out->frame_start_tick = source->frame_start_tick;
+    out->frame_end_tick = source->frame_end_tick;
+    out->sequence = source->frame_sequence;
+    out->row_count = source->row_count;
+    out->flags = source->frame_flags;
+    return 0;
+}
+
+static int av_make_capture(frame_capture *capture, const lynx_av_result *source,
+                           const uint8_t *pens, const uint8_t *palettes,
+                           const uint64_t *ticks, uint32_t input_mask,
+                           uint32_t progress, const char input_hash[65])
+{
+    uint8_t digest[32];
+    if (av_frame_result(source, &capture->result) != 0 ||
+        av_build_raw(pens, palettes, ticks, &capture->result,
+                     &capture->raw, &capture->raw_len) != 0) return 1;
+    capture->input_mask = input_mask;
+    capture->sample.joystick = (input_mask & LYNX_INPUT_A) != 0u ? 1u : 0u;
+    capture->sample.switches = (input_mask & LYNX_INPUT_PAUSE) != 0u ? 1u : 0u;
+    capture->sample.progress = progress;
+    capture->sample.error = 0u;
+    capture->sample.done = 1u;
+    capture->handedness = 1u;
+    host_sha_digest(capture->raw, capture->raw_len, digest);
+    host_sha_hex(digest, capture->raw_sha256);
+    if (replay_render_ppm(capture, pens, palettes) != 0) return 1;
+    (void)input_hash;
+    return 0;
+}
+
+static int run_av_consumer(const char *content_path, const char *symbols_path,
+                           const char *timeline_path, const char *output_directory,
+                           uint32_t profile)
+{
+    uint8_t *bll = NULL, *labels = NULL, *timeline_bytes = NULL;
+    size_t bll_len = 0u, labels_len = 0u, timeline_len = 0u;
+    input_timeline timeline = {0};
+    machine_storage storage = {0};
+    lynx_identity identity;
+    uint32_t probe_address = 0u;
+    char content_hash[65], input_hash[65];
+    uint8_t sync_pens[LYNX_FRAME_PENS_CAPACITY], sync_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t sync_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    uint8_t released_pens[LYNX_FRAME_PENS_CAPACITY], released_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t released_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    uint8_t edge_pens[LYNX_FRAME_PENS_CAPACITY], edge_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t edge_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    uint8_t pressed_pens[LYNX_FRAME_PENS_CAPACITY], pressed_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t pressed_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_av_result sync = {0}, released = {0}, edge = {0}, pressed = {0};
+    av_capture_totals totals = {0};
+    frame_capture released_capture = {0}, pressed_capture = {0};
+    char *event_text = NULL;
+    size_t event_text_len = 0u, pcm_bytes_len = 0u, wav_len = 0u;
+    uint8_t *pcm_bytes = NULL, *wav = NULL;
+    char manifest[4096];
+    size_t manifest_len = 0u;
+    uint8_t marker_before = 0u, marker_after = 0u, progress_before = 0u, progress_after = 0u;
+    uint64_t now = 0u;
+    int result = 1;
+
+    totals.pcm = calloc(AV_PCM_CAPACITY, sizeof *totals.pcm);
+    totals.events = calloc(AV_EVENT_CAPACITY, sizeof *totals.events);
+    if (totals.pcm == NULL || totals.events == NULL) {
+        (void)report_error("cannot allocate bounded caller-owned A/V capture spans"); goto done;
+    }
+    if (read_bounded(content_path, BLL_LIMIT, &bll, &bll_len, "BLL content") != 0 || bll_len < 11u ||
+        read_bounded(symbols_path, SYMBOL_LIMIT, &labels, &labels_len, "ld65 -Ln symbols") != 0 ||
+        read_bounded(timeline_path, TIMELINE_LIMIT, &timeline_bytes, &timeline_len, "input timeline") != 0 ||
+        parse_input_timeline(timeline_bytes, timeline_len, &timeline) != 0 ||
+        parse_named_symbol(labels, labels_len, "probe_result", &probe_address) != 0 ||
+        probe_address > LYNX_ADDRESS_SPACE - 9u) {
+        (void)report_error("A/V fixture, linked probe symbol or canonical input timeline is invalid"); goto done;
+    }
+    if (timeline.count != 1u || timeline.events[0].tick != UINT64_C(109321) ||
+        timeline.events[0].mask != LYNX_INPUT_A) {
+        (void)report_error("A/V tracer requires the one recorded A edge at tick 109321"); goto done;
+    }
+    {
+        uint8_t timeline_digest[32];
+        host_sha_digest(timeline_bytes, timeline_len, timeline_digest);
+        host_sha_hex(timeline_digest, input_hash);
+    }
+    if (create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1,
+                       &storage, &identity) != 0) goto done;
+    if (identity.audio_policy != LYNX_AUDIO_POLICY_DIGITAL_1 ||
+        identity.audio_rate_num != 40000u || identity.audio_rate_den != 1u ||
+        identity.audio_channels != 2u || identity.audio_bits != 16u ||
+        timeline.events[0].tick <= 0u) {
+        (void)report_error("public machine identity does not match the fixed digital stereo PCM contract"); goto done;
+    }
+    host_sha_hex(identity.content_sha256, content_hash);
+    if (lynx_advance_av(storage.machine, 60000u, NULL, NULL) != LYNX_ERR_ARGUMENT) {
+        (void)report_error("invalid A/V descriptors were not rejected before progress"); goto done;
+    }
+    if (av_step(storage.machine, UINT64_C(60000), sync_pens, sync_palettes, sync_ticks,
+                &totals, &sync) != 0 || sync.stop != LYNX_STOP_FRAME ||
+        sync.row_count != 0u || sync.frame_sequence != 0u || sync.frame_end_tick == 0u ||
+        av_step(storage.machine, UINT64_C(60000), released_pens, released_palettes, released_ticks,
+                &totals, &released) != 0 || released.stop != LYNX_STOP_FRAME ||
+        released.row_count != LYNX_FRAME_MAX_ROWS || released.frame_sequence != 1u ||
+        released.frame_start_tick != sync.frame_end_tick ||
+        lynx_read_memory(storage.machine, 0x4000u, &marker_before, 1u) != LYNX_OK ||
+        marker_before != 0x11u || lynx_read_memory(storage.machine, probe_address + 5u,
+        &progress_before, 1u) != LYNX_OK ||
+        lynx_guest_ticks(storage.machine, &now) != LYNX_OK ||
+        now > timeline.events[0].tick || timeline.events[0].tick - now != 777u ||
+        av_step(storage.machine, timeline.events[0].tick - now, edge_pens, edge_palettes,
+                edge_ticks, &totals, &edge) != 0 || edge.stop != LYNX_STOP_BUDGET ||
+        edge.ticks_consumed != 777u || lynx_set_input(storage.machine, LYNX_INPUT_A) != LYNX_OK ||
+        av_step(storage.machine, UINT64_C(60000), pressed_pens, pressed_palettes, pressed_ticks,
+                &totals, &pressed) != 0 || pressed.stop != LYNX_STOP_FRAME ||
+        pressed.row_count != LYNX_FRAME_MAX_ROWS || pressed.frame_sequence != 2u ||
+        pressed.frame_start_tick != released.frame_end_tick ||
+        lynx_read_memory(storage.machine, 0x4000u, &marker_after, 1u) != LYNX_OK ||
+        marker_after != 0x22u || lynx_read_memory(storage.machine, probe_address + 7u,
+        &progress_after, 1u) != LYNX_OK || progress_after == progress_before ||
+        lynx_read_memory(storage.machine, probe_address + 5u, &marker_before, 1u) != LYNX_OK ||
+        (marker_before & 1u) == 0u || released_pens[0] != 0x11u || pressed_pens[0] != 0x22u ||
+        memcmp(released_pens, pressed_pens, sizeof released_pens) == 0) {
+        (void)report_error("A/V path failed its released-to-A guest marker and raw-frame assertions"); goto done;
+    }
+    if (av_make_capture(&released_capture, &released, released_pens, released_palettes,
+                        released_ticks, 0u, progress_before, input_hash) != 0 ||
+        av_make_capture(&pressed_capture, &pressed, pressed_pens, pressed_palettes,
+                        pressed_ticks, LYNX_INPUT_A, progress_after, input_hash) != 0 ||
+        av_build_pcm_bytes(totals.pcm, totals.pcm_count, &pcm_bytes, &pcm_bytes_len) != 0 ||
+        av_build_wav(pcm_bytes, pcm_bytes_len, &wav, &wav_len) != 0 ||
+        av_build_event_text(totals.events, totals.event_count, &event_text, &event_text_len) != 0) {
+        (void)report_error("could not encode bounded public raw-frame, PCM, WAV or event spans"); goto done;
+    }
+    bool nonzero_after_edge = false;
+    for (size_t i = 0u; i < totals.pcm_count; i++) {
+        if (((totals.next_ordinal - totals.pcm_count + i + 1u) * UINT64_C(400)) >= timeline.events[0].tick &&
+            (totals.pcm[i].left != 0 || totals.pcm[i].right != 0)) nonzero_after_edge = true;
+    }
+    if (!nonzero_after_edge || totals.next_ordinal != totals.pcm_count ||
+        totals.pcm_count == 0u || totals.event_count == 0u) {
+        (void)report_error("the recorded A edge did not produce non-silent PCM and observable audio events"); goto done;
+    }
+    {
+        uint8_t digest[32];
+        char released_raw_hash[65], released_ppm_hash[65], pressed_raw_hash[65], pressed_ppm_hash[65];
+        char pcm_hash[65], wav_hash[65], event_hash[65];
+        int n;
+        host_sha_digest(released_capture.raw, released_capture.raw_len, digest); host_sha_hex(digest, released_raw_hash);
+        host_sha_digest(released_capture.ppm, released_capture.ppm_len, digest); host_sha_hex(digest, released_ppm_hash);
+        host_sha_digest(pressed_capture.raw, pressed_capture.raw_len, digest); host_sha_hex(digest, pressed_raw_hash);
+        host_sha_digest(pressed_capture.ppm, pressed_capture.ppm_len, digest); host_sha_hex(digest, pressed_ppm_hash);
+        host_sha_digest(pcm_bytes, pcm_bytes_len, digest); host_sha_hex(digest, pcm_hash);
+        host_sha_digest(wav, wav_len, digest); host_sha_hex(digest, wav_hash);
+        host_sha_digest(event_text, event_text_len, digest); host_sha_hex(digest, event_hash);
+        n = snprintf(manifest, sizeof manifest,
+            "artifact = AV_TRACE\nprofile = %s\nstartup = A\ntiming_policy = video-policy1-unverified\n"
+            "audio_policy = digital-1\naudio_rate_num = 40000\naudio_rate_den = 1\naudio_channels = 2\naudio_bits = 16\n"
+            "content_sha256 = %s\ninput_sha256 = %s\ninput_event_count = 1\ninput_event_tick = 109321\ninput_event_mask = 16\n"
+            "released_sequence = 1\nreleased_start_tick = %" PRIu64 "\nreleased_end_tick = %" PRIu64 "\nreleased_rows = %u\nreleased_raw_sha256 = %s\nreleased_ppm_sha256 = %s\n"
+            "pressed_sequence = 2\npressed_start_tick = %" PRIu64 "\npressed_end_tick = %" PRIu64 "\npressed_rows = %u\npressed_raw_sha256 = %s\npressed_ppm_sha256 = %s\n"
+            "first_sample_ordinal = 0\nnext_sample_ordinal = %" PRIu64 "\npcm_frame_count = %zu\npcm_sha256 = %s\nwav_sha256 = %s\nevent_count = %zu\nevents_sha256 = %s\n"
+            "source_policy = digital channel-0 divider/LFSR; mix and stereo route are software policy, not physical qualification\n",
+            lynx_profile_name(profile), content_hash, input_hash, released.frame_start_tick,
+            released.frame_end_tick, released.row_count, released_raw_hash, released_ppm_hash,
+            pressed.frame_start_tick, pressed.frame_end_tick, pressed.row_count,
+            pressed_raw_hash, pressed_ppm_hash, totals.next_ordinal, totals.pcm_count,
+            pcm_hash, wav_hash, totals.event_count, event_hash);
+        if (n < 0 || (size_t)n >= sizeof manifest) { (void)report_error("A/V manifest exceeds its fixed bound"); goto done; }
+        manifest_len = (size_t)n;
+    }
+    {
+        const av_output_file files[] = {
+            {"released.raw", released_capture.raw, released_capture.raw_len},
+            {"released.ppm", released_capture.ppm, released_capture.ppm_len},
+            {"pressed.raw", pressed_capture.raw, pressed_capture.raw_len},
+            {"pressed.ppm", pressed_capture.ppm, pressed_capture.ppm_len},
+            {"audio.pcm", pcm_bytes, pcm_bytes_len},
+            {"audio.wav", wav, wav_len},
+            {"audio.events", event_text, event_text_len},
+            {"av.manifest", manifest, manifest_len}
+        };
+        if (publish_av_outputs(output_directory, files, sizeof files / sizeof files[0]) != 0) goto done;
+    }
+    printf("lynx-consume: wrote released/A raw-frame, PPM, fixed-rate stereo WAV, PCM span and audio-event observations to %s\n",
+           output_directory);
+    result = 0;
+done:
+    free(bll); free(labels); free(timeline_bytes); free(timeline.events);
+    free(totals.pcm); free(totals.events); free(event_text); free(pcm_bytes); free(wav);
+    free(released_capture.raw); free(released_capture.ppm);
+    free(pressed_capture.raw); free(pressed_capture.ppm);
+    destroy_machine(&storage);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     const char *content = NULL;
@@ -2256,7 +2643,7 @@ int main(int argc, char **argv)
             else if (strcmp(flag, "--timeline") == 0) bit = 8u;
             else if (strcmp(flag, "--out") == 0) bit = 16u;
             else if (strcmp(flag, "--profile") == 0) bit = 32u;
-            else return usage_error("unknown frame-mode option");
+            else return usage_error("unknown replay-mode option");
             if ((seen & bit) != 0u || i + 1 >= argc) return usage_error("frame-mode option is repeated or missing its value");
             value = argv[++i];
             if (value[0] == '\0' || strlen(value) >= 4096u) return usage_error("frame-mode option value is empty or too long");
@@ -2268,9 +2655,11 @@ int main(int argc, char **argv)
             else frame_profile_text = value;
             seen |= bit;
         }
-        if (frame_mode == NULL || strcmp(frame_mode, "frames") != 0 || frame_content == NULL || frame_symbols == NULL ||
+        if (frame_mode == NULL || (strcmp(frame_mode, "frames") != 0 && strcmp(frame_mode, "av-replay") != 0) || frame_content == NULL || frame_symbols == NULL ||
             frame_timeline == NULL || frame_output == NULL || parse_profile(frame_profile_text, &selected_profile) != 0)
-            return usage_error("frame mode requires --mode frames, BLL, linked symbols, a canonical timeline, output directory, and a supported profile");
+            return usage_error("replay mode requires --mode frames or av-replay, BLL, linked symbols, a canonical timeline, output directory, and a supported profile");
+        if (strcmp(frame_mode, "av-replay") == 0)
+            return run_av_consumer(frame_content, frame_symbols, frame_timeline, frame_output, selected_profile);
 #if defined(LYNX_CONSUMER_TESTING)
         {
             const char *legacy = getenv("LYNX_TEST_REPLAY_LEGACY");

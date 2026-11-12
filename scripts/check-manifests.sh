@@ -8,7 +8,8 @@
 #   source revision recipe sha256 licence notices allowed_use startup_tier
 #   profile evidence_tier          (required; startup_tier is A or none, because a
 #                                   software-model vector injects state and is not tier A)
-#   files independence wrapper_sha256 and the complete input-probe provenance group (optional)
+#   files independence wrapper_sha256, the complete input-probe provenance group,
+#   and the complete A/V provenance group (optional)
 # and the checks below hold across the whole set:
 #   - no two manifests carry the same sha256 (an ambiguous identity);
 #   - every "files" entry is a relative path under fixtures/ and exists;
@@ -68,9 +69,38 @@ while IFS= read -r manifest; do
   # Key validation: findings arrive on standard error, one per line.
   sh "$validator" --startup-tiers "A none" \
     --required "source revision recipe sha256 licence notices allowed_use startup_tier profile evidence_tier" \
-    --optional "files independence wrapper_sha256 config_sha256 cc65_pin_sha256 cc65_build_recipe legacy_source legacy_source_sha256 source_built_legacy_tracer_guest_sha256 source_built_legacy_tracer_guest_bytes source_built_guest_sha256_lefthand_0 source_built_guest_bytes_lefthand_0 source_built_guest_sha256_lefthand_1 source_built_guest_bytes_lefthand_1" "$root/$manifest" 2>&1 |
+    --optional "files independence wrapper_sha256 config_sha256 cc65_pin_sha256 cc65_build_recipe legacy_source legacy_source_sha256 source_built_legacy_tracer_guest_sha256 source_built_legacy_tracer_guest_bytes source_built_guest_sha256_lefthand_0 source_built_guest_bytes_lefthand_0 source_built_guest_sha256_lefthand_1 source_built_guest_bytes_lefthand_1 av_config_sha256 av_guest_sha256 av_guest_bytes" "$root/$manifest" 2>&1 |
     sed "s|$root/||" |
     sed 's|^validate-kv: |check-manifests: |' >>"$findings"
+
+  # A/V build provenance is independent of the input-probe group: its
+  # config identity and source-built guest identity must travel together.
+  awk -v m="$manifest" '
+    {
+      i = index($0, " = ")
+      if (i > 0) {
+        key = substr($0, 1, i - 1)
+        value = substr($0, i + 3)
+        if (key == "av_config_sha256" || key == "av_guest_sha256" || key == "av_guest_bytes") {
+          seen[key] = value
+          count++
+        }
+      }
+    }
+    END {
+      if (count > 0) {
+        split("av_config_sha256 av_guest_sha256 av_guest_bytes", keys, " ")
+        for (i = 1; i <= 3; i++) {
+          if (!(keys[i] in seen)) {
+            printf "check-manifests: %s: incomplete A/V provenance group: missing key: %s\n", m, keys[i]
+          }
+        }
+        if ("av_guest_bytes" in seen && seen["av_guest_bytes"] !~ /^[1-9][0-9]*$/) {
+          printf "check-manifests: %s: av_guest_bytes must be a positive decimal integer\n", m
+        }
+      }
+    }
+  ' "$root/$manifest" >>"$findings"
 
   # The identity, looked up by key so the order inside the file is free.
   awk -v m="$manifest" '

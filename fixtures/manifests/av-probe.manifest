@@ -1,0 +1,14 @@
+source = fixtures/diagnostic/av_probe.s (project-authored)
+revision = in-repo
+recipe = pinned ca65 --cpu 65SC02 and ld65 -C fixtures/diagnostic/av_probe.cfg -Ln; local tool byte identities verified against .lynx-build-files; consumer.av_tracer public A/V replay
+sha256 = 8ff0685967b17abf1dc40e82676dec60d3e4d2055e24d5dc35d5cc521f366a22
+av_config_sha256 = 3a5634815e4e917af89fdfd96eac7529deb36a897d3e4741abfc4aa87ad8c5f7
+av_guest_sha256 = 79cf9d23aec06364f9a9704f90c8bdb72ae89e3aea6ac99a311a906a55802774
+av_guest_bytes = 220
+licence = project source all rights reserved (O5 open)
+notices = none
+allowed_use = original input-responsive audio/video diagnostic fixture test content
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/diagnostic/av_probe.s fixtures/diagnostic/av_probe.cfg

@@ -11,10 +11,10 @@
 #include "cpu.h"
 #include "lynxplosion.h"
 
-/* Snapshot format version 5 (core/snapshot.c documents the layout). */
+/* Snapshot format version 6 (core/snapshot.c documents the layout). */
 #define LYNX__SNAPSHOT_MAGIC "LYNXSNAP" /* 8 bytes, no terminating NUL in the blob */
 #define LYNX__SNAPSHOT_MAGIC_LEN 8u
-#define LYNX__SNAPSHOT_FORMAT 5u
+#define LYNX__SNAPSHOT_FORMAT 6u
 #define LYNX__BUILD_ID_FIELD 128u
 #define LYNX__SNAPSHOT_HEADER_LEN 256u  /* prior header + timing-policy identity */
 #define LYNX__VIDEO_CAPTURE_PENS 8160u
@@ -24,12 +24,16 @@
 #define LYNX__VIDEO_REFRESH_PERIOD 256u
 #define LYNX__VIDEO_SNAPSHOT_HEADER 72u
 #define LYNX__VIDEO_SNAPSHOT_LEN (LYNX__VIDEO_SNAPSHOT_HEADER + 32u + LYNX__VIDEO_CAPTURE_PENS + LYNX__VIDEO_CAPTURE_PALETTES + 8u * LYNX__VIDEO_CAPTURE_TICKS)
-#define LYNX__SNAPSHOT_PAYLOAD_LEN (65604u + LYNX__VIDEO_SNAPSHOT_LEN)
+#define LYNX__AUDIO_CHANNEL_COUNT 4u
+#define LYNX__AUDIO_RING_NODE_COUNT 8u
+#define LYNX__AUDIO_RING_DEBT_LIMIT 4u
+#define LYNX__AUDIO_SNAPSHOT_LEN 88u
+#define LYNX__SNAPSHOT_PAYLOAD_LEN (65604u + LYNX__VIDEO_SNAPSHOT_LEN + LYNX__AUDIO_SNAPSHOT_LEN)
 
 /* The payload layout belongs to the format number: a layout change without a
    format bump stops the build. */
-_Static_assert(LYNX__SNAPSHOT_FORMAT != 5u || LYNX__SNAPSHOT_PAYLOAD_LEN == 77948u,
-               "snapshot format 5 has a 77948-byte payload; bump the format to change it");
+_Static_assert(LYNX__SNAPSHOT_FORMAT != 6u || LYNX__SNAPSHOT_PAYLOAD_LEN == 78036u,
+               "snapshot format 6 has a 78036-byte payload; bump the format to change it");
 
 /* Build identity string baked at configure time (core/build_id.c.in). */
 extern const char lynx__build_id[];
@@ -62,6 +66,41 @@ typedef struct lynx__timer_bank {
     uint64_t last_event_tick;
 } lynx__timer_bank;
 
+typedef struct lynx__audio_channel {
+    uint8_t volume;
+    uint8_t backup;
+    uint8_t count;
+    uint8_t control_a;
+    uint8_t control_b;
+    uint8_t feedback;
+    uint16_t shift;
+    int8_t output;
+    int8_t integrator;
+} lynx__audio_channel;
+
+/* All four records and the bounded group-B ring envelope are established in
+   format 6. This plan clocks ordinary channel 0 only; linked propagation is
+   added by later audio plans without changing this state shape. */
+typedef struct lynx__audio_state {
+    lynx__audio_channel channels[LYNX__AUDIO_CHANNEL_COUNT];
+    uint8_t stereo_disable;
+    uint8_t ring_cursor;
+    uint8_t ring_debt[LYNX__AUDIO_RING_NODE_COUNT];
+    uint8_t same_tick_device_cursor;
+    uint8_t same_tick_sample_cursor;
+    uint8_t event_cursor_valid;
+    uint32_t event_sequence;
+    uint64_t event_tick;
+    uint64_t next_sample_tick;
+    uint64_t next_sample_ordinal;
+} lynx__audio_state;
+
+typedef struct lynx__audio_event_sink {
+    lynx_audio_event *events;
+    size_t capacity;
+    size_t count;
+} lynx__audio_event_sink;
+
 /* Private scheduler ordering contract. The comparator is shared with the
    scheduler-order test so traversal permutations exercise production logic. */
 typedef struct lynx__machine_event {
@@ -72,9 +111,11 @@ typedef struct lynx__machine_event {
 
 enum {
     LYNX__MACHINE_EVENT_TIMER_PRIORITY = 0u,
-    LYNX__MACHINE_EVENT_VIDEO_PRIORITY = 1u,
-    LYNX__MACHINE_EVENT_REFRESH_PRIORITY = 2u,
-    LYNX__MACHINE_EVENT_CPU_PRIORITY = 3u,
+    LYNX__MACHINE_EVENT_AUDIO_PRIORITY = 1u,
+    LYNX__MACHINE_EVENT_VIDEO_PRIORITY = 2u,
+    LYNX__MACHINE_EVENT_REFRESH_PRIORITY = 3u,
+    LYNX__MACHINE_EVENT_SAMPLE_PRIORITY = 4u,
+    LYNX__MACHINE_EVENT_CPU_PRIORITY = 5u,
     LYNX__MACHINE_EVENT_SEQUENCE = 0u,
 };
 
@@ -119,6 +160,7 @@ struct lynx_machine {
     uint64_t guest_ticks;       /* the only clock */
     uint64_t cpu_ready_at;      /* end of the currently priced cycle, not an ownership delay */
     lynx__timer_bank timer_bank;
+    lynx__audio_state audio;
     lynx__video_state video;
     lynx__host_observation host_observation;
 };
@@ -145,6 +187,17 @@ void lynx__timer_mark_tick(lynx__timer_bank *bank, uint64_t tick);
 bool lynx__timer_available(uint16_t addr);
 uint8_t lynx__timer_peek(const lynx__timer_bank *bank, uint16_t addr);
 bool lynx__timer_write(lynx__timer_bank *bank, uint16_t addr, uint8_t value);
+void lynx__audio_init(lynx__audio_state *audio);
+bool lynx__audio_next(const lynx__audio_state *audio, uint64_t now, uint64_t *tick);
+size_t lynx__audio_apply(lynx__audio_state *audio, uint64_t tick,
+                         lynx__audio_event_sink *sink);
+bool lynx__audio_sample(const lynx__audio_state *audio, uint64_t tick,
+                        lynx_pcm_frame *out);
+bool lynx__audio_available(uint16_t addr);
+uint8_t lynx__audio_peek(const lynx__audio_state *audio, uint16_t addr);
+bool lynx__audio_write(lynx__audio_state *audio, uint16_t addr, uint8_t value,
+                       uint64_t tick, lynx__audio_event_sink *sink);
+void lynx__audio_mark_sample(lynx__audio_state *audio);
 bool lynx__machine_event_before(lynx__machine_event a, lynx__machine_event b);
 void lynx__video_init(lynx__video_state *video, uint32_t timing_policy);
 bool lynx__video_available(uint16_t addr);

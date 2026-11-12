@@ -311,6 +311,13 @@ static uint32_t load_u32le(const uint8_t *bytes)
            ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
 }
 
+static uint64_t load_u64le(const uint8_t *bytes)
+{
+    uint64_t value = 0u;
+    for (size_t i = 0u; i < 8u; i++) value |= (uint64_t)bytes[i] << (8u * i);
+    return value;
+}
+
 static int validate_wav(const uint8_t *wav, size_t length, char *error,
                         size_t error_cap)
 {
@@ -633,6 +640,185 @@ invalid:
 failed:
     free(manifest);
     return 1;
+}
+
+static int av_ppm_raster(const uint8_t *ppm, size_t length, const uint8_t **raster)
+{
+    const char marker[] = "\n160 102\n255\n";
+    if (length < 3u || memcmp(ppm, "P6\n", 3u) != 0) return 1;
+    for (size_t i = 0u; i + sizeof marker - 1u <= length; i++) {
+        if (memcmp(ppm + i, marker, sizeof marker - 1u) != 0) continue;
+        const size_t start = i + sizeof marker - 1u;
+        if (length - start != 160u * 102u * 3u) return 1;
+        *raster = ppm + start;
+        return 0;
+    }
+    return 1;
+}
+
+static int av_raster_matches_raw(const uint8_t *raster, const uint8_t *raw)
+{
+    for (size_t row = 0u; row < 102u; row++) {
+        const uint8_t *record = raw + 24u + row * 120u;
+        for (size_t pixel = 0u; pixel < 160u; pixel++) {
+            const uint8_t pair = record[pixel / 2u];
+            const uint8_t pen = (pixel & 1u) == 0u ? (uint8_t)(pair >> 4) : (uint8_t)(pair & 15u);
+            const uint8_t green = (uint8_t)(record[80u + pen] & 15u);
+            const uint8_t blue_red = record[96u + pen];
+            const uint8_t expected[3] = {
+                (uint8_t)((blue_red & 15u) * 17u),
+                (uint8_t)(green * 17u),
+                (uint8_t)((blue_red >> 4) * 17u)
+            };
+            if (memcmp(raster + (row * 160u + pixel) * 3u, expected, sizeof expected) != 0) return 1;
+        }
+    }
+    return 0;
+}
+
+static int validate_av_directory(const char *directory, char *error, size_t error_cap)
+{
+    uint8_t *released_raw = NULL, *pressed_raw = NULL, *released_ppm = NULL, *pressed_ppm = NULL;
+    uint8_t *pcm = NULL, *wav = NULL, *events = NULL, *manifest = NULL;
+    size_t released_raw_len = 0u, pressed_raw_len = 0u, released_ppm_len = 0u, pressed_ppm_len = 0u;
+    size_t pcm_len = 0u, wav_len = 0u, events_len = 0u, manifest_len = 0u;
+    char path[4096], line[256];
+    const size_t raw_expected = 24u + 102u * 120u;
+    const uint8_t *released_raster = NULL, *pressed_raster = NULL;
+    const char *failed_stage = "raw frame geometry, identity or input response";
+    int result = 1;
+
+#define READ_AV(name, limit, bytes, len) \
+    do { if (path_join(directory, (name), path, sizeof path) != 0 || \
+             read_bounded(path, (limit), &(bytes), &(len), error, error_cap) != 0) goto done; } while (0)
+    READ_AV("released.raw", raw_expected, released_raw, released_raw_len);
+    READ_AV("pressed.raw", raw_expected, pressed_raw, pressed_raw_len);
+    READ_AV("released.ppm", FRAME_PPM_LIMIT, released_ppm, released_ppm_len);
+    READ_AV("pressed.ppm", FRAME_PPM_LIMIT, pressed_ppm, pressed_ppm_len);
+    READ_AV("audio.pcm", 4096u, pcm, pcm_len);
+    READ_AV("audio.wav", 4096u, wav, wav_len);
+    READ_AV("audio.events", 1024u * 1024u, events, events_len);
+    READ_AV("av.manifest", 8192u, manifest, manifest_len);
+#undef READ_AV
+    if (released_raw_len != raw_expected || pressed_raw_len != raw_expected ||
+        memcmp(released_raw, "LXAVRAW1", 8u) != 0 || memcmp(pressed_raw, "LXAVRAW1", 8u) != 0 ||
+        load_u32le(released_raw + 8u) != 102u || load_u32le(pressed_raw + 8u) != 102u ||
+        load_u32le(released_raw + 20u) != 0u || load_u32le(pressed_raw + 20u) != 0u ||
+        load_u64le(released_raw + 12u) != 1u || load_u64le(pressed_raw + 12u) != 2u ||
+        released_raw[24] != 0x11u || pressed_raw[24] != 0x22u ||
+        memcmp(released_raw + 24u, pressed_raw + 24u, 80u * 102u) == 0) goto invalid;
+    failed_stage = "raw frame row tick bounds or ordering";
+    for (size_t row = 0u; row < 102u; row++) {
+        const size_t tick_offset = 24u + row * 120u + 112u;
+        const uint64_t released_tick = load_u64le(released_raw + tick_offset);
+        const uint64_t pressed_tick = load_u64le(pressed_raw + tick_offset);
+        if (released_tick < UINT64_C(54272) || released_tick >= UINT64_C(108544) ||
+            pressed_tick < UINT64_C(108544) || pressed_tick >= UINT64_C(162816) ||
+            (row != 0u && (released_tick <= load_u64le(released_raw + tick_offset - 120u) ||
+                           pressed_tick <= load_u64le(pressed_raw + tick_offset - 120u)))) goto invalid;
+    }
+    failed_stage = "PPM geometry or raw-to-rendered pixel mapping";
+    if (av_ppm_raster(released_ppm, released_ppm_len, &released_raster) != 0 ||
+        av_ppm_raster(pressed_ppm, pressed_ppm_len, &pressed_raster) != 0 ||
+        av_raster_matches_raw(released_raster, released_raw) != 0 ||
+        av_raster_matches_raw(pressed_raster, pressed_raw) != 0 ||
+        memcmp(released_raster, pressed_raster, 160u * 102u * 3u) == 0) goto invalid;
+    failed_stage = "PPM input and sequence metadata";
+    if (
+        !has_exact_line(released_ppm, released_ppm_len, "# sequence = 1") ||
+        !has_exact_line(released_ppm, released_ppm_len, "# input_mask_at_end = 0") ||
+        !has_exact_line(released_ppm, released_ppm_len, "# sample_a = 0") ||
+        !has_exact_line(pressed_ppm, pressed_ppm_len, "# sequence = 2") ||
+        !has_exact_line(pressed_ppm, pressed_ppm_len, "# input_mask_at_end = 16") ||
+        !has_exact_line(pressed_ppm, pressed_ppm_len, "# sample_a = 1")) goto invalid;
+    failed_stage = "40 kHz stereo S16 WAV format or PCM extent";
+    if (pcm_len == 0u || pcm_len % 4u != 0u || wav_len != 44u + pcm_len ||
+        memcmp(wav, "RIFF", 4u) != 0 || memcmp(wav + 8u, "WAVEfmt ", 8u) != 0 ||
+        memcmp(wav + 36u, "data", 4u) != 0 || load_u32le(wav + 4u) != wav_len - 8u ||
+        load_u32le(wav + 16u) != 16u || load_u16le(wav + 20u) != 1u ||
+        load_u16le(wav + 22u) != 2u || load_u32le(wav + 24u) != 40000u ||
+        load_u32le(wav + 28u) != 160000u || load_u16le(wav + 32u) != 4u ||
+        load_u16le(wav + 34u) != 16u || load_u32le(wav + 40u) != pcm_len ||
+        memcmp(wav + 44u, pcm, pcm_len) != 0) goto invalid;
+    failed_stage = "non-silent PCM response";
+    {
+        int nonzero = 0;
+        for (size_t i = 0u; i < pcm_len; i++) if (pcm[i] != 0u) nonzero = 1;
+        if (nonzero == 0) goto invalid;
+    }
+    failed_stage = "audio event stream header";
+    if (events_len < 21u || memcmp(events, "LYNX-AUDIO-EVENTS 1\n", 20u) != 0) goto invalid;
+    failed_stage = "audio event syntax, ordering or post-input response";
+    {
+        size_t offset = 20u, count = 0u;
+        uint64_t previous_tick = 0u;
+        uint32_t previous_sequence = 0u;
+        int found_post_edge = 0;
+        while (offset < events_len) {
+            size_t end = offset;
+            unsigned long long tick = 0u;
+            unsigned sequence = 0u, channel = 0u;
+            int before = 0, after = 0, consumed = 0;
+            char cause[16];
+            while (end < events_len && events[end] != (uint8_t)'\n') end++;
+            if (end == events_len || memchr(events + offset, 0, end - offset) != NULL) goto invalid;
+            (void)snprintf(line, sizeof line, "%.*s", (int)(end - offset), (const char *)events + offset);
+            if (sscanf(line, "%llu %u %u %15s %d %d%n", &tick, &sequence, &channel,
+                       cause, &before, &after, &consumed) != 6 || consumed < 0 ||
+                (size_t)consumed != end - offset || channel != 0u ||
+                (strcmp(cause, "write") != 0 && strcmp(cause, "clock") != 0) ||
+                (count != 0u && ((uint64_t)tick < previous_tick ||
+                 ((uint64_t)tick == previous_tick && sequence != previous_sequence + 1u) ||
+                 ((uint64_t)tick > previous_tick && sequence != 0u)))) goto invalid;
+            if ((uint64_t)tick >= UINT64_C(109321)) found_post_edge = 1;
+            previous_tick = (uint64_t)tick; previous_sequence = sequence;
+            count++; offset = end + 1u;
+        }
+        if (count == 0u || found_post_edge == 0) goto invalid;
+        failed_stage = "audio event count in manifest";
+        (void)snprintf(line, sizeof line, "event_count = %zu", count);
+        if (!has_exact_line(manifest, manifest_len, line)) goto invalid;
+    }
+    failed_stage = "A/V manifest policy, timeline or sample ordinals";
+    if (!has_exact_line(manifest, manifest_len, "artifact = AV_TRACE") ||
+        !has_exact_line(manifest, manifest_len, "profile = none") ||
+        !has_exact_line(manifest, manifest_len, "startup = A") ||
+        !has_exact_line(manifest, manifest_len, "audio_policy = digital-1") ||
+        !has_exact_line(manifest, manifest_len, "audio_rate_num = 40000") ||
+        !has_exact_line(manifest, manifest_len, "audio_rate_den = 1") ||
+        !has_exact_line(manifest, manifest_len, "audio_channels = 2") ||
+        !has_exact_line(manifest, manifest_len, "audio_bits = 16") ||
+        !has_exact_line(manifest, manifest_len, "input_event_count = 1") ||
+        !has_exact_line(manifest, manifest_len, "input_event_tick = 109321") ||
+        !has_exact_line(manifest, manifest_len, "input_event_mask = 16") ||
+        !has_exact_line(manifest, manifest_len, "released_sequence = 1") ||
+        !has_exact_line(manifest, manifest_len, "released_start_tick = 54272") ||
+        !has_exact_line(manifest, manifest_len, "released_end_tick = 108544") ||
+        !has_exact_line(manifest, manifest_len, "pressed_sequence = 2") ||
+        !has_exact_line(manifest, manifest_len, "pressed_start_tick = 108544") ||
+        !has_exact_line(manifest, manifest_len, "pressed_end_tick = 162816") ||
+        !has_exact_line(manifest, manifest_len, "first_sample_ordinal = 0") ||
+        !has_exact_line(manifest, manifest_len, "next_sample_ordinal = 407") ||
+        !has_exact_line(manifest, manifest_len, "pcm_frame_count = 407") ||
+        !has_exact_line(manifest, manifest_len, "source_policy = digital channel-0 divider/LFSR; mix and stereo route are software policy, not physical qualification")) goto invalid;
+    failed_stage = "A/V manifest stream identities or PCM count";
+    (void)snprintf(line, sizeof line, "pcm_frame_count = %zu", pcm_len / 4u);
+    if (!has_exact_line(manifest, manifest_len, line) ||
+        !has_sha_field(manifest, manifest_len, "content_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "input_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "pressed_raw_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "pressed_ppm_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "pcm_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "wav_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "events_sha256 = ")) goto invalid;
+    result = 0;
+    goto done;
+invalid:
+    (void)snprintf(error, error_cap, "A/V validation failed: %s", failed_stage);
+done:
+    free(released_raw); free(pressed_raw); free(released_ppm); free(pressed_ppm);
+    free(pcm); free(wav); free(events); free(manifest);
+    return result;
 }
 
 static int validate_replay_directory(const char *directory, const char *scenario,
@@ -1931,6 +2117,14 @@ int main(int argc, char **argv)
     if (argc == 3 && strcmp(argv[1], "frames") == 0) {
         if (validate_frame_directory(argv[2], error, sizeof error) == 0) {
             puts("artifact-check: independent released/A raw-frame semantics are valid");
+            return 0;
+        }
+        fprintf(stderr, "artifact-check: %s\n", error);
+        return 1;
+    }
+    if (argc == 3 && strcmp(argv[1], "av") == 0) {
+        if (validate_av_directory(argv[2], error, sizeof error) == 0) {
+            puts("artifact-check: released/A raw images and fixed-rate stereo WAV spans are valid");
             return 0;
         }
         fprintf(stderr, "artifact-check: %s\n", error);
