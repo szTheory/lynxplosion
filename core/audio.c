@@ -50,6 +50,16 @@ static int8_t clamp_output(int16_t value)
     return (int8_t)value;
 }
 
+/* Convert the register's two's-complement byte without an out-of-range cast
+   from uint8_t to int8_t. */
+static int8_t signed_register_byte(uint8_t value)
+{
+    const int16_t decoded = value <= (uint8_t)INT8_MAX
+                                ? (int16_t)value
+                                : (int16_t)value - INT16_C(256);
+    return (int8_t)decoded;
+}
+
 static void audio_emit(lynx__audio_state *audio, uint64_t tick, uint8_t channel,
                        uint8_t cause, int8_t before, int8_t after,
                        lynx__audio_event_sink *sink)
@@ -73,7 +83,7 @@ static void audio_emit(lynx__audio_state *audio, uint64_t tick, uint8_t channel,
 
 static int16_t channel_volume(const lynx__audio_channel *channel)
 {
-    return (int16_t)(int8_t)channel->volume;
+    return (int16_t)signed_register_byte(channel->volume);
 }
 
 static void channel_update_output(lynx__audio_channel *channel)
@@ -298,7 +308,7 @@ bool lynx__audio_write(lynx__audio_state *audio, uint16_t addr, uint8_t value,
         channel->feedback = value;
         break;
     case AUDIO_OUTPUT:
-        channel->output = (int8_t)value;
+        channel->output = signed_register_byte(value);
         channel->integrator = channel->output;
         break;
     case AUDIO_SHIFT_LOW:

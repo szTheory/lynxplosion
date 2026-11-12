@@ -68,6 +68,10 @@ api.watch_controls	api
 api.watch_controls.self_test	api
 api.watch_independent	api
 api.watch_post_write	api
+audio.counter	audio
+audio.integrator	audio
+audio.lfsr	audio
+audio.registers	audio
 consumer.av_tracer	consumer
 consumer.frame_publication_controls	consumer
 consumer.frame_replay	consumer

@@ -1523,6 +1523,21 @@ static void case_memory_peek_pure(void)
             : lynx_read_memory(m, 0xFC00u, &raw_suzy, 1u);
     CHECK_EQ_U64(raw_status, LYNX_OK);
     CHECK_EQ_HEX(raw_suzy, 0xB2u);
+    m->ram[0xFD20u] = 0xA7u;
+    CHECK_NAMED(lynx__audio_write(&m->audio, 0xFD20u, 0x7Fu, m->guest_ticks, NULL),
+                "memory.peek.audio-write-fixture");
+    uint8_t mapped_audio_volume = 0xCCu;
+    const uint64_t audio_peek_ticks = ticks_of(m);
+    memcpy(snap_a, m, MSIZE);
+    const lynx_status audio_peek_status =
+        lynx_read_cpu_memory(m, 0xFD20u, &mapped_audio_volume, 1u);
+    CHECK_NAMED(audio_peek_status == LYNX_OK, "memory.peek.audio-mapped-route");
+    CHECK_NAMED(mapped_audio_volume == 0x7Fu, "memory.peek.audio-mapped-volume");
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK_EQ_U64(ticks_of(m), audio_peek_ticks);
+    uint8_t raw_audio_volume = 0u;
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFD20u, &raw_audio_volume, 1u), LYNX_OK);
+    CHECK_EQ_HEX(raw_audio_volume, 0xA7u);
     uint64_t ticks_before = ticks_of(m);
     memcpy(snap_a, m, MSIZE);
     capture_inspection_snapshot(m, before_snapshot, sizeof before_snapshot);
@@ -1536,7 +1551,7 @@ static void case_memory_peek_pure(void)
     CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD00u, &timer_backup, 1u), LYNX_OK);
     CHECK_EQ_U64(timer_backup, 0u); /* the timer view is separate from raw RAM */
     static const uint16_t unavailable_addresses[] = {
-        0xFC00u, 0xFD20u, 0xFE00u, 0xFFF9u, 0xFFFAu};
+        0xFC00u, 0xFE00u, 0xFFF9u, 0xFFFAu};
     for (size_t i = 0u; i < sizeof unavailable_addresses / sizeof unavailable_addresses[0]; i++) {
         unavailable = 0xCCu;
         CHECK_EQ_U64(lynx_read_cpu_memory(m, unavailable_addresses[i], &unavailable, 1u),

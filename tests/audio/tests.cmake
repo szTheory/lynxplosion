@@ -1,0 +1,11 @@
+add_executable(lynx-test-audio ${CMAKE_CURRENT_LIST_DIR}/test_audio.c)
+target_link_libraries(lynx-test-audio PRIVATE lynx_bundle)
+target_include_directories(lynx-test-audio PRIVATE ${PROJECT_SOURCE_DIR}/core)
+lynx_warnings(lynx-test-audio)
+lynx_sanitize(lynx-test-audio)
+set_target_properties(lynx-test-audio PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
+
+lynx_add_test(NAME audio.registers COMMAND lynx-test-audio registers LABELS audio TIMEOUT 30)
+lynx_add_test(NAME audio.lfsr COMMAND lynx-test-audio lfsr LABELS audio TIMEOUT 30)
+lynx_add_test(NAME audio.counter COMMAND lynx-test-audio counter LABELS audio TIMEOUT 30)
+lynx_add_test(NAME audio.integrator COMMAND lynx-test-audio integrator LABELS audio TIMEOUT 30)
