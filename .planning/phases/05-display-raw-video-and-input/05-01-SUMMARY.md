@@ -14,6 +14,8 @@ provides:
 affects: [05-display-raw-video-and-input, 06-audio-and-playable-checkpoint]
 
 actuals:
+  tokens: 24670.5 # GSD realized-diff chars/4 proxy; not measured model/API usage.
+  realized_diff_chars: 98682
   tasks: 2
   commits: 2
 commits: 2
@@ -171,3 +173,7 @@ The summary and all named primary artifacts exist. Both task commits are ancesto
 ---
 *Phase: 05-display-raw-video-and-input*
 *Completed: 2026-11-11*
+
+## Metric convention clarification
+
+The required GSD `actuals.tokens` field is a deterministic realized source-diff character count divided by four, not measured model/API token consumption. Parent measured 98682 characters over `53232bcd..f8f7d653` with `git diff --no-ext-diff --unified=0 <range> -- . ":(exclude).planning/**"` and divided by four. Historical task verification is unchanged.

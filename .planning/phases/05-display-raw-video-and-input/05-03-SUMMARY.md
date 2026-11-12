@@ -14,8 +14,8 @@ provides:
 affects: [05-04, 05-09, 05-10, 05-11, 05-12]
 
 actuals:
-  realized_diff_chars: 45414
-  diff_token_estimate: 11354 # source-size proxy, not measured model usage
+  tokens: 9546.5 # GSD realized-diff chars/4 proxy; not measured model/API usage.
+  realized_diff_chars: 38186
   tasks: 2
   commits: 5
 commits: 5
@@ -53,7 +53,7 @@ Video and refresh grants now serialize ahead of CPU requests, and VIDEO_POLICY1 
 
 - Duration measured from the first task commit through closeout: about 35 minutes; initial reading and setup happened before that timestamp.
 - Task 2 focused suite: 13/13 tests passed in 2.78 seconds total CTest wall time.
-- The task diff was 45,414 characters; the source-size token proxy is characters divided by four, not measured model token usage.
+- The normalized source diff is 38,186 characters; its required GSD proxy is 9,546.5 characters/4 units, not measured model token usage.
 
 ## Accomplishments
 
@@ -121,3 +121,7 @@ The summary exists, and all five recorded task commits are ancestors of the curr
 ## Post-wave consumer regression
 
 After the page-pricing change, the parent configured/built the metadata head `fd63806` and ran `consumer.frame_tracer` alone. It passed in 0.75 seconds, preserving the original public-only guest/frame path under the expanded policy. No full qualification gate was repeated. The owning wave-post checks were non-blocking: schema drift none, no codebase map to compare, and no interactive frontend files.
+
+## Metric convention clarification
+
+The required GSD `actuals.tokens` field is a deterministic realized source-diff character count divided by four, not measured model/API token consumption. Parent measured 38186 characters over `0140d065..f94771f4` with `git diff --no-ext-diff --unified=0 <range> -- . ":(exclude).planning/**"` and divided by four. Historical task verification is unchanged.

@@ -175,3 +175,6 @@ qualification evidence.
 **Measure executor progress, not just commit cadence.** Reading the execution contract, active source edits, passing focused checks and closeout tool activity are progress. A long verification tail is not a new approval gate. Keep the parent read-only during a foreground handoff; do not inject finalization urgency into an active executor. Reconcile summary plus reachable commits before classifying an abnormal end.
 
 **Keep report commands executable and metrics evidenced.** Markdown code spans need the actual shell regex, not a JSON/YAML-escaped copy. Preserve YAML escaping inside quoted frontmatter separately. Omit token actuals without an instrumented provenance source; task/commit counts can be checked from the repository.
+
+
+**Respect the GSD metric unit before overriding a schema field.** Executor summaries define `actuals.tokens` as realized source-diff characters divided by four. Keep that required, reproducibly measured proxy and label its unit; do not present it as measured model/API usage or remove it merely because the field name is overloaded. Record the source-diff range/path convention. Large shared test files can be read by locating relevant helpers/cases/dispatchers with rg and bounded sections; keep the required execution contract and actual dependency context intact.
