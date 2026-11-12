@@ -31,6 +31,24 @@ static void clear_capture(lynx__video_state *video)
     memset(video->line_ticks, 0, sizeof video->line_ticks);
 }
 
+/* Rows are published only after all 80 DMA bytes have arrived. A later row
+   reuses this slot; clearing the dropped partial observation prevents stale
+   bytes or metadata from leaking into an otherwise unused row. The bus grants
+   and guest time already consumed are unaffected. */
+static void discard_incomplete_row(lynx__video_state *video)
+{
+    const size_t row = (size_t)video->capture_rows;
+    video->capture_partial = 1u;
+    video->row_active = 0u;
+    video->dma_cursor = 0u;
+    video->dma_next_tick = 0u;
+    if (row < LYNX_FRAME_MAX_ROWS) {
+        memset(video->pens + row * LYNX_FRAME_ROW_BYTES, 0, LYNX_FRAME_ROW_BYTES);
+        memset(video->palettes + row * 32u, 0, 32u);
+        video->line_ticks[row] = 0u;
+    }
+}
+
 void lynx__video_init(lynx__video_state *video, uint32_t timing_policy)
 {
     if (video == NULL) {
@@ -163,11 +181,7 @@ static void begin_visible_row(lynx__video_state *video, uint64_t tick)
         return;
     }
     if (video->row_active != 0u) {
-        video->capture_partial = 1u;
-        video->row_active = 0u;
-        video->dma_cursor = 0u;
-        video->dma_next_tick = 0u;
-        if (video->capture_rows < LYNX_FRAME_MAX_ROWS) video->capture_rows++;
+        discard_incomplete_row(video);
     }
     const size_t row = (size_t)video->capture_rows;
     memcpy(video->palettes + row * 32u, video->palette, 32u);
@@ -187,11 +201,7 @@ bool lynx__video_timer_apply(lynx__video_state *video, uint8_t borrow_mask, uint
     const bool timer0_underflow = (borrow_mask & (1u << 0)) != 0u;
     if (timer2_underflow) {
         if (video->row_active != 0u) {
-            video->capture_partial = 1u;
-            video->row_active = 0u;
-            video->dma_cursor = 0u;
-            video->dma_next_tick = 0u;
-            if (video->capture_rows < LYNX_FRAME_MAX_ROWS) video->capture_rows++;
+            discard_incomplete_row(video);
         }
         video->frame_end_tick = tick;
         if (video->frame_synced != 0u) {
