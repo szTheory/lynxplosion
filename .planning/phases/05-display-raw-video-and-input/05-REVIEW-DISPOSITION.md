@@ -19,19 +19,24 @@ findings:
     severity: warning
     disposition: fixed
     title: "Test-only environment variable selects legacy replay in the production consumer"
+  - id: WR-04
+    severity: warning
+    disposition: fixed
+    title: "Test-only replay modes remain selectable in the production consumer"
 open: 0
-total: 4
-recorded: 2026-11-12T14:38:58.564Z
+total: 5
+recorded: 2026-11-12T15:10:38.463Z
 ---
 
 # Phase 05: Code Review Disposition
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-01 | critical | fixed | 05-REVIEW-FIX.md |
-| WR-01 | warning | fixed | 05-REVIEW-FIX.md |
-| WR-02 | warning | fixed | 05-REVIEW-FIX.md |
-| WR-03 | warning | fixed | 05-REVIEW-FIX.md |
+| CR-01 | critical | fixed | 05-REVIEW-FIX.md (not in the current review) |
+| WR-01 | warning | fixed | 05-REVIEW-FIX.md (not in the current review) |
+| WR-02 | warning | fixed | 05-REVIEW-FIX.md (not in the current review) |
+| WR-03 | warning | fixed | 05-REVIEW-FIX.md (not in the current review) |
+| WR-04 | warning | fixed | 05-REVIEW-FIX.md (not in the current review) |
 
 Dispositions: `open` (recorded, not yet triaged), `fixed`, `skipped`, `deferred`.
 Set `deferred` by hand and put the reason in the Source cell; both are preserved. A `|` in the reason is kept as prose and escaped on the next run.
