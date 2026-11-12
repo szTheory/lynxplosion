@@ -1,0 +1,11 @@
+{
+  "command": "./build/check/tests/lynx-test-api video_page_mode",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.video_page_mode\n",
+  "stderr": "ASSERT page-mode snapshot retains same-page continuation failed\nASSERT page-mode same-page NOP fetch costs four ticks failed\nASSERT page-mode NOP after same-page data access costs four ticks failed\nASSERT page-mode same-page stream resumes after CPU access failed\nASSERT page-mode same-page stream remains eligible failed\nASSERT page-mode same-page fetch after crossing is eligible failed\nASSERT page-mode CPU stream resumes after closed grant failed\nASSERT page-mode snapshot retains same-page continuation failed\nASSERT page-mode same-page NOP fetch costs four ticks failed\nASSERT page-mode NOP after same-page data access costs four ticks failed\nASSERT page-mode same-page stream resumes after CPU access failed\nASSERT page-mode same-page stream remains eligible failed\nASSERT page-mode same-page fetch after crossing is eligible failed\nASSERT page-mode CPU stream resumes after closed grant failed\n",
+  "targetTest": "api.video_page_mode",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "Under VIDEO_POLICY1, source-constrained same-page NOP opcode fetches cost four ticks; operand/data/write cycles, disabled MAPCTL page mode, page crossings, and CPU fetches after video or refresh grants cost five. Snapshot restore preserves the active continuation. The flat5 control remains unchanged.",
+  "actual": "The target test compiled and ran under both Lynx CPU profiles. All ordinary five-tick, request-kind, address, write-effect, disabled-mode, page-crossing, and invalid-policy assertions passed. Each expected four-tick eligible opcode fetch instead retained the current five-tick price, including after snapshot restore and bus grants.",
+  "semanticAssessment": "This is a production behavior RED, not a build/setup failure: the named API test executed successfully and reported only its explicit same-page eligible-opcode four-tick assertions as failing. The hand-derived trace separately confirms that the unchanged flat5 lane, data cycles, stores, request sequence, mapctl disable, page crossing, and video/refresh grant timing all satisfy their stated controls before implementation."
+}

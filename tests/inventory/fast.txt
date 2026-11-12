@@ -53,6 +53,7 @@ api.video_bus	api
 api.video_bus_edges	api
 api.video_cadence	api
 api.video_geometry	api
+api.video_page_mode	api
 api.watch_controls	api
 api.watch_controls.self_test	api
 api.watch_independent	api

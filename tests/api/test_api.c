@@ -6452,6 +6452,206 @@ static void case_video_bus_edges(void)
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void video_page_expect_grant(lynx_machine *m, uint64_t grant_tick,
+                                    uint16_t addr, uint8_t kind, uint8_t ticks,
+                                    const char *assertion)
+{
+    CHECK_EQ_U64(m->cpu.req_addr, addr);
+    CHECK_EQ_U64(m->cpu.req_kind, kind);
+    CHECK(grant_tick >= m->guest_ticks);
+    const uint64_t budget = grant_tick - m->guest_ticks + 1u;
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(m, budget, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, budget);
+    CHECK_EQ_U64(m->guest_ticks, grant_tick + 1u);
+    CHECK_NAMED(m->cpu_ready_at == grant_tick + ticks, assertion);
+}
+
+static uint64_t video_page_expect_next(lynx_machine *m, uint16_t addr, uint8_t kind,
+                                       uint8_t ticks, const char *assertion)
+{
+    const uint64_t grant_tick = m->cpu_ready_at > m->guest_ticks ?
+                                    m->cpu_ready_at : m->guest_ticks;
+    video_page_expect_grant(m, grant_tick, addr, kind, ticks, assertion);
+    return m->cpu_ready_at;
+}
+
+static void case_video_page_mode(void)
+{
+    const int failures_before = check_failures;
+    static const uint8_t program[] = {
+        0xEAu,                               /* $0200 NOP: initial page access */
+        0xEAu,                               /* $0201 NOP: eligible same-page opcode */
+        0xADu, 0x00u, 0x02u,                 /* $0202 LDA $0200: opcode plus data */
+        0xEAu,                               /* $0205 eligible opcode after data read */
+        0x8Du, 0x01u, 0x03u,                 /* $0206 STA $0301: writes stay full-cycle */
+        0xEAu, 0xEAu, 0xEAu,                 /* $0209-$020B same page */
+        0xEAu                                /* $020C */
+    };
+    const uint32_t profiles[] = {LYNX_PROFILE_LYNX1, LYNX_PROFILE_LYNX2};
+    for (size_t profile_index = 0u;
+         profile_index < sizeof profiles / sizeof profiles[0]; profile_index++) {
+        lynx_config cfg;
+        lynx_config_default(&cfg);
+        cfg.profile = profiles[profile_index];
+        cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+        lynx_machine *m = init_in(machine_buf, &cfg);
+        lynx_machine *restored = NULL;
+        if (m == NULL) continue;
+        CHECK_EQ_U64(load_bll_at(m, program, sizeof program, 0x0200u), LYNX_OK);
+        m->mapctl = 0x80u; /* Page-mode enable; low overlay bits remain clear. */
+        lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), 0x0200u);
+        m->cpu_ready_at = m->guest_ticks;
+
+        video_page_expect_grant(m, 0u, 0x0200u, LYNX__CK_OPCODE, 5u,
+                                "page-mode initial fetch uses normal five-tick cycle");
+        video_page_expect_next(m, 0x0201u, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+        CHECK_EQ_U64(save_into(m, blob_c), 0u);
+        restored = init_in(buf_b, &cfg);
+        if (restored != NULL) {
+            CHECK_EQ_U64(load_bll_at(restored, program, sizeof program, 0x0200u), LYNX_OK);
+            CHECK_EQ_U64(lynx_snapshot_restore(restored, blob_c, SNAP_TOTAL), LYNX_OK);
+            video_page_expect_next(restored, 0x0201u, LYNX__CK_OPCODE, 4u,
+                                    "page-mode snapshot retains same-page continuation");
+            restored->mapctl = 0u;
+            lynx__cpu_start_at(&restored->cpu, lynx__cpu_table(restored->cpu.profile), 0x0200u);
+            restored->cpu_ready_at = restored->guest_ticks;
+            video_page_expect_next(restored, 0x0200u, LYNX__CK_OPCODE, 5u,
+                                   "page-mode disabled first fetch uses normal cycle");
+            video_page_expect_next(restored, 0x0201u, LYNX__CK_DUMMY_STREAM, 5u,
+                                   "page-mode disabled dummy access uses normal cycle");
+            video_page_expect_next(restored, 0x0201u, LYNX__CK_OPCODE, 5u,
+                                   "page-mode disabled same-page fetch uses normal cycle");
+            lynx_machine_deinit(restored);
+        }
+
+        /* Exact microcycle trace: only NOP opcode fetches can use the narrow
+           unverified subset. Every implied dummy, operand, data access, other
+           opcode, and write remains full-cycle. */
+        video_page_expect_next(m, 0x0201u, LYNX__CK_OPCODE, 4u,
+                                "page-mode same-page NOP fetch costs four ticks");
+        video_page_expect_next(m, 0x0202u, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+        video_page_expect_next(m, 0x0202u, LYNX__CK_OPCODE, 5u,
+                                "page-mode conservative opcode exclusion costs five ticks");
+        video_page_expect_next(m, 0x0203u, LYNX__CK_OPERAND, 5u,
+                                "page-mode operand access costs five ticks");
+        video_page_expect_next(m, 0x0204u, LYNX__CK_OPERAND, 5u,
+                                "page-mode operand access costs five ticks");
+        video_page_expect_next(m, 0x0200u, LYNX__CK_READ, 5u,
+                                "page-mode data read costs five ticks");
+        video_page_expect_next(m, 0x0205u, LYNX__CK_OPCODE, 4u,
+                                "page-mode NOP after same-page data access costs four ticks");
+        video_page_expect_next(m, 0x0206u, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+        video_page_expect_next(m, 0x0206u, LYNX__CK_OPCODE, 5u,
+                                "page-mode conservative opcode exclusion costs five ticks");
+        video_page_expect_next(m, 0x0207u, LYNX__CK_OPERAND, 5u,
+                                "page-mode store operand costs five ticks");
+        video_page_expect_next(m, 0x0208u, LYNX__CK_OPERAND, 5u,
+                                "page-mode store operand costs five ticks");
+        video_page_expect_next(m, 0x0301u, LYNX__CK_WRITE, 5u,
+                                "page-mode data write costs five ticks");
+        CHECK_EQ_U64(m->ram[0x0301u], 0xEAu);
+        video_page_expect_next(m, 0x0209u, LYNX__CK_OPCODE, 5u,
+                               "page-mode page crossing uses normal five-tick cycle");
+        video_page_expect_next(m, 0x020Au, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+        video_page_expect_next(m, 0x020Au, LYNX__CK_OPCODE, 4u,
+                               "page-mode same-page stream resumes after CPU access");
+        video_page_expect_next(m, 0x020Bu, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+        video_page_expect_next(m, 0x020Bu, LYNX__CK_OPCODE, 4u,
+                               "page-mode same-page stream remains eligible");
+        video_page_expect_next(m, 0x020Cu, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+
+        /* JMP $0300 leaves its high operand at $02FF, so the target opcode
+           crosses a page without an intervening CPU access at $0300. */
+        m->ram[0x02FDu] = 0x4Cu;
+        m->ram[0x02FEu] = 0x00u;
+        m->ram[0x02FFu] = 0x03u;
+        m->ram[0x0300u] = 0xEAu;
+        m->ram[0x0301u] = 0xEAu;
+        m->ram[0x0302u] = 0xEAu;
+        m->ram[0x0303u] = 0xEAu;
+        lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), 0x02FDu);
+        video_page_expect_next(m, 0x02FDu, LYNX__CK_OPCODE, 5u,
+                               "page-mode conservative JMP opcode uses normal cycle");
+        video_page_expect_next(m, 0x02FEu, LYNX__CK_OPERAND, 5u,
+                               "page-mode JMP operand uses normal cycle");
+        video_page_expect_next(m, 0x02FFu, LYNX__CK_OPERAND, 5u,
+                               "page-mode JMP operand uses normal cycle");
+        video_page_expect_next(m, 0x0300u, LYNX__CK_OPCODE, 5u,
+                               "page-mode 256-byte crossing uses normal cycle");
+        video_page_expect_next(m, 0x0301u, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+        video_page_expect_next(m, 0x0301u, LYNX__CK_OPCODE, 4u,
+                               "page-mode same-page fetch after crossing is eligible");
+        video_page_expect_next(m, 0x0302u, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+
+        /* A one-byte video row closes continuation before the pending CPU
+           opcode, then a refresh grant independently closes the next stream. */
+        const uint64_t video_tick = m->cpu_ready_at;
+        m->video.dispctl = 1u;
+        m->video.row_active = 1u;
+        m->video.dma_cursor = 79u;
+        m->video.dma_next_tick = video_tick;
+        m->video.dma_busy_until = video_tick;
+        m->video.refresh_next_tick = 0u;
+        m->video.refresh_busy_until = 0u;
+        video_page_expect_grant(m, video_tick + 5u, 0x0302u, LYNX__CK_OPCODE, 5u,
+                                "page-mode video grant closes the CPU continuation");
+        video_page_expect_next(m, 0x0303u, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+        const uint64_t refresh_tick = m->cpu_ready_at;
+        m->video.refresh_next_tick = refresh_tick;
+        video_page_expect_grant(m, refresh_tick + 5u, 0x0303u, LYNX__CK_OPCODE, 5u,
+                                "page-mode refresh grant closes the CPU continuation");
+        video_page_expect_next(m, 0x0304u, LYNX__CK_DUMMY_STREAM, 5u,
+                               "page-mode implied dummy access uses normal cycle");
+        video_page_expect_next(m, 0x0304u, LYNX__CK_OPCODE, 4u,
+                                "page-mode CPU stream resumes after closed grant");
+        lynx_machine_deinit(m);
+    }
+
+    /* The legacy flat5 control remains unchanged even with MAPCTL bit 7 set. */
+    lynx_config legacy_cfg;
+    lynx_config_default(&legacy_cfg);
+    legacy_cfg.profile = LYNX_PROFILE_LYNX1;
+    lynx_machine *legacy = init_in(machine_buf, &legacy_cfg);
+    if (legacy != NULL) {
+        CHECK_EQ_U64(load_bll_at(legacy, program, sizeof program, 0x0200u), LYNX_OK);
+        legacy->mapctl = 0x80u;
+        lynx__cpu_start_at(&legacy->cpu, lynx__cpu_table(legacy->cpu.profile), 0x0200u);
+        legacy->cpu_ready_at = legacy->guest_ticks;
+        video_page_expect_next(legacy, 0x0200u, LYNX__CK_OPCODE, 5u,
+                               "legacy flat5 first opcode remains five ticks");
+        video_page_expect_next(legacy, 0x0201u, LYNX__CK_DUMMY_STREAM, 5u,
+                               "legacy flat5 dummy access remains five ticks");
+        video_page_expect_next(legacy, 0x0201u, LYNX__CK_OPCODE, 5u,
+                               "legacy flat5 same-page opcode remains five ticks");
+        lynx_machine_deinit(legacy);
+    }
+
+    /* An invalid timing-policy id is rejected before touching caller storage. */
+    lynx_config invalid;
+    lynx_config_default(&invalid);
+    invalid.timing_policy = 2u;
+    memset(machine_buf, 0xA5, MSIZE);
+    memcpy(snap_a, machine_buf, MSIZE);
+    lynx_machine *invalid_out = NULL;
+    CHECK_EQ_U64(lynx_machine_init(machine_buf, MSIZE, &invalid, &invalid_out), LYNX_ERR_ARGUMENT);
+    CHECK_UNCHANGED(machine_buf, snap_a);
+    if (invalid_out != NULL) lynx_machine_deinit(invalid_out);
+    printf("TAP version 13\n1..1\n%s 1 - api.video_page_mode\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void case_video_cadence(void)
 {
     const int failures_before = check_failures;
@@ -6996,6 +7196,7 @@ static const struct {
     {"timer_shared_phase", case_timer_shared_phase},
     {"video_bus", case_video_bus},
     {"video_bus_edges", case_video_bus_edges},
+    {"video_page_mode", case_video_page_mode},
     {"video_cadence", case_video_cadence},
     {"video_geometry", case_video_geometry},
     {"timer_pending_after_disable", case_timer_pending_after_disable},
