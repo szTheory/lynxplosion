@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Display, Raw Video and Input
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 05-01-PLAN.md
-last_updated: "2026-11-12T01:27:24.814Z"
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-11-12T02:30:56.836Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 05 execution started
-state_head: f8f7d653b2ef82606e08a2d65776211ae2485dd6
+state_head: f8b6527c56b7d7f1b11ff958ae46d0448233dd4d
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 57
-  completed_plans: 46
+  completed_plans: 47
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-11)
 ## Current Position
 
 Phase: 05 (Display, Raw Video and Input) — EXECUTING
-Current Plan: 2
+Current Plan: 3
 Total Plans in Phase: 12
 Status: Ready to execute
 Last activity: 2026-11-11 — Phase 05 execution started
@@ -106,6 +106,7 @@ Progress: [███████░░░] 67%
 | Phase 04 P11 | 30min | 2 tasks | 6 files |
 | Phase 04 P12 | 4h 14m | 2 tasks | 5 files |
 | Phase 05 P01 | 55min | 2 tasks | 20 files |
+| Phase 05 P02 | about 35 min; measured from first task commit through closeout | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -215,6 +216,10 @@ Recent decisions affecting current work:
 - [Phase 05]: Raw native video exposes pens, per-row palettes and guest line ticks without host presentation in the core.
 - [Phase 05]: The Phase 5 native C API does not change LibFuturo; O9/HOST-02 remains outside this plan.
 - [Phase 05]: No run-identity change: another emulator appears only in the prohibition on importing constants.
+- [Phase 05]: Incomplete DMA rows are omitted and cleared without rolling back consumed guest time.
+- [Phase 05]: The effective normal display address is aligned down at the third-blank transfer; unsupported flip, color and two-bit modes refuse atomically.
+- [Phase 05]: Per-row palette snapshots occur after timer work and before same-tick CPU stores; this is software policy, not hardware latch evidence.
+- [Phase 05]: Baseline-green palette behavior is recorded as a positive regression, never as fabricated RED evidence.
 
 ### Pending Todos
 
@@ -249,6 +254,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-12T01:27:24.446Z
-Stopped at: Completed 05-01-PLAN.md
+Last session: 2026-11-12T02:29:24.532Z
+Stopped at: Completed 05-02-PLAN.md
 Resume file: None

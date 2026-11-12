@@ -25,16 +25,16 @@ Run each task's owning assertions after its last relevant edit, then reuse compl
 
 ## Per-Task Verification Map
 
-Complete planned24-task map below; independent checker reviews before execution. No new test is claimed present or passing.
+Complete planned24-task map below; independent checker reviews before execution.
 
-Task format is phase-plan-task. SC is T-05-SC; numeric threats are unique phase-wide. All tests/commands below are planned, not claimed executed. Each named new test is authored and registered before the same task's verification; later users require its completed predecessor.
+Task format is phase-plan-task. SC is T-05-SC; numeric threats are unique phase-wide. Commands define the owning checks, and the final column records their current execution status. Each named new test is authored and registered before the same task's verification; later users require its completed predecessor.
 
 | Task | Wave | Requirements | Threat refs | Exact registered tests / proof | Command | Dependency | Exists now | Status |
 |---|---|---|---|---|---|---|---|---|
 | 05-01-1 | 1 | VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01 | T-05-01, T-05-02, T-05-03, SC | consumer.frame_tracer | C011 | Phase4 + pinned tools | new cases created/registered in owning task before verify; inherited cases exist | pending execution |
 | 05-01-2 | 1 | VID-01, VID-02, VID-03, VID-04, VID-05, INP-01, API-06, HB-02, CON-01 | T-05-01, T-05-02, T-05-03, SC | consumer.frame_tracer; consumer.public_api; consumer.snapshot_ppm; consumer.silence_wav; api.header_selfcontained | C012 | 05-01-1 | mixed old/header + tracer01-1 | pending execution |
-| 05-02-1 | 2 | VID-01, VID-03, VID-04, VID-05 | T-05-04, T-05-05, T-05-06, SC | api.video_cadence; api.frame_edges; api.scheduler_order; api.scheduler_limits | C021 | 05-01 | new cases created/registered in owning task before verify; inherited cases exist | pending execution |
-| 05-02-2 | 2 | VID-01, VID-03, VID-04, VID-05 | T-05-04, T-05-05, T-05-06, SC | api.video_geometry; api.palette_boundary | C022 | 05-02-1 | new cases created/registered in owning task before verify; inherited cases exist | pending execution |
+| 05-02-1 | 2 | VID-01, VID-03, VID-04, VID-05 | T-05-04, T-05-05, T-05-06, SC | api.video_cadence; api.frame_edges; api.scheduler_order; api.scheduler_limits | C021 | 05-01 | new cases created/registered in owning task before verify; inherited cases exist | passed with combined six-case C021/C022 run; 6/6 in 0.19 s on 2026-11-11 |
+| 05-02-2 | 2 | VID-01, VID-03, VID-04, VID-05 | T-05-04, T-05-05, T-05-06, SC | api.video_geometry; api.palette_boundary | C022 | 05-02-1 | new cases created/registered in owning task before verify; inherited cases exist | passed with combined six-case C021/C022 run; 6/6 in 0.19 s on 2026-11-11 |
 | 05-03-1 | 3 | VID-02, EVD-05 | T-05-07, T-05-08, T-05-09, SC | api.video_bus; api.video_bus_edges; api.request_hold; api.request_wake; api.request_boundary | C031 | 05-02 | new cases created/registered in owning task before verify; inherited cases exist | pending execution |
 | 05-03-2 | 3 | VID-02, EVD-05 | T-05-07, T-05-08, T-05-09, SC | api.video_page_mode; api.video_bus; api.cost_model; api.cost_model.self_test | C032 | 05-03-1 | new cases created/registered in owning task before verify; inherited cases exist | pending execution |
 | 05-04-1 | 4 | VID-04, VID-05, API-06 | T-05-10, T-05-11, T-05-12, SC | api.frame_refusal; api.input_refusal | C041 | 05-03 | new cases created/registered in owning task before verify; inherited cases exist | pending execution |
