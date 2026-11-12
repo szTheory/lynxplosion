@@ -7555,6 +7555,265 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+/* The guest configures MAPCTL and SPRSYS, then reads the real CPU-mapped
+   SPRSYS/JOYSTICK/SWITCHES routes. It repeats the two input reads so the host
+   can replace levels only while the next CPU data request is pending. */
+static size_t make_input_read_program(uint8_t *program, uint8_t mapctl,
+                                     uint8_t lefthand)
+{
+    size_t n = 0u;
+    program[n++] = 0xA9u; program[n++] = mapctl;       /* LDA #mapctl */
+    program[n++] = 0x8Du; program[n++] = 0xF9u; program[n++] = 0xFFu;
+    program[n++] = 0xA9u; program[n++] = lefthand;     /* LDA #SPRSYS input bit */
+    program[n++] = 0x8Du; program[n++] = 0x92u; program[n++] = 0xFCu;
+    program[n++] = 0xADu; program[n++] = 0x92u; program[n++] = 0xFCu;
+    const uint16_t loop = (uint16_t)(0x0200u + (uint16_t)n);
+    program[n++] = 0xADu; program[n++] = 0xB0u; program[n++] = 0xFCu;
+    program[n++] = 0xADu; program[n++] = 0xB1u; program[n++] = 0xFCu;
+    program[n++] = 0x4Cu; program[n++] = (uint8_t)loop;
+    program[n++] = (uint8_t)(loop >> 8);
+    return n;
+}
+
+static lynx_status load_input_read_guest(lynx_machine *m, uint8_t mapctl,
+                                         uint8_t lefthand)
+{
+    uint8_t program[32];
+    uint8_t object[sizeof program + 10u];
+    const size_t length = make_input_read_program(program, mapctl, lefthand);
+    const size_t object_length = length + 10u;
+    make_bll_header(object, object_length, 0x0200u);
+    memcpy(object + 10u, program, length);
+    return lynx_load_bll(m, object, object_length);
+}
+
+static int input_read_request(const lynx_machine *m, uint16_t address)
+{
+    return m->cpu.req_addr == address && m->cpu.req_kind == LYNX__CK_READ &&
+           (m->cpu.req_flags & (uint8_t)LYNX__CF_WRITE) == 0u;
+}
+
+static void input_advance_one_tick(lynx_machine *m, const char *assertion)
+{
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    const lynx_status status = lynx_advance(m, 1u, &consumed, &stop);
+    CHECK_NAMED(status == LYNX_OK && consumed == 1u && stop == LYNX_STOP_BUDGET,
+                assertion);
+}
+
+static void input_wait_for_read_request(lynx_machine *m, uint16_t address,
+                                        const char *assertion)
+{
+    for (unsigned i = 0u; i < 512u && !input_read_request(m, address); i++) {
+        input_advance_one_tick(m, assertion);
+    }
+    CHECK_NAMED(input_read_request(m, address), assertion);
+}
+
+/* Returns the tick at which the CPU request actually completed, or UINT64_MAX
+   when it did not complete within the bounded guest-time window. */
+static uint64_t input_complete_read(lynx_machine *m, uint16_t address,
+                                    uint8_t expected, const char *assertion)
+{
+    for (unsigned i = 0u; i < 1024u && input_read_request(m, address); i++) {
+        const uint64_t before = ticks_of(m);
+        input_advance_one_tick(m, assertion);
+        if (!input_read_request(m, address)) {
+            CHECK_NAMED(m->cpu.a == expected, assertion);
+            return before;
+        }
+    }
+    CHECK_NAMED(!input_read_request(m, address), assertion);
+    return UINT64_MAX;
+}
+
+static void input_set_exact_mask(lynx_machine *m, uint32_t mask,
+                                 const char *assertion)
+{
+    const uint64_t before_ticks = ticks_of(m);
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_set_input(m, mask), LYNX_OK);
+    const size_t mask_offset = offsetof(struct lynx_machine, video) +
+                               offsetof(lynx__video_state, input_mask);
+    const uint16_t expected_mask = (uint16_t)mask;
+    uint8_t want_mask[sizeof expected_mask];
+    memcpy(want_mask, &expected_mask, sizeof want_mask);
+    int only_mask_changed = 1;
+    for (size_t i = 0u; i < MSIZE; i++) {
+        const uint8_t expected = i >= mask_offset && i < mask_offset + sizeof want_mask
+                                     ? want_mask[i - mask_offset] : snap_a[i];
+        if (((const uint8_t *)(const void *)m)[i] != expected) {
+            only_mask_changed = 0;
+            break;
+        }
+    }
+    CHECK_NAMED(only_mask_changed && ticks_of(m) == before_ticks, assertion);
+}
+
+/* Independently transcribed from the primary appendix and cc65 alias table.
+   The expected side does not call production input helpers. */
+static uint8_t expected_joystick(uint32_t mask, uint8_t lefthand)
+{
+    static const struct {
+        uint32_t logical;
+        uint8_t lefthand_on;
+        uint8_t lefthand_off;
+    } fields[] = {
+        {LYNX_INPUT_UP,       0x80u, 0x40u},
+        {LYNX_INPUT_DOWN,     0x40u, 0x80u},
+        {LYNX_INPUT_LEFT,     0x20u, 0x10u},
+        {LYNX_INPUT_RIGHT,    0x10u, 0x20u},
+        {LYNX_INPUT_OPTION1,  0x08u, 0x08u},
+        {LYNX_INPUT_OPTION2,  0x04u, 0x04u},
+        {LYNX_INPUT_B,        0x02u, 0x02u},
+        {LYNX_INPUT_A,        0x01u, 0x01u},
+    };
+    uint8_t value = 0u;
+    for (size_t i = 0u; i < sizeof fields / sizeof fields[0]; i++) {
+        if ((mask & fields[i].logical) != 0u) {
+            value |= lefthand != 0u ? fields[i].lefthand_on : fields[i].lefthand_off;
+        }
+    }
+    return value;
+}
+
+static uint8_t expected_switches(uint32_t mask)
+{
+    return (mask & LYNX_INPUT_PAUSE) != 0u ? 0x01u : 0u;
+}
+
+static void case_input_bits(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) goto done;
+
+    for (uint8_t lefthand = 0u; lefthand <= 1u; lefthand++) {
+        CHECK_EQ_U64(load_input_read_guest(m, 0x0Cu, lefthand != 0u ? 0x08u : 0u), LYNX_OK);
+        input_wait_for_read_request(m, 0xFC92u, "input_bits.guest-sprsys-read-request");
+        (void)input_complete_read(m, 0xFC92u, lefthand != 0u ? 0x08u : 0u,
+                                  "input_bits.guest-sprsys-readback");
+        for (uint32_t mask = 0u; mask <= LYNX_INPUT_MASK; mask++) {
+            input_wait_for_read_request(m, 0xFCB0u, "input_bits.guest-joystick-read-request");
+            input_set_exact_mask(m, mask, "input_bits.setter-copies-only-levels-without-time");
+            (void)input_complete_read(m, 0xFCB0u,
+                                      expected_joystick(mask, lefthand),
+                                      "input_bits.independent-nine-bit-joystick-table");
+            input_wait_for_read_request(m, 0xFCB1u, "input_bits.guest-switches-read-request");
+            (void)input_complete_read(m, 0xFCB1u, expected_switches(mask),
+                                      "input_bits.pause-and-disconnected-lines");
+        }
+    }
+
+    /* MAPCTL 0F is a negative device-fixture control: CPU reads must see
+       underlying RAM even when logical levels are pressed. */
+    CHECK_EQ_U64(load_input_read_guest(m, 0x0Fu, 0x08u), LYNX_OK);
+    m->ram[0xFCB0u] = 0xA5u;
+    m->ram[0xFCB1u] = 0x3Cu;
+    CHECK_EQ_U64(lynx_set_input(m, LYNX_INPUT_MASK), LYNX_OK);
+    input_wait_for_read_request(m, 0xFC92u, "input_bits.mapctl-0f-sprsys-ram-request");
+    (void)input_complete_read(m, 0xFC92u, 0x08u, "input_bits.mapctl-0f-sprsys-write-routes-to-ram");
+    input_wait_for_read_request(m, 0xFCB0u, "input_bits.mapctl-0f-joystick-ram-request");
+    (void)input_complete_read(m, 0xFCB0u, 0xA5u, "input_bits.mapctl-0f-joystick-is-ram");
+    input_wait_for_read_request(m, 0xFCB1u, "input_bits.mapctl-0f-switches-ram-request");
+    (void)input_complete_read(m, 0xFCB1u, 0x3Cu, "input_bits.mapctl-0f-switches-is-ram");
+
+    lynx_machine_deinit(m);
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.input_bits\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_input_orientation(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) goto done;
+
+    CHECK_EQ_U64(load_input_read_guest(m, 0x0Cu, 0x08u), LYNX_OK);
+    input_wait_for_read_request(m, 0xFC92u, "input_orientation.sprsys-read-request");
+    CHECK_NAMED(m->video.lefthand == 1u,
+                "input_orientation.guest-write-selects-lefthand");
+
+    /* Raw RAM inspection and the CPU device overlay are distinct pure views. */
+    m->ram[0xFCB0u] = 0xA5u;
+    m->ram[0xFCB1u] = 0x5Au;
+    input_set_exact_mask(m, LYNX_INPUT_UP | LYNX_INPUT_A,
+                         "input_orientation.inspection-levels-installed");
+    static uint8_t before_inspection[sizeof(struct lynx_machine)];
+    uint8_t raw[2] = {0u, 0u};
+    uint8_t mapped[2] = {0u, 0u};
+    memcpy(before_inspection, m, sizeof *m);
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFCB0u, raw, sizeof raw), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFCB0u, mapped, sizeof mapped), LYNX_OK);
+    CHECK_NAMED(raw[0] == 0xA5u && raw[1] == 0x5Au &&
+                    mapped[0] == 0x81u && mapped[1] == 0u &&
+                    memcmp(before_inspection, m, sizeof *m) == 0,
+                "input_orientation.raw-and-mapped-inspection-are-distinct-and-pure");
+
+    input_set_exact_mask(m, LYNX_INPUT_OPTION2 | LYNX_INPUT_PAUSE,
+                         "input_orientation.option2-pause-keeps-guest-orientation");
+    CHECK_NAMED(m->video.lefthand == 1u,
+                "input_orientation.option2-pause-does-not-auto-rotate");
+    (void)input_complete_read(m, 0xFC92u, 0x08u,
+                              "input_orientation.readback-exposes-only-lefthand-bit");
+    input_wait_for_read_request(m, 0xFCB0u, "input_orientation.chord-joystick-request");
+    (void)input_complete_read(m, 0xFCB0u, 0x04u,
+                              "input_orientation.chord-is-two-independent-levels");
+    input_wait_for_read_request(m, 0xFCB1u, "input_orientation.chord-switches-request");
+    (void)input_complete_read(m, 0xFCB1u, 0x01u,
+                              "input_orientation.pause-remains-on-switches-bit-zero");
+
+    /* A bit-3 clear is accepted. Engine/math bits fail at the write request
+       without modifying the input-owned orientation state. */
+    static const uint8_t unsupported_sprsys_write[] = {
+        0xA9u, 0x0Cu, 0x8Du, 0xF9u, 0xFFu,
+        0xA9u, 0x08u, 0x8Du, 0x92u, 0xFCu,
+        0xA9u, 0x10u, 0x8Du, 0x92u, 0xFCu,
+        0x4Cu, 0x0Au, 0x02u
+    };
+    CHECK_EQ_U64(load_bll_at(m, unsupported_sprsys_write,
+                             sizeof unsupported_sprsys_write, 0x0200u), LYNX_OK);
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    for (unsigned i = 0u; i < 128u && stop != LYNX_STOP_UNAVAILABLE; i++) {
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    }
+    CHECK_NAMED(stop == LYNX_STOP_UNAVAILABLE && m->video.lefthand == 1u &&
+                    m->cpu.req_addr == 0xFC92u && m->cpu.req_kind == LYNX__CK_WRITE &&
+                    m->cpu.a == 0x10u,
+                "input_orientation.unsupported-sprsys-control-refuses-before-device-mutation");
+
+    static const uint8_t unsupported_suzy_read[] = {
+        0xA9u, 0x0Cu, 0x8Du, 0xF9u, 0xFFu,
+        0xADu, 0x90u, 0xFCu,
+        0x4Cu, 0x05u, 0x02u
+    };
+    CHECK_EQ_U64(load_bll_at(m, unsupported_suzy_read,
+                             sizeof unsupported_suzy_read, 0x0200u), LYNX_OK);
+    consumed = UINT64_MAX;
+    stop = LYNX_STOP_HALT;
+    for (unsigned i = 0u; i < 64u && stop != LYNX_STOP_UNAVAILABLE; i++) {
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+    }
+    CHECK_NAMED(stop == LYNX_STOP_UNAVAILABLE && m->cpu.req_addr == 0xFC90u &&
+                    m->cpu.req_kind == LYNX__CK_READ,
+                "input_orientation.other-suzy-registers-remain-unavailable");
+    lynx_machine_deinit(m);
+
+done:
+    printf("TAP version 13\n1..1\n%s 1 - api.input_orientation\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void fill_frame_test_outputs(uint8_t *pens, uint8_t *palettes,
                                     uint64_t *line_ticks, uint8_t sentinel)
 {
@@ -7996,6 +8255,8 @@ static const struct {
     {"frame_edges", case_frame_edges},
     {"frame_refusal", case_frame_refusal},
     {"frame_stops", case_frame_stops},
+    {"input_bits", case_input_bits},
+    {"input_orientation", case_input_orientation},
     {"input_refusal", case_input_refusal},
     {"video_reset_load", case_video_reset_load},
     {"cpu_program", case_cpu_program},

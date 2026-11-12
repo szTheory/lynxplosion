@@ -19,6 +19,8 @@ api.frame_stops	api
 api.header_selfcontained	api
 api.identity	api
 api.init_refusal	api
+api.input_bits	api
+api.input_orientation	api
 api.input_refusal	api
 api.inspect_pure	api
 api.instances_independent	api

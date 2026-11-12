@@ -36,6 +36,8 @@ uint8_t lynx__input_peek(const lynx__video_state *video, uint16_t addr)
     if (addr == JOYSTICK) {
         const uint16_t mask = video->input_mask;
         uint8_t value = 0u;
+        /* MUTATION_ANCHOR_INPUT_DIRECTION: guest Lefthand alone selects the
+           direction-bit permutation; the host mask stays logical. */
         if (video->lefthand != 0u) {
             if ((mask & LYNX_INPUT_UP) != 0u) value |= 0x80u;
             if ((mask & LYNX_INPUT_DOWN) != 0u) value |= 0x40u;
@@ -47,6 +49,8 @@ uint8_t lynx__input_peek(const lynx__video_state *video, uint16_t addr)
             if ((mask & LYNX_INPUT_LEFT) != 0u) value |= 0x10u;
             if ((mask & LYNX_INPUT_RIGHT) != 0u) value |= 0x20u;
         }
+        /* MUTATION_ANCHOR_INPUT_ACTIONS: action and option levels are
+           independent of the guest's direction orientation. */
         if ((mask & LYNX_INPUT_OPTION1) != 0u) value |= 0x08u;
         if ((mask & LYNX_INPUT_OPTION2) != 0u) value |= 0x04u;
         if ((mask & LYNX_INPUT_B) != 0u) value |= 0x02u;
