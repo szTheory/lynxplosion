@@ -32,6 +32,17 @@ lynx_add_test(NAME api.input_bits COMMAND lynx-test-api input_bits LABELS api TI
 lynx_add_test(NAME api.input_edges COMMAND lynx-test-api input_edges LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.input_orientation COMMAND lynx-test-api input_orientation LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.input_refusal COMMAND lynx-test-api input_refusal LABELS api TIMEOUT 30)
+foreach(fault_id IN ITEMS a_b_swapped option1_option2_swapped pause_register orientation edge_late)
+  lynx_add_test(NAME input.fault.${fault_id}
+    COMMAND ${CMAKE_COMMAND}
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DBUILD_DIR=${PROJECT_BINARY_DIR}"
+      "-DAPI_TEST_BINARY=$<TARGET_FILE:lynx-test-api>"
+      "-DC_COMPILER=${CMAKE_C_COMPILER}"
+      "-DFAULT_ID=${fault_id}"
+      -P ${PROJECT_SOURCE_DIR}/tests/video/fault_controls.cmake
+    LABELS api TIMEOUT 300)
+endforeach()
 lynx_add_test(NAME api.state_digest COMMAND lynx-test-api state_digest LABELS api TIMEOUT 30)
 lynx_add_test(NAME api.palette_boundary COMMAND lynx-test-api palette_boundary LABELS api TIMEOUT 60)
 lynx_add_test(NAME api.cpu_program COMMAND lynx-test-api cpu_program LABELS api TIMEOUT 30)

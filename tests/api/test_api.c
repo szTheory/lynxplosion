@@ -8103,6 +8103,166 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static lynx_machine *init_input_fault_guest(uint8_t lefthand)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m != NULL) {
+        CHECK_EQ_U64(load_input_read_guest(m, 0x0Cu, lefthand), LYNX_OK);
+        input_wait_for_read_request(m, 0xFC92u,
+                                    "input.fault.setup-sprsys-read-request");
+        (void)input_complete_read(m, 0xFC92u, lefthand,
+                                  "input.fault.setup-sprsys-readback");
+    }
+    return m;
+}
+
+static void case_input_fault_a_b(void)
+{
+    const int failures_before = check_failures;
+    lynx_machine *m = init_input_fault_guest(0u);
+    if (m != NULL) {
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.a-b-pressed-read-request");
+        input_set_exact_mask(m, LYNX_INPUT_A,
+                             "input.fault.a-b-press-installed-at-read-edge");
+        (void)input_complete_read(m, 0xFCB0u, 0x01u,
+                                  "input.fault.a-b-register-mismatch");
+        input_wait_for_read_request(m, 0xFCB1u,
+                                    "input.fault.a-b-switches-read-request");
+        input_set_exact_mask(m, 0u,
+                             "input.fault.a-b-release-installed-at-read-edge");
+        (void)input_complete_read(m, 0xFCB1u, 0u,
+                                  "input.fault.a-b-switches-after-release");
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.a-b-released-read-request");
+        (void)input_complete_read(m, 0xFCB0u, 0u,
+                                  "input.fault.a-b-release-observed");
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.input_fault_a_b\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_input_fault_options(void)
+{
+    const int failures_before = check_failures;
+    lynx_machine *m = init_input_fault_guest(0u);
+    if (m != NULL) {
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.option-pressed-read-request");
+        input_set_exact_mask(m, LYNX_INPUT_OPTION1,
+                             "input.fault.option1-press-installed-at-read-edge");
+        (void)input_complete_read(m, 0xFCB0u, 0x08u,
+                                  "input.fault.option-register-mismatch");
+        input_wait_for_read_request(m, 0xFCB1u,
+                                    "input.fault.option-switches-read-request");
+        input_set_exact_mask(m, 0u,
+                             "input.fault.option-release-installed-at-read-edge");
+        (void)input_complete_read(m, 0xFCB1u, 0u,
+                                  "input.fault.option-switches-after-release");
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.option-released-read-request");
+        (void)input_complete_read(m, 0xFCB0u, 0u,
+                                  "input.fault.option-release-observed");
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.input_fault_options\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_input_fault_pause(void)
+{
+    const int failures_before = check_failures;
+    lynx_machine *m = init_input_fault_guest(0u);
+    if (m != NULL) {
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.pause-joystick-read-request");
+        input_set_exact_mask(m, LYNX_INPUT_PAUSE,
+                             "input.fault.pause-press-installed-at-read-edge");
+        (void)input_complete_read(m, 0xFCB0u, 0u,
+                                  "input.fault.pause-is-not-a-joystick-bit");
+        input_wait_for_read_request(m, 0xFCB1u,
+                                    "input.fault.pause-switches-read-request");
+        (void)input_complete_read(m, 0xFCB1u, 0x01u,
+                                  "input.fault.pause-register-mismatch");
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.pause-release-joystick-request");
+        input_set_exact_mask(m, 0u,
+                             "input.fault.pause-release-installed-at-read-edge");
+        (void)input_complete_read(m, 0xFCB0u, 0u,
+                                  "input.fault.pause-release-joystick-is-clear");
+        input_wait_for_read_request(m, 0xFCB1u,
+                                    "input.fault.pause-released-switches-request");
+        (void)input_complete_read(m, 0xFCB1u, 0u,
+                                  "input.fault.pause-release-observed");
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.input_fault_pause\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_input_fault_orientation(void)
+{
+    const int failures_before = check_failures;
+    lynx_machine *m = init_input_fault_guest(0x08u);
+    if (m != NULL) {
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.lefthand-pressed-read-request");
+        input_set_exact_mask(m, LYNX_INPUT_LEFT,
+                             "input.fault.lefthand-left-installed-at-read-edge");
+        (void)input_complete_read(m, 0xFCB0u, 0x20u,
+                                  "input.fault.lefthand-direction-mismatch");
+        input_wait_for_read_request(m, 0xFCB1u,
+                                    "input.fault.lefthand-switches-read-request");
+        input_set_exact_mask(m, 0u,
+                             "input.fault.lefthand-release-installed-at-read-edge");
+        (void)input_complete_read(m, 0xFCB1u, 0u,
+                                  "input.fault.lefthand-switches-after-release");
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.lefthand-released-read-request");
+        (void)input_complete_read(m, 0xFCB0u, 0u,
+                                  "input.fault.lefthand-release-observed");
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.input_fault_orientation\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
+static void case_input_fault_edge_late(void)
+{
+    const int failures_before = check_failures;
+    lynx_machine *m = init_input_fault_guest(0u);
+    if (m != NULL) {
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.sample-pressed-read-request");
+        const uint64_t sample_tick = input_next_grant_tick(m);
+        input_advance_exclusive_to(m, sample_tick,
+                                   "input.fault.sample-request-edge-is-reachable");
+        input_set_exact_mask(m, LYNX_INPUT_A,
+                             "input.fault.sample-press-installed-at-request-edge");
+        (void)input_complete_read(m, 0xFCB0u, 0x01u,
+                                  "input.fault.sample-value-observes-press");
+        CHECK_NAMED(m->cpu_ready_at == sample_tick + 5u,
+                    "input.fault.sample-edge-at-guest-tick");
+        input_wait_for_read_request(m, 0xFCB1u,
+                                    "input.fault.sample-switches-read-request");
+        input_set_exact_mask(m, 0u,
+                             "input.fault.sample-release-installed-at-read-edge");
+        (void)input_complete_read(m, 0xFCB1u, 0u,
+                                  "input.fault.sample-released-switches");
+        input_wait_for_read_request(m, 0xFCB0u,
+                                    "input.fault.sample-released-read-request");
+        (void)input_complete_read(m, 0xFCB0u, 0u,
+                                  "input.fault.sample-release-observed");
+        lynx_machine_deinit(m);
+    }
+    printf("TAP version 13\n1..1\n%s 1 - api.input_fault_edge_late\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 static void fill_frame_test_outputs(uint8_t *pens, uint8_t *palettes,
                                     uint64_t *line_ticks, uint8_t sentinel)
 {
@@ -9067,6 +9227,11 @@ static const struct {
     {"frame_stops", case_frame_stops},
     {"input_bits", case_input_bits},
     {"input_edges", case_input_edges},
+    {"input_fault_a_b", case_input_fault_a_b},
+    {"input_fault_edge_late", case_input_fault_edge_late},
+    {"input_fault_options", case_input_fault_options},
+    {"input_fault_orientation", case_input_fault_orientation},
+    {"input_fault_pause", case_input_fault_pause},
     {"input_orientation", case_input_orientation},
     {"input_refusal", case_input_refusal},
     {"state_digest", case_state_digest},

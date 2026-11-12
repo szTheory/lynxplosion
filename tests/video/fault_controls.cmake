@@ -61,6 +61,60 @@ elseif(FAULT_ID STREQUAL "palette_boundary")
     if (row != 0u) memcpy(video->palettes + row * 32u, video->palette, 32u);]=])
   set(assertion_id "video.fault.palette-row-boundary-late")
   set(assertion_pattern "video\\.fault\\.palette-row-boundary-late")
+elseif(FAULT_ID STREQUAL "a_b_swapped")
+  set(API_CASE "input_fault_a_b")
+  set(API_TAP_CASE "input_fault_a_b")
+  set(MUTANT_SOURCE "core/input.c")
+  set(anchor [=[        if ((mask & LYNX_INPUT_B) != 0u) value |= 0x02u;
+        if ((mask & LYNX_INPUT_A) != 0u) value |= 0x01u;]=])
+  set(replacement [=[        if ((mask & LYNX_INPUT_B) != 0u) value |= 0x01u;
+        if ((mask & LYNX_INPUT_A) != 0u) value |= 0x02u;]=])
+  set(assertion_id "input.fault.a-b-register-mismatch")
+  set(assertion_pattern "input\\.fault\\.a-b-register-mismatch")
+elseif(FAULT_ID STREQUAL "option1_option2_swapped")
+  set(API_CASE "input_fault_options")
+  set(API_TAP_CASE "input_fault_options")
+  set(MUTANT_SOURCE "core/input.c")
+  set(anchor [=[        if ((mask & LYNX_INPUT_OPTION1) != 0u) value |= 0x08u;
+        if ((mask & LYNX_INPUT_OPTION2) != 0u) value |= 0x04u;]=])
+  set(replacement [=[        if ((mask & LYNX_INPUT_OPTION1) != 0u) value |= 0x04u;
+        if ((mask & LYNX_INPUT_OPTION2) != 0u) value |= 0x08u;]=])
+  set(assertion_id "input.fault.option-register-mismatch")
+  set(assertion_pattern "input\\.fault\\.option-register-mismatch")
+elseif(FAULT_ID STREQUAL "pause_register")
+  set(API_CASE "input_fault_pause")
+  set(API_TAP_CASE "input_fault_pause")
+  set(MUTANT_SOURCE "core/input.c")
+  set(anchor [=[        return (video->input_mask & LYNX_INPUT_PAUSE) != 0u ? 0x01u : 0u;]=])
+  set(replacement [=[        return 0u;]=])
+  set(assertion_id "input.fault.pause-register-mismatch")
+  set(assertion_pattern "input\\.fault\\.pause-register-mismatch")
+elseif(FAULT_ID STREQUAL "orientation")
+  set(API_CASE "input_fault_orientation")
+  set(API_TAP_CASE "input_fault_orientation")
+  set(MUTANT_SOURCE "core/input.c")
+  set(anchor [=[        if (video->lefthand != 0u) {]=])
+  set(replacement [=[        if (video->lefthand == 0u) {]=])
+  set(assertion_id "input.fault.lefthand-direction-mismatch")
+  set(assertion_pattern "input\\.fault\\.lefthand-direction-mismatch")
+elseif(FAULT_ID STREQUAL "edge_late")
+  set(API_CASE "input_fault_edge_late")
+  set(API_TAP_CASE "input_fault_edge_late")
+  set(MUTANT_SOURCE "core/machine.c")
+  set(anchor [=[            const lynx__machine_event cpu_event = {
+                cpu_tick, (uint8_t)LYNX__MACHINE_EVENT_CPU_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};]=])
+  set(replacement [=[            uint64_t sample_tick = cpu_tick;
+            if (m->cpu.req_kind == LYNX__CK_READ &&
+                (m->cpu.req_addr == 0xFCB0u || m->cpu.req_addr == 0xFCB1u) &&
+                sample_tick < UINT64_MAX) {
+                sample_tick++;
+            }
+            const lynx__machine_event cpu_event = {
+                sample_tick, (uint8_t)LYNX__MACHINE_EVENT_CPU_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};]=])
+  set(assertion_id "input.fault.sample-edge-at-guest-tick")
+  set(assertion_pattern "input\\.fault\\.sample-edge-at-guest-tick")
 else()
   message(FATAL_ERROR "video fault control: unsupported fault '${FAULT_ID}'")
 endif()
@@ -105,7 +159,7 @@ function(run_clean_case stage output_failure output_seconds)
   set(output "${out}${err}")
   if(NOT "${result}" STREQUAL "0" OR
      NOT output MATCHES "ok 1 - api\\.${API_TAP_CASE}" OR
-     output MATCHES "ASSERT [^\r\n]* failed")
+     output MATCHES "ASSERT [^\r\n]* failed|CHECK\\([^\r\n]*\\) failed| == .* failed:")
     set(${output_failure} "${stage} fresh clean API positive failed: exit=${result}\n${output}" PARENT_SCOPE)
     set(${output_seconds} "${elapsed}" PARENT_SCOPE)
     return()
@@ -231,8 +285,9 @@ target_link_options(lynx-test-api PRIVATE -fsanitize=address,undefined)
     set(${output_failure} "mutant runtime timeout/sanitizer fault; not semantic detection: exit=${mutant_result}\n${mutant_output}" PARENT_SCOPE)
     return()
   endif()
-  if(NOT "${mutant_result}" STREQUAL "1" OR assertion_count GREATER 1 OR
+  if(NOT "${mutant_result}" STREQUAL "1" OR NOT assertion_count EQUAL 1 OR
      NOT mutant_output MATCHES "ASSERT ${assertion_pattern} failed" OR
+     mutant_output MATCHES "CHECK\\([^\r\n]*\\) failed| == .* failed:" OR
      NOT mutant_output MATCHES "not ok 1 - api\\.${API_TAP_CASE}")
     set(${output_failure} "mutant did not fail exactly its intended assertion with exit 1: exit=${mutant_result}\n${mutant_output}" PARENT_SCOPE)
     return()

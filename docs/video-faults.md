@@ -33,7 +33,28 @@ rejected before any scratch was created.
 
 ## Remaining evidence scope
 
-The five independent input and sample-timing controls are added by Task 2.
-These video controls establish only the Phase 5 device-fault slice of EVD-05;
-the requirement remains partial for the Phase 6 audio obligation. EVD-02 and
-CON-01 remain pending where their later obligations apply.
+## Phase 5 input controls
+
+The five controls below also use profile `none` and timing policy
+`video_policy1`. The generated build identity source SHA-256 was
+`aa5e392a4cba1ff742d3d2246ea0a5747c6414bb9d1aaad7df46b3a40f9d086b`, with
+the same isolated strict sanitizer configuration SHA-256 listed above.
+
+| CTest control | Copied source change | Intended assertion | Clean / mutant source SHA-256 | Mutant binary SHA-256 | CTest time |
+| --- | --- | --- | --- | --- | ---: |
+| `input.fault.a_b_swapped` | Swap logical A and B register bits | `input.fault.a-b-register-mismatch` | `85bec6ec489227af1e3f700ec1f4da10c42dec3bda4d1da7fc8207386ea56d4b` / `177052b961cd2a2b1ac7756d9f36e0458acbe2ecdac6d35daaeb3ee133ac3491` | `3f9e845555d0793def5b46ab0dfa7cdfe1ced2cde438ef6b35a296c3404ebf8a` | 2.61 s |
+| `input.fault.option1_option2_swapped` | Swap Option 1 and Option 2 register bits | `input.fault.option-register-mismatch` | `85bec6ec489227af1e3f700ec1f4da10c42dec3bda4d1da7fc8207386ea56d4b` / `28d15489ecc2a81424a93c831b5688ea06fec0b289e9b46b464ceef1347904be` | `98f8442660c0b06284cfbc65f4d7f41655b0fea50565945e83bb8f1d11feff2f` | 2.08 s |
+| `input.fault.pause_register` | Make the Pause switch register stay clear | `input.fault.pause-register-mismatch` | `85bec6ec489227af1e3f700ec1f4da10c42dec3bda4d1da7fc8207386ea56d4b` / `bb78bbc68258c479eda699858fa815ff02cf7fd8135dec138d337f8899f086cf` | `08a50b14c14f734030211f6059da446b50725ed14091cf784d175a9c038fd0aa` | 1.83 s |
+| `input.fault.orientation` | Reverse the guest Lefthand direction branch | `input.fault.lefthand-direction-mismatch` | `85bec6ec489227af1e3f700ec1f4da10c42dec3bda4d1da7fc8207386ea56d4b` / `4cc4a2c6307bcca2ebb7885b6b693e432b52ed096ff30dcfba785c7f9456ae20` | `afa5179106da8fe13a91f681a2dc3ba1c1a410b25e84bbc435c85a5c447728c8` | 2.34 s |
+| `input.fault.edge_late` | Delay selected joystick/switch CPU grants by one guest tick | `input.fault.sample-edge-at-guest-tick` | `b9e37062e2899aa7b5a6a5b6480cefe276f50229452d4a956a7a96648d567625` / `7111f025650f66503cfaf027f1c2ff48efbb36262c79b3765926ae2a0986671d` | `4183c9211053ac4d9ff20e47fad886bbbf5a48dbf8abea6a3b6be92e64d6da30` | 1.52 s |
+
+Each input probe drives the real guest bus through a pressed read and a later
+released read. The sample-edge probe sets the logical A level at the predicted
+guest request tick and checks that the next CPU grant is exactly five policy
+ticks later; the one-tick mutant fails that named assertion. Existing
+`api.input_bits`, `api.input_orientation`, and `api.input_edges` remain the
+independent logical-table, handedness, and T-1/T/T+1 edge regressions.
+
+Together the eight controls establish only the Phase 5 device-fault slice of
+EVD-05; the requirement remains partial for the Phase 6 audio obligation.
+EVD-02 and CON-01 remain pending where their later obligations apply.

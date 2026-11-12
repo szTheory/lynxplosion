@@ -147,6 +147,11 @@ hygiene.manifests	hygiene
 hygiene.manifests.self_test	hygiene
 hygiene.pii.self_test	hygiene
 hygiene.tree	hygiene
+input.fault.a_b_swapped	api
+input.fault.edge_late	api
+input.fault.option1_option2_swapped	api
+input.fault.orientation	api
+input.fault.pause_register	api
 inventory.junit.self_test	inventory
 inventory.registered.self_test	inventory
 memory.map_matrix	memory
