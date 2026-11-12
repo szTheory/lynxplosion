@@ -108,3 +108,7 @@ Independent static review at `9290c743e67e9a8aabc60aff841c831c17186410` verified
 ## Consumer scratch cleanup review
 
 Independent static review at `3aaf004f08fb40d6aad6c9fc126aaa86fefd681f` verified all55 hashes (`69f6a655f0aeff73f8270cdb14deebb5775d3cee99b6cf7f9d6e0b2f5ac716c4`). Canonical scratch/parent and direct case label are checked before mutation, exclusive nonce creation never removes earlier work, guarded success cleanup verifies real location/non-symlink/owner marker and removal. All four early success returns and final success call cleanup after assertions; fatal paths preserve evidence. T-05-02/22/23/24/25/26 remain closed, no implementation gap/accepted risk. Prior register reused; T-05-34 remains open because passing CTest/JUnit before artifact failure is incomplete qualification.
+
+## Shell portability and private-tool restoration review
+
+Independent static review at `735cfa169b0cfcf7f4687d746c87461dc1677e1f` verified all55 hashes (`5de70b75e913919755c198ceef2a989ebd8c636908f37986fedbe17ebbd11dc8`). Explicit inverse conditions preserve option bounds, output/source/tool/recipe checks and owner-marker refusals. The copied fixture tool is restored through a fresh adjacent byte-verified file and rename; no pin, hash or signature check is disabled. Exact hostile diagnostics and final positive brackets remain. T-05-SC/22/25/26/28/29/30 mitigations remain closed, no implementation gap/accepted risk. T-05-34 remains final-source qualification-only open; no new full scan or test execution by auditor is represented.
