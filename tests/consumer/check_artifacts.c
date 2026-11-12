@@ -460,6 +460,37 @@ static int has_exact_line(const uint8_t *bytes, size_t length, const char *line)
     return 0;
 }
 
+static int line_has_fragments(const uint8_t *bytes, size_t length,
+                              const char *prefix, const char *fragment)
+{
+    size_t offset = 0u;
+    const size_t prefix_len = strlen(prefix), fragment_len = strlen(fragment);
+    while (offset < length) {
+        size_t end = offset;
+        while (end < length && bytes[end] != (uint8_t)'\n') end++;
+        if (end - offset >= prefix_len && memcmp(bytes + offset, prefix, prefix_len) == 0) {
+            for (size_t at = offset; at + fragment_len <= end; at++)
+                if (memcmp(bytes + at, fragment, fragment_len) == 0) return 1;
+        }
+        offset = end < length ? end + 1u : end;
+    }
+    return 0;
+}
+
+static uint32_t expected_joystick(uint32_t mask, unsigned lefthand)
+{
+    uint32_t value = (mask & 16u ? 1u : 0u) | (mask & 32u ? 2u : 0u) |
+                     (mask & 128u ? 4u : 0u) | (mask & 64u ? 8u : 0u);
+    if (lefthand != 0u) {
+        value |= (mask & 1u ? 0x80u : 0u) | (mask & 2u ? 0x40u : 0u) |
+                 (mask & 4u ? 0x20u : 0u) | (mask & 8u ? 0x10u : 0u);
+    } else {
+        value |= (mask & 1u ? 0x40u : 0u) | (mask & 2u ? 0x80u : 0u) |
+                 (mask & 4u ? 0x10u : 0u) | (mask & 8u ? 0x20u : 0u);
+    }
+    return value;
+}
+
 static int has_sha_field(const uint8_t *bytes, size_t length, const char *name)
 {
     const size_t prefix_len = strlen(name);
@@ -580,15 +611,19 @@ failed:
 
 static int validate_replay_directory(const char *directory, const char *scenario,
                                      const char *expected_input_sha,
+                                     const char *expected_handedness,
+                                     const char *expected_profile,
                                      char *error, size_t error_cap)
 {
     uint8_t *manifest = NULL;
     size_t manifest_len = 0u;
     size_t expected_frames;
-    uint64_t starts[3] = {UINT64_C(54272), UINT64_C(108544), UINT64_C(162816)};
-    uint64_t ends[3] = {UINT64_C(108544), UINT64_C(162816), UINT64_C(217088)};
-    uint32_t masks[3] = {0u, 0u, 16u};
-    uint32_t samples[3] = {0u, 0u, 1u};
+    uint64_t starts[9] = {UINT64_C(54272),UINT64_C(108544),UINT64_C(162816),UINT64_C(217088),UINT64_C(271360),UINT64_C(325632),UINT64_C(379904),UINT64_C(434176),UINT64_C(488448)};
+    uint64_t ends[9] = {UINT64_C(108544),UINT64_C(162816),UINT64_C(217088),UINT64_C(271360),UINT64_C(325632),UINT64_C(379904),UINT64_C(434176),UINT64_C(488448),UINT64_C(542720)};
+    uint32_t masks[9] = {0u,0u,16u,0u,0u,0u,0u,0u,0u};
+    uint32_t samples[9] = {0u,0u,1u,0u,0u,0u,0u,0u,0u};
+    const int replay_all_inputs = strcmp(scenario, "frame_replay") == 0;
+    unsigned handedness = 1u;
     char path[4096], line[512];
     if (strcmp(scenario, "replay_edges") == 0) {
         expected_frames = 3u;
@@ -596,17 +631,27 @@ static int validate_replay_directory(const char *directory, const char *scenario
         expected_frames = 2u; masks[1] = 16u; samples[1] = 1u;
     } else if (strcmp(scenario, "frame_tracer") == 0) {
         expected_frames = 2u; masks[1] = 16u; samples[1] = 1u;
+    } else if (replay_all_inputs != 0) {
+        static const uint32_t scenario_masks[9] = {16u,32u,1u,64u,64u,128u,256u,52u,0u};
+        expected_frames = 9u;
+        memcpy(masks, scenario_masks, sizeof scenario_masks);
+        for (size_t i = 0u; i < expected_frames; i++) samples[i] = (masks[i] & 16u) != 0u ? 1u : 0u;
     } else if (strcmp(scenario, "empty") == 0) {
         expected_frames = 1u;
     } else {
         set_error(error, error_cap, "unknown generic replay scenario");
         return 1;
     }
+    if (strcmp(expected_handedness, "0") == 0) handedness = 0u;
+    else if (strcmp(expected_handedness, "1") != 0) goto invalid;
+    if (strcmp(expected_profile, "none") != 0 && strcmp(expected_profile, "lynx1") != 0 &&
+        strcmp(expected_profile, "lynx2") != 0) goto invalid;
     if (path_join(directory, "frame-trace.manifest", path, sizeof path) != 0 ||
         read_bounded(path, 8192u, &manifest, &manifest_len, error, error_cap) != 0) return 1;
 #define EXPECT_REPLAY(text) do { if (!has_exact_line(manifest, manifest_len, (text))) goto invalid; } while (0)
     EXPECT_REPLAY("artifact = FRAME_TRACE");
-    EXPECT_REPLAY("profile = none");
+    (void)snprintf(line, sizeof line, "profile = %s", expected_profile);
+    EXPECT_REPLAY(line);
     EXPECT_REPLAY("startup = A");
     EXPECT_REPLAY("timing_policy = video-policy1-unverified");
     EXPECT_REPLAY("raw_pen_order = high nibble first; no host rotation");
@@ -625,6 +670,9 @@ static int validate_replay_directory(const char *directory, const char *scenario
     } else if (strcmp(scenario, "frame_tracer") == 0) {
         EXPECT_REPLAY("event_count = 1");
         EXPECT_REPLAY("finish_tick = 163594");
+    } else if (replay_all_inputs != 0) {
+        EXPECT_REPLAY("event_count = 9");
+        EXPECT_REPLAY("finish_tick = 578561");
     } else {
         EXPECT_REPLAY("event_count = 0");
         EXPECT_REPLAY("finish_tick = 108545");
@@ -661,6 +709,13 @@ static int validate_replay_directory(const char *directory, const char *scenario
         if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
         (void)snprintf(line, sizeof line, "# sample_a = %u", samples[i]);
         if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
+        if (replay_all_inputs != 0) {
+            const uint32_t joy = expected_joystick(masks[i], handedness);
+            (void)snprintf(line, sizeof line, "# sample_joystick = %u", joy);
+            if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto missing_guest_samples; }
+            (void)snprintf(line, sizeof line, "# sample_switches = %u", masks[i] & 256u ? 1u : 0u);
+            if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto missing_guest_samples; }
+        }
         (void)snprintf(line, sizeof line, "# input_sha256 = %s", expected_input_sha);
         if (!has_exact_line(ppm, header_end, line)) { free(raw); free(ppm); goto invalid; }
         for (size_t row = 0u; row < 102u; row++) {
@@ -674,12 +729,36 @@ static int validate_replay_directory(const char *directory, const char *scenario
                 tick < starts[i] || tick >= ends[i] || (row != 0u && tick <= previous_tick)) {
                 free(raw); free(ppm); goto invalid;
             }
+            if (replay_all_inputs != 0) {
+                for (size_t button = 0u; button < 9u; button++) {
+                    const uint32_t bit = button == 8u ? 256u : (1u << button);
+                    const uint8_t expected_byte = (masks[i] & bit) != 0u ? 0x22u : 0x11u;
+                    if (record[button] != (row == 0u ? expected_byte : 0u)) { free(raw); free(ppm); goto invalid; }
+                }
+            }
             previous_tick = tick;
             for (size_t pixel = 0u; pixel < 160u; pixel++) {
-                const uint8_t *wanted = row == 0u && pixel < 2u ?
-                    (samples[i] != 0u ? red : green) : black;
+                const uint8_t *wanted = black;
+                if (replay_all_inputs != 0 && row == 0u && pixel < 18u) {
+                    const size_t button = pixel / 2u;
+                    const uint32_t bit = button == 8u ? 256u : (1u << button);
+                    wanted = (masks[i] & bit) != 0u ? red : green;
+                } else if (replay_all_inputs == 0 && row == 0u && pixel < 2u) {
+                    wanted = samples[i] != 0u ? red : green;
+                }
                 if (memcmp(pixels + pixel * 3u, wanted, 3u) != 0) { free(raw); free(ppm); goto invalid; }
             }
+        }
+        if (replay_all_inputs != 0) {
+            const uint32_t joy = expected_joystick(masks[i], handedness), switches = masks[i] & 256u ? 1u : 0u;
+            (void)snprintf(line, sizeof line,
+                "frame[%zu] = sequence:%zu,start:%" PRIu64 ",end:%" PRIu64 ",rows:102,flags:0,mask:%u,",
+                i, i + 1u, starts[i], ends[i], masks[i]);
+            char fragment[192];
+            (void)snprintf(fragment, sizeof fragment,
+                "joy:%u,switches:%u,progress:63,error:0,done:1,handedness:%u,",
+                joy, switches, handedness);
+            if (!line_has_fragments(manifest, manifest_len, line, fragment)) { free(raw); free(ppm); goto invalid; }
         }
         free(raw); free(ppm);
     }
@@ -689,6 +768,10 @@ static int validate_replay_directory(const char *directory, const char *scenario
 invalid:
     free(manifest);
     set_error(error, error_cap, "replay transcript, exact input digest, raw pen/palette/ticks or representative rendered pixels are invalid");
+    return 1;
+missing_guest_samples:
+    free(manifest);
+    set_error(error, error_cap, "frame artifact omits the guest's joystick or switches sample for the recorded input mask");
     return 1;
 }
 
@@ -1586,7 +1669,15 @@ int main(int argc, char **argv)
         return 1;
     }
     if (argc == 5 && strcmp(argv[1], "frames") == 0) {
-        if (validate_replay_directory(argv[2], argv[3], argv[4], error, sizeof error) == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], "1", "none", error, sizeof error) == 0) {
+            puts("artifact-check: canonical replay raw/rendered frame transcript is valid");
+            return 0;
+        }
+        fprintf(stderr, "artifact-check: %s\n", error);
+        return 1;
+    }
+    if (argc == 7 && strcmp(argv[1], "frames") == 0) {
+        if (validate_replay_directory(argv[2], argv[3], argv[4], argv[5], argv[6], error, sizeof error) == 0) {
             puts("artifact-check: canonical replay raw/rendered frame transcript is valid");
             return 0;
         }

@@ -53,6 +53,7 @@ function(lynx_frame_test name scenario timeout)
       -P ${CMAKE_CURRENT_LIST_DIR}/frame_driver.cmake
     LABELS consumer TIMEOUT ${timeout})
 endfunction()
+lynx_frame_test(consumer.frame_replay frame_replay 240)
 lynx_frame_test(consumer.frame_tracer frame_tracer 120)
 lynx_frame_test(consumer.replay_edges replay_edges 120)
 lynx_frame_test(consumer.replay_restore replay_restore 120)

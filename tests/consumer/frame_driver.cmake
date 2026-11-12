@@ -46,6 +46,9 @@ elseif(CASE STREQUAL "replay_edges")
     "LYNX-INPUT 1\n0 16\n54271 0\n54272 16\n54273 0\n162816 16\n")
 elseif(CASE STREQUAL "replay_restore")
   file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n108544 16\n")
+elseif(CASE STREQUAL "frame_replay")
+  file(WRITE "${WORK}/input.timeline"
+    "LYNX-INPUT 1\n0 0\n65536 16\n131072 32\n196608 1\n262144 64\n327680 128\n393216 256\n458752 52\n524288 0\n")
 else()
   message(FATAL_ERROR "frame_driver: unknown CASE ${CASE}")
 endif()
@@ -134,7 +137,7 @@ if(CASE STREQUAL "frame_tracer")
     TIMEOUT 30 RESULT_VARIABLE check_rc OUTPUT_VARIABLE check_out ERROR_VARIABLE check_err)
 else()
   file(SHA256 "${WORK}/input.timeline" timeline_sha)
-  execute_process(COMMAND "${ARTIFACT_CHECKER}" frames "${WORK}/trace" "${CASE}" "${timeline_sha}"
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" frames "${WORK}/trace" "${CASE}" "${timeline_sha}" "1" "none"
     TIMEOUT 30 RESULT_VARIABLE check_rc OUTPUT_VARIABLE check_out ERROR_VARIABLE check_err)
 endif()
 if(NOT check_rc STREQUAL "0")
