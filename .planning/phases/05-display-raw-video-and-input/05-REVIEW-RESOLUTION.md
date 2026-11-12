@@ -222,3 +222,20 @@ All three independent delta reviewers returned terminal results at source head `
 The first macOS canonical gate stopped at ShellCheck 0.11 SC1007 before CMake/tests. Four POSIX command-prefix empty assignments in the CR-01 helper used `CDPATH= cd`; commit `ce23448` spells the identical empty value explicitly as `CDPATH='' cd`. No cleanup or containment logic changed. ShellCheck, shell syntax and both registered manifest checks passed after the edit. An independent one-path mechanical delta check is pending before restarting the final gates. Only this scoped path changed; all other 50 hashes remain identical. The full 51-path fingerprint is `b5568b960e8ce7f1c265f106e1d8dbc2e58455081497c8d69c1698742af10ed6`; helper SHA-256 `f24b2b096b788a99e4992bb01528ddb851df9377dc90da27c5f9711c416ff5f2`. No Linux or hosted run started on the preflight-failing source.
 
 The independent one-path review returned clean at `ce2344851c7adebea900d590f34eda31eef25a1e`: all four quoted empty assignments are semantically equivalent and containment, ownership, target selection and cleanup logic are unchanged. Prior security/coverage deltas remain applicable; the two focused manifest tests and ShellCheck passed. Task 2 can resume on this source after the report commit.
+
+## Final-gate harness corrections
+
+The macOS final-gate attempt at `fe7afdd39fb498cfe9146b2d1263584e65a2bd21` passed ShellCheck but failed 12/202 CTests before artifacts/history. Bounded diagnosis showed stale snapshot-layout assumptions in CPU seam/diagnostic controls, omitted input/video modules in timer-mutant builds, and a Darwin compiler stack-probe helper absent from the symbol allowlist. Commit `9290c743e67e9a8aabc60aff841c831c17186410` repairs four test-harness/platform files; all 13 affected focused checks then passed with semantic assertions intact. No emulator implementation/oracle changed. Details: `05-QUALIFICATION-REPAIRS.md`.
+
+These four paths were unchanged since Phase4 and therefore expand the Phase5 reviewed source scope from51 to55. All original51 hashes remain exactly unchanged from the preceding binding. Current sorted55-path fingerprint: `d9cdad7a5c25079d5b7c38c1c09e7747f518ba0581720bc0cccb4e0f2a376c51`. Added scope hashes:
+
+| Path | SHA-256 |
+|---|---|
+| `tests/cmake/abi.cmake` | `2cbf21b96f8c5258e327e62eea6d5f876b0ab6eb3173d30dec7344b567ee8e5e` |
+| `tests/cpu/test_cpu_vectors.c` | `70bbc989dde386fba7dc15753869a27e367daf7227d95f9580c15467bee04f9e` |
+| `tests/diag/test_diag.c` | `99aa549f0f522e53bdf9961893dcdda5f912c411d50e026e49959e5dd0d20ebf` |
+| `tests/timers/fault_controls.cmake` | `eeefca41067bc328152f20698644c36e396094acc3138a40de8c03221852b030` |
+
+Independent affected-scope review is pending. No Linux/hosted qualification or broad passing macOS result is claimed.
+
+All three independent four-path delta reviews returned terminal results at `9290c743e67e9a8aabc60aff841c831c17186410`: code clean, coverage/control assertions preserved, security mitigations preserved; T-05-34 qualification remains open. Root also corrected three stale numeric values in the opening snapshot layout comment (format5/header256/payload77948). Everything after that comment is byte-identical, so executable behavior is unchanged; the intended layout values were independently checked in the harness review. Final55-path fingerprint before restarted qualification: `82cc7aa3d2f400da9b9ffa4cd221e2005b23d5c6b3e70e8f7fd6607fcbcab749`; replacement `core/snapshot.c` SHA-256 `e3d0c18748fec5847e3d2b45c4a972bc0d75ca3904f2a9f7b742cf768c68c5fd`. All other54 hashes unchanged.

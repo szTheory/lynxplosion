@@ -178,3 +178,6 @@ qualification evidence.
 
 
 **Respect the GSD metric unit before overriding a schema field.** Executor summaries define `actuals.tokens` as realized source-diff characters divided by four. Keep that required, reproducibly measured proxy and label its unit; do not present it as measured model/API usage or remove it merely because the field name is overloaded. Record the source-diff range/path convention. Large shared test files can be read by locating relevant helpers/cases/dispatchers with rg and bounded sections; keep the required execution contract and actual dependency context intact.
+
+
+**Run integration checks when structural contracts change.** Phase5 final qualification found twelve failing CTests after narrow feature checks passed: old snapshot header/hash offsets in CPU/diagnostic harnesses, private mutant source lists missing new modules, and a platform compiler-helper allowlist. When changing serialized layout or core module dependencies, locate all raw snapshot consumers, independent build recipes and ABI checks in the same implementation plan and run that affected group then. A canonical gate before the review/closeout tail catches cross-plan omissions earlier; repeat it only for new changes or unresolved failures. Preserve exact semantic negative controls rather than treating failed builds as detection.

@@ -6,8 +6,8 @@
 
    Header (256 bytes), in order:
      0    magic          8 bytes  "LYNXSNAP"
-     8    format_version u32      4
-     12   header_len     u32      252
+     8    format_version u32      5
+     12   header_len     u32      256
      16   build_id       128      lynx__build_id, NUL-padded to 128
      144  profile        u32
      148  ram_policy     u32
@@ -19,7 +19,7 @@
      204  startup_tier   u32
      208  entry_addr     u32
      212  object_len     u32
-     216  payload_len    u32      65604
+     216  payload_len    u32      77948
      220  payload_sha256 32       SHA-256 of the payload
      252  timing_policy  u32
    Payload (77948 bytes), offsets relative to its start:
