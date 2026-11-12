@@ -41,10 +41,17 @@ remains unverified.
 Budgets are half-open: a boundary exactly at the target is deferred, while
 already-due current-tick work can return FRAME with zero ticks consumed. Zero
 budget makes no progress. Only FRAME copies output arrays; other guest stops
-leave them unchanged. Ordinary `lynx_advance` discards frame delivery while
-retaining guest effects, and a later frame request waits for the next
-completion. Calls serialize on one instance; buffers are caller-owned and no
-pointer is retained. Independent instances share no mutable state.
+leave them unchanged. For a successful nonframe stop, the result reports that
+stop and consumed guest ticks; frame timestamps, sequence, row count and flags
+are zero, so the metadata does not imply that the payload is a frame. At a
+shared tick, timer work and a completed frame precede a CPU grant. A FRAME
+return therefore leaves a same-tick CPU write for the next call. A write watch
+returns at grant tick plus one after the bus write and CPU request completion;
+work due exactly at that return tick is deferred to the next positive call.
+Ordinary `lynx_advance` discards frame delivery while retaining guest effects,
+and a later frame request waits for the next completion. Calls serialize on one
+instance; buffers are caller-owned and no pointer is retained. Independent
+instances share no mutable state.
 
 The default `LEGACY_FLAT5` policy has no video or refresh grants. The explicit
 immutable `VIDEO_POLICY1` identity schedules one RAM byte per five-tick video
@@ -53,8 +60,9 @@ order is timer, video, refresh, CPU. Grant ownership delays CPU execution
 without changing priced cycle readiness. These cadence, costs and boundary
 choices are versioned software policy, not hardware measurements. Identity
 and snapshot state include the selected policy; reset/load preserve it and
-clear capture/input state. Per-row palette sampling does not prove intra-line
-color accuracy.
+clear capture/input state, stream ownership and host write watches. A rejected
+load preserves the full prior instance, including partial capture and watch
+state. Per-row palette sampling does not prove intra-line color accuracy.
 
 ## Input and evidence boundaries
 

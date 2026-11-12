@@ -15,6 +15,7 @@ api.cost_model.self_test	api
 api.cpu_program	api
 api.frame_edges	api
 api.frame_refusal	api
+api.frame_stops	api
 api.header_selfcontained	api
 api.identity	api
 api.init_refusal	api
@@ -56,6 +57,7 @@ api.video_bus_edges	api
 api.video_cadence	api
 api.video_geometry	api
 api.video_page_mode	api
+api.video_reset_load	api
 api.watch_controls	api
 api.watch_controls.self_test	api
 api.watch_independent	api
