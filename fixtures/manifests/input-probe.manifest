@@ -1,0 +1,16 @@
+source = fixtures/diagnostic/input_probe.s (project-authored)
+revision = in-repo
+recipe = pinned ca65 --cpu 65SC02 and ld65 -C fixtures/diagnostic/input_probe.cfg -Ln; consumer.frame_tracer
+sha256 = bbb75198f2bfd01e7ba415489ac6c78e2eccb43077f431deefba34c2c6e352b3
+config_sha256 = 64daaf42011ef8fc5f49307225ecf8ec082b5fc52cf2c06048f1a52592b730f9
+ca65_sha256 = aae8906856e0a07e3eb138ed83fd52c1f20ae0b21c35000ce774c896f1785967
+ld65_sha256 = e74938752aabfe22609d7cf3009a525630f1d4dc279a53bad569360b42b3ffd6
+source_built_guest_sha256 = 5c582fc2775992ece4cd6e6dab0f736ab8daec5cf92f17bd42888311fe5ba937
+source_built_guest_bytes = 150
+licence = project source all rights reserved (O5 open)
+notices = none
+allowed_use = original display/input diagnostic fixture test content
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/diagnostic/input_probe.s fixtures/diagnostic/input_probe.cfg

@@ -1,10 +1,10 @@
-/* Snapshot save and restore, format version 4.
+/* Snapshot save and restore, format version 5.
 
    A snapshot is a header followed by a payload. Every integer is
    little-endian and is written and read one field at a time, never by copying
    a struct, so padding bytes and host byte order never reach the blob.
 
-   Header (252 bytes), in order:
+   Header (256 bytes), in order:
      0    magic          8 bytes  "LYNXSNAP"
      8    format_version u32      4
      12   header_len     u32      252
@@ -21,7 +21,8 @@
      212  object_len     u32
      216  payload_len    u32      65604
      220  payload_sha256 32       SHA-256 of the payload
-   Payload (65604 bytes), offsets relative to its start:
+     252  timing_policy  u32
+   Payload (77948 bytes), offsets relative to its start:
      0  pc u16        2  a      3  x      4  y      5  s
      6  p (bits 4 and 5 set)    7  cpu latches (lynx__cpu.flags)
      8  opcode        9  step (cycle index inside the instruction)
@@ -33,6 +34,7 @@
      65601 fixed timer phase policy
      65602 event-already-applied-at-guest-tick (0 or 1)
      65603 bus ownership hold (0 or 1)
+     65604 video/input runtime header and bounded raw capture (format 5)
    The profile is not in the payload: it is part of the header identity. The
    CPU request and wake_pending are derived state and are never stored; restore
    recomputes them from CPU state and timer pending bits. Divider phase and
@@ -48,7 +50,7 @@
    cannot fail. A refused restore leaves the instance byte-identical. After
    that guest-state apply succeeds, host-only watch configuration and hit
    reporting are cleared; callers must explicitly rearm after restore.
-   Formats 1, 2 and 3 are refused as version errors.
+   Formats 1 through 4 are refused as version errors.
 
    Reversibility: restore needs the same build, so no old snapshot is ever
    accepted and the format may change in any later build without migration. */
@@ -78,7 +80,8 @@ enum {
     OFF_OBJECT_LEN = OFF_ENTRY_ADDR + 4,
     OFF_PAYLOAD_LEN = OFF_OBJECT_LEN + 4,
     OFF_PAYLOAD_SHA = OFF_PAYLOAD_LEN + 4,
-    OFF_END = OFF_PAYLOAD_SHA + 32
+    OFF_TIMING_POLICY = OFF_PAYLOAD_SHA + 32,
+    OFF_END = OFF_TIMING_POLICY + 4
 };
 
 /* Payload field offsets, relative to the start of the payload. */
@@ -105,7 +108,8 @@ enum {
     P_TIMER_PHASE_POLICY = P_TIMER_PENDING + 1,
     P_TIMER_EVENT_APPLIED = P_TIMER_PHASE_POLICY + 1,
     P_BUS_HOLD = P_TIMER_EVENT_APPLIED + 1,
-    P_END = P_BUS_HOLD + 1
+    P_VIDEO = P_BUS_HOLD + 1,
+    P_END = P_VIDEO + (int)LYNX__VIDEO_SNAPSHOT_LEN
 };
 
 _Static_assert(OFF_END == (int)LYNX__SNAPSHOT_HEADER_LEN, "snapshot header length");
@@ -240,6 +244,99 @@ static uint64_t max_public_ready_span(uint8_t cost_model)
     }
 }
 
+static void video_snapshot_write(uint8_t *out, const lynx__video_state *video)
+{
+    out[0] = video->dispctl; out[1] = video->pbkup;
+    out[2] = video->frame_synced; out[3] = video->line_ordinal;
+    out[4] = video->row_active; out[5] = video->capture_rows;
+    out[6] = video->dma_cursor; out[7] = video->capture_partial;
+    put_u16(out + 8, video->dispaddr); put_u16(out + 10, video->backup_addr);
+    put_u16(out + 12, video->input_mask);
+    out[14] = video->lefthand; out[15] = video->timing_policy;
+    put_u64(out + 16, video->dma_next_tick); put_u64(out + 24, video->dma_busy_until);
+    put_u64(out + 32, video->refresh_next_tick); put_u64(out + 40, video->refresh_busy_until);
+    put_u64(out + 48, video->frame_start_tick); put_u64(out + 56, video->frame_end_tick);
+    put_u64(out + 64, video->frame_sequence);
+    memcpy(out + LYNX__VIDEO_SNAPSHOT_HEADER, video->palette, sizeof video->palette);
+    memcpy(out + LYNX__VIDEO_SNAPSHOT_HEADER + sizeof video->palette,
+           video->pens, sizeof video->pens);
+    memcpy(out + LYNX__VIDEO_SNAPSHOT_HEADER + sizeof video->palette + sizeof video->pens,
+           video->palettes, sizeof video->palettes);
+    uint8_t *ticks = out + LYNX__VIDEO_SNAPSHOT_HEADER + sizeof video->palette +
+                     sizeof video->pens + sizeof video->palettes;
+    for (size_t i = 0u; i < LYNX__VIDEO_CAPTURE_TICKS; i++) put_u64(ticks + i * 8u, video->line_ticks[i]);
+}
+
+static void video_snapshot_read(lynx__video_state *video, const uint8_t *in)
+{
+    memset(video, 0, sizeof *video);
+    video->dispctl = in[0]; video->pbkup = in[1];
+    video->frame_synced = in[2]; video->line_ordinal = in[3];
+    video->row_active = in[4]; video->capture_rows = in[5];
+    video->dma_cursor = in[6]; video->capture_partial = in[7];
+    video->dispaddr = get_u16(in + 8); video->backup_addr = get_u16(in + 10);
+    video->input_mask = get_u16(in + 12);
+    video->lefthand = in[14]; video->timing_policy = in[15];
+    video->dma_next_tick = get_u64(in + 16); video->dma_busy_until = get_u64(in + 24);
+    video->refresh_next_tick = get_u64(in + 32); video->refresh_busy_until = get_u64(in + 40);
+    video->frame_start_tick = get_u64(in + 48); video->frame_end_tick = get_u64(in + 56);
+    video->frame_sequence = get_u64(in + 64);
+    memcpy(video->palette, in + LYNX__VIDEO_SNAPSHOT_HEADER, sizeof video->palette);
+    memcpy(video->pens, in + LYNX__VIDEO_SNAPSHOT_HEADER + sizeof video->palette, sizeof video->pens);
+    memcpy(video->palettes, in + LYNX__VIDEO_SNAPSHOT_HEADER + sizeof video->palette +
+           sizeof video->pens, sizeof video->palettes);
+    const uint8_t *ticks = in + LYNX__VIDEO_SNAPSHOT_HEADER + sizeof video->palette +
+                           sizeof video->pens + sizeof video->palettes;
+    for (size_t i = 0u; i < LYNX__VIDEO_CAPTURE_TICKS; i++) video->line_ticks[i] = get_u64(ticks + i * 8u);
+}
+
+static int bytes_zero(const uint8_t *bytes, size_t count)
+{
+    for (size_t i = 0u; i < count; i++) if (bytes[i] != 0u) return 0;
+    return 1;
+}
+
+static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uint32_t policy)
+{
+    if (video->timing_policy != policy || video->input_mask > LYNX_INPUT_MASK ||
+        video->lefthand > 1u || (video->dispctl & 0xFEu) != 0u ||
+        video->frame_synced > 1u || video->line_ordinal > 104u ||
+        video->row_active > 1u || video->capture_rows > LYNX_FRAME_MAX_ROWS ||
+        video->capture_partial > 1u || video->frame_end_tick != 0u ||
+        video->frame_start_tick > ticks ||
+        video->dma_busy_until > ticks + (ticks <= UINT64_MAX - 5u ? 5u : 0u) ||
+        video->refresh_busy_until > ticks + (ticks <= UINT64_MAX - 5u ? 5u : 0u)) return 0;
+    if (policy == LYNX_TIMING_POLICY_LEGACY_FLAT5) {
+        return video->row_active == 0u && video->capture_rows == 0u &&
+               video->dma_next_tick == 0u && video->refresh_next_tick == 0u &&
+               video->capture_partial == 0u &&
+               bytes_zero(video->pens, sizeof video->pens) &&
+               bytes_zero(video->palettes, sizeof video->palettes);
+    }
+    if (video->refresh_next_tick != 0u && video->refresh_next_tick < ticks) return 0;
+    if (video->row_active != 0u) {
+        if (video->frame_synced == 0u || video->dispctl == 0u ||
+            video->capture_rows >= LYNX_FRAME_MAX_ROWS || video->dma_cursor >= LYNX_FRAME_ROW_BYTES ||
+            video->dma_next_tick < ticks) return 0;
+    } else if (video->dma_cursor != 0u || video->dma_next_tick != 0u) {
+        return 0;
+    }
+    const size_t used_rows = (size_t)video->capture_rows + video->row_active;
+    if (used_rows > LYNX_FRAME_MAX_ROWS) return 0;
+    if (!bytes_zero(video->pens + used_rows * LYNX_FRAME_ROW_BYTES,
+                    sizeof video->pens - used_rows * LYNX_FRAME_ROW_BYTES) ||
+        !bytes_zero(video->palettes + used_rows * 32u,
+                    sizeof video->palettes - used_rows * 32u)) return 0;
+    for (size_t i = used_rows; i < LYNX__VIDEO_CAPTURE_TICKS; i++) {
+        if (video->line_ticks[i] != 0u) return 0;
+    }
+    if (video->row_active != 0u) {
+        const size_t tail = (size_t)video->capture_rows * LYNX_FRAME_ROW_BYTES + video->dma_cursor;
+        if (!bytes_zero(video->pens + tail, LYNX_FRAME_ROW_BYTES - video->dma_cursor)) return 0;
+    }
+    return 1;
+}
+
 lynx_status lynx_snapshot_size(const lynx_machine *m, size_t *size)
 {
     if (m == NULL || size == NULL) {
@@ -300,6 +397,7 @@ lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, 
                   m->timer_bank.last_event_tick == m->guest_ticks &&
                   timer_edge_due_now(&m->timer_bank, m->guest_ticks));
     payload[P_BUS_HOLD] = m->bus_hold;
+    video_snapshot_write(payload + P_VIDEO, &m->video);
 
     memcpy(buf + OFF_MAGIC, LYNX__SNAPSHOT_MAGIC, LYNX__SNAPSHOT_MAGIC_LEN);
     put_u32(buf + OFF_FORMAT, LYNX__SNAPSHOT_FORMAT);
@@ -316,6 +414,7 @@ lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, 
     put_u32(buf + OFF_ENTRY_ADDR, m->entry_addr);
     put_u32(buf + OFF_OBJECT_LEN, m->object_len);
     put_u32(buf + OFF_PAYLOAD_LEN, LYNX__SNAPSHOT_PAYLOAD_LEN);
+    put_u32(buf + OFF_TIMING_POLICY, m->cfg.timing_policy);
 
     lynx__sha256 hash;
     lynx__sha256_init(&hash);
@@ -370,7 +469,8 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
         get_u32(buf + OFF_CONTENT_FORMAT) != m->content_format ||
         get_u32(buf + OFF_STARTUP_TIER) != m->startup_tier ||
         get_u32(buf + OFF_ENTRY_ADDR) != m->entry_addr ||
-        get_u32(buf + OFF_OBJECT_LEN) != m->object_len) {
+        get_u32(buf + OFF_OBJECT_LEN) != m->object_len ||
+        get_u32(buf + OFF_TIMING_POLICY) != m->cfg.timing_policy) {
         return LYNX_ERR_SNAPSHOT_MISMATCH;
     }
     /* 8. Payload length. */
@@ -459,6 +559,11 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     if (!timer_bank_valid(&timer_cand, ticks, event_applied)) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
+    lynx__video_state video_cand;
+    video_snapshot_read(&video_cand, payload + P_VIDEO);
+    if (!video_state_valid(&video_cand, ticks, m->cfg.timing_policy)) {
+        return LYNX_ERR_SNAPSHOT_INVALID;
+    }
 
     /* Apply: one step, field by field, no failure path. The pending bus
        request is recomputed from the restored state. */
@@ -479,6 +584,7 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     m->mapctl = payload[P_MAPCTL];
     memcpy(m->ram, payload + P_RAM, LYNX_ADDRESS_SPACE);
     m->timer_bank = timer_cand;
+    m->video = video_cand;
     m->bus_hold = bus_hold;
     m->wake_pending = timer_cand.pending != 0u ? 1u : 0u;
     /* Every refusal check is above. Successful restore resumes guest state

@@ -40,6 +40,16 @@ function(lynx_consumer_test name scenario profile timeout)
 endfunction()
 
 lynx_consumer_test(consumer.public_api public_api none 60)
+lynx_add_test(NAME consumer.frame_tracer
+  COMMAND ${CMAKE_COMMAND}
+    -DROOT=${PROJECT_SOURCE_DIR}
+    -DWORK=${LYNX_SCRATCH_DIR}/consumer/frame_tracer
+    -DSCRATCH_ROOT=${LYNX_SCRATCH_DIR}/consumer
+    -DCONSUMER=$<TARGET_FILE:lynx-consume>
+    -DARTIFACT_CHECKER=$<TARGET_FILE:lynx-check-artifacts>
+    -DENV_EXECUTABLE=${LYNX_ENV_EXECUTABLE}
+    -P ${CMAKE_CURRENT_LIST_DIR}/frame_driver.cmake
+  LABELS consumer TIMEOUT 120)
 lynx_consumer_test(consumer.snapshot_ppm snapshot_ppm none 60)
 lynx_consumer_test(consumer.silence_wav silence_wav none 60)
 lynx_consumer_test(consumer.refusal_controls refusal_controls none 90)

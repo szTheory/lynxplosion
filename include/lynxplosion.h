@@ -39,14 +39,14 @@ enum {
     LYNX_ERR_UNAVAILABLE = 10       /* requested mapped observation is unavailable */
 };
 
-/* Why lynx_advance returned. FRAME and HALT remain reserved in this build.
-   WATCH reports a completed matching CPU write. UNAVAILABLE leaves the
-   pending CPU request uncompleted at its grant. */
+/* Why an advance returned. lynx_advance_frame can stop at FRAME. WATCH
+   reports a completed matching CPU write. UNAVAILABLE leaves the pending
+   CPU request uncompleted at its grant. */
 typedef uint32_t lynx_stop_reason;
 enum {
-    LYNX_STOP_BUDGET = 0,   /* the tick budget was used up */
-    LYNX_STOP_FRAME = 1,    /* reserved */
-    LYNX_STOP_WATCH = 2,    /* reserved */
+    LYNX_STOP_BUDGET = 0,   /* the half-open tick budget was used up */
+    LYNX_STOP_FRAME = 1,    /* a timer-generated video frame completed */
+    LYNX_STOP_WATCH = 2,    /* a matching CPU write completed */
     LYNX_STOP_HALT = 3,     /* reserved */
     LYNX_STOP_UNDEFINED = 4, /* profile NONE reached an opcode the Lynx profiles disagree on */
     LYNX_STOP_UNAVAILABLE = 5 /* the pending CPU bus route has no implemented target */
@@ -65,6 +65,14 @@ enum { LYNX_PROFILE_NONE = 0, LYNX_PROFILE_LYNX1 = 1, LYNX_PROFILE_LYNX2 = 2 };
    SplitMix64 generator (public domain) started at ram_seed: eight bytes per
    output, least significant byte first, from address 0. */
 enum { LYNX_RAM_POLICY_ZERO = 0, LYNX_RAM_POLICY_SPLITMIX64 = 1 };
+
+/* The default legacy policy preserves flat five-tick CPU timing and performs
+   no video or refresh grants. VIDEO_POLICY1 enables the bounded, unverified
+   software video/refresh grant cadence described by the frame API below. */
+enum {
+    LYNX_TIMING_POLICY_LEGACY_FLAT5 = 0,
+    LYNX_TIMING_POLICY_VIDEO_POLICY1 = 1
+};
 
 /* Register ids for lynx_read_register. P reads with bits 4 and 5 set.
    CPU_STATE packs the CPU's position inside an instruction:
@@ -103,10 +111,11 @@ typedef struct lynx_config {
     uint32_t ram_policy;  /* LYNX_RAM_POLICY_* */
     uint32_t reserved;    /* must be zero */
     uint64_t ram_seed;    /* SplitMix64 start state; unused by the ZERO policy */
+    uint32_t timing_policy; /* LYNX_TIMING_POLICY_*; immutable and in identity */
 } lynx_config;
 
 /* Fills cfg with the defaults: profile NONE, RAM policy ZERO (fixed 0x00),
-   seed 0. A NULL cfg is ignored. */
+   seed 0, and LYNX_TIMING_POLICY_LEGACY_FLAT5. A NULL cfg is ignored. */
 void lynx_config_default(lynx_config *cfg);
 
 /* The stable name of a profile id ("none", "lynx1", "lynx2"), or NULL for an
@@ -204,6 +213,96 @@ lynx_status lynx_load_bll(lynx_machine *m, const uint8_t *bytes, size_t len);
 lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
                          lynx_stop_reason *stop);
 
+/* Logical pressed levels. A/B and Option 1/2 are independent bits; unknown
+   bits are refused. A and B map to JOYSTICK bits 0 and 1, Option 1 and 2 to
+   bits 3 and 2, and Pause to SWITCHES bit 0. Direction pairs swap when
+   SPRSYS.Lefthand is clear. These are deterministic project mappings; physical
+   polarity and controller discovery are outside the core. */
+enum {
+    LYNX_INPUT_UP = 1u << 0, LYNX_INPUT_DOWN = 1u << 1,
+    LYNX_INPUT_LEFT = 1u << 2, LYNX_INPUT_RIGHT = 1u << 3,
+    LYNX_INPUT_A = 1u << 4, LYNX_INPUT_B = 1u << 5,
+    LYNX_INPUT_OPTION1 = 1u << 6, LYNX_INPUT_OPTION2 = 1u << 7,
+    LYNX_INPUT_PAUSE = 1u << 8, LYNX_INPUT_MASK = 0x1ffu
+};
+
+/* Replaces all nine logical input levels at the current guest tick. A valid
+   initialized instance needs no loaded content. Unknown bits return
+   LYNX_ERR_ARGUMENT; NULL returns LYNX_ERR_ARGUMENT; a deinitialized machine
+   returns LYNX_ERR_STATE. A refusal changes neither machine nor guest time.
+   Successful reset/load clears the levels to released. */
+lynx_status lynx_set_input(lynx_machine *m, uint32_t pressed_mask);
+
+enum {
+    LYNX_FRAME_WIDTH = 160,
+    LYNX_FRAME_ROW_BYTES = 80,
+    LYNX_FRAME_MAX_ROWS = 102,
+    LYNX_FRAME_PENS_CAPACITY = 8160,
+    LYNX_FRAME_PALETTE_CAPACITY = 3264,
+    LYNX_FRAME_LINE_TICKS_CAPACITY = 102,
+    LYNX_FRAME_PARTIAL = 1u /* at least one captured row ended before 80 bytes */
+};
+
+typedef struct lynx_frame_buffers {
+    uint32_t struct_size;
+    uint32_t reserved;
+    uint8_t *pens;
+    size_t pens_capacity;
+    uint8_t *palettes;
+    size_t palettes_capacity;
+    uint64_t *line_ticks;
+    size_t line_ticks_capacity;
+} lynx_frame_buffers;
+
+typedef struct lynx_frame_result {
+    uint32_t struct_size;
+    lynx_stop_reason stop;
+    uint64_t ticks_consumed;
+    uint64_t frame_start_tick;
+    uint64_t frame_end_tick;
+    uint64_t sequence;
+    uint32_t row_count;
+    uint32_t flags;
+} lynx_frame_result;
+
+/* Advances until one Timer 2 frame event or the half-open budget ends. The
+   VIDEO_POLICY1 config must be selected; legacy flat5/no-DMA instances return
+   LYNX_ERR_UNAVAILABLE without changing the instance or outputs. Same-tick
+   timer work precedes video DMA, then refresh, then CPU grants. Video DMA
+   serves one underlying-RAM byte per five guest ticks; refresh takes one
+   five-tick grant at ticks 256, 512, ... . These are versioned software
+   policy values, not measured Lynx cadence or accuracy claims. CPU cycle price
+   and grant ownership remain separate.
+
+   Both descriptors must have exact struct_size values; buffers.reserved must
+   be zero. All three buffers are required with capacities of at least the
+   declared maxima, line_ticks must meet uint64_t alignment, and the descriptor,
+   result, buffers and machine must have pairwise disjoint address ranges. The
+   full declared capacities are checked for wrap and overlap before progress.
+   Any invalid span/alignment/capacity or API error leaves the machine,
+   result and buffers unchanged. The call retains no caller pointer.
+
+   On LYNX_OK, result reports FRAME, BUDGET or the same CPU stop as
+   lynx_advance. FRAME copies all fixed-capacity arrays exactly once; a
+   non-FRAME stop leaves the three data buffers untouched. A first zero-row
+   synchronization frame is returned as FRAME with sequence 0 and is not a
+   renderable image. Later frame sequences increase from 1. frame_start_tick
+   names the preceding Timer 2 boundary, frame_end_tick the completing
+   boundary. row_count is 0..102; partial rows are included and flagged with
+   LYNX_FRAME_PARTIAL. Unused capture bytes are zero.
+
+   Pens are raw 4-bit register indices, two per 80-byte row, high nibble first
+   in display order; rows are 160 pixels wide, without host rotation. Per-row
+   palettes are 32 raw bytes in GREEN0..GREEN15 then BLUERED0..BLUERED15 order;
+   line_ticks has one guest line-start tick per row. Palette sampling at a row
+   boundary is project policy and does not establish intra-line color
+   accuracy. PBKUP is retained as a guest register latch; this slice does not
+   transform raw output on the host. Calls on one instance must be
+   caller-serialized; independent instances share no mutable state. */
+lynx_status lynx_advance_frame(lynx_machine *m, uint64_t budget,
+                              const lynx_frame_buffers *buffers,
+                              lynx_frame_result *result);
+
 /* A one-shot write-watch event. hit is 1 when a CPU bus write matched the
    configured range; otherwise all fields are zero. hit_tick is the access
    sample tick (currently the grant tick), and return_tick is one tick later. */
@@ -258,7 +357,8 @@ lynx_status lynx_guest_ticks(const lynx_machine *m, uint64_t *ticks);
    object; the host never supplies it. content_addr/content_len identify the
    payload in RAM, while object_len includes any container header. entry_addr
    is the first CPU address. Before any load, the content and startup fields
-   are zero. reserved is always zero. */
+   are zero. reserved is always zero. timing_policy is the immutable
+   LYNX_TIMING_POLICY_* chosen at initialization. */
 typedef struct lynx_identity {
     uint32_t profile;    /* LYNX_PROFILE_* */
     uint32_t ram_policy; /* LYNX_RAM_POLICY_* */
@@ -272,6 +372,7 @@ typedef struct lynx_identity {
     uint32_t startup_tier;   /* LYNX_STARTUP_* */
     uint32_t entry_addr;
     uint32_t object_len;
+    uint32_t timing_policy; /* LYNX_TIMING_POLICY_* */
 } lynx_identity;
 
 /* Side-effect-free inspect. NULL m or out gives LYNX_ERR_ARGUMENT; a
@@ -287,17 +388,20 @@ lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out);
 const char *lynx_build_id(void);
 
 /* Snapshots. A snapshot is a versioned blob: a header that names the build,
-   profile, RAM policy, seed and loaded content, then the machine state with a
-   SHA-256 of that state. All integers in it are little-endian. Format 3 added
-   content format, startup tier, entry, object length and MAPCTL. Format 4
-   adds timer/IRQ state, the current-tick event cursor and CPU bus hold; the
-   posted request and wake state are derived. It is documented beside its code
-   in core/snapshot.c; versions 1 through 3 are refused.
+   profile, RAM policy, seed, timing policy and loaded content, then machine
+   state with a SHA-256 of that state. All integers in it are little-endian.
+   Format 3 added content format, startup tier, entry, object length and
+   MAPCTL. Format 4 adds timer/IRQ state, the current-tick event cursor and
+   CPU bus hold. Format 5 adds logical input, video registers, DMA/refresh cursors
+   and the bounded capture. The posted request and wake state are derived. It
+   is documented beside its code in core/snapshot.c; versions 1 through 4 are
+   refused.
 
    A snapshot restores only into an instance of the same build (the full
-   lynx_build_id string), with the same profile, RAM policy and seed and the
-   same loaded content (same bytes at the same address). Anything else is
-   refused, so no snapshot from an older or different build is ever accepted.
+   lynx_build_id string), with the same profile, RAM policy, seed, timing
+   policy and the same loaded content (same bytes at the same address).
+   Anything else is refused, so no snapshot from an older or different build
+   is ever accepted.
 
    lynx_snapshot_size gives the exact size of every snapshot of this build; it
    needs only an initialised machine. lynx_snapshot_save writes that many

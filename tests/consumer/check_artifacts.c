@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <poll.h>
 #include <stdint.h>
 #include <signal.h>
@@ -17,6 +18,7 @@
 
 enum {
     PPM_LIMIT = 4096,
+    FRAME_PPM_LIMIT = 50000,
     MANIFEST_LIMIT = 2048,
     WAV_DATA_BYTES = 1600,
     WAV_SIZE = 44 + WAV_DATA_BYTES,
@@ -443,6 +445,137 @@ done:
     free(wav);
     (void)ppm_data_offset;
     return result;
+}
+
+static int has_exact_line(const uint8_t *bytes, size_t length, const char *line)
+{
+    const size_t line_len = strlen(line);
+    size_t offset = 0u;
+    while (offset < length) {
+        size_t end = offset;
+        while (end < length && bytes[end] != (uint8_t)'\n') end++;
+        if (end - offset == line_len && memcmp(bytes + offset, line, line_len) == 0) return 1;
+        offset = end < length ? end + 1u : end;
+    }
+    return 0;
+}
+
+static int has_sha_field(const uint8_t *bytes, size_t length, const char *name)
+{
+    const size_t prefix_len = strlen(name);
+    size_t offset = 0u;
+    while (offset < length) {
+        size_t end = offset;
+        while (end < length && bytes[end] != (uint8_t)'\n') end++;
+        if (end - offset == prefix_len + 64u && memcmp(bytes + offset, name, prefix_len) == 0) {
+            char value[65];
+            memcpy(value, bytes + offset + prefix_len, 64u);
+            value[64] = '\0';
+            return valid_sha256(value);
+        }
+        offset = end < length ? end + 1u : end;
+    }
+    return 0;
+}
+
+static int validate_frame_ppm(const char *path, unsigned frame_index,
+                              uint64_t start_tick, uint64_t end_tick,
+                              uint32_t input_mask, uint32_t sample_a,
+                              char *error, size_t error_cap)
+{
+    uint8_t *bytes = NULL;
+    size_t length = 0u, marker_at = SIZE_MAX;
+    const char marker[] = "\n160 102\n255\n";
+    const uint8_t released[3] = {0u,255u,0u};
+    const uint8_t pressed[3] = {255u,0u,0u};
+    const uint8_t black[3] = {0u,0u,0u};
+    const uint8_t *expected = frame_index == 0u ? released : pressed;
+    char line[128];
+    if (read_bounded(path, FRAME_PPM_LIMIT, &bytes, &length, error, error_cap) != 0) return 1;
+    if (length < 3u || memcmp(bytes, "P6\n", 3u) != 0) goto invalid;
+    for (size_t i = 0u; i + sizeof marker - 1u <= length; i++) {
+        if (memcmp(bytes + i, marker, sizeof marker - 1u) == 0) { marker_at = i; break; }
+    }
+    if (marker_at == SIZE_MAX || length - (marker_at + sizeof marker - 1u) != 160u * 102u * 3u) goto invalid;
+    if (!has_exact_line(bytes, marker_at, "# artifact = FRAME")) goto invalid;
+    (void)snprintf(line, sizeof line, "# sequence = %u", frame_index == 0u ? 1u : 2u);
+    if (!has_exact_line(bytes, marker_at, line)) goto invalid;
+    (void)snprintf(line, sizeof line, "# frame_start_tick = %" PRIu64, start_tick);
+    if (!has_exact_line(bytes, marker_at, line)) goto invalid;
+    (void)snprintf(line, sizeof line, "# frame_end_tick = %" PRIu64, end_tick);
+    if (!has_exact_line(bytes, marker_at, line)) goto invalid;
+    (void)snprintf(line, sizeof line, "# rows = 102");
+    if (!has_exact_line(bytes, marker_at, line)) goto invalid;
+    (void)snprintf(line, sizeof line, "# input_mask = %u", input_mask);
+    if (!has_exact_line(bytes, marker_at, line)) goto invalid;
+    (void)snprintf(line, sizeof line, "# sample_a = %u", sample_a);
+    if (!has_exact_line(bytes, marker_at, line)) goto invalid;
+    {
+        const size_t raster = marker_at + sizeof marker - 1u;
+        for (size_t pixel = 0u; pixel < 160u * 102u; pixel++) {
+            const uint8_t *wanted = pixel < 2u ? expected : black;
+            if (memcmp(bytes + raster + pixel * 3u, wanted, 3u) != 0) goto invalid;
+        }
+    }
+    free(bytes);
+    return 0;
+invalid:
+    free(bytes);
+    set_error(error, error_cap, "raw PPM geometry, identity or independently expected released/A pen pixels are invalid");
+    return 1;
+}
+
+static int validate_frame_directory(const char *directory, char *error, size_t error_cap)
+{
+    uint8_t *manifest = NULL;
+    size_t manifest_len = 0u;
+    char paths[3][4096];
+    const char *names[3] = {"released.ppm", "pressed.ppm", "frame-trace.manifest"};
+    if (directory == NULL || strlen(directory) >= sizeof paths[0] - sizeof("/frame-trace.manifest")) {
+        set_error(error, error_cap, "frame output path exceeds its bound");
+        return 1;
+    }
+    for (size_t i = 0u; i < 3u; i++) {
+        if (path_join(directory, names[i], paths[i], sizeof paths[i]) != 0) return 1;
+    }
+    if (validate_frame_ppm(paths[0], 0u, UINT64_C(54272), UINT64_C(108544), 0u, 0u,
+                           error, error_cap) != 0 ||
+        validate_frame_ppm(paths[1], 1u, UINT64_C(108544), UINT64_C(162816), 16u, 1u,
+                           error, error_cap) != 0 ||
+        read_bounded(paths[2], 4096u, &manifest, &manifest_len, error, error_cap) != 0) goto failed;
+#define EXPECT_LINE(text) do { if (!has_exact_line(manifest, manifest_len, (text))) goto invalid; } while (0)
+    EXPECT_LINE("artifact = FRAME_TRACE");
+    EXPECT_LINE("profile = none");
+    EXPECT_LINE("startup = A");
+    EXPECT_LINE("timing_policy = video-policy1-unverified");
+    EXPECT_LINE("event_count = 1");
+    EXPECT_LINE("event_tick = 109321");
+    EXPECT_LINE("event_mask = 16");
+    EXPECT_LINE("sync_rows = 0");
+    EXPECT_LINE("sync_end_tick = 54272");
+    EXPECT_LINE("released_sequence = 1");
+    EXPECT_LINE("released_start_tick = 54272");
+    EXPECT_LINE("released_end_tick = 108544");
+    EXPECT_LINE("released_rows = 102");
+    EXPECT_LINE("released_sample_a = 0");
+    EXPECT_LINE("pressed_sequence = 2");
+    EXPECT_LINE("pressed_start_tick = 108544");
+    EXPECT_LINE("pressed_end_tick = 162816");
+    EXPECT_LINE("pressed_rows = 102");
+    EXPECT_LINE("pressed_sample_a = 1");
+    EXPECT_LINE("guest_progress = 2");
+    EXPECT_LINE("palette_policy = per-line GREEN then BLUERED raw nibbles; intra-line color accuracy unverified");
+    EXPECT_LINE("raw_pen_order = high nibble first; no host rotation");
+    if (!has_sha_field(manifest, manifest_len, "content_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "input_sha256 = ")) goto invalid;
+#undef EXPECT_LINE
+    free(manifest);
+    return 0;
+invalid:
+    set_error(error, error_cap, "frame trace manifest does not match its independent guest/input expectations");
+failed:
+    free(manifest);
+    return 1;
 }
 
 static int write_owned_file(const char *path, const void *bytes, size_t length)
@@ -1330,6 +1463,14 @@ int main(int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "self-test") == 0) {
         return self_test();
     }
+    if (argc == 3 && strcmp(argv[1], "frames") == 0) {
+        if (validate_frame_directory(argv[2], error, sizeof error) == 0) {
+            puts("artifact-check: independent released/A raw-frame semantics are valid");
+            return 0;
+        }
+        fprintf(stderr, "artifact-check: %s\n", error);
+        return 1;
+    }
     if (argc == 6 && strcmp(argv[1], "publication") == 0) {
         if (publication_control(argv[2], argv[3], argv[4], argv[5]) != 0) {
             return 1;
@@ -1364,6 +1505,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "artifact-check: %s\n", error);
         return 1;
     }
-    fprintf(stderr, "Usage: lynx-check-artifacts <output-directory> | self-test | publication CONSUMER BLL LABELS OUTPUT\n");
+    fprintf(stderr, "Usage: lynx-check-artifacts <output-directory> | frames DIRECTORY | self-test | publication CONSUMER BLL LABELS OUTPUT\n");
     return 2;
 }

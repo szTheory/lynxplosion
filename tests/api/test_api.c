@@ -424,6 +424,7 @@ static void case_identity(void)
     CHECK_EQ_U64(id.startup_tier, LYNX_STARTUP_NONE);
     CHECK_EQ_U64(id.entry_addr, 0u);
     CHECK_EQ_U64(id.object_len, 0u);
+    CHECK_EQ_U64(id.timing_policy, LYNX_TIMING_POLICY_LEGACY_FLAT5);
 
     CHECK_EQ_U64(load_bll_at(m, tracer_image, sizeof tracer_image, 0x0200u), LYNX_OK);
     memset(&id, 0xA5, sizeof id);
@@ -439,6 +440,7 @@ static void case_identity(void)
     CHECK_EQ_U64(id.startup_tier, LYNX_STARTUP_A);
     CHECK_EQ_U64(id.entry_addr, 0x0200u);
     CHECK_EQ_U64(id.object_len, 42u);
+    CHECK_EQ_U64(id.timing_policy, LYNX_TIMING_POLICY_LEGACY_FLAT5);
     char hex[65];
     lynx__sha256_hex(id.content_sha256, hex);
     CHECK(strcmp(hex, "bab6f7ea8d9ba129db7e7a776f61a73162ccd67f2348d3a17a31ae7dda31da4e") == 0);
@@ -2399,7 +2401,7 @@ static void case_reset_power_on(void)
 #define SNAP_OFF_PAYLOAD_SHA 220u
 #define SNAP_SEED 0x0123456789abcdefu
 
-/* Payload offsets of format 4 (white-box, from core/snapshot.c). */
+/* Payload offsets of format 5 (white-box, from core/snapshot.c). */
 enum {
     PAY_PC = 0, PAY_P = 6, PAY_FLAGS = 7, PAY_OPCODE = 8, PAY_STEP = 9, PAY_EA = 10, PAY_TMP = 12,
     PAY_COST_MODEL = 13, PAY_MAPCTL = 14, PAY_RESERVED = 15, PAY_TICKS = 16, PAY_READY_AT = 24,
@@ -2841,7 +2843,7 @@ static void case_snapshot_roundtrip(void)
     CHECK_UNCHANGED(machine_buf, snap_a);
     CHECK_EQ_U64(blob_v[SNAP_TOTAL], 0xA5u); /* nothing written past the end */
     CHECK(memcmp(blob_v, "LYNXSNAP", 8u) == 0);
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 4u); /* format 4 */
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 5u); /* format 5 */
     CHECK_EQ_U64(get_le(blob_v + 12u, 4u), LYNX__SNAPSHOT_HEADER_LEN);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
@@ -3009,14 +3011,15 @@ static void case_bll_identity(void)
     CHECK_EQ_U64(m->mapctl, 0x0Cu);
     CHECK_EQ_U64(save_into(m, blob_v), 0u);
 
-    /* Format 4 carries the complete object identity in the LE header and the
+    /* Format 5 carries the complete object and timing identity in the LE header and the
        guest-written MAPCTL latch in the payload. */
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 4u);
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 5u);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
     CHECK_EQ_U64(get_le(blob_v + 208u, 4u), 0x0200u);
     CHECK_EQ_U64(get_le(blob_v + 212u, 4u), sizeof bll_tracer);
     CHECK_EQ_U64(get_le(blob_v + 216u, 4u), LYNX__SNAPSHOT_PAYLOAD_LEN);
+    CHECK_EQ_U64(get_le(blob_v + 252u, 4u), LYNX_TIMING_POLICY_LEGACY_FLAT5);
     CHECK_EQ_U64(blob_v[LYNX__SNAPSHOT_HEADER_LEN + 14u], 0x0Cu);
     CHECK_EQ_U64(blob_v[LYNX__SNAPSHOT_HEADER_LEN + 15u], 0u);
 
@@ -3066,6 +3069,9 @@ static lynx_status header_flip_status(size_t i)
     }
     if (i < 216u) {
         return LYNX_ERR_SNAPSHOT_MISMATCH; /* build, profile, policy, seed, full content identity */
+    }
+    if (i >= 252u) {
+        return LYNX_ERR_SNAPSHOT_MISMATCH; /* timing-policy identity */
     }
     return LYNX_ERR_SNAPSHOT_INVALID; /* payload_len, payload_sha256 */
 }
@@ -3219,8 +3225,8 @@ static void case_snapshot_refusal(void)
     RESTORE_EXPECT(m, blob_v, 0u, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
     RESTORE_EXPECT(m, blob_v, LYNX__SNAPSHOT_HEADER_LEN, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
 
-    /* Formats 1, 2 and 3 are unsupported; format 4 is the current positive case. */
-    CHECK_EQ_U64(blob_bad[8], 4u);
+    /* Formats 1 through 4 are unsupported; format 5 is the current positive case. */
+    CHECK_EQ_U64(blob_bad[8], 5u);
     CHECK_EQ_U64(blob_bad[9] | blob_bad[10] | blob_bad[11], 0u);
     blob_bad[8] = 1u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
@@ -3229,6 +3235,8 @@ static void case_snapshot_refusal(void)
     blob_bad[8] = 3u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
     blob_bad[8] = 4u;
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
+    blob_bad[8] = 5u;
 
     /* Another identity: each refused as a MISMATCH, whatever the blob holds. */
     unsigned char other_image[sizeof churn_loop];

@@ -41,6 +41,7 @@ void lynx_config_default(lynx_config *cfg)
     cfg->ram_policy = LYNX_RAM_POLICY_ZERO;
     cfg->reserved = 0u;
     cfg->ram_seed = 0u;
+    cfg->timing_policy = LYNX_TIMING_POLICY_LEGACY_FLAT5;
 }
 
 /* A switch over string literals: a table of pointers would land in
@@ -129,6 +130,7 @@ void lynx__power_on(lynx_machine *m)
     m->guest_ticks = 0u;
     m->cpu_ready_at = m->guest_ticks;
     lynx__timer_init(&m->timer_bank);
+    lynx__video_init(&m->video, m->cfg.timing_policy);
     memset(&m->host_observation, 0, sizeof m->host_observation);
 }
 
@@ -157,7 +159,8 @@ lynx_status lynx_machine_init(void *mem, size_t size, const lynx_config *cfg, ly
     }
     if (cfg->struct_size != (uint32_t)sizeof(lynx_config) || !profile_valid(cfg->profile) ||
         (cfg->ram_policy != LYNX_RAM_POLICY_ZERO && cfg->ram_policy != LYNX_RAM_POLICY_SPLITMIX64) ||
-        cfg->reserved != 0u) {
+        (cfg->timing_policy != LYNX_TIMING_POLICY_LEGACY_FLAT5 &&
+         cfg->timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1) || cfg->reserved != 0u) {
         return LYNX_ERR_ARGUMENT;
     }
     struct lynx_machine *m = (struct lynx_machine *)mem;
@@ -375,8 +378,9 @@ static bool bus_request_available(const struct lynx_machine *m, uint16_t addr, u
         return true;
     }
     if (route == LYNX__BUS_ROUTE_MIKEY) {
-        return lynx__timer_available(addr);
+        return lynx__timer_available(addr) || lynx__video_available(addr);
     }
+    if (route == LYNX__BUS_ROUTE_SUZY) return lynx__input_available(addr);
     return route == LYNX__BUS_ROUTE_MAPCTL && (flags & LYNX__CF_WRITE) != 0u;
 }
 
@@ -415,8 +419,17 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
         *result = data;
         return true;
     case LYNX__BUS_ROUTE_MIKEY:
-        if (!lynx__timer_available(addr)) {
+        if (!lynx__timer_available(addr) && !lynx__video_available(addr)) {
             return false;
+        }
+        if (lynx__video_available(addr)) {
+            if (write) {
+                if (!lynx__video_write(&m->video, addr, data)) return false;
+                *result = data;
+            } else {
+                *result = lynx__video_peek(&m->video, addr);
+            }
+            return true;
         }
         if (write) {
             if (!lynx__timer_write(&m->timer_bank, addr, data)) {
@@ -428,6 +441,14 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
         }
         return true;
     case LYNX__BUS_ROUTE_SUZY:
+        if (!lynx__input_available(addr)) return false;
+        if (write) {
+            if (!lynx__input_write(&m->video, addr, data)) return false;
+            *result = data;
+        } else {
+            *result = lynx__input_peek(&m->video, addr);
+        }
+        return true;
     case LYNX__BUS_ROUTE_ROM:
     case LYNX__BUS_ROUTE_VECTOR:
         return false;
@@ -451,8 +472,8 @@ bool lynx__machine_event_before(lynx__machine_event a, lynx__machine_event b)
    after target is not. A cycle granted before target is performed even when
    its duration ends past target; cpu_ready_at records when the next one may
    start, and the clock stops at target. */
-lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
-                         lynx_stop_reason *stop)
+static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
+                                   lynx_stop_reason *stop, bool stop_on_frame)
 {
     if (m == NULL || consumed == NULL || stop == NULL) {
         return LYNX_ERR_ARGUMENT;
@@ -479,9 +500,33 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
             next.sequence = (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE;
             has_event = true;
         }
+        uint64_t video_tick = 0u;
+        if (lynx__video_next_dma(&m->video, m->guest_ticks, &video_tick) &&
+            video_tick < target) {
+            const lynx__machine_event video_event = {
+                video_tick, (uint8_t)LYNX__MACHINE_EVENT_VIDEO_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
+            if (!has_event || lynx__machine_event_before(video_event, next)) {
+                next = video_event;
+                has_event = true;
+            }
+        }
+        uint64_t refresh_tick = 0u;
+        if (lynx__video_next_refresh(&m->video, m->guest_ticks, &refresh_tick) &&
+            refresh_tick < target) {
+            const lynx__machine_event refresh_event = {
+                refresh_tick, (uint8_t)LYNX__MACHINE_EVENT_REFRESH_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
+            if (!has_event || lynx__machine_event_before(refresh_event, next)) {
+                next = refresh_event;
+                has_event = true;
+            }
+        }
         const bool cpu_available = m->bus_hold == 0u;
-        const uint64_t cpu_tick = m->cpu_ready_at > m->guest_ticks ?
-                                      m->cpu_ready_at : m->guest_ticks;
+        uint64_t cpu_tick = m->cpu_ready_at > m->guest_ticks ?
+                                m->cpu_ready_at : m->guest_ticks;
+        if (m->video.dma_busy_until > cpu_tick) cpu_tick = m->video.dma_busy_until;
+        if (m->video.refresh_busy_until > cpu_tick) cpu_tick = m->video.refresh_busy_until;
         if (cpu_available && cpu_tick < target) {
             const lynx__machine_event cpu_event = {
                 cpu_tick, (uint8_t)LYNX__MACHINE_EVENT_CPU_PRIORITY,
@@ -501,8 +546,26 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
             machine_set_guest_tick(m, next.tick);
             /* Drain the timer's bounded owned-link prefix before allowing a
                same-tick CPU bus request to observe the mapped bank. */
-            lynx__timer_apply(&m->timer_bank, next.tick);
+            const uint8_t borrow_mask = lynx__timer_apply(&m->timer_bank, next.tick);
+            const bool frame_complete = lynx__video_timer_apply(&m->video, borrow_mask, next.tick);
             machine_update_wake_request(m);
+            if (frame_complete) {
+                if (stop_on_frame) {
+                    *stop = LYNX_STOP_FRAME;
+                    break;
+                }
+                lynx__video_discard_frame(&m->video, next.tick);
+            }
+            continue;
+        }
+        if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_VIDEO_PRIORITY) {
+            machine_set_guest_tick(m, next.tick);
+            lynx__video_dma_apply(&m->video, m->ram, next.tick);
+            continue;
+        }
+        if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_REFRESH_PRIORITY) {
+            machine_set_guest_tick(m, next.tick);
+            lynx__video_refresh_apply(&m->video, next.tick);
             continue;
         }
         if (next.tick > m->guest_ticks) {
@@ -554,6 +617,103 @@ lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
         }
     }
     *consumed = m->guest_ticks - start;
+    return LYNX_OK;
+}
+
+lynx_status lynx_advance(lynx_machine *m, uint64_t budget, uint64_t *consumed,
+                         lynx_stop_reason *stop)
+{
+    return machine_advance(m, budget, consumed, stop, false);
+}
+
+static bool span_valid(const void *ptr, size_t size)
+{
+    const uintptr_t begin = (uintptr_t)ptr;
+    return size <= UINTPTR_MAX - begin;
+}
+
+static bool span_overlap(const void *a, size_t a_size, const void *b, size_t b_size)
+{
+    const uintptr_t a_begin = (uintptr_t)a;
+    const uintptr_t b_begin = (uintptr_t)b;
+    const uintptr_t a_end = a_begin + (uintptr_t)a_size;
+    const uintptr_t b_end = b_begin + (uintptr_t)b_size;
+    return a_begin < b_end && b_begin < a_end;
+}
+
+static bool frame_spans_disjoint(const lynx_machine *m, const lynx_frame_buffers *buffers,
+                                 lynx_frame_result *result)
+{
+    const size_t descriptor_size = sizeof *buffers;
+    const size_t result_size = sizeof *result;
+    const size_t pens_size = buffers->pens_capacity;
+    const size_t palettes_size = buffers->palettes_capacity;
+    const size_t ticks_size = buffers->line_ticks_capacity * sizeof(uint64_t);
+    if (buffers->line_ticks_capacity > SIZE_MAX / sizeof(uint64_t) ||
+        !span_valid(buffers, descriptor_size) || !span_valid(result, result_size) ||
+        !span_valid(buffers->pens, pens_size) || !span_valid(buffers->palettes, palettes_size) ||
+        !span_valid(buffers->line_ticks, ticks_size)) return false;
+    const struct { const void *ptr; size_t size; } spans[] = {
+        {m, sizeof *m}, {buffers, descriptor_size}, {result, result_size},
+        {buffers->pens, pens_size}, {buffers->palettes, palettes_size},
+        {buffers->line_ticks, ticks_size}
+    };
+    for (size_t i = 0u; i < sizeof spans / sizeof spans[0]; i++) {
+        for (size_t j = i + 1u; j < sizeof spans / sizeof spans[0]; j++) {
+            if (span_overlap(spans[i].ptr, spans[i].size, spans[j].ptr, spans[j].size)) return false;
+        }
+    }
+    return true;
+}
+
+lynx_status lynx_set_input(lynx_machine *m, uint32_t pressed_mask)
+{
+    if (m == NULL) return LYNX_ERR_ARGUMENT;
+    if (!machine_valid(m)) return LYNX_ERR_STATE;
+    return lynx__input_set(&m->video, pressed_mask);
+}
+
+lynx_status lynx_advance_frame(lynx_machine *m, uint64_t budget,
+                               const lynx_frame_buffers *buffers,
+                               lynx_frame_result *result)
+{
+    if (m == NULL || buffers == NULL || result == NULL) return LYNX_ERR_ARGUMENT;
+    if (!machine_valid(m) || m->has_content == 0u) return LYNX_ERR_STATE;
+    if (m->cfg.timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1) return LYNX_ERR_UNAVAILABLE;
+    if (!span_valid(buffers, sizeof *buffers) || !span_valid(result, sizeof *result) ||
+        span_overlap(m, sizeof *m, buffers, sizeof *buffers) ||
+        span_overlap(m, sizeof *m, result, sizeof *result) ||
+        span_overlap(buffers, sizeof *buffers, result, sizeof *result)) return LYNX_ERR_ARGUMENT;
+    if (buffers->struct_size != (uint32_t)sizeof *buffers || buffers->reserved != 0u ||
+        result->struct_size != (uint32_t)sizeof *result || buffers->pens == NULL ||
+        buffers->palettes == NULL || buffers->line_ticks == NULL) return LYNX_ERR_ARGUMENT;
+    if (buffers->pens_capacity < LYNX_FRAME_PENS_CAPACITY ||
+        buffers->palettes_capacity < LYNX_FRAME_PALETTE_CAPACITY ||
+        buffers->line_ticks_capacity < LYNX_FRAME_LINE_TICKS_CAPACITY) return LYNX_ERR_CAPACITY;
+    if (((uintptr_t)buffers->line_ticks % _Alignof(uint64_t)) != 0u) return LYNX_ERR_ALIGNMENT;
+    if (!frame_spans_disjoint(m, buffers, result)) return LYNX_ERR_ARGUMENT;
+
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    const lynx_status status = machine_advance(m, budget, &consumed, &stop, true);
+    if (status != LYNX_OK) return status;
+    const uint64_t frame_start = stop == LYNX_STOP_FRAME ? m->video.frame_start_tick : 0u;
+    const uint64_t frame_end = stop == LYNX_STOP_FRAME ? m->video.frame_end_tick : 0u;
+    const uint64_t sequence = stop == LYNX_STOP_FRAME ? m->video.frame_sequence : 0u;
+    const uint32_t rows = stop == LYNX_STOP_FRAME ? m->video.capture_rows : 0u;
+    const uint32_t flags = stop == LYNX_STOP_FRAME && m->video.capture_partial != 0u ?
+                               LYNX_FRAME_PARTIAL : 0u;
+    if (stop == LYNX_STOP_FRAME) {
+        lynx__video_copy_frame(&m->video, buffers);
+        lynx__video_discard_frame(&m->video, frame_end);
+    }
+    result->stop = stop;
+    result->ticks_consumed = consumed;
+    result->frame_start_tick = frame_start;
+    result->frame_end_tick = frame_end;
+    result->sequence = sequence;
+    result->row_count = rows;
+    result->flags = flags;
     return LYNX_OK;
 }
 
@@ -660,7 +820,9 @@ lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *
         const uint16_t current = (uint16_t)(addr + (uint32_t)i);
         const lynx__bus_route route = lynx__bus_decode(m->mapctl, current);
         if (route != LYNX__BUS_ROUTE_RAM &&
-            (route != LYNX__BUS_ROUTE_MIKEY || !lynx__timer_available(current))) {
+            !((route == LYNX__BUS_ROUTE_MIKEY &&
+               (lynx__timer_available(current) || lynx__video_available(current))) ||
+              (route == LYNX__BUS_ROUTE_SUZY && lynx__input_available(current)))) {
             return LYNX_ERR_UNAVAILABLE;
         }
     }
@@ -669,6 +831,10 @@ lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *
         const uint16_t current = (uint16_t)(addr + (uint32_t)i);
         if (lynx__bus_decode(m->mapctl, current) == LYNX__BUS_ROUTE_RAM) {
             out[i] = m->ram[current];
+        } else if (lynx__bus_decode(m->mapctl, current) == LYNX__BUS_ROUTE_SUZY) {
+            out[i] = lynx__input_peek(&m->video, current);
+        } else if (lynx__video_available(current)) {
+            out[i] = lynx__video_peek(&m->video, current);
         } else {
             out[i] = lynx__timer_peek(&m->timer_bank, current);
         }
@@ -696,9 +862,11 @@ lynx_status lynx_get_identity(const lynx_machine *m, lynx_identity *out)
     if (!machine_valid(m)) {
         return LYNX_ERR_STATE;
     }
+    memset(out, 0, sizeof *out);
     out->profile = m->cfg.profile;
     out->ram_policy = m->cfg.ram_policy;
     out->ram_seed = m->cfg.ram_seed;
+    out->timing_policy = m->cfg.timing_policy;
     out->has_content = m->has_content;
     out->content_addr = m->content_addr;
     out->content_len = m->content_len;

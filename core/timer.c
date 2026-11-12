@@ -104,10 +104,11 @@ static bool timer_can_advance(const lynx__timer *timer)
 /* Drain one bounded borrow prefix. Timer links only move to a greater timer
    index, so a single ascending pass is a stable topological order and each
    timer can consume at most one input in this master-tick event. */
-static void lynx__timer_borrow(lynx__timer_bank *bank,
-                               bool incoming[LYNX__TIMER_COUNT],
-                               uint8_t forced_index, bool expose_status)
+static uint8_t lynx__timer_borrow(lynx__timer_bank *bank,
+                                  bool incoming[LYNX__TIMER_COUNT],
+                                  uint8_t forced_index, bool expose_status)
 {
+    uint8_t borrow_mask = 0u;
     for (size_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
         if (!incoming[i]) {
             continue;
@@ -133,6 +134,8 @@ static void lynx__timer_borrow(lynx__timer_bank *bank,
             timer->count--;
             continue;
         }
+
+        borrow_mask = (uint8_t)(borrow_mask | (uint8_t)(1u << i));
 
         if (expose_status) {
             timer->control_b = (uint8_t)(timer->control_b | TIMER_CONTROL_B_BORROW_OUT);
@@ -161,6 +164,7 @@ static void lynx__timer_borrow(lynx__timer_bank *bank,
             incoming[target] = true;
         }
     }
+    return borrow_mask;
 }
 
 void lynx__timer_init(lynx__timer_bank *bank)
@@ -221,10 +225,10 @@ bool lynx__timer_next(const lynx__timer_bank *bank, uint64_t now, uint64_t *tick
     return found;
 }
 
-void lynx__timer_apply(lynx__timer_bank *bank, uint64_t tick)
+uint8_t lynx__timer_apply(lynx__timer_bank *bank, uint64_t tick)
 {
     if (bank == NULL) {
-        return;
+        return 0u;
     }
     bank->last_event_valid = 1u;
     bank->last_event_tick = tick;
@@ -243,7 +247,7 @@ void lynx__timer_apply(lynx__timer_bank *bank, uint64_t tick)
         }
         incoming[i] = true;
     }
-    lynx__timer_borrow(bank, incoming, UINT8_MAX, true);
+    return lynx__timer_borrow(bank, incoming, UINT8_MAX, true);
 }
 
 void lynx__timer_mark_tick(lynx__timer_bank *bank, uint64_t tick)
@@ -336,7 +340,7 @@ bool lynx__timer_write(lynx__timer_bank *bank, uint16_t addr, uint8_t value)
         if ((value & TIMER_CONTROL_B_BORROW_IN) != 0u) {
             bool incoming[LYNX__TIMER_COUNT] = {false};
             incoming[index] = true;
-            lynx__timer_borrow(bank, incoming, index, false);
+            (void)lynx__timer_borrow(bank, incoming, index, false);
         }
         return true;
     }

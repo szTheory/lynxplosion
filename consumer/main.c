@@ -38,8 +38,86 @@ enum {
     PPM_CAP = 4096,
     METADATA_CAP = 1024,
     WAV_DATA_BYTES = 1600,
-    WAV_BYTES = 44 + WAV_DATA_BYTES
+    WAV_BYTES = 44 + WAV_DATA_BYTES,
+    TIMELINE_LIMIT = 128 * 1024,
+    TIMELINE_RECORD_LIMIT = 4096,
+    FRAME_PPM_LIMIT = 50000,
+    FRAME_MANIFEST_CAP = 2048
 };
+
+typedef struct input_event { uint64_t tick; uint32_t mask; } input_event;
+typedef struct input_timeline { input_event *events; size_t count; } input_timeline;
+
+/* Static host-local copy of the project-owned FIPS 180-4 helper. The consumer
+   includes only the public emulator header and hashes canonical script bytes. */
+typedef struct host_sha256 {
+    uint32_t h[8]; uint8_t block[64]; uint32_t used; uint64_t total;
+} host_sha256;
+static const uint32_t host_sha_k[64] = {
+    0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,
+    0xd807aa98u,0x12835b01u,0x243185beu,0x550c7dc3u,0x72be5d74u,0x80deb1feu,0x9bdc06a7u,0xc19bf174u,
+    0xe49b69c1u,0xefbe4786u,0x0fc19dc6u,0x240ca1ccu,0x2de92c6fu,0x4a7484aau,0x5cb0a9dcu,0x76f988dau,
+    0x983e5152u,0xa831c66du,0xb00327c8u,0xbf597fc7u,0xc6e00bf3u,0xd5a79147u,0x06ca6351u,0x14292967u,
+    0x27b70a85u,0x2e1b2138u,0x4d2c6dfcu,0x53380d13u,0x650a7354u,0x766a0abbu,0x81c2c92eu,0x92722c85u,
+    0xa2bfe8a1u,0xa81a664bu,0xc24b8b70u,0xc76c51a3u,0xd192e819u,0xd6990624u,0xf40e3585u,0x106aa070u,
+    0x19a4c116u,0x1e376c08u,0x2748774cu,0x34b0bcb5u,0x391c0cb3u,0x4ed8aa4au,0x5b9cca4fu,0x682e6ff3u,
+    0x748f82eeu,0x78a5636fu,0x84c87814u,0x8cc70208u,0x90befffau,0xa4506cebu,0xbef9a3f7u,0xc67178f2u
+};
+static uint32_t host_rotr(uint32_t x, uint32_t n) { return (x >> n) | (x << (32u - n)); }
+static void host_sha_compress(uint32_t h[8], const uint8_t block[64])
+{
+    uint32_t w[64];
+    for (uint32_t i = 0u; i < 16u; i++)
+        w[i] = ((uint32_t)block[4u*i] << 24) | ((uint32_t)block[4u*i+1u] << 16) |
+               ((uint32_t)block[4u*i+2u] << 8) | (uint32_t)block[4u*i+3u];
+    for (uint32_t i = 16u; i < 64u; i++) {
+        uint32_t s0 = host_rotr(w[i-15u],7u) ^ host_rotr(w[i-15u],18u) ^ (w[i-15u] >> 3);
+        uint32_t s1 = host_rotr(w[i-2u],17u) ^ host_rotr(w[i-2u],19u) ^ (w[i-2u] >> 10);
+        w[i] = w[i-16u] + s0 + w[i-7u] + s1;
+    }
+    uint32_t a=h[0], b=h[1], c=h[2], d=h[3], e=h[4], f=h[5], g=h[6], q=h[7];
+    for (uint32_t i = 0u; i < 64u; i++) {
+        uint32_t s1=host_rotr(e,6u)^host_rotr(e,11u)^host_rotr(e,25u);
+        uint32_t ch=(e&f)^(~e&g), t1=q+s1+ch+host_sha_k[i]+w[i];
+        uint32_t s0=host_rotr(a,2u)^host_rotr(a,13u)^host_rotr(a,22u);
+        uint32_t maj=(a&b)^(a&c)^(b&c), t2=s0+maj;
+        q=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+    }
+    h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=q;
+}
+static void host_sha_init(host_sha256 *s)
+{
+    static const uint32_t initial[8]={0x6a09e667u,0xbb67ae85u,0x3c6ef372u,0xa54ff53au,
+        0x510e527fu,0x9b05688cu,0x1f83d9abu,0x5be0cd19u};
+    memcpy(s->h,initial,sizeof initial); s->used=0u; s->total=0u;
+}
+static void host_sha_update(host_sha256 *s, const void *data, size_t len)
+{
+    const uint8_t *p=(const uint8_t *)data; s->total+=(uint64_t)len;
+    while(len>0u) {
+        size_t take=64u-(size_t)s->used; if(take>len) take=len;
+        memcpy(s->block+s->used,p,take); s->used+=(uint32_t)take; p+=take; len-=take;
+        if(s->used==64u) { host_sha_compress(s->h,s->block); s->used=0u; }
+    }
+}
+static void host_sha_final(host_sha256 *s, uint8_t out[32])
+{
+    uint64_t bits=s->total*8u; s->block[s->used++]=0x80u;
+    if(s->used>56u) { memset(s->block+s->used,0,64u-(size_t)s->used); host_sha_compress(s->h,s->block); s->used=0u; }
+    memset(s->block+s->used,0,56u-(size_t)s->used);
+    for(uint32_t i=0u;i<8u;i++) s->block[56u+i]=(uint8_t)(bits>>(56u-8u*i));
+    host_sha_compress(s->h,s->block);
+    for(uint32_t i=0u;i<8u;i++) { out[4u*i]=(uint8_t)(s->h[i]>>24); out[4u*i+1u]=(uint8_t)(s->h[i]>>16);
+        out[4u*i+2u]=(uint8_t)(s->h[i]>>8); out[4u*i+3u]=(uint8_t)s->h[i]; }
+}
+static void host_sha_digest(const void *bytes,size_t len,uint8_t out[32])
+{ host_sha256 s; host_sha_init(&s); host_sha_update(&s,bytes,len); host_sha_final(&s,out); }
+static void host_sha_hex(const uint8_t digest[32], char out[65])
+{
+    static const char digits[]="0123456789abcdef";
+    for(uint32_t i=0u;i<32u;i++){out[2u*i]=digits[digest[i]>>4];out[2u*i+1u]=digits[digest[i]&0x0fu];}
+    out[64]='\0';
+}
 
 typedef struct symbols {
     uint32_t result;
@@ -78,8 +156,8 @@ static int report_error(const char *message)
 static int usage_error(const char *reason)
 {
     fprintf(stderr, "lynx-consume: %s\n"
-                    "Usage: lynx-consume --content BLL --symbols LABELS --out NEW-DIRECTORY "
-                    "[--profile none|lynx1|lynx2]\n"
+                    "Usage: lynx-consume --content BLL --symbols LABELS --out NEW-DIRECTORY [--profile none|lynx1|lynx2]\n"
+                    "   or: lynx-consume --mode frames --content BLL --symbols LABELS --timeline FILE --out NEW-DIRECTORY [--profile none|lynx1|lynx2]\n"
                     "Provide a complete BS93 BLL and the matching ld65 -Ln symbol file.\n",
             reason);
     return 2;
@@ -255,7 +333,102 @@ static int parse_linked_symbols(const uint8_t *text, size_t length, symbols *out
     return 0;
 }
 
+static int parse_decimal(const uint8_t *text, size_t length, uint64_t maximum, uint64_t *out)
+{
+    uint64_t value = 0u;
+    if (length == 0u || (length > 1u && text[0] == (uint8_t)'0')) return 1;
+    for (size_t i = 0u; i < length; i++) {
+        if (text[i] < (uint8_t)'0' || text[i] > (uint8_t)'9') return 1;
+        const uint32_t digit = (uint32_t)(text[i] - (uint8_t)'0');
+        if (value > (maximum - digit) / 10u) return 1;
+        value = value * 10u + digit;
+    }
+    *out = value;
+    return 0;
+}
+
+static int parse_input_timeline(const uint8_t *bytes, size_t length, input_timeline *out)
+{
+    static const uint8_t header[] = "LYNX-INPUT 1\n";
+    size_t offset = sizeof header - 1u;
+    uint64_t previous = 0u;
+    bool has_previous = false;
+    memset(out, 0, sizeof *out);
+    if (length < sizeof header - 1u || memcmp(bytes, header, sizeof header - 1u) != 0) return 1;
+    out->events = calloc(TIMELINE_RECORD_LIMIT, sizeof *out->events);
+    if (out->events == NULL) return 1;
+    while (offset < length) {
+        size_t end = offset, space = SIZE_MAX;
+        uint64_t tick = 0u, mask = 0u;
+        while (end < length && bytes[end] != (uint8_t)'\n') {
+            if (bytes[end] == (uint8_t)'\r' || bytes[end] == 0u) goto invalid;
+            if (bytes[end] == (uint8_t)' ') {
+                if (space != SIZE_MAX) goto invalid;
+                space = end;
+            }
+            end++;
+        }
+        if (end == length || end == offset || space == SIZE_MAX || space == offset || space + 1u == end ||
+            out->count >= TIMELINE_RECORD_LIMIT ||
+            parse_decimal(bytes + offset, space - offset, UINT64_MAX - UINT64_C(65536), &tick) != 0 ||
+            parse_decimal(bytes + space + 1u, end - space - 1u, LYNX_INPUT_MASK, &mask) != 0 ||
+            (has_previous && tick <= previous)) goto invalid;
+        out->events[out->count].tick = tick;
+        out->events[out->count].mask = (uint32_t)mask;
+        out->count++;
+        previous = tick;
+        has_previous = true;
+        offset = end + 1u;
+    }
+    return 0;
+invalid:
+    free(out->events);
+    memset(out, 0, sizeof *out);
+    return 1;
+}
+
+static int parse_named_symbol(const uint8_t *text, size_t length, const char *name,
+                              uint32_t *address)
+{
+    size_t offset = 0u;
+    unsigned found = 0u;
+    while (offset < length) {
+        size_t end = offset, starts[3] = {0u,0u,0u}, lengths[3] = {0u,0u,0u};
+        size_t tokens = 0u, cursor;
+        uint32_t candidate = 0u;
+        while (end < length && text[end] != (uint8_t)'\n') end++;
+        if (end - offset > SYMBOL_LINE_LIMIT || memchr(text + offset, 0, end - offset) != NULL ||
+            memchr(text + offset, '\r', end - offset) != NULL) return 1;
+        cursor = offset;
+        while (cursor < end) {
+            size_t start;
+            while (cursor < end && isspace((unsigned char)text[cursor]) != 0) cursor++;
+            if (cursor == end) break;
+            start = cursor;
+            while (cursor < end && isspace((unsigned char)text[cursor]) == 0) cursor++;
+            if (tokens < 3u) { starts[tokens] = start; lengths[tokens] = cursor - start; }
+            tokens++;
+        }
+        if (tokens >= 3u) {
+            size_t symbol_index = 2u;
+            const uint8_t *symbol = text + starts[symbol_index];
+            size_t symbol_len = lengths[symbol_index];
+            if (symbol_len > 0u && symbol[0] == (uint8_t)'.') { symbol++; symbol_len--; }
+            if (symbol_len == strlen(name) && memcmp(symbol, name, symbol_len) == 0) {
+                if (tokens != 3u || lengths[0] != 2u || memcmp(text + starts[0], "al", 2u) != 0 ||
+                    parse_hex_address((const char *)text + starts[1], lengths[1], &candidate) != 0 ||
+                    found != 0u) return 1;
+                *address = candidate;
+                found = 1u;
+            }
+        }
+        offset = end < length ? end + 1u : end;
+    }
+    return found == 1u ? 0 : 1;
+}
+
 static int create_machine(const uint8_t *bll, size_t bll_len, uint32_t profile,
+                          uint32_t timing_policy,
                           machine_storage *storage, lynx_identity *identity)
 {
     lynx_config config;
@@ -278,6 +451,7 @@ static int create_machine(const uint8_t *bll, size_t bll_len, uint32_t profile,
     lynx_config_default(&config);
     config.profile = profile;
     config.ram_policy = LYNX_RAM_POLICY_ZERO;
+    config.timing_policy = timing_policy;
     if (lynx_machine_init(aligned, size, &config, &storage->machine) != LYNX_OK) {
         free(storage->allocation);
         memset(storage, 0, sizeof *storage);
@@ -292,7 +466,8 @@ static int create_machine(const uint8_t *bll, size_t bll_len, uint32_t profile,
     if (lynx_get_identity(storage->machine, identity) != LYNX_OK ||
         identity->has_content != 1u || identity->content_format != LYNX_CONTENT_BS93 ||
         identity->startup_tier != LYNX_STARTUP_A || identity->profile != profile ||
-        identity->ram_policy != LYNX_RAM_POLICY_ZERO || identity->object_len != bll_len ||
+        identity->ram_policy != LYNX_RAM_POLICY_ZERO || identity->timing_policy != timing_policy ||
+        identity->object_len != bll_len ||
         identity->entry_addr != identity->content_addr) {
         lynx_machine_deinit(storage->machine);
         free(storage->allocation);
@@ -819,7 +994,8 @@ static int run_consumer(const char *content_path, const char *symbols_path,
         fprintf(stderr, "lynx-consume: %s; rebuild the exact object with ld65 -Ln and pass its matching label file\n", reason);
         goto done;
     }
-    if (create_machine(bll, bll_len, profile, &storage, &identity) != 0) {
+    if (create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_LEGACY_FLAT5,
+                       &storage, &identity) != 0) {
         goto done;
     }
     if (advance_diagnostic(storage.machine, &linked, &guest_tick) != 0 ||
@@ -845,6 +1021,321 @@ done:
     return result;
 }
 
+static int frame_ppm(const uint8_t *pens, const uint8_t *palettes,
+                     const lynx_frame_result *frame, uint32_t input_mask,
+                     uint32_t sampled_a, const char *input_hash,
+                     uint8_t **out, size_t *out_len)
+{
+    const size_t raster_len = (size_t)LYNX_FRAME_WIDTH * frame->row_count * 3u;
+    char header[512];
+    int header_len;
+    uint8_t *bytes;
+    size_t at;
+    if (frame->row_count == 0u || frame->row_count > LYNX_FRAME_MAX_ROWS ||
+        raster_len > FRAME_PPM_LIMIT - sizeof header) return report_error("frame geometry is outside the bounded PPM surface");
+    header_len = snprintf(header, sizeof header,
+        "P6\n# artifact = FRAME\n# sequence = %" PRIu64 "\n"
+        "# frame_start_tick = %" PRIu64 "\n# frame_end_tick = %" PRIu64 "\n"
+        "# rows = %u\n# input_mask = %u\n# sample_a = %u\n# input_sha256 = %s\n"
+        "160 %u\n255\n", frame->sequence, frame->frame_start_tick,
+        frame->frame_end_tick, frame->row_count, input_mask, sampled_a, input_hash,
+        frame->row_count);
+    if (header_len < 0 || (size_t)header_len >= sizeof header ||
+        raster_len > SIZE_MAX - (size_t)header_len) return report_error("frame PPM header exceeds its fixed bound");
+    bytes = malloc((size_t)header_len + raster_len);
+    if (bytes == NULL) return report_error("cannot allocate the bounded raw frame PPM");
+    memcpy(bytes, header, (size_t)header_len);
+    at = (size_t)header_len;
+    for (size_t y = 0u; y < frame->row_count; y++) {
+        const uint8_t *row = pens + y * LYNX_FRAME_ROW_BYTES;
+        const uint8_t *palette = palettes + y * 32u;
+        for (size_t x = 0u; x < LYNX_FRAME_WIDTH; x++) {
+            const uint8_t pair = row[x / 2u];
+            const uint8_t pen = (x & 1u) == 0u ? (uint8_t)(pair >> 4) : (uint8_t)(pair & 0x0Fu);
+            const uint8_t green = (uint8_t)(palette[pen] & 0x0Fu);
+            const uint8_t blue_red = palette[16u + pen];
+            bytes[at++] = (uint8_t)((blue_red & 0x0Fu) * 17u);
+            bytes[at++] = (uint8_t)(green * 17u);
+            bytes[at++] = (uint8_t)((blue_red >> 4) * 17u);
+        }
+    }
+    *out = bytes;
+    *out_len = at;
+    return 0;
+}
+
+static int publish_frame_outputs(const char *directory, const uint8_t *released,
+                                 size_t released_len, const uint8_t *pressed,
+                                 size_t pressed_len, const char *manifest,
+                                 size_t manifest_len)
+{
+    char normalized[4096], staging[4096], path[3][4096], probe[4096];
+    const char *names[3] = {"released.ppm", "pressed.ppm", "frame-trace.manifest"};
+    const void *data[3] = {released, pressed, manifest};
+    size_t lengths[3] = {released_len, pressed_len, manifest_len};
+    int n;
+    int made = 0;
+    if (normalize_destination(directory, normalized, sizeof normalized) != 0 ||
+        destination_is_absent(normalized) != 0) return report_error("frame output path is unavailable; choose a new absent destination");
+    for (size_t i = 0u; i < 3u; i++) {
+        if (output_path(normalized, names[i], probe, sizeof probe) != 0) return report_error("frame output path exceeds its bound");
+    }
+    n = snprintf(staging, sizeof staging, "%s.lynxplosion-frame-stage-XXXXXX", normalized);
+    if (n < 0 || (size_t)n >= sizeof staging || mkdtemp(staging) == NULL) return report_error("cannot create a private frame output staging directory");
+    made = 1;
+    for (size_t i = 0u; i < 3u; i++) {
+        if (output_path(staging, names[i], path[i], sizeof path[i]) != 0 ||
+            write_exclusive(path[i], data[i], lengths[i]) != 0) goto failed;
+    }
+    if (publish_directory_exclusive(staging, normalized) != 0) {
+        (void)report_error("cannot publish the complete frame directory without replacement");
+        goto failed;
+    }
+    made = 0;
+    return 0;
+failed:
+    for (size_t i = 0u; i < 3u; i++) (void)unlink(path[i]);
+    if (made != 0) (void)rmdir(staging);
+    return report_error("cannot write the complete frame output; this invocation removed its private partial files");
+}
+
+static int host_sha_known_vector(void)
+{
+    static const char expected[] = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    uint8_t digest[32];
+    char hex[65];
+    host_sha_digest("abc", 3u, digest);
+    host_sha_hex(digest, hex);
+    return strcmp(hex, expected) == 0 ? 0 : 1;
+}
+
+static int advance_exact_tick(lynx_machine *machine, uint64_t target)
+{
+    uint64_t current = 0u;
+    if (lynx_guest_ticks(machine, &current) != LYNX_OK || target < current) return 1;
+    while (current < target) {
+        uint64_t consumed = 0u, after = 0u;
+        lynx_stop_reason stop = LYNX_STOP_HALT;
+        const uint64_t budget = target - current;
+        if (lynx_advance(machine, budget, &consumed, &stop) != LYNX_OK || consumed != budget ||
+            stop != LYNX_STOP_BUDGET || lynx_guest_ticks(machine, &after) != LYNX_OK || after != target) return 1;
+        current = after;
+    }
+    return 0;
+}
+
+static int read_probe_result(lynx_machine *machine, uint32_t address,
+                             uint32_t expected_a, uint8_t *framebuffer_byte)
+{
+    uint8_t result[8];
+    if (lynx_read_memory(machine, address, result, sizeof result) != LYNX_OK ||
+        memcmp(result, "LXI5", 4u) != 0 || result[4] != 2u || result[5] != expected_a ||
+        lynx_read_memory(machine, 0x4000u, framebuffer_byte, 1u) != LYNX_OK) return 1;
+    return 0;
+}
+
+static int run_frame_consumer(const char *content_path, const char *symbols_path,
+                              const char *timeline_path, const char *output_directory,
+                              uint32_t profile)
+{
+    uint8_t *bll = NULL, *label_bytes = NULL, *timeline_bytes = NULL;
+    uint8_t *released_ppm = NULL, *pressed_ppm = NULL;
+    size_t bll_len = 0u, label_len = 0u, timeline_len = 0u;
+    size_t released_ppm_len = 0u, pressed_ppm_len = 0u;
+    uint8_t released_pens[LYNX_FRAME_PENS_CAPACITY], pressed_pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t released_palettes[LYNX_FRAME_PALETTE_CAPACITY], pressed_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t released_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY], pressed_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    uint8_t replay_pens[LYNX_FRAME_PENS_CAPACITY], replay_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t replay_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_frame_buffers buffers;
+    lynx_frame_result sync = {0}, released = {0}, replayed = {0}, pressed = {0};
+    machine_storage storage = {0};
+    lynx_identity identity;
+    input_timeline timeline = {0};
+    uint8_t *snapshot_blob = NULL, *snapshot_again = NULL;
+    size_t snapshot_size = 0u;
+    char content_hash[65], input_hash[65], manifest[FRAME_MANIFEST_CAP];
+    size_t manifest_len = 0u;
+    uint32_t probe_address = 0u;
+    uint8_t result_sample = 0u;
+    int result = 1;
+
+    if (host_sha_known_vector() != 0) {
+        (void)report_error("host SHA-256 helper failed its independent known-vector check");
+        goto done;
+    }
+    if (read_bounded(timeline_path, TIMELINE_LIMIT, &timeline_bytes, &timeline_len,
+                     "input timeline") != 0 ||
+        parse_input_timeline(timeline_bytes, timeline_len, &timeline) != 0) {
+        (void)report_error("timeline is not canonical LYNX-INPUT 1 ASCII; use strict increasing decimal tick/mask LF rows within the documented bounds");
+        goto done;
+    }
+    {
+        uint8_t digest[32];
+        host_sha_digest(timeline_bytes, timeline_len, digest);
+        host_sha_hex(digest, input_hash);
+    }
+    if (timeline.count != 1u || timeline.events[0].mask != LYNX_INPUT_A) {
+        (void)report_error("frame tracer requires one recorded A press after the released frame");
+        goto done;
+    }
+    if (read_bounded(content_path, BLL_LIMIT, &bll, &bll_len, "BLL content") != 0 || bll_len < 11u ||
+        read_bounded(symbols_path, SYMBOL_LIMIT, &label_bytes, &label_len,
+                     "ld65 -Ln symbols") != 0 ||
+        parse_named_symbol(label_bytes, label_len, "probe_result", &probe_address) != 0 ||
+        probe_address > LYNX_ADDRESS_SPACE - 8u) {
+        (void)report_error("input-probe BLL or linked probe_result symbol is invalid; rebuild source with the pinned fixture recipe");
+        goto done;
+    }
+    if (create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1,
+                       &storage, &identity) != 0) goto done;
+
+    memset(&buffers, 0, sizeof buffers);
+    buffers.struct_size = (uint32_t)sizeof buffers;
+    buffers.pens = released_pens;
+    buffers.pens_capacity = sizeof released_pens;
+    buffers.palettes = released_palettes;
+    buffers.palettes_capacity = sizeof released_palettes;
+    buffers.line_ticks = released_ticks;
+    buffers.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+    sync.struct_size = (uint32_t)sizeof sync;
+    if (lynx_advance_frame(storage.machine, UINT64_C(60000), &buffers, &sync) != LYNX_OK ||
+        sync.stop != LYNX_STOP_FRAME || sync.row_count != 0u || sync.sequence != 0u ||
+        sync.frame_end_tick == 0u) {
+        (void)report_error("first timer synchronization did not return its declared zero-row frame");
+        goto done;
+    }
+
+    if (advance_exact_tick(storage.machine, sync.frame_end_tick + UINT64_C(1600)) != 0 ||
+        lynx_snapshot_size(storage.machine, &snapshot_size) != LYNX_OK || snapshot_size == 0u) {
+        (void)report_error("could not reach the in-progress row and size its public snapshot");
+        goto done;
+    }
+    snapshot_blob = malloc(snapshot_size);
+    snapshot_again = malloc(snapshot_size);
+    if (snapshot_blob == NULL || snapshot_again == NULL) {
+        (void)report_error("cannot allocate the bounded format-5 continuation snapshot");
+        goto done;
+    }
+    {
+        size_t written = 0u;
+        if (lynx_snapshot_save(storage.machine, snapshot_blob, snapshot_size, &written) != LYNX_OK ||
+            written != snapshot_size) {
+            (void)report_error("public format-5 snapshot refused the in-progress display capture");
+            goto done;
+        }
+    }
+    buffers.pens = released_pens; buffers.palettes = released_palettes; buffers.line_ticks = released_ticks;
+    released.struct_size = (uint32_t)sizeof released;
+    if (lynx_advance_frame(storage.machine, UINT64_C(60000), &buffers, &released) != LYNX_OK ||
+        released.stop != LYNX_STOP_FRAME || released.row_count != LYNX_FRAME_MAX_ROWS ||
+        released.sequence != 1u || released.frame_start_tick != sync.frame_end_tick ||
+        released.flags != 0u || read_probe_result(storage.machine, probe_address, 0u,
+                                                    &result_sample) != 0 ||
+        result_sample != 0x11u || released_pens[0] != 0x11u ||
+        released_palettes[1] != 0x0Fu || released_palettes[17] != 0u ||
+        released_palettes[2] != 0u || released_palettes[18] != 0x0Fu) {
+        (void)report_error("released frame did not match the independent first-pen, palette, progress and timer expectations");
+        goto done;
+    }
+    if (lynx_snapshot_restore(storage.machine, snapshot_blob, snapshot_size) != LYNX_OK) {
+        (void)report_error("public format-5 restore refused its own captured in-progress video state");
+        goto done;
+    }
+    {
+        size_t written = 0u;
+        if (lynx_snapshot_save(storage.machine, snapshot_again, snapshot_size, &written) != LYNX_OK ||
+            written != snapshot_size || memcmp(snapshot_blob, snapshot_again, snapshot_size) != 0) {
+            (void)report_error("format-5 restore did not reproduce its canonical in-progress capture state");
+            goto done;
+        }
+    }
+    buffers.pens = replay_pens; buffers.palettes = replay_palettes; buffers.line_ticks = replay_ticks;
+    replayed.struct_size = (uint32_t)sizeof replayed;
+    if (lynx_advance_frame(storage.machine, UINT64_C(60000), &buffers, &replayed) != LYNX_OK ||
+        memcmp(&released, &replayed, sizeof released) != 0 ||
+        memcmp(released_pens, replay_pens, sizeof released_pens) != 0 ||
+        memcmp(released_palettes, replay_palettes, sizeof released_palettes) != 0 ||
+        memcmp(released_ticks, replay_ticks, sizeof released_ticks) != 0) {
+        (void)report_error("restored in-progress capture differs from uninterrupted raw frame output");
+        goto done;
+    }
+    for (size_t row = 0u; row < released.row_count; row++) {
+        if (released_ticks[row] < released.frame_start_tick || released_ticks[row] >= released.frame_end_tick ||
+            (row > 0u && released_ticks[row] <= released_ticks[row - 1u])) {
+            (void)report_error("released frame line ticks are not ordered within the timer-generated frame");
+            goto done;
+        }
+    }
+    if (timeline.events[0].tick != released.frame_end_tick + UINT64_C(777) ||
+        timeline.events[0].tick == released.frame_end_tick) {
+        (void)report_error("recorded A event is not the fixture's exact non-frame tick");
+        goto done;
+    }
+    if (advance_exact_tick(storage.machine, timeline.events[0].tick) != 0 ||
+        lynx_set_input(storage.machine, timeline.events[0].mask) != LYNX_OK) {
+        (void)report_error("public input replay failed to reach and apply its recorded guest tick");
+        goto done;
+    }
+
+    buffers.pens = pressed_pens; buffers.palettes = pressed_palettes; buffers.line_ticks = pressed_ticks;
+    pressed.struct_size = (uint32_t)sizeof pressed;
+    if (lynx_advance_frame(storage.machine, UINT64_C(60000), &buffers, &pressed) != LYNX_OK ||
+        pressed.stop != LYNX_STOP_FRAME || pressed.row_count != LYNX_FRAME_MAX_ROWS ||
+        pressed.sequence != 2u || pressed.frame_start_tick != released.frame_end_tick ||
+        pressed.flags != 0u || pressed.frame_end_tick <= pressed.frame_start_tick ||
+        pressed.frame_end_tick - pressed.frame_start_tick !=
+            released.frame_end_tick - released.frame_start_tick ||
+        read_probe_result(storage.machine, probe_address, 1u, &result_sample) != 0 ||
+        result_sample != 0x22u || pressed_pens[0] != 0x22u ||
+        pressed_palettes[1] != 0x0Fu || pressed_palettes[17] != 0u ||
+        pressed_palettes[2] != 0u || pressed_palettes[18] != 0x0Fu) {
+        (void)report_error("A-pressed frame did not match the independent pen, palette, input and progress expectations");
+        goto done;
+    }
+    for (size_t row = 0u; row < pressed.row_count; row++) {
+        if (pressed_ticks[row] < pressed.frame_start_tick || pressed_ticks[row] >= pressed.frame_end_tick ||
+            (row > 0u && pressed_ticks[row] <= pressed_ticks[row - 1u])) {
+            (void)report_error("pressed frame line ticks are not ordered within the timer-generated frame");
+            goto done;
+        }
+    }
+    encode_hex(identity.content_sha256, content_hash);
+    if (frame_ppm(released_pens, released_palettes, &released, 0u, 0u, input_hash,
+                  &released_ppm, &released_ppm_len) != 0 ||
+        frame_ppm(pressed_pens, pressed_palettes, &pressed, LYNX_INPUT_A, 1u, input_hash,
+                  &pressed_ppm, &pressed_ppm_len) != 0) goto done;
+    {
+        int n = snprintf(manifest, sizeof manifest,
+            "artifact = FRAME_TRACE\nprofile = %s\nstartup = A\ntiming_policy = video-policy1-unverified\n"
+            "content_sha256 = %s\ninput_sha256 = %s\nevent_count = %zu\nevent_tick = %" PRIu64 "\nevent_mask = %u\n"
+            "sync_rows = %u\nsync_end_tick = %" PRIu64 "\n"
+            "released_sequence = %" PRIu64 "\nreleased_start_tick = %" PRIu64 "\nreleased_end_tick = %" PRIu64 "\nreleased_rows = %u\nreleased_sample_a = 0\n"
+            "pressed_sequence = %" PRIu64 "\npressed_start_tick = %" PRIu64 "\npressed_end_tick = %" PRIu64 "\npressed_rows = %u\npressed_sample_a = 1\n"
+            "guest_progress = 2\npalette_policy = per-line GREEN then BLUERED raw nibbles; intra-line color accuracy unverified\n"
+            "raw_pen_order = high nibble first; no host rotation\n",
+            lynx_profile_name(profile), content_hash, input_hash, timeline.count,
+            timeline.events[0].tick, timeline.events[0].mask, sync.row_count, sync.frame_end_tick,
+            released.sequence, released.frame_start_tick, released.frame_end_tick, released.row_count,
+            pressed.sequence, pressed.frame_start_tick, pressed.frame_end_tick, pressed.row_count);
+        if (n < 0 || (size_t)n >= sizeof manifest) {
+            (void)report_error("frame trace manifest exceeds its fixed bound");
+            goto done;
+        }
+        manifest_len = (size_t)n;
+    }
+    if (publish_frame_outputs(output_directory, released_ppm, released_ppm_len,
+                              pressed_ppm, pressed_ppm_len, manifest, manifest_len) != 0) goto done;
+    printf("lynx-consume: wrote released and A-pressed raw-frame PPM observations to %s\n", output_directory);
+    result = 0;
+done:
+    free(bll); free(label_bytes); free(timeline_bytes); free(timeline.events);
+    free(snapshot_blob); free(snapshot_again);
+    free(released_ppm); free(pressed_ppm);
+    destroy_machine(&storage);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     const char *content = NULL;
@@ -852,6 +1343,37 @@ int main(int argc, char **argv)
     const char *output = NULL;
     const char *profile_text = "none";
     uint32_t profile = LYNX_PROFILE_NONE;
+    if (argc > 1 && strcmp(argv[1], "--mode") == 0) {
+        const char *frame_mode = NULL, *frame_content = NULL, *frame_symbols = NULL, *frame_timeline = NULL;
+        const char *frame_output = NULL, *frame_profile_text = "none";
+        uint32_t selected_profile = LYNX_PROFILE_NONE;
+        unsigned seen = 0u;
+        for (int i = 1; i < argc; i++) {
+            const char *flag = argv[i], *value;
+            unsigned bit;
+            if (strcmp(flag, "--mode") == 0) bit = 1u;
+            else if (strcmp(flag, "--content") == 0) bit = 2u;
+            else if (strcmp(flag, "--symbols") == 0) bit = 4u;
+            else if (strcmp(flag, "--timeline") == 0) bit = 8u;
+            else if (strcmp(flag, "--out") == 0) bit = 16u;
+            else if (strcmp(flag, "--profile") == 0) bit = 32u;
+            else return usage_error("unknown frame-mode option");
+            if ((seen & bit) != 0u || i + 1 >= argc) return usage_error("frame-mode option is repeated or missing its value");
+            value = argv[++i];
+            if (value[0] == '\0' || strlen(value) >= 4096u) return usage_error("frame-mode option value is empty or too long");
+            if (bit == 1u) frame_mode = value;
+            else if (bit == 2u) frame_content = value;
+            else if (bit == 4u) frame_symbols = value;
+            else if (bit == 8u) frame_timeline = value;
+            else if (bit == 16u) frame_output = value;
+            else frame_profile_text = value;
+            seen |= bit;
+        }
+        if (frame_mode == NULL || strcmp(frame_mode, "frames") != 0 || frame_content == NULL || frame_symbols == NULL ||
+            frame_timeline == NULL || frame_output == NULL || parse_profile(frame_profile_text, &selected_profile) != 0)
+            return usage_error("frame mode requires --mode frames, BLL, linked symbols, a canonical timeline, output directory, and a supported profile");
+        return run_frame_consumer(frame_content, frame_symbols, frame_timeline, frame_output, selected_profile);
+    }
     unsigned seen = 0u;
     int index;
     for (index = 1; index < argc; index++) {
