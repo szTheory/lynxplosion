@@ -46,6 +46,7 @@ api.snapshot_continue	api
 api.snapshot_continue.self_test	api
 api.snapshot_refusal	api
 api.snapshot_roundtrip	api
+api.state_digest	api
 api.timer_done_borrow	api
 api.timer_link_tracer	api
 api.timer_links	api

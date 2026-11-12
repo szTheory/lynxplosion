@@ -7578,6 +7578,35 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void case_state_digest(void)
+{
+    const int failures_before = check_failures;
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    _Alignas(max_align_t) unsigned char storage_a[sizeof(struct lynx_machine)];
+    _Alignas(max_align_t) unsigned char storage_b[sizeof(struct lynx_machine)];
+    lynx_machine *a = init_in(storage_a, &cfg);
+    lynx_machine *b = init_in(storage_b, &cfg);
+    if (a == NULL || b == NULL) goto done;
+
+    CHECK_EQ_U64(lynx_set_input(a, 0u), LYNX_OK);
+    CHECK_EQ_U64(lynx_set_input(b, LYNX_INPUT_A), LYNX_OK);
+    const bundle_run run = {"input-sensitivity", 0u, 0u, LYNX_STOP_BUDGET};
+    char digest_a[65] = {0};
+    char digest_b[65] = {0};
+    CHECK_EQ_U64(bundle_observe(a, &run, digest_a), 0u);
+    CHECK_EQ_U64(bundle_observe(b, &run, digest_b), 0u);
+    CHECK_NAMED(memcmp(digest_a, digest_b, 64u) != 0,
+                "state_digest.input-changes-observation");
+
+done:
+    if (a != NULL) lynx_machine_deinit(a);
+    if (b != NULL) lynx_machine_deinit(b);
+    printf("TAP version 13\n1..1\n%s 1 - api.state_digest\n",
+           check_failures == failures_before ? "ok" : "not ok");
+}
+
 /* The guest configures MAPCTL and SPRSYS, then reads the real CPU-mapped
    SPRSYS/JOYSTICK/SWITCHES routes. It repeats the two input reads so the host
    can replace levels only while the next CPU data request is pending. */
@@ -8826,6 +8855,7 @@ static const struct {
     {"input_edges", case_input_edges},
     {"input_orientation", case_input_orientation},
     {"input_refusal", case_input_refusal},
+    {"state_digest", case_state_digest},
     {"video_snapshot", case_video_snapshot},
     {"video_snapshot_refusal", case_video_snapshot_refusal},
     {"video_reset_load", case_video_reset_load},

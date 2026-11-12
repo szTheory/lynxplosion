@@ -1,0 +1,11 @@
+{
+  "command": "build/check/tests/lynx-test-api state_digest 2>/private/tmp/lynx-state-digest-red.stderr",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - api.state_digest\n",
+  "targetTest": "api.state_digest",
+  "targetFile": "tests/api/test_api.c",
+  "expected": "Two initialized VIDEO_POLICY1 machines with different current logical input masks produce different guest observation digests.",
+  "actual": "The target executed and failed state_digest.input-changes-observation because bundle_observe returned the same digest for both input masks.",
+  "semanticAssessment": "Valid RED: the named TAP target ran and failed only the planned assertion showing that the current runner observation omits logical input state.",
+  "stderr": "ASSERT state_digest.input-changes-observation failed\n"
+}
