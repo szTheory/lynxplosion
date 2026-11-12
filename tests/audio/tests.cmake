@@ -9,3 +9,5 @@ lynx_add_test(NAME audio.registers COMMAND lynx-test-audio registers LABELS audi
 lynx_add_test(NAME audio.lfsr COMMAND lynx-test-audio lfsr LABELS audio TIMEOUT 30)
 lynx_add_test(NAME audio.counter COMMAND lynx-test-audio counter LABELS audio TIMEOUT 30)
 lynx_add_test(NAME audio.integrator COMMAND lynx-test-audio integrator LABELS audio TIMEOUT 30)
+lynx_add_test(NAME audio.stereo COMMAND lynx-test-audio stereo LABELS audio TIMEOUT 60)
+lynx_add_test(NAME audio.mix COMMAND lynx-test-audio mix LABELS audio TIMEOUT 60)

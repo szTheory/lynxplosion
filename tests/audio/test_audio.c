@@ -425,6 +425,114 @@ static void case_integrator(void)
     ASSERT_EQ("audio.integrator.hot-volume-polarity", lynx__audio_peek(&hot, 0xFD22u), 0x80u);
 }
 
+static uint8_t audio_pen_scratch[LYNX_FRAME_PENS_CAPACITY];
+static uint8_t audio_palette_scratch[LYNX_FRAME_PALETTE_CAPACITY];
+static uint64_t audio_line_tick_scratch[LYNX_FRAME_LINE_TICKS_CAPACITY];
+static lynx_pcm_frame audio_pcm_scratch[1];
+static lynx_audio_event audio_event_scratch[LYNX_AV_MIN_EVENT_CAPACITY];
+
+static int public_sample(const int8_t outputs[4], uint8_t muted, int16_t expected_left,
+                        int16_t expected_right, const char *left_label, const char *right_label)
+{
+    static const uint8_t looping_guest[3] = {0x4Cu, 0x00u, 0x02u};
+    machine_box box;
+    ASSERT_NAMED("audio.mix.machine-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return 0;
+    ASSERT_EQ("audio.mix.guest-load", load_guest(box.machine, looping_guest,
+                                                  sizeof looping_guest), LYNX_OK);
+    for (uint8_t channel = 0u; channel < 4u; channel++) {
+        ASSERT_NAMED("audio.mix.channel-write",
+                     lynx__audio_write(&box.machine->audio,
+                                       channel_register(channel, 2u),
+                                       (uint8_t)outputs[channel], 0u, NULL));
+    }
+    ASSERT_NAMED("audio.mix.mute-write",
+                 lynx__audio_write(&box.machine->audio, 0xFD50u, muted, 0u, NULL));
+
+    lynx_av_buffers buffers;
+    memset(&buffers, 0, sizeof buffers);
+    buffers.struct_size = (uint32_t)sizeof buffers;
+    buffers.frame.struct_size = (uint32_t)sizeof buffers.frame;
+    buffers.frame.pens = audio_pen_scratch;
+    buffers.frame.pens_capacity = sizeof audio_pen_scratch;
+    buffers.frame.palettes = audio_palette_scratch;
+    buffers.frame.palettes_capacity = sizeof audio_palette_scratch;
+    buffers.frame.line_ticks = audio_line_tick_scratch;
+    buffers.frame.line_ticks_capacity = sizeof audio_line_tick_scratch / sizeof audio_line_tick_scratch[0];
+    buffers.pcm = audio_pcm_scratch;
+    buffers.pcm_capacity = sizeof audio_pcm_scratch / sizeof audio_pcm_scratch[0];
+    buffers.events = audio_event_scratch;
+    buffers.event_capacity = LYNX_AV_MIN_EVENT_CAPACITY;
+    lynx_av_result result;
+    memset(&result, 0, sizeof result);
+    result.struct_size = (uint32_t)sizeof result;
+    ASSERT_EQ("audio.mix.public-advance", lynx_advance_av(box.machine, 401u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.mix.public-sample-count", result.pcm_count, 1u);
+    if (result.pcm_count == 1u) {
+        ASSERT_EQ(left_label, audio_pcm_scratch[0].left, expected_left);
+        ASSERT_EQ(right_label, audio_pcm_scratch[0].right, expected_right);
+    }
+    machine_close(&box);
+    return 1;
+}
+
+static void case_stereo(void)
+{
+    for (uint8_t channel = 0u; channel < 4u; channel++) {
+        int8_t outputs[4] = {0, 0, 0, 0};
+        outputs[channel] = 37;
+        char left[64];
+        char right[64];
+        (void)snprintf(left, sizeof left, "audio.stereo.left-route channel %u", channel);
+        (void)snprintf(right, sizeof right, "audio.stereo.right-route channel %u", channel);
+        (void)public_sample(outputs, (uint8_t)(1u << (channel + 4u)), 0, 2368, left, right);
+        (void)public_sample(outputs, (uint8_t)(1u << channel), 2368, 0, left, right);
+    }
+    const int8_t silence[4] = {0, 0, 0, 0};
+    (void)public_sample(silence, 0u, 0, 0, "audio.stereo.left-route all-enabled",
+                        "audio.stereo.right-route all-enabled");
+    (void)public_sample(silence, 0xFFu, 0, 0, "audio.stereo.left-route all-muted",
+                        "audio.stereo.right-route all-muted");
+
+    lynx__audio_state audio;
+    lynx__audio_init(&audio);
+    (void)write_register(&audio, 0u, 0u, 7u);
+    (void)write_register(&audio, 0u, 3u, 0u);
+    (void)write_register(&audio, 0u, 6u, 0u);
+    (void)write_register(&audio, 0u, 5u, 0x08u);
+    (void)lynx__audio_write(&audio, 0xFD50u, 0xFFu, 0u, NULL);
+    lynx_audio_event event;
+    lynx__audio_event_sink sink = {&event, 1u, 0u};
+    (void)lynx__audio_apply(&audio, 16u, &sink);
+    ASSERT_EQ("audio.stereo.mute-keeps-evolution", lynx__audio_peek(&audio, 0xFD23u), 1u);
+    ASSERT_EQ("audio.stereo.mute-keeps-event", sink.count, 1u);
+    ASSERT_EQ("audio.stereo.mute-event-before", event.before_output, -7);
+    ASSERT_EQ("audio.stereo.mute-event-after", event.after_output, 7);
+    lynx_pcm_frame muted = {INT16_MIN, INT16_MIN};
+    ASSERT_NAMED("audio.stereo.muted-sample-ready", lynx__audio_sample(&audio, 400u, &muted));
+    ASSERT_EQ("audio.stereo.muted-left", muted.left, 0);
+    ASSERT_EQ("audio.stereo.muted-right", muted.right, 0);
+}
+
+static void case_mix(void)
+{
+    int8_t outputs[4] = {127, 127, 127, 127};
+    (void)public_sample(outputs, 0u, 32512, 32512,
+                        "audio.mix.positive-maximum-left", "audio.mix.positive-maximum-right");
+    outputs[0] = -128;
+    outputs[1] = -128;
+    outputs[2] = -128;
+    outputs[3] = -128;
+    (void)public_sample(outputs, 0u, INT16_MIN, INT16_MIN,
+                        "audio.mix.negative-maximum-left", "audio.mix.negative-maximum-right");
+    outputs[0] = 127;
+    outputs[1] = -128;
+    outputs[2] = 0;
+    outputs[3] = 0;
+    (void)public_sample(outputs, 0u, -64, -64,
+                        "audio.mix.cancellation-left", "audio.mix.cancellation-right");
+}
 
 typedef struct test_case {
     const char *name;
@@ -436,12 +544,14 @@ static const test_case cases[] = {
     {"lfsr", case_lfsr},
     {"counter", case_counter},
     {"integrator", case_integrator},
+    {"stereo", case_stereo},
+    {"mix", case_mix},
 };
 
 int main(int argc, char **argv)
 {
     if (argc != 2) {
-        (void)fprintf(stderr, "usage: lynx-test-audio <registers|lfsr|counter|integrator>\n");
+        (void)fprintf(stderr, "usage: lynx-test-audio <registers|lfsr|counter|integrator|stereo|mix>\n");
         return 2;
     }
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i++) {
