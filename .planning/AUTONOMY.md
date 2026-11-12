@@ -95,6 +95,13 @@ For every discuss phase (and milestone discussion):
   unexpected fields or unexplained changes; never fabricate an exact restore
   when prior bytes were not captured. Plan 05-07 exposed this SDK side effect.
 
+- After writing the final SUMMARY and all planning metadata, run tree hygiene
+  and `git diff --check` in the same ordered command that calls the GSD SDK
+  metadata commit. Use the orchestrator-supplied guarded commit helper, which
+  preserves normal hooks, exact arguments and SDK skip semantics. A scan before
+  writing the summary is insufficient. The Plan 05-10 handoff caught a late
+  summary path; the helper was proven to block SDK execution on that finding.
+
 ## CI and CD efficiency review
 
 After every CI run (and at release/CD steps): inspect the slowest
