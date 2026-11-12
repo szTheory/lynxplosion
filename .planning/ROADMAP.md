@@ -276,7 +276,42 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
   5. A named workload (the homebrew with a fixed input timeline) has a recorded throughput baseline with its output digest held constant. No optimisation is done.
 **Owner gates**: O1 for any suite claim. O8 is inherited.
 **Research flag**: Deeper research needed before planning: audio register layout and LFSR taps (no sourced page found); CTLB lower-nibble behaviour; exact-rational output rate choice (AD-07); conflicting low-pass figures.
-**Plans**: TBD
+**Plans:** 12 plans
+
+Plans:
+**Wave 1**
+- [ ] 06-01-PLAN.md — One input-responsive audio path through public spans and WAV
+- [ ] 06-02-PLAN.md — Source-built audio and audio2 objects and exact source oracles
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 06-03-PLAN.md — Four-channel digital behavior and all stereo routes
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 06-04-PLAN.md — Complete bounded timer/audio ring and sample order
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 06-05-PLAN.md — Transactional A/V spans and lossless capacity stops
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 06-06-PLAN.md — Validate complete audio state and prove all continuation paths
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 06-07-PLAN.md — Complete public A/V replay, host checkpoint and artifact semantics
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 06-08-PLAN.md — Exclusive whole-bundle publication and malformed replay controls
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 06-09-PLAN.md — Fresh source-suite observations and exact five-suite inventory
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [ ] 06-10-PLAN.md — Private semantic faults for channel, link, stereo and phase behavior
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 06-11-PLAN.md — Digest-bound five-run homebrew throughput baseline
+
+**Wave 11** *(blocked on Wave 10 completion)*
+- [ ] 06-12-PLAN.md — Review, bounded fixes and exact-source qualification
 
 ## Later Milestones (unscheduled)
 
