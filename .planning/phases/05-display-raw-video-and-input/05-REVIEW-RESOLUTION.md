@@ -1,6 +1,6 @@
 # Phase 5 Independent Review Ledger
 
-**Gate:** `PARENT_REVIEW_REQUIRED`  
+**Gate:** `PARENT_REVIEW_REQUIRED`
 **State:** preparation complete; independent verdicts and accepted fixes are
 pending. Plan 05-12 Task 2 has not started. Root owns review, findings,
 dispositions, fixes, bounded retests, and Task 2 resumption.
