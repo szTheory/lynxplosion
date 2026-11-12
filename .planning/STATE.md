@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Display, Raw Video and Input
-current_plan: 1
+current_plan: 2
 status: executing
-stopped_at: Phase 5 context gathered; ready for planning
-last_updated: "2026-11-12T00:27:03.861Z"
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-11-12T01:27:24.814Z"
 last_activity: 2026-11-11
 last_activity_desc: Phase 05 execution started
-state_head: 4b931bd9cdd422068b5bb61f4954bed0a3e2742b
+state_head: f8f7d653b2ef82606e08a2d65776211ae2485dd6
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 57
-  completed_plans: 45
+  completed_plans: 46
   percent: 67
 ---
 
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-11-11)
 ## Current Position
 
 Phase: 05 (Display, Raw Video and Input) — EXECUTING
-Current Plan: 1
+Current Plan: 2
 Total Plans in Phase: 12
-Status: Executing Phase 05
+Status: Ready to execute
 Last activity: 2026-11-11 — Phase 05 execution started
 
 Progress: [███████░░░] 67%
@@ -105,6 +105,7 @@ Progress: [███████░░░] 67%
 | Phase 04 P10 | 46min | 2 tasks | 6 files |
 | Phase 04 P11 | 30min | 2 tasks | 6 files |
 | Phase 04 P12 | 4h 14m | 2 tasks | 5 files |
+| Phase 05 P01 | 55min | 2 tasks | 20 files |
 
 ## Accumulated Context
 
@@ -210,6 +211,10 @@ Recent decisions affecting current work:
 - [Phase 04]: Same-profile deterministic hashes cannot prove freshness; actual fresh-machine completion and watch checks must ignore prior output files.
 - [Phase 04]: 04-11: Use per-CTest copied-core mutants with unique anchors, source/build hashes, exact API assertions, and clean API brackets.
 - [Phase 04]: 04-11: Preserve D-10 index 14 at expected 0D versus observed 0C; global EVD-02 and recurring EVD-05 remain open for later phase evidence.
+- [Phase 05]: LEGACY_FLAT5 remains the default; VIDEO_POLICY1 is explicit immutable unverified software timing policy.
+- [Phase 05]: Raw native video exposes pens, per-row palettes and guest line ticks without host presentation in the core.
+- [Phase 05]: The Phase 5 native C API does not change LibFuturo; O9/HOST-02 remains outside this plan.
+- [Phase 05]: No run-identity change: another emulator appears only in the prohibition on importing constants.
 
 ### Pending Todos
 
@@ -244,6 +249,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-11T23:23:41.859Z
-Stopped at: Phase 5 context gathered; ready for planning
-Resume file: .planning/phases/05-display-raw-video-and-input/05-CONTEXT.md
+Last session: 2026-11-12T01:27:24.446Z
+Stopped at: Completed 05-01-PLAN.md
+Resume file: None
