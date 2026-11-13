@@ -89,9 +89,12 @@ Restore validates the full candidate before applying any machine byte. The
 video policy must match the target instance. Input masks, orientation, flags,
 line ordinal, row count, and active-row cursor must be in range. The refresh
 deadline stays on the 256-tick phase grid. Future release ticks are at most
-five ticks beyond guest time, and DMA and refresh cannot both own the bus at
-once. A refresh phase can be overdue while a video DMA grant blocks it; a DMA
-request can be overdue while refresh owns the bus. Other overdue requests are
+five ticks beyond guest time, and CPU, DMA and refresh cannot overlap as bus
+owners. A refresh phase can be overdue while a video DMA grant blocks it; a DMA
+request can be overdue while refresh owns the bus. Either request can also
+wait for an already granted CPU cycle, including a return exactly at its
+release tick. That case requires a request less than five ticks before CPU
+release and no intervening video or refresh owner. Other overdue requests are
 rejected. This preserves reachable arbitration state while refusing forged
 stale work.
 

@@ -490,7 +490,18 @@ static int audio_state_valid(const lynx__audio_state *audio, const uint8_t *raw,
     return 1;
 }
 
-static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uint32_t policy,
+static int cpu_delays_video_request(const lynx__video_state *video, uint64_t ticks,
+                                    uint64_t ready, uint64_t due)
+{
+    /* VIDEO_POLICY1 CPU cycles cost at most five ticks. A request arriving
+       strictly inside the last cycle may still be pending at its exclusive
+       release boundary. An intervening device owner cannot be a CPU delay. */
+    return due < ticks && ready >= ticks && ready - due < 5u &&
+           video->dma_busy_until < due && video->refresh_busy_until < due;
+}
+
+static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uint64_t ready,
+                             uint32_t policy,
                              uint8_t mapctl, uint8_t cpu_page_latch)
 {
     enum {
@@ -525,7 +536,8 @@ static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uin
 
     /* Refresh deadlines stay on the original 256-tick phase grid. There is
        always one next phase in VIDEO_POLICY1; an overdue phase is valid only
-       while a video grant is holding the bus or a DMA request is due now. */
+       while a video grant is holding the bus, a DMA request is due now, or
+       an already granted CPU cycle delays it through its release boundary. */
     if (video->refresh_next_tick == 0u ||
         video->refresh_next_tick % REFRESH_PERIOD_TICKS != 0u ||
         (video->refresh_next_tick > ticks &&
@@ -534,11 +546,14 @@ static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uin
         video->refresh_next_tick <= video->refresh_busy_until - DMA_GRANT_TICKS) return 0;
     if (video->refresh_next_tick < ticks &&
         video->dma_busy_until < ticks &&
-        !(video->row_active != 0u && video->dma_next_tick <= ticks)) return 0;
+        !(video->row_active != 0u && video->dma_next_tick <= ticks) &&
+        !cpu_delays_video_request(video, ticks, ready, video->refresh_next_tick)) return 0;
 
     /* The bus is exclusive: after one grant starts, the other cannot have a
        future release at the same public return boundary. */
     if (video->dma_busy_until > ticks && video->refresh_busy_until > ticks) return 0;
+    if (ready > ticks &&
+        (video->dma_busy_until > ticks || video->refresh_busy_until > ticks)) return 0;
     if (cpu_page_latch != 0u &&
         (policy == LYNX_TIMING_POLICY_LEGACY_FLAT5 || (mapctl & 0x80u) != 0u ||
          video->dma_busy_until > ticks || video->refresh_busy_until > ticks)) return 0;
@@ -550,7 +565,8 @@ static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uin
             video->dma_next_tick == 0u ||
             video->dma_next_tick < video->line_ticks[video->capture_rows] ||
             video->dma_next_tick - video->line_ticks[video->capture_rows] < DMA_GRANT_TICKS ||
-            (video->dma_next_tick < ticks && video->refresh_busy_until < ticks) ||
+            (video->dma_next_tick < ticks && video->refresh_busy_until < ticks &&
+             !cpu_delays_video_request(video, ticks, ready, video->dma_next_tick)) ||
             (video->dma_next_tick > ticks &&
              video->dma_next_tick - ticks > DMA_GRANT_TICKS)) return 0;
     } else if (video->dma_cursor != 0u || video->dma_next_tick != 0u) {
@@ -817,7 +833,7 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     }
     lynx__video_state video_cand;
     video_snapshot_read(&video_cand, payload + P_VIDEO);
-    if (!video_state_valid(&video_cand, ticks, m->cfg.timing_policy,
+    if (!video_state_valid(&video_cand, ticks, ready, m->cfg.timing_policy,
                            payload[P_MAPCTL], cpu_page_latch)) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }

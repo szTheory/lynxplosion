@@ -6870,6 +6870,14 @@ static void case_video_bus(void)
     CHECK_NAMED(found_store, "video.bus.real-guest-store-posted");
     if (!found_store) goto done;
 
+    /* The posted store follows a granted operand cycle. Begin this tie case
+       at that cycle's release; mid-cycle arrivals have their own regression. */
+    if (m->cpu_ready_at > m->guest_ticks) {
+        const uint64_t remaining = m->cpu_ready_at - m->guest_ticks;
+        CHECK_EQ_U64(lynx_advance(m, remaining, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, remaining);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    }
     const uint64_t start = m->guest_ticks;
     const lynx__cpu posted = m->cpu;
     CHECK_EQ_U64(posted.req_addr, 0x0400u);
@@ -6944,9 +6952,77 @@ done:
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void check_video_waits_for_cpu_cycle(void)
+{
+    static const uint8_t program[] = {0xEAu, 0xEAu, 0xDBu};
+    for (uint32_t profile = LYNX_PROFILE_LYNX1; profile <= LYNX_PROFILE_LYNX2; profile++) {
+        for (uint32_t fast = 0u; fast <= 1u; fast++) {
+            const uint64_t cycle_start = fast != 0u ? 10u : 0u;
+            const uint64_t cycle_ticks = fast != 0u ? 4u : 5u;
+            const uint64_t release = cycle_start + cycle_ticks;
+            for (uint32_t requests = 1u; requests <= 3u; requests++) {
+                for (uint64_t offset = 1u; offset < cycle_ticks; offset++) {
+                    lynx_config cfg;
+                    lynx_config_default(&cfg);
+                    cfg.profile = profile;
+                    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+                    lynx_machine *m = init_in(machine_buf, &cfg);
+                    if (m == NULL) continue;
+                    uint64_t consumed = UINT64_MAX;
+                    lynx_stop_reason stop = LYNX_STOP_HALT;
+                    CHECK_EQ_U64(load_bll_at(m, program, sizeof program, 0x0200u), LYNX_OK);
+                    CHECK_EQ_U64(lynx_advance(m, cycle_start + 1u, &consumed, &stop), LYNX_OK);
+                    CHECK_EQ_U64(m->cpu_ready_at, release); /* Actual granted opcode cycle. */
+                    const lynx__cpu posted = m->cpu;
+                    CHECK(lynx__video_write(&m->video, 0xFD92u, 1u));
+                    m->video.row_active = (uint8_t)(requests & 1u);
+                    m->video.dma_cursor = 79u;
+                    m->video.dma_next_tick = cycle_start + offset;
+                    m->video.refresh_next_tick = (requests & 2u) != 0u ? cycle_start + offset : 0u;
+
+                    /* No higher-priority requester may overlap the granted CPU interval. Calls that
+                       end at the release tick must leave both requests pending. */
+                    CHECK_EQ_U64(lynx_advance(m, cycle_ticks - 1u, &consumed, &stop), LYNX_OK);
+                    CHECK_EQ_U64(consumed, cycle_ticks - 1u);
+                    CHECK_NAMED(m->video.dma_busy_until == 0u &&
+                                    m->video.refresh_busy_until == 0u,
+                                "video.bus.cpu-cycle-not-preempted");
+                    CHECK_NAMED(memcmp(&posted, &m->cpu, sizeof posted) == 0,
+                                "video.bus.cpu-request-stays-posted-during-cycle");
+                    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+                    if ((requests & 1u) != 0u) {
+                        CHECK_NAMED(m->video.dma_busy_until == release + 5u,
+                                    "video.bus.video-waits-for-cpu-release");
+                        CHECK_EQ_U64(m->video.capture_rows, 1u);
+                        CHECK_EQ_U64(m->video.refresh_busy_until, 0u);
+                    } else {
+                        CHECK_NAMED(m->video.refresh_busy_until == release + 5u,
+                                    "video.bus.refresh-waits-for-cpu-release");
+                    }
+                    CHECK_EQ_U64(lynx_advance(m, 4u, &consumed, &stop), LYNX_OK);
+                    CHECK_EQ_U64(m->guest_ticks, release + 5u);
+                    CHECK(memcmp(&posted, &m->cpu, sizeof posted) == 0);
+                    CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+                    if (requests == 3u) {
+                        CHECK_NAMED(m->video.refresh_busy_until == release + 10u &&
+                                        memcmp(&posted, &m->cpu, sizeof posted) == 0,
+                                    "video.bus.delayed-video-before-delayed-refresh");
+                        CHECK_EQ_U64(lynx_advance(m, 5u, &consumed, &stop), LYNX_OK);
+                        CHECK_EQ_U64(m->cpu_ready_at, release + 15u);
+                    } else {
+                        CHECK_EQ_U64(m->cpu_ready_at, release + 10u);
+                    }
+                    lynx_machine_deinit(m);
+                }
+            }
+        }
+    }
+}
+
 static void case_video_bus_edges(void)
 {
     const int failures_before = check_failures;
+    check_video_waits_for_cpu_cycle();
     lynx__video_state video;
     uint8_t ram[LYNX_ADDRESS_SPACE];
     uint64_t next = UINT64_MAX;
@@ -9499,9 +9575,76 @@ static void video_snapshot_value_refused(lynx_machine *target, const unsigned ch
                 "video_snapshot_refusal.caller-blob-preserved");
 }
 
+static void check_snapshot_cpu_delayed_bus(void)
+{
+    static const uint8_t loop[] = {0x4Cu, 0x00u, 0x02u};
+    for (uint32_t requests = 1u; requests <= 3u; requests++) {
+        lynx_config cfg;
+        lynx_config_default(&cfg);
+        cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+        lynx_machine *source = init_in(machine_buf, &cfg);
+        lynx_machine *restored = init_in(buf_b, &cfg);
+        if (source == NULL || restored == NULL) continue;
+        CHECK_EQ_U64(load_bll_at(source, loop, sizeof loop, 0x0200u), LYNX_OK);
+        CHECK_EQ_U64(load_bll_at(restored, loop, sizeof loop, 0x0200u), LYNX_OK);
+        /* Normal refresh at256 falls inside the actual CPU grant [255,260).
+           DMA-only uses the next CPU grant [265,270), after that refresh. */
+        const uint64_t line_tick = requests == 2u ? 261u : 251u;
+        const uint64_t release = requests == 2u ? 270u : 260u;
+        advance_ticks(source, line_tick);
+        if ((requests & 2u) != 0u) {
+            CHECK(lynx__video_write(&source->video, 0xFD92u, 1u));
+            source->video.frame_synced = 1u;
+            source->video.line_ordinal = 2u;
+            (void)lynx__video_timer_apply(&source->video, 1u, line_tick);
+        }
+        advance_ticks(source, release - 3u - source->guest_ticks);
+        CHECK_NAMED(source->cpu_ready_at == release,
+                    "video_snapshot.cpu-delay-control-has-real-outstanding-cycle");
+        if (!video_snapshot_roundtrip(source, restored,
+                                      "video_snapshot.inside-cpu-delayed-request-restores")) goto next;
+        advance_ticks(source, 3u);
+        advance_ticks(restored, 3u);
+        CHECK_NAMED(memcmp(source, restored, MSIZE) == 0,
+                    "video_snapshot.cpu-delay-prefix-matches");
+        if (!video_snapshot_roundtrip(source, restored,
+                                      "video_snapshot.cpu-release-with-pending-request-restores")) goto next;
+        if (requests == 1u) {
+            video_snapshot_value_refused(restored, blob_v, PAY_READY_AT,
+                                         release + 4u, 8u,
+                                         "video_snapshot_refusal.cpu-delay-age-is-bounded");
+            CHECK_EQ_U64(lynx_watch_clear(restored), LYNX_OK);
+        }
+        advance_ticks(source, 1u);
+        advance_ticks(restored, 1u);
+        if ((requests & 2u) != 0u) {
+            CHECK_NAMED(source->video.dma_cursor == 1u &&
+                            source->video.dma_busy_until == release + 5u,
+                        "video_snapshot.cpu-delayed-video-granted-once");
+        } else {
+            CHECK_NAMED(source->video.refresh_busy_until == release + 5u &&
+                            source->video.refresh_next_tick == 512u,
+                        "video_snapshot.cpu-delayed-refresh-granted-once");
+        }
+        CHECK_EQ_U64(save_into(source, blob_v), 0u);
+        video_snapshot_value_refused(restored, blob_v, PAY_READY_AT,
+                                     release + 2u, 8u,
+                                     "video_snapshot_refusal.cpu-and-device-owners-do-not-overlap");
+        CHECK_EQ_U64(lynx_watch_clear(restored), LYNX_OK);
+        advance_ticks(source, 500u);
+        for (uint32_t tick = 0u; tick < 500u; tick++) advance_ticks(restored, 1u);
+        CHECK_NAMED(memcmp(source, restored, MSIZE) == 0,
+                    "video_snapshot.cpu-delay-coarse-and-sliced-suffix-match");
+next:
+        lynx_machine_deinit(source);
+        lynx_machine_deinit(restored);
+    }
+}
+
 static void case_video_snapshot(void)
 {
     const int failures_before = check_failures;
+    check_snapshot_cpu_delayed_bus();
     lynx_config cfg;
     lynx_config_default(&cfg);
     cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;

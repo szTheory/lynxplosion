@@ -612,8 +612,11 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             }
         }
         uint64_t video_tick = 0u;
-        if (lynx__video_next_dma(&m->video, m->guest_ticks, &video_tick) &&
-            video_tick < target) {
+        const bool video_pending = lynx__video_next_dma(&m->video, m->guest_ticks, &video_tick);
+        /* Priority chooses the next owner; it cannot preempt the interval of
+           an already granted CPU cycle. cpu_ready_at is its release tick. */
+        if (video_pending && video_tick < m->cpu_ready_at) video_tick = m->cpu_ready_at;
+        if (video_pending && video_tick < target) {
             const lynx__machine_event video_event = {
                 video_tick, (uint8_t)LYNX__MACHINE_EVENT_VIDEO_PRIORITY,
                 (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
@@ -623,8 +626,10 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             }
         }
         uint64_t refresh_tick = 0u;
-        if (lynx__video_next_refresh(&m->video, m->guest_ticks, &refresh_tick) &&
-            refresh_tick < target) {
+        const bool refresh_pending = lynx__video_next_refresh(&m->video, m->guest_ticks,
+                                                             &refresh_tick);
+        if (refresh_pending && refresh_tick < m->cpu_ready_at) refresh_tick = m->cpu_ready_at;
+        if (refresh_pending && refresh_tick < target) {
             const lynx__machine_event refresh_event = {
                 refresh_tick, (uint8_t)LYNX__MACHINE_EVENT_REFRESH_PRIORITY,
                 (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};

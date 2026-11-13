@@ -36,7 +36,12 @@ priced CPU cycle; it does not include ownership delay. The private `bus_hold`
 test seam remains a separate gate.
 
 Every bus grant consumes its interval before another requester can start. The
-half-open advance budget still excludes an event exactly at the target, while
+video and refresh candidates wait until `cpu_ready_at` when an already granted
+CPU cycle still owns the bus. Their relative priority applies at that release
+tick, including when both requests became pending during the CPU interval.
+This repairs the earlier scheduler's overlapping grants; it does not calibrate
+the policy's numeric costs against hardware or the timer-suite expectation.
+The half-open advance budget still excludes an event exactly at the target, while
 timer work continues during video and refresh ownership. A one-shot watch is
 reported only after the original CPU write completes. Disabling display DMA in
 the middle of a row abandons that partial row and its remaining DMA requests;

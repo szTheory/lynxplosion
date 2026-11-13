@@ -311,3 +311,17 @@ preserved the exact command text while making the frontmatter parseable; all69
 summaries then extracted successfully. Keep parse failure distinct from absent
 coverage, and validate each new summary before committing it. Historical
 verification hashes are not blindly rewritten after this metadata repair.
+
+## CPU and device ownership intervals (2026-11-13)
+
+- Bus-priority tests must exercise requests arriving inside another owner's
+  priced interval, in both directions, as well as equal-ready ties. A CPU
+  readiness deadline also bounds when video/refresh may start; priority alone
+  does not establish exclusive ownership.
+- A scheduler repair can make new pending states reachable at public returns,
+  including an exact half-open release boundary. Couple it with snapshot
+  round-trips, bounded hostile timestamp controls and coarse/sliced continuation.
+- Single-factor timing experiments over a full guest can shift earlier display
+  phase and the number of stalls. Account for actual intervals and counts;
+  differences between complete runs are not additive timing corrections.
+  See `.planning/debug/evidence/timer-focused-bus-accounting.md`.

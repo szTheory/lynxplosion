@@ -58,7 +58,7 @@ software release version, tag or publication authority.
 
 ## The remaining decision, in plain language
 
-The pinned timer diagnostic produces a status byte different from its unchanged
+The pinned timer diagnostic produces an interrupt acknowledgment count different from its unchanged
 source expectation. The harness runs and observes it correctly, but strict
 agreement remains a real failure: row14 is0C under legacy flat5 and0F under
 video-policy1 against source0D. Phase4's approved exception closed its
@@ -71,10 +71,11 @@ The recommended next action is a focused, evidence-led timer investigation,
 reusing the existing traces, source pin and controls. Do not change the oracle,
 add an exception or tune to0D without source-supported behavioral evidence.
 
-Milestone completion/archive is held at the required owner boundary. The owner
-may authorize that focused next scope, or explicitly accept the unmet comparison
-as a milestone-scope change. No answer or an indifferent answer is not acceptance.
-Until then the milestone remains open automatically; no confirmation is needed
+The owner approved the recommended focused investigation on2026-11-13. It found
+and repaired a CPU/video/refresh grant overlap; strict counts remain12/15 versus13.
+See the [focused investigation](debug/evidence/timer-focused-bus-accounting.md).
+This approval does not accept the unmet comparison as a milestone-scope change.
+The milestone remains open automatically; no confirmation is needed
 to keep the existing hardware/rights/release stops in place. No new phase,
 archive cleanup, tag or release has been started.
 
