@@ -51,6 +51,11 @@ function(lynx_av_test name timeout)
       -DTEST_CONSUMER=$<TARGET_FILE:lynx-consume-test>
       -DARTIFACT_CHECKER=$<TARGET_FILE:lynx-check-artifacts>
       -DENV_EXECUTABLE=${LYNX_ENV_EXECUTABLE}
+      -DHOST_OS=${CMAKE_HOST_SYSTEM_NAME}
+      -DHOST_ARCH=${CMAKE_HOST_SYSTEM_PROCESSOR}
+      -DC_COMPILER_ID=${CMAKE_C_COMPILER_ID}
+      -DC_COMPILER_VERSION=${CMAKE_C_COMPILER_VERSION}
+      -DBUILD_TYPE=${CMAKE_BUILD_TYPE}
       -P ${CMAKE_CURRENT_LIST_DIR}/av_driver.cmake
     LABELS consumer TIMEOUT ${timeout})
 endfunction()
@@ -59,6 +64,7 @@ lynx_av_test(consumer.av_controls 180)
 lynx_av_test(consumer.av_edges 180)
 lynx_av_test(consumer.av_publication_controls 240)
 lynx_av_test(consumer.av_replay 240)
+lynx_av_test(consumer.av_benchmark 720)
 lynx_av_test(consumer.av_response_controls 240)
 lynx_av_test(consumer.av_restore 180)
 function(lynx_frame_test name scenario timeout)

@@ -19,6 +19,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #if defined(__linux__)
@@ -221,7 +222,7 @@ static int usage_error(const char *reason)
 {
     fprintf(stderr, "lynx-consume: %s\n"
                     "Usage: lynx-consume --content BLL --symbols LABELS --out NEW-DIRECTORY [--profile none|lynx1|lynx2]\n"
-                    "   or: lynx-consume --mode frames|av-replay --content BLL --symbols LABELS --timeline FILE --out NEW-DIRECTORY [--profile none|lynx1|lynx2]\n"
+                    "   or: lynx-consume --mode frames|av-replay|av-benchmark --content BLL --symbols LABELS --timeline FILE --out NEW-DIRECTORY [--profile none|lynx1|lynx2]\n"
                     "Provide a complete BS93 BLL and the matching ld65 -Ln symbol file.\n",
             reason);
     return 2;
@@ -2372,11 +2373,116 @@ static int av_build_event_text(const lynx_audio_event *events, size_t count,
     return 0;
 }
 
+typedef struct av_benchmark_timing {
+    uint64_t advance_ns;
+    uint64_t advance_calls;
+    uint64_t guest_ticks;
+    uint64_t advance_first_start_ns;
+    uint64_t advance_last_end_ns;
+    uint64_t frame_encode_ns;
+    uint64_t frame_encode_calls;
+    uint64_t frame_encode_first_start_ns;
+    uint64_t frame_encode_last_end_ns;
+    uint64_t assembly_ns;
+    uint64_t assembly_start_ns;
+    uint64_t assembly_end_ns;
+    uint64_t publication_ns;
+    uint64_t publication_start_ns;
+    uint64_t publication_end_ns;
+    uint64_t replay_start_ns;
+    uint64_t replay_end_ns;
+    int have_advance;
+} av_benchmark_timing;
+
 typedef struct av_output_file {
     const char *name;
     const void *bytes;
     size_t length;
 } av_output_file;
+
+enum { AV_BENCHMARK_FILE_LIMIT = 16 };
+
+static int av_benchmark_hash_files(const av_output_file *files, size_t count,
+                                   char stream_hashes[AV_BENCHMARK_FILE_LIMIT][65],
+                                   char combined_hash[65])
+{
+    host_sha256 combined;
+    if (files == NULL || count == 0u || count > AV_BENCHMARK_FILE_LIMIT) return 1;
+    host_sha_init(&combined);
+    for (size_t i = 0u; i < count; i++) {
+        uint8_t digest[32];
+        char length_text[32];
+        int length_text_size;
+        if (files[i].name == NULL || (files[i].bytes == NULL && files[i].length != 0u)) return 1;
+        host_sha_digest(files[i].bytes, files[i].length, digest);
+        host_sha_hex(digest, stream_hashes[i]);
+        length_text_size = snprintf(length_text, sizeof length_text, "%zu", files[i].length);
+        if (length_text_size < 0 || (size_t)length_text_size >= sizeof length_text) return 1;
+        host_sha_update(&combined, files[i].name, strlen(files[i].name));
+        host_sha_update(&combined, "\n", 1u);
+        host_sha_update(&combined, length_text, (size_t)length_text_size);
+        host_sha_update(&combined, "\n", 1u);
+        host_sha_update(&combined, stream_hashes[i], 64u);
+        host_sha_update(&combined, "\n", 1u);
+    }
+    {
+        uint8_t digest[32];
+        host_sha_final(&combined, digest);
+        host_sha_hex(digest, combined_hash);
+    }
+    return 0;
+}
+
+static int av_benchmark_emit_report(const av_benchmark_timing *timing,
+                                    uint32_t profile, const char *content_hash,
+                                    const char *timeline_hash, uint64_t guest_endpoint,
+                                    uint64_t guest_window_bound,
+                                    size_t input_event_count, size_t frame_count,
+                                    size_t pcm_count, size_t event_count,
+                                    uint64_t next_ordinal,
+                                    const av_output_file *files, size_t file_count,
+                                    char stream_hashes[AV_BENCHMARK_FILE_LIMIT][65],
+                                    const char *combined_hash)
+{
+    if (timing == NULL || timing->have_advance == 0 || timing->advance_calls == 0u ||
+        timing->guest_ticks == 0u || timing->advance_ns == 0u ||
+        timing->frame_encode_calls != frame_count || timing->frame_encode_ns == 0u ||
+        timing->assembly_ns == 0u || timing->publication_ns == 0u ||
+        timing->replay_end_ns <= timing->replay_start_ns || content_hash == NULL ||
+        timeline_hash == NULL || files == NULL || combined_hash == NULL ||
+        lynx_profile_name(profile) == NULL || file_count > AV_BENCHMARK_FILE_LIMIT) return 1;
+    if (printf("format=LYNX-BENCHMARK-1\nbuild_id=%s\nprofile=%s\n"
+            "timing_policy=video-policy1-unverified\naudio_policy=digital-1\n"
+            "clock=CLOCK_MONOTONIC\ncontent_sha256=%s\ntimeline_sha256=%s\n"
+            "input_event_count=%zu\ninput_applied_count=%zu\nguest_endpoint_tick=%" PRIu64 "\n"
+            "guest_window_bound_tick=%" PRIu64 "\n"
+            "guest_ticks=%" PRIu64 "\napi_advance_calls=%" PRIu64 "\n"
+            "api_advance_ns=%" PRIu64 "\napi_first_start_ns=%" PRIu64 "\napi_last_end_ns=%" PRIu64 "\n"
+            "frame_encode_calls=%" PRIu64 "\nframe_encode_ns=%" PRIu64 "\n"
+            "frame_encode_first_start_ns=%" PRIu64 "\nframe_encode_last_end_ns=%" PRIu64 "\n"
+            "frames_count=%zu\npcm_frames_count=%zu\naudio_events_count=%zu\n"
+            "api_advance_output_sample_ordinal=%" PRIu64 "\nstream_count=%zu\ncombined_output_sha256=%s\n",
+            lynx_build_id(), lynx_profile_name(profile), content_hash, timeline_hash,
+            input_event_count, input_event_count, guest_endpoint, guest_window_bound,
+            timing->guest_ticks,
+            timing->advance_calls, timing->advance_ns, timing->advance_first_start_ns,
+            timing->advance_last_end_ns, timing->frame_encode_calls, timing->frame_encode_ns,
+            timing->frame_encode_first_start_ns, timing->frame_encode_last_end_ns,
+            frame_count, pcm_count, event_count,
+            next_ordinal, file_count, combined_hash) < 0) return 1;
+    for (size_t i = 0u; i < file_count; i++) {
+        if (printf("stream_%zu_name=%s\nstream_%zu_bytes=%zu\nstream_%zu_sha256=%s\n",
+                i, files[i].name, i, files[i].length, i, stream_hashes[i]) < 0) return 1;
+    }
+    if (printf("assembly_ns=%" PRIu64 "\nassembly_start_ns=%" PRIu64 "\nassembly_end_ns=%" PRIu64 "\n"
+            "publication_ns=%" PRIu64 "\npublication_start_ns=%" PRIu64 "\npublication_end_ns=%" PRIu64 "\n"
+            "replay_total_ns=%" PRIu64 "\nreplay_start_ns=%" PRIu64 "\nreplay_end_ns=%" PRIu64 "\n",
+            timing->assembly_ns, timing->assembly_start_ns, timing->assembly_end_ns,
+            timing->publication_ns, timing->publication_start_ns, timing->publication_end_ns,
+            timing->replay_end_ns - timing->replay_start_ns, timing->replay_start_ns,
+            timing->replay_end_ns) < 0 || fflush(stdout) != 0) return 1;
+    return 0;
+}
 
 static int publish_av_outputs(const char *directory, const av_output_file *files,
                               size_t file_count)
@@ -2475,13 +2581,67 @@ typedef struct av_capture_totals {
     uint64_t next_ordinal;
 } av_capture_totals;
 
+static int av_monotonic_now_ns(uint64_t *value)
+{
+    struct timespec now;
+    uint64_t seconds, nanoseconds;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0 || now.tv_sec < 0 ||
+        now.tv_nsec < 0 || now.tv_nsec >= 1000000000L) return 1;
+    seconds = (uint64_t)now.tv_sec;
+    nanoseconds = (uint64_t)now.tv_nsec;
+    if (seconds > (UINT64_MAX - nanoseconds) / UINT64_C(1000000000)) return 1;
+    *value = seconds * UINT64_C(1000000000) + nanoseconds;
+    return 0;
+}
+
+static int av_benchmark_interval(uint64_t start, uint64_t end, uint64_t *duration)
+{
+    if (end <= start) return 1;
+    *duration = end - start;
+    return 0;
+}
+
+static int av_benchmark_record_advance(av_benchmark_timing *timing,
+                                       uint64_t start, uint64_t end,
+                                       const lynx_av_result *result)
+{
+    uint64_t duration;
+    if (av_benchmark_interval(start, end, &duration) != 0 ||
+        UINT64_MAX - timing->advance_ns < duration ||
+        timing->advance_calls == UINT64_MAX ||
+        UINT64_MAX - timing->guest_ticks < result->ticks_consumed) return 1;
+    if (timing->have_advance == 0) timing->advance_first_start_ns = start;
+    timing->advance_last_end_ns = end;
+    timing->advance_ns += duration;
+    timing->advance_calls++;
+    timing->guest_ticks += result->ticks_consumed;
+    timing->have_advance = 1;
+    return 0;
+}
+
+static int av_benchmark_record_frame_encode(av_benchmark_timing *timing,
+                                            uint64_t start, uint64_t end)
+{
+    uint64_t duration;
+    if (av_benchmark_interval(start, end, &duration) != 0 ||
+        UINT64_MAX - timing->frame_encode_ns < duration ||
+        timing->frame_encode_calls == UINT64_MAX) return 1;
+    if (timing->frame_encode_calls == 0u) timing->frame_encode_first_start_ns = start;
+    timing->frame_encode_last_end_ns = end;
+    timing->frame_encode_ns += duration;
+    timing->frame_encode_calls++;
+    return 0;
+}
+
 static int av_step(lynx_machine *machine, uint64_t budget,
                    uint8_t *pens, uint8_t *palettes, uint64_t *line_ticks,
                    size_t pcm_span_capacity, size_t event_span_capacity,
-                   av_capture_totals *totals, lynx_av_result *result)
+                   av_capture_totals *totals, lynx_av_result *result,
+                   av_benchmark_timing *benchmark)
 {
     lynx_av_buffers buffers = {0};
     uint64_t before = 0u, after = 0u;
+    uint64_t advance_start = 0u, advance_end = 0u;
     size_t pcm_remaining, event_remaining;
     int advance_status;
     if (totals->pcm_count >= AV_PCM_CAPACITY || totals->event_count >= AV_EVENT_CAPACITY ||
@@ -2501,10 +2661,23 @@ static int av_step(lynx_machine *machine, uint64_t budget,
     buffers.events = totals->events + totals->event_count;
     buffers.event_capacity = event_span_capacity;
     result->struct_size = (uint32_t)sizeof *result;
+    if (benchmark != NULL && av_monotonic_now_ns(&advance_start) != 0) {
+        (void)report_error("CLOCK_MONOTONIC failed before public A/V advance");
+        return 1;
+    }
     advance_status = (int)lynx_advance_av(machine, budget, &buffers, result);
+    if (benchmark != NULL && av_monotonic_now_ns(&advance_end) != 0) {
+        (void)report_error("CLOCK_MONOTONIC failed after public A/V advance");
+        return 1;
+    }
     if (advance_status != (int)LYNX_OK) {
         fprintf(stderr, "lynx-consume: public A/V advance returned status %d for budget %" PRIu64 "\n",
                 advance_status, budget);
+        return 1;
+    }
+    if (benchmark != NULL && av_benchmark_record_advance(benchmark, advance_start,
+            advance_end, result) != 0) {
+        (void)report_error("public A/V advance timing was non-positive or overflowed");
         return 1;
     }
     if (result->ticks_consumed > budget || result->pcm_count > buffers.pcm_capacity ||
@@ -2636,10 +2809,11 @@ static int av_step_interleaved(lynx_machine *primary, uint64_t budget,
                                uint8_t *pens, uint8_t *palettes, uint64_t *ticks,
                                size_t pcm_capacity, size_t event_capacity,
                                av_capture_totals *primary_totals, lynx_av_result *primary_result,
-                               av_interleaved_pair *pair)
+                               av_interleaved_pair *pair,
+                               av_benchmark_timing *benchmark)
 {
     if (av_step(primary, budget, pens, palettes, ticks, pcm_capacity,
-                event_capacity, primary_totals, primary_result) != 0) return 1;
+                event_capacity, primary_totals, primary_result, benchmark) != 0) return 1;
     if (pair->enabled != 0) {
         uint8_t first_pens[LYNX_FRAME_PENS_CAPACITY], first_palettes[LYNX_FRAME_PALETTE_CAPACITY];
         uint8_t second_pens[LYNX_FRAME_PENS_CAPACITY], second_palettes[LYNX_FRAME_PALETTE_CAPACITY];
@@ -2653,9 +2827,9 @@ static int av_step_interleaved(lynx_machine *primary, uint64_t budget,
         const size_t second_event_before = pair->second_totals.event_count;
         uint8_t primary_digest[32], first_digest[32], second_digest[32];
         if (av_step(pair->first.machine, budget, first_pens, first_palettes, first_ticks,
-                    pcm_capacity, event_capacity, &pair->first_totals, &first_result) != 0 ||
+                    pcm_capacity, event_capacity, &pair->first_totals, &first_result, NULL) != 0 ||
             av_step(pair->second.machine, budget, second_pens, second_palettes, second_ticks,
-                    pcm_capacity, event_capacity, &pair->second_totals, &second_result) != 0 ||
+                    pcm_capacity, event_capacity, &pair->second_totals, &second_result, NULL) != 0 ||
             !av_result_equal(primary_result, &first_result) ||
             !av_result_equal(primary_result, &second_result) ||
             av_totals_delta_equal(primary_totals, primary_pcm_before, primary_event_before,
@@ -2678,13 +2852,13 @@ static int av_step_interleaved(lynx_machine *primary, uint64_t budget,
     return 0;
 }
 
-#define AV_REPLAY_STEP(machine, budget, pens, palettes, ticks, pcm_capacity, event_capacity, totals, result) \
+#define AV_REPLAY_STEP(machine, budget, pens, palettes, ticks, pcm_capacity, event_capacity, totals, result, benchmark) \
     av_step_interleaved((machine), (budget), (pens), (palettes), (ticks), (pcm_capacity), \
-                        (event_capacity), (totals), (result), &interleaved)
+                        (event_capacity), (totals), (result), &interleaved, (benchmark))
 #else
-#define AV_REPLAY_STEP(machine, budget, pens, palettes, ticks, pcm_capacity, event_capacity, totals, result) \
+#define AV_REPLAY_STEP(machine, budget, pens, palettes, ticks, pcm_capacity, event_capacity, totals, result, benchmark) \
     av_step((machine), (budget), (pens), (palettes), (ticks), (pcm_capacity), \
-            (event_capacity), (totals), (result))
+            (event_capacity), (totals), (result), (benchmark))
 #endif
 
 static int av_frame_result(const lynx_av_result *source, lynx_frame_result *out)
@@ -2719,6 +2893,21 @@ static int av_make_capture(frame_capture *capture, const lynx_av_result *source,
     host_sha_digest(capture->raw, capture->raw_len, digest);
     host_sha_hex(digest, capture->raw_sha256);
     if (replay_render_ppm(capture, pens, palettes) != 0) return 1;
+    return 0;
+}
+
+static int av_make_capture_timed(frame_capture *capture, const lynx_av_result *source,
+                                 const uint8_t *pens, const uint8_t *palettes,
+                                 const uint64_t *ticks, uint32_t input_mask,
+                                 const guest_probe *sample, uint32_t display_marker,
+                                 uint32_t handedness, av_benchmark_timing *benchmark)
+{
+    uint64_t start = 0u, end = 0u;
+    if (benchmark != NULL && av_monotonic_now_ns(&start) != 0) return 1;
+    if (av_make_capture(capture, source, pens, palettes, ticks, input_mask,
+            sample, display_marker, handedness) != 0) return 1;
+    if (benchmark != NULL && (av_monotonic_now_ns(&end) != 0 ||
+        av_benchmark_record_frame_encode(benchmark, start, end) != 0)) return 1;
     return 0;
 }
 
@@ -2961,7 +3150,7 @@ static int av_join_frames(const frame_capture frames[FRAME_OUTPUT_LIMIT], size_t
 
 static int run_av_consumer(const char *content_path, const char *symbols_path,
                            const char *timeline_path, const char *output_directory,
-                           uint32_t profile)
+                           uint32_t profile, int benchmark_mode)
 {
     uint8_t *bll = NULL, *labels = NULL, *timeline_bytes = NULL, script_digest[32];
     size_t bll_len = 0u, labels_len = 0u, timeline_len = 0u, cursor = 0u, frame_count = 0u;
@@ -2988,9 +3177,15 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
     size_t pcm_bytes_len = 0u, wav_len = 0u, event_text_len = 0u;
     size_t raw_stream_len = 0u, ppm_stream_len = 0u;
     size_t applied_text_len = 0u, progress_text_len = 0u;
-    char content_hash[65], input_hash[65], manifest[8192];
+    char content_hash[65], input_hash[65], timeline_stream_hash[65], manifest[8192];
+    char benchmark_stream_hashes[AV_BENCHMARK_FILE_LIMIT][65] = {{0}};
+    char benchmark_combined_hash[65] = {0};
     size_t manifest_len = 0u;
     int result = 1;
+    av_benchmark_timing benchmark = {0};
+    av_benchmark_timing *benchmark_ptr = benchmark_mode != 0 ? &benchmark : NULL;
+    if (benchmark_ptr != NULL && av_monotonic_now_ns(&benchmark.replay_start_ns) != 0)
+        return report_error("CLOCK_MONOTONIC failed before A/V benchmark replay");
 #if defined(LYNX_CONSUMER_TESTING)
     {
         const char *value = getenv("LYNX_TEST_AV_SHORT_SPANS");
@@ -3100,7 +3295,7 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
             const size_t pcm_capacity = short_spans != 0 ? LYNX_AV_MIN_PCM_CAPACITY : AV_PCM_CAPACITY;
             const size_t event_capacity = short_spans != 0 ? LYNX_AV_MIN_EVENT_CAPACITY : AV_EVENT_CAPACITY;
             const int step_status = AV_REPLAY_STEP(active.machine, request, pens, palettes, ticks,
-                        pcm_capacity, event_capacity, &totals, &step);
+                        pcm_capacity, event_capacity, &totals, &step, benchmark_ptr);
             if (step_status != 0) {
 #if defined(LYNX_CONSUMER_TESTING)
                 (void)fprintf(stderr,
@@ -3145,8 +3340,8 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
                         sample.progress == 0u || sample.error != 0u ||
                         (marker == 0x22u && (sample.joystick & 1u) == 0u) ||
                         (marker == 0x11u && (sample.joystick & 1u) != 0u) ||
-                        av_make_capture(&frames[frame_count], &step, pens, palettes, ticks,
-                                        frame_mask, &sample, marker, 1u) != 0) {
+                        av_make_capture_timed(&frames[frame_count], &step, pens, palettes, ticks,
+                                        frame_mask, &sample, marker, 1u, benchmark_ptr) != 0) {
                         (void)report_error("A/V frame guest marker, progress or raw/rendered capture is invalid"); goto done;
                     }
                     if (marker == 0x11u && released_capture == NULL) released_capture = &frames[frame_count];
@@ -3268,7 +3463,7 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
         }
         remaining = endpoint - now;
         if (AV_REPLAY_STEP(active.machine, remaining, pens, palettes, ticks, pcm_capacity,
-                    event_capacity, &totals, &step) != 0 ||
+                    event_capacity, &totals, &step, benchmark_ptr) != 0 ||
             lynx_guest_ticks(active.machine, &after) != LYNX_OK || after < now || after > endpoint) {
             (void)report_error("final A/V frame interval violated its guest-time bound"); goto done;
         }
@@ -3295,8 +3490,8 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
                     sample.progress == 0u || sample.error != 0u ||
                     (marker == 0x22u && (sample.joystick & 1u) == 0u) ||
                     (marker == 0x11u && (sample.joystick & 1u) != 0u) ||
-                    av_make_capture(&frames[frame_count], &step, pens, palettes, ticks,
-                                    frame_mask, &sample, marker, 1u) != 0) {
+                    av_make_capture_timed(&frames[frame_count], &step, pens, palettes, ticks,
+                                    frame_mask, &sample, marker, 1u, benchmark_ptr) != 0) {
                     (void)report_error("final A/V guest marker, progress or raw/rendered capture is invalid"); goto done;
                 }
                 if (marker == 0x11u && released_capture == NULL) released_capture = &frames[frame_count];
@@ -3334,6 +3529,9 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
             (void)report_error("recorded A input did not produce non-silent PCM and channel events"); goto done;
         }
     }
+    if (benchmark_ptr != NULL && av_monotonic_now_ns(&benchmark.assembly_start_ns) != 0) {
+        (void)report_error("CLOCK_MONOTONIC failed before A/V stream assembly"); goto done;
+    }
     if (av_build_pcm_bytes(totals.pcm, totals.pcm_count, &pcm_bytes, &pcm_bytes_len) != 0 ||
         av_build_wav(pcm_bytes, pcm_bytes_len, &wav, &wav_len) != 0 ||
         av_build_event_text(totals.events, totals.event_count, &event_text, &event_text_len) != 0 ||
@@ -3347,7 +3545,6 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
         char released_raw_hash[65], released_ppm_hash[65], pressed_raw_hash[65], pressed_ppm_hash[65];
         char pcm_hash[65], wav_hash[65], event_hash[65], raw_stream_hash[65], ppm_stream_hash[65];
         char applied_hash[65], progress_hash[65];
-        char timeline_stream_hash[65];
         int n;
         host_sha_digest(released_capture->raw, released_capture->raw_len, digest); host_sha_hex(digest, released_raw_hash);
         host_sha_digest(released_capture->ppm, released_capture->ppm_len, digest); host_sha_hex(digest, released_ppm_hash);
@@ -3405,10 +3602,40 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
             {"audio.pcm", pcm_bytes, pcm_bytes_len}, {"audio.wav", wav, wav_len},
             {"audio.events", event_text, event_text_len}, {"av.manifest", manifest, manifest_len}
         };
-        if (publish_av_outputs(output_directory, files, sizeof files / sizeof files[0]) != 0) goto done;
+        const size_t file_count = sizeof files / sizeof files[0];
+        int publication_status;
+        if (benchmark_ptr != NULL) {
+            if (av_benchmark_hash_files(files, file_count, benchmark_stream_hashes,
+                    benchmark_combined_hash) != 0 ||
+                av_monotonic_now_ns(&benchmark.assembly_end_ns) != 0 ||
+                av_benchmark_interval(benchmark.assembly_start_ns, benchmark.assembly_end_ns,
+                    &benchmark.assembly_ns) != 0 ||
+                av_monotonic_now_ns(&benchmark.publication_start_ns) != 0) {
+                (void)report_error("A/V assembly timing or stream identity failed"); goto done;
+            }
+        }
+        publication_status = publish_av_outputs(output_directory, files, file_count);
+        if (benchmark_ptr != NULL &&
+            (av_monotonic_now_ns(&benchmark.publication_end_ns) != 0 ||
+             av_benchmark_interval(benchmark.publication_start_ns, benchmark.publication_end_ns,
+                &benchmark.publication_ns) != 0)) {
+            (void)report_error("A/V publication timing was non-positive or failed"); goto done;
+        }
+        if (publication_status != 0) goto done;
+        if (benchmark_ptr != NULL) {
+            if (av_monotonic_now_ns(&benchmark.replay_end_ns) != 0 ||
+                av_benchmark_emit_report(&benchmark, profile, content_hash,
+                    timeline_stream_hash, benchmark.guest_ticks, endpoint, timeline.count, frame_count,
+                    totals.pcm_count, totals.event_count, totals.next_ordinal,
+                    files, file_count, benchmark_stream_hashes,
+                    benchmark_combined_hash) != 0) {
+                (void)report_error("A/V benchmark report is incomplete or could not be written"); goto done;
+            }
+        } else {
+            printf("lynx-consume: replayed %zu input edges and published %zu complete frame/progress records with applied input, PCM and event streams to %s\n",
+                   timeline.count, frame_count, output_directory);
+        }
     }
-    printf("lynx-consume: replayed %zu input edges and published %zu complete frame/progress records with applied input, PCM and event streams to %s\n",
-           timeline.count, frame_count, output_directory);
 #if defined(LYNX_CONSUMER_TESTING)
     if (interleaved_test != 0)
         puts("lynx-consume-test: two fresh A/V instances matched every interleaved frame, PCM, event and state boundary");
@@ -3461,11 +3688,14 @@ int main(int argc, char **argv)
             else frame_profile_text = value;
             seen |= bit;
         }
-        if (frame_mode == NULL || (strcmp(frame_mode, "frames") != 0 && strcmp(frame_mode, "av-replay") != 0) || frame_content == NULL || frame_symbols == NULL ||
+        if (frame_mode == NULL || (strcmp(frame_mode, "frames") != 0 && strcmp(frame_mode, "av-replay") != 0 &&
+                strcmp(frame_mode, "av-benchmark") != 0) || frame_content == NULL || frame_symbols == NULL ||
             frame_timeline == NULL || frame_output == NULL || parse_profile(frame_profile_text, &selected_profile) != 0)
-            return usage_error("replay mode requires --mode frames or av-replay, BLL, linked symbols, a canonical timeline, output directory, and a supported profile");
+            return usage_error("replay mode requires --mode frames, av-replay or av-benchmark, BLL, linked symbols, a canonical timeline, output directory, and a supported profile");
         if (strcmp(frame_mode, "av-replay") == 0)
-            return run_av_consumer(frame_content, frame_symbols, frame_timeline, frame_output, selected_profile);
+            return run_av_consumer(frame_content, frame_symbols, frame_timeline, frame_output, selected_profile, 0);
+        if (strcmp(frame_mode, "av-benchmark") == 0)
+            return run_av_consumer(frame_content, frame_symbols, frame_timeline, frame_output, selected_profile, 1);
 #if defined(LYNX_CONSUMER_TESTING)
         {
             const char *legacy = getenv("LYNX_TEST_REPLAY_LEGACY");
