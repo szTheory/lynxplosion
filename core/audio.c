@@ -280,6 +280,32 @@ void lynx__audio_mark_sample(lynx__audio_state *audio)
     }
 }
 
+uint64_t lynx__audio_advance_sample_phase_before(lynx__audio_state *audio,
+                                                 uint64_t before_tick)
+{
+    if (audio == NULL || audio->next_sample_tick >= before_tick) return 0u;
+
+    const uint64_t first_tick = audio->next_sample_tick;
+    const uint64_t sample_count =
+        ((before_tick - 1u) - first_tick) / AUDIO_SAMPLE_TICKS + 1u;
+    const uint64_t last_offset = (sample_count - 1u) * AUDIO_SAMPLE_TICKS;
+    const uint64_t last_tick = first_tick + last_offset;
+
+    if (sample_count > UINT64_MAX - audio->next_sample_ordinal) {
+        audio->next_sample_ordinal = UINT64_MAX;
+    } else {
+        audio->next_sample_ordinal += sample_count;
+    }
+    const uint64_t tick_steps_before_overflow =
+        (UINT64_MAX - audio->next_sample_tick) / AUDIO_SAMPLE_TICKS;
+    if (sample_count > tick_steps_before_overflow) {
+        audio->next_sample_tick = UINT64_MAX;
+    } else {
+        audio->next_sample_tick += sample_count * AUDIO_SAMPLE_TICKS;
+    }
+    return last_tick;
+}
+
 bool lynx__audio_available(uint16_t addr)
 {
     return (addr >= 0xFD20u && addr <= 0xFD3Fu) || addr == 0xFD50u;

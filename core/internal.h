@@ -230,6 +230,8 @@ uint8_t lynx__audio_peek(const lynx__audio_state *audio, uint16_t addr);
 bool lynx__audio_write(lynx__audio_state *audio, uint16_t addr, uint8_t value,
                        uint64_t tick, lynx__audio_event_sink *sink);
 void lynx__audio_mark_sample(lynx__audio_state *audio);
+uint64_t lynx__audio_advance_sample_phase_before(lynx__audio_state *audio,
+                                                 uint64_t before_tick);
 bool lynx__machine_event_before(lynx__machine_event a, lynx__machine_event b);
 void lynx__video_init(lynx__video_state *video, uint32_t timing_policy);
 bool lynx__video_available(uint16_t addr);

@@ -68,11 +68,13 @@ api.watch_controls	api
 api.watch_controls.self_test	api
 api.watch_independent	api
 api.watch_post_write	api
+audio.cadence	audio
 audio.counter	audio
 audio.integrator	audio
 audio.lfsr	audio
 audio.links	audio
 audio.mix	audio
+audio.order	audio
 audio.registers	audio
 audio.ring_zero	audio
 audio.stereo	audio

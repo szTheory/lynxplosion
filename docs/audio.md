@@ -104,6 +104,12 @@ span is never required for a PCM sample, but an absent next frame returns
 Legacy `lynx_advance` and `lynx_advance_frame` still advance channel and sample
 phase but do not request PCM or event output.
 
+When a call has no PCM output span, the scheduler advances sample ordinals
+arithmetically between real events and the exclusive target. A sample that
+shares a tick with device, video, refresh or CPU work remains in the event
+order, so this fast path preserves boundary and stop behavior without skipping
+timer, channel, link, video or CPU work.
+
 Raw pens/palettes and per-line ticks remain separate from audio samples and
 events. Host timeline cursors, file offsets, clocks, and output buffers are not
 guest state. The complete four-channel state and deferred ring work are

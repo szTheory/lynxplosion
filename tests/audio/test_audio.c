@@ -431,6 +431,568 @@ static uint64_t audio_line_tick_scratch[LYNX_FRAME_LINE_TICKS_CAPACITY];
 static lynx_pcm_frame audio_pcm_scratch[1];
 static lynx_audio_event audio_event_scratch[LYNX_AV_MIN_EVENT_CAPACITY];
 
+static void av_buffers_init(lynx_av_buffers *buffers, lynx_pcm_frame *pcm,
+                            size_t pcm_capacity, lynx_audio_event *events,
+                            size_t event_capacity)
+{
+    memset(buffers, 0, sizeof *buffers);
+    buffers->struct_size = (uint32_t)sizeof *buffers;
+    buffers->frame.struct_size = (uint32_t)sizeof buffers->frame;
+    buffers->frame.pens = audio_pen_scratch;
+    buffers->frame.pens_capacity = sizeof audio_pen_scratch;
+    buffers->frame.palettes = audio_palette_scratch;
+    buffers->frame.palettes_capacity = sizeof audio_palette_scratch;
+    buffers->frame.line_ticks = audio_line_tick_scratch;
+    buffers->frame.line_ticks_capacity = sizeof audio_line_tick_scratch /
+                                         sizeof audio_line_tick_scratch[0];
+    buffers->pcm = pcm;
+    buffers->pcm_capacity = pcm_capacity;
+    buffers->events = events;
+    buffers->event_capacity = event_capacity;
+}
+
+static lynx_status av_advance(lynx_machine *machine, uint64_t budget,
+                              const lynx_av_buffers *buffers, lynx_av_result *result)
+{
+    memset(result, 0, sizeof *result);
+    result->struct_size = (uint32_t)sizeof *result;
+    return lynx_advance_av(machine, budget, buffers, result);
+}
+
+static int load_until_write_request(lynx_machine *machine, const uint8_t *program,
+                                    size_t length, uint16_t address,
+                                    const char *label)
+{
+    const lynx_status loaded = load_guest(machine, program, length);
+    if (loaded != LYNX_OK) {
+        ASSERT_EQ(label, loaded, LYNX_OK);
+        return 0;
+    }
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    for (uint32_t attempt = 0u; attempt < 128u; attempt++) {
+        if (lynx_advance(machine, 1u, &consumed, &stop) != LYNX_OK) break;
+        if (machine->cpu.req_addr == address &&
+            (machine->cpu.req_flags & LYNX__CF_WRITE) != 0u) return 1;
+    }
+    ASSERT_NAMED("audio.order.posted-cpu-write", 0);
+    return 0;
+}
+
+static void case_cadence(void)
+{
+    static const uint8_t looping_guest[3] = {0x4Cu, 0x00u, 0x02u};
+    machine_box coarse, one_tick, irregular, headroom;
+    ASSERT_NAMED("audio.cadence.coarse-init",
+                 machine_open(&coarse, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.cadence.one-tick-init",
+                 machine_open(&one_tick, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.cadence.irregular-init",
+                 machine_open(&irregular, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.cadence.headroom-init",
+                 machine_open(&headroom, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (coarse.machine == NULL || one_tick.machine == NULL || irregular.machine == NULL ||
+        headroom.machine == NULL) {
+        machine_close(&coarse); machine_close(&one_tick);
+        machine_close(&irregular); machine_close(&headroom);
+        return;
+    }
+    ASSERT_EQ("audio.cadence.coarse-load", load_guest(coarse.machine, looping_guest,
+                                                       sizeof looping_guest), LYNX_OK);
+    ASSERT_EQ("audio.cadence.one-tick-load", load_guest(one_tick.machine, looping_guest,
+                                                         sizeof looping_guest), LYNX_OK);
+    ASSERT_EQ("audio.cadence.irregular-load", load_guest(irregular.machine, looping_guest,
+                                                          sizeof looping_guest), LYNX_OK);
+    ASSERT_EQ("audio.cadence.headroom-load", load_guest(headroom.machine, looping_guest,
+                                                         sizeof looping_guest), LYNX_OK);
+    lynx_machine *machines[3] = {coarse.machine, one_tick.machine, irregular.machine};
+    for (size_t path = 0u; path < 3u; path++) {
+        machines[path]->audio.channels[0].output = -128;
+        machines[path]->audio.channels[1].output = 127;
+    }
+
+    lynx_pcm_frame coarse_pcm[2], one_tick_pcm[2], irregular_pcm[2];
+    lynx_audio_event coarse_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_audio_event one_tick_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_audio_event irregular_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_av_buffers coarse_buffers, one_tick_buffers, irregular_buffers;
+    av_buffers_init(&coarse_buffers, coarse_pcm, 2u, coarse_events,
+                    LYNX_AV_MIN_EVENT_CAPACITY);
+    av_buffers_init(&one_tick_buffers, one_tick_pcm, 1u, one_tick_events,
+                    LYNX_AV_MIN_EVENT_CAPACITY);
+    av_buffers_init(&irregular_buffers, irregular_pcm, 1u, irregular_events,
+                    LYNX_AV_MIN_EVENT_CAPACITY);
+    lynx_av_result result;
+
+    ASSERT_EQ("audio.cadence.zero-budget", av_advance(coarse.machine, 0u,
+              &coarse_buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.cadence.zero-budget-ticks", result.ticks_consumed, 0u);
+    ASSERT_EQ("audio.cadence.zero-budget-ordinal", result.next_sample_ordinal, 0u);
+    ASSERT_EQ("audio.cadence.zero-budget-pcm", result.pcm_count, 0u);
+    ASSERT_EQ("audio.cadence.origin-ordinal-tick", coarse.machine->audio.next_sample_tick, 400u);
+    ASSERT_EQ("audio.cadence.origin-ordinal", coarse.machine->audio.next_sample_ordinal, 0u);
+    ASSERT_EQ("audio.cadence.coarse-advance", av_advance(coarse.machine, 801u,
+              &coarse_buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.cadence.coarse-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.cadence.coarse-ticks", result.ticks_consumed, 801u);
+    ASSERT_EQ("audio.cadence.coarse-first-ordinal", result.first_sample_ordinal, 0u);
+    ASSERT_EQ("audio.cadence.coarse-next-ordinal", result.next_sample_ordinal, 2u);
+    ASSERT_EQ("audio.cadence.coarse-sample-count", result.pcm_count, 2u);
+    ASSERT_EQ("audio.cadence.coarse-event-count", result.event_count, 0u);
+    ASSERT_EQ("audio.cadence.sample-400-left", coarse_pcm[0].left, -64);
+    ASSERT_EQ("audio.cadence.sample-400-right", coarse_pcm[0].right, -64);
+    ASSERT_EQ("audio.cadence.sample-800-left", coarse_pcm[1].left, -64);
+    ASSERT_EQ("audio.cadence.sample-800-right", coarse_pcm[1].right, -64);
+    ASSERT_EQ("audio.cadence.coarse-zero-after", av_advance(coarse.machine, 0u,
+              &coarse_buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.cadence.zero-no-duplicate", result.pcm_count, 0u);
+    ASSERT_EQ("audio.cadence.zero-keeps-ordinal", result.next_sample_ordinal, 2u);
+
+    uint32_t one_tick_count = 0u;
+    for (uint32_t step = 0u; step < 801u; step++) {
+        one_tick_buffers.pcm = &one_tick_pcm[one_tick_count];
+        ASSERT_EQ("audio.cadence.one-tick-advance", av_advance(one_tick.machine, 1u,
+                  &one_tick_buffers, &result), LYNX_OK);
+        ASSERT_EQ("audio.cadence.one-tick-budget", result.ticks_consumed, 1u);
+        ASSERT_EQ("audio.cadence.one-tick-stop", result.stop, LYNX_STOP_BUDGET);
+        ASSERT_EQ("audio.cadence.one-tick-no-events", result.event_count, 0u);
+        if (step == 398u) {
+            ASSERT_EQ("audio.cadence.tick-399", one_tick.machine->guest_ticks, 399u);
+            ASSERT_EQ("audio.cadence.tick-399-pending", result.next_sample_ordinal, 0u);
+            ASSERT_EQ("audio.cadence.tick-399-empty", result.pcm_count, 0u);
+        } else if (step == 399u) {
+            ASSERT_EQ("audio.cadence.tick-400-exclusive", one_tick.machine->guest_ticks, 400u);
+            ASSERT_EQ("audio.cadence.tick-400-pending", result.next_sample_ordinal, 0u);
+            ASSERT_EQ("audio.cadence.tick-400-empty", result.pcm_count, 0u);
+        } else if (step == 400u) {
+            ASSERT_EQ("audio.cadence.tick-401", one_tick.machine->guest_ticks, 401u);
+            ASSERT_EQ("audio.cadence.tick-401-first", result.first_sample_ordinal, 0u);
+            ASSERT_EQ("audio.cadence.tick-401-next", result.next_sample_ordinal, 1u);
+            ASSERT_EQ("audio.cadence.tick-401-sample-once", result.pcm_count, 1u);
+            one_tick_count += result.pcm_count;
+        } else if (step == 798u) {
+            ASSERT_EQ("audio.cadence.tick-799", one_tick.machine->guest_ticks, 799u);
+            ASSERT_EQ("audio.cadence.tick-799-pending", result.next_sample_ordinal, 1u);
+            ASSERT_EQ("audio.cadence.tick-799-empty", result.pcm_count, 0u);
+        } else if (step == 799u) {
+            ASSERT_EQ("audio.cadence.tick-800-exclusive", one_tick.machine->guest_ticks, 800u);
+            ASSERT_EQ("audio.cadence.tick-800-pending", result.next_sample_ordinal, 1u);
+            ASSERT_EQ("audio.cadence.tick-800-empty", result.pcm_count, 0u);
+        } else if (step == 800u) {
+            ASSERT_EQ("audio.cadence.tick-801", one_tick.machine->guest_ticks, 801u);
+            ASSERT_EQ("audio.cadence.tick-801-first", result.first_sample_ordinal, 1u);
+            ASSERT_EQ("audio.cadence.tick-801-next", result.next_sample_ordinal, 2u);
+            ASSERT_EQ("audio.cadence.tick-801-sample-once", result.pcm_count, 1u);
+            one_tick_count += result.pcm_count;
+        }
+    }
+    ASSERT_EQ("audio.cadence.one-tick-total", one_tick_count, 2u);
+
+    static const uint64_t irregular_slices[] = {137u, 262u, 1u, 1u, 211u, 187u, 1u, 1u};
+    uint32_t irregular_count = 0u;
+    uint64_t irregular_tick = 0u;
+    for (size_t i = 0u; i < sizeof irregular_slices / sizeof irregular_slices[0]; i++) {
+        irregular_buffers.pcm = &irregular_pcm[irregular_count];
+        ASSERT_EQ("audio.cadence.irregular-advance", av_advance(irregular.machine,
+                  irregular_slices[i], &irregular_buffers, &result), LYNX_OK);
+        irregular_tick += irregular_slices[i];
+        ASSERT_EQ("audio.cadence.irregular-ticks", result.ticks_consumed,
+                  irregular_slices[i]);
+        ASSERT_EQ("audio.cadence.irregular-guest-tick", irregular.machine->guest_ticks,
+                  irregular_tick);
+        ASSERT_EQ("audio.cadence.irregular-no-events", result.event_count, 0u);
+        if (irregular_tick == 399u || irregular_tick == 400u ||
+            irregular_tick == 799u || irregular_tick == 800u) {
+            ASSERT_EQ("audio.cadence.irregular-exclusive-target", result.pcm_count, 0u);
+        } else if (irregular_tick == 401u || irregular_tick == 801u) {
+            ASSERT_EQ("audio.cadence.irregular-first-ordinal", result.first_sample_ordinal,
+                      irregular_count);
+            ASSERT_EQ("audio.cadence.irregular-next-ordinal", result.next_sample_ordinal,
+                      irregular_count + 1u);
+            ASSERT_EQ("audio.cadence.irregular-once", result.pcm_count, 1u);
+            irregular_count += result.pcm_count;
+        } else {
+            ASSERT_EQ("audio.cadence.irregular-no-sample", result.pcm_count, 0u);
+        }
+    }
+    ASSERT_EQ("audio.cadence.irregular-total", irregular_count, 2u);
+    ASSERT_NAMED("audio.cadence.slicing-equal",
+                 memcmp(coarse_pcm, one_tick_pcm, sizeof coarse_pcm) == 0 &&
+                 memcmp(coarse_pcm, irregular_pcm, sizeof coarse_pcm) == 0);
+
+    /* A legacy no-capture call must land on the same canonical phase and
+       continuation as captured output at each half-open sample boundary. */
+    machine_box boundary_capture, boundary_legacy;
+    ASSERT_NAMED("audio.cadence.boundary-capture-init",
+                 machine_open(&boundary_capture, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.cadence.boundary-legacy-init",
+                 machine_open(&boundary_legacy, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (boundary_capture.machine == NULL || boundary_legacy.machine == NULL) {
+        machine_close(&boundary_capture); machine_close(&boundary_legacy);
+        machine_close(&coarse); machine_close(&one_tick);
+        machine_close(&irregular); machine_close(&headroom);
+        return;
+    }
+    ASSERT_EQ("audio.cadence.boundary-capture-load", load_guest(
+        boundary_capture.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    ASSERT_EQ("audio.cadence.boundary-legacy-load", load_guest(
+        boundary_legacy.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    lynx_machine *boundary_machines[2] = {
+        boundary_capture.machine, boundary_legacy.machine
+    };
+    for (size_t i = 0u; i < 2u; i++) {
+        boundary_machines[i]->bus_hold = 1u;
+        lynx__video_init(&boundary_machines[i]->video, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+        boundary_machines[i]->video.refresh_next_tick = 0u;
+        boundary_machines[i]->audio.channels[0].output = -3;
+        boundary_machines[i]->audio.channels[1].output = 2;
+    }
+    lynx_pcm_frame boundary_pcm[2];
+    lynx_audio_event boundary_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_av_buffers boundary_buffers;
+    av_buffers_init(&boundary_buffers, boundary_pcm, 2u, boundary_events,
+                    LYNX_AV_MIN_EVENT_CAPACITY);
+    static const uint64_t boundary_slices[] = {399u, 1u, 1u, 398u, 1u, 1u};
+    static const uint64_t boundary_ordinals[] = {0u, 0u, 1u, 1u, 1u, 2u};
+    uint32_t boundary_samples = 0u;
+    uint64_t boundary_tick = 0u;
+    uint64_t boundary_consumed = 0u;
+    lynx_stop_reason boundary_stop = LYNX_STOP_UNAVAILABLE;
+    for (size_t i = 0u; i < sizeof boundary_slices / sizeof boundary_slices[0]; i++) {
+        const uint64_t slice = boundary_slices[i];
+        boundary_buffers.pcm = &boundary_pcm[boundary_samples];
+        boundary_buffers.pcm_capacity = 2u - boundary_samples;
+        ASSERT_EQ("audio.cadence.boundary-captured-advance", av_advance(
+            boundary_capture.machine, slice, &boundary_buffers, &result), LYNX_OK);
+        ASSERT_EQ("audio.cadence.boundary-legacy-advance", lynx_advance(
+            boundary_legacy.machine, slice, &boundary_consumed, &boundary_stop), LYNX_OK);
+        boundary_tick += slice;
+        ASSERT_EQ("audio.cadence.boundary-guest-tick", boundary_capture.machine->guest_ticks,
+                  boundary_tick);
+        ASSERT_EQ("audio.cadence.boundary-legacy-tick", boundary_legacy.machine->guest_ticks,
+                  boundary_tick);
+        ASSERT_EQ("audio.cadence.boundary-stop", result.stop, LYNX_STOP_BUDGET);
+        ASSERT_EQ("audio.cadence.boundary-legacy-stop", boundary_stop, LYNX_STOP_BUDGET);
+        ASSERT_EQ("audio.cadence.boundary-ordinal", result.next_sample_ordinal,
+                  boundary_ordinals[i]);
+        ASSERT_EQ("audio.cadence.boundary-legacy-ordinal",
+                  boundary_legacy.machine->audio.next_sample_ordinal, boundary_ordinals[i]);
+        ASSERT_EQ("audio.cadence.boundary-pcm-count", result.pcm_count,
+                  (i == 2u || i == 5u) ? 1u : 0u);
+        ASSERT_EQ("audio.cadence.boundary-event-count", result.event_count, 0u);
+        boundary_samples += result.pcm_count;
+        uint8_t captured_digest[32], legacy_digest[32];
+        ASSERT_EQ("audio.cadence.boundary-captured-digest", lynx_state_digest(
+            boundary_capture.machine, captured_digest), LYNX_OK);
+        ASSERT_EQ("audio.cadence.boundary-legacy-digest", lynx_state_digest(
+            boundary_legacy.machine, legacy_digest), LYNX_OK);
+        ASSERT_NAMED("audio.cadence.boundary-canonical-match",
+                     memcmp(captured_digest, legacy_digest, sizeof captured_digest) == 0);
+    }
+    ASSERT_EQ("audio.cadence.boundary-sample-count", boundary_samples, 2u);
+    ASSERT_EQ("audio.cadence.boundary-sample-value-left", boundary_pcm[0].left, -64);
+    ASSERT_EQ("audio.cadence.boundary-sample-value-right", boundary_pcm[0].right, -64);
+    ASSERT_EQ("audio.cadence.boundary-second-sample-left", boundary_pcm[1].left, -64);
+    ASSERT_EQ("audio.cadence.boundary-second-sample-right", boundary_pcm[1].right, -64);
+    machine_close(&boundary_capture); machine_close(&boundary_legacy);
+
+    /* Frame-stop continuation has the same canonical timer/audio phase with
+       and without the PCM sink. The video fixture uses its ordinary timer roots. */
+    machine_box frame_capture, frame_legacy;
+    ASSERT_NAMED("audio.cadence.frame-capture-init",
+                 machine_open(&frame_capture, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.cadence.frame-legacy-init",
+                 machine_open(&frame_legacy, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (frame_capture.machine == NULL || frame_legacy.machine == NULL) {
+        machine_close(&frame_capture); machine_close(&frame_legacy);
+        machine_close(&coarse); machine_close(&one_tick);
+        machine_close(&irregular); machine_close(&headroom);
+        return;
+    }
+    ASSERT_EQ("audio.cadence.frame-load", load_guest(frame_capture.machine, looping_guest,
+                                                       sizeof looping_guest), LYNX_OK);
+    lynx_machine *frame_machine = frame_capture.machine;
+    frame_machine->bus_hold = 1u;
+    lynx__video_init(&frame_machine->video, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+    lynx__timer_init(&frame_machine->timer_bank);
+    frame_machine->timer_bank.timers[0].backup = 158u;
+    frame_machine->timer_bank.timers[0].count = 158u;
+    frame_machine->timer_bank.timers[0].control_a = 0x18u;
+    frame_machine->timer_bank.timers[2].backup = 104u;
+    frame_machine->timer_bank.timers[2].count = 104u;
+    frame_machine->timer_bank.timers[2].control_a = 0x1Fu;
+    memcpy(frame_legacy.machine, frame_machine, lynx_machine_size());
+    const uint64_t frame_edge = UINT64_C(159) * 16u * 105u;
+    lynx_frame_result legacy_frame_result;
+    memset(&legacy_frame_result, 0, sizeof legacy_frame_result);
+    legacy_frame_result.struct_size = (uint32_t)sizeof legacy_frame_result;
+    lynx_frame_buffers frame_buffers;
+    memset(&frame_buffers, 0, sizeof frame_buffers);
+    frame_buffers.struct_size = (uint32_t)sizeof frame_buffers;
+    frame_buffers.pens = audio_pen_scratch;
+    frame_buffers.pens_capacity = sizeof audio_pen_scratch;
+    frame_buffers.palettes = audio_palette_scratch;
+    frame_buffers.palettes_capacity = sizeof audio_palette_scratch;
+    frame_buffers.line_ticks = audio_line_tick_scratch;
+    frame_buffers.line_ticks_capacity = sizeof audio_line_tick_scratch /
+                                        sizeof audio_line_tick_scratch[0];
+    ASSERT_EQ("audio.cadence.frame-legacy-stop", lynx_advance_frame(
+        frame_legacy.machine, frame_edge + 1u, &frame_buffers, &legacy_frame_result), LYNX_OK);
+    ASSERT_EQ("audio.cadence.frame-legacy-kind", legacy_frame_result.stop, LYNX_STOP_FRAME);
+    ASSERT_EQ("audio.cadence.frame-legacy-edge", legacy_frame_result.frame_end_tick, frame_edge);
+
+    lynx_pcm_frame frame_pcm[700];
+    lynx_audio_event frame_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_av_buffers frame_av_buffers;
+    av_buffers_init(&frame_av_buffers, frame_pcm,
+                    sizeof frame_pcm / sizeof frame_pcm[0], frame_events,
+                    LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.cadence.frame-captured-stop", av_advance(
+        frame_capture.machine, frame_edge + 1u, &frame_av_buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.cadence.frame-captured-kind", result.stop, LYNX_STOP_FRAME);
+    ASSERT_EQ("audio.cadence.frame-captured-edge", result.frame_end_tick, frame_edge);
+    ASSERT_EQ("audio.cadence.frame-captured-samples", result.pcm_count,
+              (frame_edge - 1u) / 400u);
+    uint8_t frame_capture_digest[32], frame_legacy_digest[32];
+    ASSERT_EQ("audio.cadence.frame-captured-digest", lynx_state_digest(
+        frame_capture.machine, frame_capture_digest), LYNX_OK);
+    ASSERT_EQ("audio.cadence.frame-legacy-digest", lynx_state_digest(
+        frame_legacy.machine, frame_legacy_digest), LYNX_OK);
+    ASSERT_NAMED("audio.cadence.frame-canonical-match",
+                 memcmp(frame_capture_digest, frame_legacy_digest,
+                        sizeof frame_capture_digest) == 0);
+    machine_close(&frame_capture); machine_close(&frame_legacy);
+
+    /* A final representable multiple is sampled without signed wrap; advancing
+       its next tick uses a checked saturation rather than overflowing u64. */
+    lynx__audio_state phase;
+    lynx__audio_init(&phase);
+    const uint64_t last_multiple = UINT64_MAX - (UINT64_MAX % UINT64_C(400));
+    phase.next_sample_tick = last_multiple;
+    phase.next_sample_ordinal = last_multiple / UINT64_C(400) - 1u;
+    lynx_pcm_frame edge_sample;
+    ASSERT_NAMED("audio.cadence.last-safe-sample-ready",
+                 lynx__audio_sample(&phase, last_multiple, &edge_sample));
+    const uint64_t ordinal_before_edge = phase.next_sample_ordinal;
+    lynx__audio_mark_sample(&phase);
+    ASSERT_EQ("audio.cadence.ordinal-no-wrap", phase.next_sample_ordinal,
+              ordinal_before_edge + 1u);
+    ASSERT_EQ("audio.cadence.tick-add-saturates", phase.next_sample_tick, UINT64_MAX);
+    phase.next_sample_ordinal = UINT64_MAX;
+    const uint64_t saturated_tick = phase.next_sample_tick;
+    lynx__audio_mark_sample(&phase);
+    ASSERT_EQ("audio.cadence.ordinal-saturation", phase.next_sample_ordinal, UINT64_MAX);
+    ASSERT_EQ("audio.cadence.tick-saturation", phase.next_sample_tick, saturated_tick);
+
+    const uint64_t guest_limit = UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM;
+    headroom.machine->guest_ticks = guest_limit - 7u;
+    headroom.machine->cpu_ready_at = headroom.machine->guest_ticks;
+    headroom.machine->bus_hold = 1u;
+    headroom.machine->audio.next_sample_tick = UINT64_MAX;
+    lynx_pcm_frame headroom_pcm;
+    lynx_audio_event headroom_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_av_buffers headroom_buffers;
+    av_buffers_init(&headroom_buffers, &headroom_pcm, 1u, headroom_events,
+                    LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.cadence.headroom-advance", av_advance(headroom.machine, UINT64_MAX,
+              &headroom_buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.cadence.headroom-consumed", result.ticks_consumed, 7u);
+    ASSERT_EQ("audio.cadence.headroom-tick", headroom.machine->guest_ticks, guest_limit);
+    ASSERT_EQ("audio.cadence.headroom-no-sample", result.pcm_count, 0u);
+
+    machine_close(&coarse); machine_close(&one_tick);
+    machine_close(&irregular); machine_close(&headroom);
+}
+
+static void case_order(void)
+{
+    static const uint8_t volume_guest[] = {
+        0xA9u, 0x07u,             /* LDA #new volume */
+        0x8Du, 0x20u, 0xFDu,      /* STA A0 volume */
+        0x4Cu, 0x00u, 0x02u       /* JMP $0200 */
+    };
+    machine_box box;
+    ASSERT_NAMED("audio.order.machine-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    lynx_machine *m = box.machine;
+    ASSERT_NAMED("audio.order.posted-volume-write",
+                 load_until_write_request(m, volume_guest, sizeof volume_guest,
+                                          0xFD20u, "audio.order.guest-load"));
+    if (m->cpu.req_addr != 0xFD20u || (m->cpu.req_flags & LYNX__CF_WRITE) == 0u) {
+        machine_close(&box);
+        return;
+    }
+
+    m->guest_ticks = 399u;
+    m->cpu_ready_at = 400u;
+    lynx__timer_init(&m->timer_bank);
+    lynx__video_init(&m->video, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+    m->video.refresh_next_tick = 0u;
+    lynx__audio_init(&m->audio);
+    m->audio.channels[0].volume = 5u;
+    m->audio.channels[0].feedback = 1u;
+    m->audio.channels[0].control_a = 0x58u; /* A0 natural source, count/reload/reset-DONE */
+    m->audio.channels[0].count = 0u;
+    m->audio.channels[0].backup = 0u;
+    m->audio.channels[1].volume = 3u;
+    m->audio.channels[1].feedback = 1u;
+    m->audio.channels[1].control_a = 0x5Fu; /* A1 receives the pending A0 link */
+    m->audio.channels[1].count = 0u;
+    m->audio.channels[1].backup = 0u;
+    m->audio.ring_debt[4] = 1u;
+    m->audio.ring_cursor = 4u;
+    m->audio.ring_defer_valid = 1u;
+    m->audio.ring_defer_tick = 400u;
+    m->audio.same_tick_device_cursor = LYNX__AUDIO_RING_VISIT_LIMIT;
+    ASSERT_NAMED("audio.order.fixture-ring-valid",
+                 lynx__audio_ring_state_valid(&m->audio, 399u));
+    ASSERT_EQ("audio.order.watch-configure", lynx_watch_configure(m, 0xFD20u, 1u),
+              LYNX_OK);
+
+    lynx_pcm_frame pcm[1];
+    lynx_audio_event events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_av_buffers buffers;
+    av_buffers_init(&buffers, pcm, 1u, events, LYNX_AV_MIN_EVENT_CAPACITY);
+    lynx_av_result result;
+    machine_box legacy_watch;
+    ASSERT_NAMED("audio.order.legacy-watch-init",
+                 machine_open(&legacy_watch, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (legacy_watch.machine == NULL) {
+        machine_close(&box);
+        return;
+    }
+    memcpy(legacy_watch.machine, m, lynx_machine_size());
+    uint64_t legacy_consumed = 0u;
+    lynx_stop_reason legacy_stop = LYNX_STOP_UNAVAILABLE;
+    ASSERT_EQ("audio.order.legacy-watch-advance", lynx_advance(
+        legacy_watch.machine, 2u, &legacy_consumed, &legacy_stop), LYNX_OK);
+    ASSERT_EQ("audio.order.legacy-watch-stop", legacy_stop, LYNX_STOP_WATCH);
+    ASSERT_EQ("audio.order.legacy-watch-consumed", legacy_consumed, 2u);
+    ASSERT_EQ("audio.order.legacy-watch-return", legacy_watch.machine->guest_ticks, 401u);
+
+    /* The exact target is exclusive: ring/device/sample/CPU work at 400 stays
+       pending. The next one-tick slice commits it in declared order. */
+    ASSERT_EQ("audio.order.exact-target", av_advance(m, 1u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.order.exact-target-tick", m->guest_ticks, 400u);
+    ASSERT_EQ("audio.order.exact-target-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.order.exact-target-events", result.event_count, 0u);
+    ASSERT_EQ("audio.order.exact-target-samples", result.pcm_count, 0u);
+    ASSERT_EQ("audio.order.exact-target-debt", m->audio.ring_debt[4], 1u);
+    ASSERT_EQ("audio.order.exact-target-sample", m->audio.next_sample_tick, 400u);
+    ASSERT_EQ("audio.order.next-call", av_advance(m, 1u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.order.device-prefix-stop", result.stop, LYNX_STOP_OUTPUT);
+    ASSERT_EQ("audio.order.device-prefix-ticks", result.ticks_consumed, 0u);
+    ASSERT_EQ("audio.order.device-prefix-samples", result.pcm_count, 1u);
+    ASSERT_EQ("audio.order.device-prefix-count", result.event_count, 4u);
+    ASSERT_EQ("audio.order.device-prefix-pcm", pcm[0].left, -512);
+    ASSERT_EQ("audio.order.device-prefix-first-ordinal", result.first_sample_ordinal, 0u);
+    ASSERT_EQ("audio.order.device-prefix-next-ordinal", result.next_sample_ordinal, 1u);
+    ASSERT_EQ("audio.order.device-prefix-cpu-pending", m->cpu.req_addr, 0xFD20u);
+    lynx_audio_event resume_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    av_buffers_init(&buffers, pcm, 1u, resume_events, LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.order.resume-cpu-strobe", av_advance(m, 1u, &buffers, &result),
+              LYNX_OK);
+    ASSERT_EQ("audio.order.watch-stop", result.stop, LYNX_STOP_WATCH);
+    ASSERT_EQ("audio.order.watch-grant-plus-one", m->guest_ticks, 401u);
+    ASSERT_EQ("audio.order.watch-ticks", result.ticks_consumed, 1u);
+    ASSERT_EQ("audio.order.resume-sample-count", result.pcm_count, 0u);
+    ASSERT_EQ("audio.order.resume-first-ordinal", result.first_sample_ordinal, 1u);
+    ASSERT_EQ("audio.order.resume-next-ordinal", result.next_sample_ordinal, 1u);
+    ASSERT_EQ("audio.order.resume-event-count", result.event_count, 1u);
+    ASSERT_EQ("audio.order.resume-event-tick", resume_events[0].tick, 400u);
+    ASSERT_EQ("audio.order.resume-event-sequence", resume_events[0].sequence, 4u);
+    ASSERT_EQ("audio.order.resume-event-channel", resume_events[0].channel, 0u);
+    ASSERT_EQ("audio.order.resume-event-cause", resume_events[0].cause,
+              LYNX_AUDIO_EVENT_WRITE);
+    ASSERT_EQ("audio.order.sample-first-ordinal-after-resume", result.first_sample_ordinal, 1u);
+    ASSERT_EQ("audio.order.sample-next-ordinal", result.next_sample_ordinal, 1u);
+    ASSERT_EQ("audio.order.sample-once-left", pcm[0].left, -512);
+    ASSERT_EQ("audio.order.sample-once-right", pcm[0].right, -512);
+    ASSERT_EQ("audio.order.resume-event-count", result.event_count, 1u);
+    static const uint8_t order_channel[4] = {0u, 1u, 0u, 1u};
+    static const uint8_t order_cause[4] = {
+        LYNX_AUDIO_EVENT_CLOCK, LYNX_AUDIO_EVENT_CLOCK,
+        LYNX_AUDIO_EVENT_CLOCK, LYNX_AUDIO_EVENT_CLOCK
+    };
+    for (uint32_t i = 0u; i < 4u; i++) {
+        ASSERT_EQ("audio.order.equal-tick", events[i].tick, 400u);
+        ASSERT_EQ("audio.order.sequence", events[i].sequence, i);
+        ASSERT_EQ("audio.order.channel", events[i].channel, order_channel[i]);
+        ASSERT_EQ("audio.order.cause", events[i].cause, order_cause[i]);
+    }
+    ASSERT_EQ("audio.order.link-event-target", events[1].channel, 1u);
+    ASSERT_EQ("audio.order.register-write-value", m->audio.channels[0].volume, 7u);
+    ASSERT_EQ("audio.order.register-write-after-sample", m->audio.channels[0].output, -7);
+    lynx_watch_event watch;
+    ASSERT_EQ("audio.order.watch-read", lynx_watch_get(m, &watch), LYNX_OK);
+    ASSERT_EQ("audio.order.watch-hit", watch.hit, 1u);
+    ASSERT_EQ("audio.order.watch-address", watch.address, 0xFD20u);
+    ASSERT_EQ("audio.order.watch-value", watch.value, 7u);
+    ASSERT_EQ("audio.order.watch-grant", watch.hit_tick, 400u);
+    ASSERT_EQ("audio.order.watch-return", watch.return_tick, 401u);
+    uint8_t captured_watch_digest[32], legacy_watch_digest[32];
+    ASSERT_EQ("audio.order.captured-watch-digest", lynx_state_digest(
+        m, captured_watch_digest), LYNX_OK);
+    ASSERT_EQ("audio.order.legacy-watch-digest", lynx_state_digest(
+        legacy_watch.machine, legacy_watch_digest), LYNX_OK);
+    ASSERT_NAMED("audio.order.watch-canonical-match",
+                 memcmp(captured_watch_digest, legacy_watch_digest,
+                        sizeof captured_watch_digest) == 0);
+    machine_close(&legacy_watch);
+    machine_close(&box);
+
+    /* A write that returns at tick 400 leaves sample ordinal zero pending at
+       that same return tick; the following AV call emits it exactly once. */
+    static const uint8_t ram_guest[] = {
+        0xA9u, 0x5Au,             /* LDA #$5A */
+        0x8Du, 0x00u, 0x04u,      /* STA $0400 */
+        0x4Cu, 0x00u, 0x02u       /* JMP $0200 */
+    };
+    ASSERT_NAMED("audio.order.return-machine-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    m = box.machine;
+    ASSERT_NAMED("audio.order.posted-ram-write",
+                 load_until_write_request(m, ram_guest, sizeof ram_guest,
+                                          0x0400u, "audio.order.ram-guest-load"));
+    if (m->cpu.req_addr != 0x0400u || (m->cpu.req_flags & LYNX__CF_WRITE) == 0u) {
+        machine_close(&box);
+        return;
+    }
+    m->guest_ticks = 399u;
+    m->cpu_ready_at = 399u;
+    lynx__timer_init(&m->timer_bank);
+    lynx__video_init(&m->video, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+    m->video.refresh_next_tick = 0u;
+    lynx__audio_init(&m->audio);
+    m->audio.channels[0].output = 2;
+    m->audio.channels[1].output = -1;
+    ASSERT_EQ("audio.order.return-watch-configure", lynx_watch_configure(m, 0x0400u, 1u),
+              LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    ASSERT_EQ("audio.order.return-watch-advance", lynx_advance(m, 1u, &consumed, &stop),
+              LYNX_OK);
+    ASSERT_EQ("audio.order.return-watch-stop", stop, LYNX_STOP_WATCH);
+    ASSERT_EQ("audio.order.return-watch-tick", m->guest_ticks, 400u);
+    ASSERT_EQ("audio.order.return-watch-ram", m->ram[0x0400u], 0x5Au);
+    ASSERT_EQ("audio.order.return-sample-pending", m->audio.next_sample_tick, 400u);
+    ASSERT_EQ("audio.order.return-sample-ordinal", m->audio.next_sample_ordinal, 0u);
+    ASSERT_EQ("audio.order.return-av", av_advance(m, 1u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.order.return-sample-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.order.return-sample-tick", m->guest_ticks, 401u);
+    ASSERT_EQ("audio.order.return-sample-count", result.pcm_count, 1u);
+    ASSERT_EQ("audio.order.return-sample-first", result.first_sample_ordinal, 0u);
+    ASSERT_EQ("audio.order.return-sample-next", result.next_sample_ordinal, 1u);
+    ASSERT_EQ("audio.order.return-sample-value-left", pcm[0].left, 64);
+    ASSERT_EQ("audio.order.return-sample-value-right", pcm[0].right, 64);
+    ASSERT_EQ("audio.order.return-sample-no-duplicate", av_advance(m, 0u, &buffers, &result),
+              LYNX_OK);
+    ASSERT_EQ("audio.order.return-no-duplicate", result.pcm_count, 0u);
+    machine_close(&box);
+}
+
 static int public_sample(const int8_t outputs[4], uint8_t muted, int16_t expected_left,
                         int16_t expected_right, const char *left_label, const char *right_label)
 {
@@ -562,6 +1124,55 @@ static uint64_t ring_debt_sum(const lynx__audio_state *audio)
     return total;
 }
 
+static void check_a3_t1_wake(void)
+{
+    machine_box source;
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    static const uint8_t irq_loop[] = {0xEAu, 0x4Cu, 0x00u, 0x02u};
+
+    /* A3→T1 also supplies the pending IRQ line before the CPU's existing
+       instruction poll. I masks IRQ acceptance, not wake/progress. */
+    for (uint8_t mask_irq = 0u; mask_irq <= 1u; mask_irq++) {
+        ASSERT_NAMED("audio.links.a3-t1-machine", machine_open(
+            &source, LYNX_TIMING_POLICY_LEGACY_FLAT5));
+        if (source.machine == NULL) return;
+        ASSERT_EQ("audio.links.a3-t1-program",
+                  load_guest(source.machine, irq_loop, sizeof irq_loop), LYNX_OK);
+        lynx_machine *m = source.machine;
+        m->timer_bank.timers[1].control_a = 0xCFu; /* link, IRQ, count, reset-DONE */
+        m->timer_bank.timers[1].count = 0u;
+        m->audio.channels[3].control_a = 0x48u; /* A3 natural root */
+        m->audio.channels[3].count = 0u;
+        m->cpu.p = mask_irq != 0u ? (uint8_t)(m->cpu.p | 0x04u) :
+                                    (uint8_t)(m->cpu.p & (uint8_t)~0x04u);
+        const lynx__cpu before_hold = m->cpu;
+        m->bus_hold = 1u;
+        ASSERT_EQ("audio.links.a3-t1-held-advance", lynx_advance(
+            m, 17u, &consumed, &stop), LYNX_OK);
+        ASSERT_EQ("audio.links.a3-t1-pending", m->timer_bank.pending & 0x02u, 0x02u);
+        ASSERT_EQ("audio.links.a3-t1-wake", m->wake_pending, 1u);
+        ASSERT_NAMED("audio.links.a3-t1-held-cpu-unchanged",
+                     memcmp(&before_hold, &m->cpu, sizeof before_hold) == 0);
+        ASSERT_EQ("audio.links.a3-t1-release", lynx__machine_set_bus_hold(m, 0u), LYNX_OK);
+        ASSERT_EQ("audio.links.a3-t1-cpu-poll-advance", lynx_advance(
+            m, 20u, &consumed, &stop), LYNX_OK);
+        if (mask_irq != 0u) {
+            ASSERT_EQ("audio.links.a3-t1-masked-no-irq-entry",
+                      m->cpu.flags & LYNX__CS_SEQ_MASK, 0u);
+            ASSERT_NAMED("audio.links.a3-t1-masked-cpu-progress",
+                         m->cpu.req_addr != 0x0200u || m->cpu.req_kind != LYNX__CK_OPCODE);
+            ASSERT_EQ("audio.links.a3-t1-masked-pending-retained",
+                      m->timer_bank.pending & 0x02u, 0x02u);
+            ASSERT_EQ("audio.links.a3-t1-masked-wake-retained", m->wake_pending, 1u);
+        } else {
+            ASSERT_EQ("audio.links.a3-t1-cpu-poll",
+                      m->cpu.flags & LYNX__CS_SEQ_MASK, 0x10u);
+        }
+        machine_close(&source);
+    }
+}
+
 static void case_links(void)
 {
     static const char *const edge_names[8] = {
@@ -647,6 +1258,7 @@ static void case_links(void)
         ASSERT_EQ("audio.links.simultaneous-audio-roots",
                   audio.channels[i].control_b & 0x05u, 0x05u);
     }
+    check_a3_t1_wake();
 }
 
 static void case_ring_zero(void)
@@ -814,32 +1426,6 @@ static void case_ring_zero(void)
               source.machine->audio.ring_defer_tick, 70u);
     machine_close(&source);
 
-    /* A3→T1 also supplies the pending IRQ line before the next CPU poll. */
-    ASSERT_NAMED("audio.links.a3-t1-machine", machine_open(
-        &source, LYNX_TIMING_POLICY_LEGACY_FLAT5));
-    if (source.machine == NULL) return;
-    static const uint8_t irq_loop[] = {0xEAu, 0x4Cu, 0x00u, 0x02u};
-    ASSERT_EQ("audio.links.a3-t1-program",
-              load_guest(source.machine, irq_loop, sizeof irq_loop), LYNX_OK);
-    lynx_machine *m = source.machine;
-    m->timer_bank.timers[1].control_a = 0xCFu; /* link, IRQ, count, reset-DONE */
-    m->timer_bank.timers[1].count = 0u;
-    m->audio.channels[3].control_a = 0x48u; /* A3 natural root */
-    m->audio.channels[3].count = 0u;
-    m->bus_hold = 1u;
-    ASSERT_EQ("audio.links.a3-t1-held-advance", lynx_advance(
-        m, 17u, &consumed, &stop), LYNX_OK);
-    ASSERT_EQ("audio.links.a3-t1-pending", m->timer_bank.pending & 0x02u, 0x02u);
-    ASSERT_EQ("audio.links.a3-t1-wake", m->wake_pending, 1u);
-    m->bus_hold = 0u;
-    lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), 0x0200u);
-    m->cpu.p = (uint8_t)(m->cpu.p & (uint8_t)~0x04u);
-    m->cpu_ready_at = m->guest_ticks;
-    ASSERT_EQ("audio.links.a3-t1-cpu-poll-advance", lynx_advance(
-        m, 20u, &consumed, &stop), LYNX_OK);
-    ASSERT_EQ("audio.links.a3-t1-cpu-poll",
-              m->cpu.flags & LYNX__CS_SEQ_MASK, 0x10u);
-    machine_close(&source);
 }
 
 typedef struct test_case {
@@ -848,12 +1434,14 @@ typedef struct test_case {
 } test_case;
 
 static const test_case cases[] = {
+    {"cadence", case_cadence},
     {"registers", case_registers},
     {"lfsr", case_lfsr},
     {"counter", case_counter},
     {"integrator", case_integrator},
     {"stereo", case_stereo},
     {"mix", case_mix},
+    {"order", case_order},
     {"links", case_links},
     {"ring_zero", case_ring_zero},
 };
@@ -861,7 +1449,7 @@ static const test_case cases[] = {
 int main(int argc, char **argv)
 {
     if (argc != 2) {
-        (void)fprintf(stderr, "usage: lynx-test-audio <registers|lfsr|counter|integrator|stereo|mix|links|ring_zero>\n");
+        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|counter|integrator|stereo|mix|order|links|ring_zero>\n");
         return 2;
     }
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i++) {

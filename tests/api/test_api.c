@@ -645,8 +645,8 @@ static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t p
 
 /* CPU-only reads and writes use a BLL program that selects MAPCTL through the
    guest bus before touching one address. The oracle below is hand-derived
-   from the four independent Epyx overlay windows, with the implemented Mikey
-   timer registers checked as device routes and unimplemented targets stopping
+   from the four independent Epyx overlay windows, with implemented timer and
+   audio registers checked as device routes and unimplemented targets stopping
    before the CPU request completes. */
 static int map_target_is_ram(uint8_t mapctl, uint16_t addr)
 {
@@ -678,7 +678,14 @@ static int map_target_is_ram(uint8_t mapctl, uint16_t addr)
 
 static int map_target_is_mikey(uint8_t mapctl, uint16_t addr)
 {
-    return (mapctl & 0x02u) == 0u && lynx__timer_available(addr);
+    return (mapctl & 0x02u) == 0u &&
+           (lynx__timer_available(addr) || lynx__audio_available(addr));
+}
+
+static uint8_t map_mikey_peek(const lynx_machine *m, uint16_t addr)
+{
+    return lynx__audio_available(addr) ? lynx__audio_peek(&m->audio, addr) :
+                                         lynx__timer_peek(&m->timer_bank, addr);
 }
 
 static void map_read_one(uint8_t mapctl, uint16_t addr)
@@ -711,7 +718,7 @@ static void map_read_one(uint8_t mapctl, uint16_t addr)
     if (map_target_is_mikey(mapctl, addr)) {
         CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
         CHECK_EQ_U64(consumed, 512u);
-        CHECK_EQ_U64(m->ram[0x0300u], lynx__timer_peek(&m->timer_bank, addr));
+        CHECK_EQ_U64(m->ram[0x0300u], map_mikey_peek(m, addr));
         return;
     }
 
@@ -763,6 +770,9 @@ static void map_write_one(uint8_t mapctl, uint16_t addr)
             CHECK_EQ_U64(lynx__timer_peek(&m->timer_bank, addr),
                          addr == 0xFD80u ? 0u : value);
         }
+        if (lynx__audio_available(addr)) {
+            CHECK_EQ_U64(lynx__audio_peek(&m->audio, addr), value);
+        }
         return;
     }
 
@@ -802,11 +812,11 @@ static void case_map_matrix(void)
 {
     static const uint16_t boundaries[] = {
         0xFBFFu, 0xFC00u, 0xFCFFu, 0xFD00u, 0xFD1Fu, 0xFD20u,
-        0xFD7Fu, 0xFD80u, 0xFD81u, 0xFD82u, 0xFDFFu, 0xFE00u,
+        0xFD3Fu, 0xFD40u, 0xFD50u, 0xFD7Fu, 0xFD80u, 0xFD81u, 0xFD82u, 0xFDFFu, 0xFE00u,
         0xFFF7u, 0xFFF8u, 0xFFF9u, 0xFFFAu, 0xFFFFu
     };
     static const uint16_t window_writes[] = {
-        0xFC00u, 0xFCFFu, 0xFD00u, 0xFD1Fu, 0xFD20u, 0xFD7Fu,
+        0xFC00u, 0xFCFFu, 0xFD00u, 0xFD1Fu, 0xFD20u, 0xFD50u, 0xFD7Fu,
         0xFD80u, 0xFD81u, 0xFD82u, 0xFDFFu, 0xFE00u, 0xFFF7u,
         0xFFF8u, 0xFFFAu, 0xFFFFu
     };
@@ -3350,9 +3360,9 @@ static void case_bll_identity(void)
     CHECK_EQ_U64(m->mapctl, 0x0Cu);
     CHECK_EQ_U64(save_into(m, blob_v), 0u);
 
-    /* Format 6 carries the complete object and timing identity in the LE header and the
-       guest-written MAPCTL latch in the payload. */
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 6u);
+    /* Format 7 carries the complete object and timing identity in the LE
+       header and the guest-written MAPCTL latch in the payload. */
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 7u);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
     CHECK_EQ_U64(get_le(blob_v + 208u, 4u), 0x0200u);
@@ -5309,15 +5319,27 @@ static void case_scheduler_limits(void)
     CHECK_EQ_U64(m->timer_bank.pending, 0x01u); /* target + 1 includes tick 16 */
     CHECK_EQ_U64(m->timer_bank.timers[0].control_b, 0x0Du);
 
+    /* This is a one-shot IRQ timer (no reload/reset-DONE), so the pending
+       event is retained and the source is done during the large idle span. */
+    uint64_t idle_timer_tick = 0u;
+    CHECK_NAMED(!lynx__timer_next(&m->timer_bank, ticks_of(m), &idle_timer_tick),
+                "scheduler.limits.one-shot-source-done");
     const uint64_t idle_budget = UINT64_C(1) << 40;
     CHECK_EQ_U64(lynx_advance(m, idle_budget, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(consumed, idle_budget);
     CHECK_EQ_U64(ticks_of(m), idle_budget + 17u);
     CHECK_EQ_U64(m->timer_bank.pending, 0x01u);
+    const uint64_t expected_samples = (idle_budget + 16u) / 400u;
+    CHECK_EQ_U64(m->audio.next_sample_ordinal, expected_samples);
+    CHECK_EQ_U64(m->audio.next_sample_tick, (expected_samples + 1u) * 400u);
 
     const uint64_t limit = UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM;
     m->guest_ticks = limit - 7u;
     m->cpu_ready_at = m->guest_ticks;
+    const uint64_t limit_remainder = limit % 400u;
+    m->audio.next_sample_tick = limit +
+        (limit_remainder == 0u ? 0u : 400u - limit_remainder);
+    m->audio.next_sample_ordinal = m->audio.next_sample_tick / 400u - 1u;
     CHECK_EQ_U64(lynx_advance(m, UINT64_MAX, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(consumed, 7u);
     CHECK_EQ_U64(ticks_of(m), limit);
@@ -6025,6 +6047,12 @@ static void case_timer_standalone(void)
     }
     uint8_t crossing[2] = {0xA5u, 0x5Au};
     CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD1Fu, crossing, sizeof crossing),
+                 LYNX_OK);
+    CHECK_EQ_U64(crossing[0], lynx__timer_peek(&m->timer_bank, 0xFD1Fu));
+    CHECK_EQ_U64(crossing[1], lynx__audio_peek(&m->audio, 0xFD20u));
+    crossing[0] = 0xA5u;
+    crossing[1] = 0x5Au;
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD3Fu, crossing, sizeof crossing),
                  LYNX_ERR_UNAVAILABLE);
     CHECK_EQ_U64(crossing[0], 0xA5u);
     CHECK_EQ_U64(crossing[1], 0x5Au);

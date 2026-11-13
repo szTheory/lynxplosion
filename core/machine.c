@@ -632,16 +632,6 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
                 has_event = true;
             }
         }
-        if (m->audio.next_sample_tick < target) {
-            const lynx__machine_event sample_event = {
-                m->audio.next_sample_tick,
-                (uint8_t)LYNX__MACHINE_EVENT_SAMPLE_PRIORITY,
-                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
-            if (!has_event || lynx__machine_event_before(sample_event, next)) {
-                next = sample_event;
-                has_event = true;
-            }
-        }
         const bool cpu_available = m->bus_hold == 0u;
         uint64_t cpu_tick = m->cpu_ready_at > m->guest_ticks ?
                                 m->cpu_ready_at : m->guest_ticks;
@@ -653,6 +643,30 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
                 (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
             if (!has_event || lynx__machine_event_before(cpu_event, next)) {
                 next = cpu_event;
+                has_event = true;
+            }
+        }
+        if (capture == NULL) {
+            /* No PCM span can observe sample values in this legacy call. Keep
+               samples as ordered scheduler events when they coincide with
+               real work, but advance a sample-only prefix arithmetically. */
+            const uint64_t before_tick = has_event ? next.tick : target;
+            const uint64_t sampled_through =
+                lynx__audio_advance_sample_phase_before(&m->audio, before_tick);
+            if (sampled_through != 0u) {
+                if (sampled_through > m->guest_ticks) {
+                    machine_set_guest_tick(m, sampled_through);
+                }
+                m->audio.same_tick_sample_cursor = 1u;
+            }
+        }
+        if (m->audio.next_sample_tick < target) {
+            const lynx__machine_event sample_event = {
+                m->audio.next_sample_tick,
+                (uint8_t)LYNX__MACHINE_EVENT_SAMPLE_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
+            if (!has_event || lynx__machine_event_before(sample_event, next)) {
+                next = sample_event;
                 has_event = true;
             }
         }
