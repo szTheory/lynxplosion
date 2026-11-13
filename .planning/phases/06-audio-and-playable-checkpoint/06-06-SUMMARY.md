@@ -2,7 +2,7 @@
 phase: 06-audio-and-playable-checkpoint
 plan: "06"
 subsystem: testing
-tags: [c, audio, snapshot-format-7, deterministic, av-continuation, clang, gcc]
+tags: [c, audio, snapshot-format-7, deterministic, av-continuation, build-artifacts, clang, gcc]
 
 requires:
   - phase: 06-05
@@ -27,13 +27,15 @@ tech-stack:
     - Fieldwise comparison of complete A/V streams at common guest ticks
 
 key-files:
-  created: []
+  created:
+    - tests/det/av_driver.cmake
   modified:
     - core/snapshot.c
     - tests/audio/test_audio.c
     - tests/audio/tests.cmake
     - tests/det/test_det.c
     - tests/det/tests.cmake
+    - .planning/phases/06-audio-and-playable-checkpoint/06-06-PLAN.md
     - tests/inventory/fast.txt
     - docs/snapshot-audio.md
     - docs/claims/skeleton-repeatability.claim
@@ -156,6 +158,19 @@ The plan scope and interfaces were preserved. Two small correctness fixes were m
 - Tick-target calls use an exclusive target, so comparing them at the frame-stop tick omitted the frame-boundary event. Advancing each path through the next tick produced the same complete frame record and common machine state.
 - The first synthetic snapshot candidate used an overdue video refresh deadline. It was corrected to a valid future phase before rerunning the control; the format-7 snapshot restore then passed.
 
+## Follow-up: A/V Fixture Artifact Lifecycle
+
+A post-closeout artifact scan found the persistent `build/check/generated/av-probe/av_probe.bll` output was unmanifested. Its 220-byte content matched the fixture's `av_guest_sha256` and `av_guest_bytes`, while the scanner grants fixture exemptions only through the manifest's generic `sha256` field. The source fixture and manifest remain unchanged.
+
+The deterministic audio tests now build the existing `av_probe.s` guest independently in a unique, test-owned scratch directory. The driver checks the pinned ca65/ld65 records and source/config manifest identities; `lynx-test-det` checks the linked BLL and `probe_result` symbol. It removes only the temporary object and that test's scratch directory after success, while failures retain their artifacts. The old custom target and persistent generated path are gone.
+
+- **Repair commit:** `7ed0b6bf726c4c53d41ff5b9ee72e5fa92e99b6b` (`fix(06-06): isolate deterministic A/V fixture outputs`); the plan's Task 2 scope now names the driver and artifact lifecycle.
+- **AppleClang 21:** configure and `lynx-test-det` build passed; `det.audio_paths` and `det.audio_sensitivity` passed 2/2 after removal of the exact old generated directory. The path stayed absent and both owned case directories were cleaned.
+- **Artifact scan:** `sh scripts/scan-binaries.sh --artifacts build --cmake-binary-dir build/check` passed with exit 0 across 6,367 files. Private logs and the recorded exit are under `/private/tmp/lynx-av-life.QLBMPm/final-artifact-scan.{stdout,stderr,exit}`.
+- **GNU 13.3/Linux aarch64:** fetched and fast-forwarded the reused checkout to the exact repair commit; configure, det build, and both audio cases passed. After verifying and removing its two-file legacy `generated/av-probe` directory (BLL SHA-256 `79cf9d23aec06364f9a9704f90c8bdb72ae89e3aea6ac99a311a906a55802774`, 220 bytes; labels 112 bytes), the same two cases passed 2/2 again. The tracked tree is clean, the persistent path was not recreated, and the test-owned case directories were removed.
+- **Scoped history hygiene:** `sh scripts/hygiene.sh --history 2baaa047e0609118ce1bdbc01c8b8f42ac08b93c..7ed0b6bf726c4c53d41ff5b9ee72e5fa92e99b6b` passed with exit 0; its separate private logs are under `/private/tmp/lynx-av-life.QLBMPm/history-scope.{stdout,stderr,exit}`.
+- This follow-up covers only the two affected deterministic audio cases and the artifact scan. It does not claim a new phase-wide or compatibility qualification; the planned final canonical gates remain with Plan 12.
+
 ## User Setup Required
 
 None — the pinned tools and GNU reuse container were already available.
@@ -167,8 +182,9 @@ Plan 06 closes its format-7 validation and deterministic continuation evidence. 
 ## Self-Check: PASSED
 
 - Summary file exists at the required phase path.
-- Task 1 (`0dc6178`) and Task 2 (`2511cb7`) commits are ancestors of the current source head.
-- `git diff --check` passed before the guarded summary commit.
+- Task 1 (`0dc6178`), Task 2 (`2511cb7`), and the artifact-lifecycle repair commit (`7ed0b6b`) are ancestors of the current source head.
+- `tests/det/av_driver.cmake` exists; the persistent generated fixture path remained absent after the focused Mac and GNU reruns.
+- `git diff --check` passed before the guarded summary follow-up commit.
 
 ---
 *Phase: 06-audio-and-playable-checkpoint*
