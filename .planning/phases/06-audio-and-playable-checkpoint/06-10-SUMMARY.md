@@ -145,3 +145,5 @@ Plan 11 can proceed with private audio baseline work. Plan 12 owns final canonic
 - The summary and all six owned implementation/documentation files exist.
 - The combined native fault selector passed 10/10; the task-specific fault selectors and 7-case/10-case positive-source selectors passed on native Clang and GNU 13.3. Each claim proof selector and claim checker passed on both builds.
 - `git diff --check` passed before the guarded metadata commit. The pre-existing untracked `.planning/state.json` and `.planning/research/.cache/` were left untouched.
+
+Parent closeout preserved both identified exploratory fault directories outside the build scan after exact source/fault/nonce marker and full byte/type/mode/link inventory verification. Their original paths above describe failure provenance; no artifacts were deleted or scanner rules weakened.
