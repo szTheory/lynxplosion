@@ -172,3 +172,16 @@ Plan 09 can request `--include-audio` to obtain the four-suite source oracle, bu
 - All created/modified plan files and this summary exist.
 - All four task/fix commits recorded above are ancestors of `plan_head_after`.
 - `git diff --check` passes for the remaining tracked workspace changes.
+
+## Follow-up integration repair (2026-11-12)
+
+- Extended the isolated builder-control fixture with the audio/audio2 wrappers and pinned `main.c`/`tests.s` inputs. After rerunning `cmake --preset check` to regenerate its test driver, `suite.build_controls` passed.
+- Refreshed only the pending timer descriptor's builder and oracle-generator identity hashes after private comparisons on the same verified pins. The old/current default oracle files were byte-identical (1,178 bytes); old/current timer BLL and label outputs were byte-identical (612 and 900 bytes). The legacy source/oracle values, model expectations, policies, and admission set were unchanged.
+- Updated the timer negative controls to mutate the current descriptor identities and derive the build-record digest from that run's successful baseline, keeping the rejection checks portable across native toolchains.
+- macOS `ctest --preset check -R '^(suite\.build_controls|suite\.oracle_controls|suite\.symbol_controls|suite\.timers\..*)$' --output-on-failure` passed 13/13. After the final portability edit, `ctest --preset check -R '^(suite\.timers\.pending_controls|suite\.timers\.video_revisit_controls)$' --output-on-failure` passed 2/2 on macOS. Linux/GNU 13.3 passed 12/13 in the first full focused run; its sole failure was the platform-specific build-record needle. After deriving that needle from the local baseline, the same targeted pending/video command passed 2/2 at the exact synced repair commit. No Phase 06 full gate is claimed.
+- Follow-up repair commits: `fd4a2e8` and `d9cb169`.
+
+### Follow-up self-check
+
+- The three repair files and this evidence note exist; `git diff --check` passes for the repair and summary diffs.
+- Commits `fd4a2e8` and `d9cb169` are ancestors of the current main HEAD.
