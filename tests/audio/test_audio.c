@@ -1117,6 +1117,42 @@ static void case_stereo(void)
     ASSERT_EQ("audio.stereo.muted-right", muted.right, 0);
 }
 
+static void case_stereo_left_fault(void)
+{
+    lynx__audio_state audio;
+    lynx__audio_init(&audio);
+    audio.channels[0].output = 37;
+    audio.stereo_disable = 0x10u;
+    lynx_pcm_frame sample = {INT16_MIN, INT16_MIN};
+    ASSERT_NAMED("audio.stereo.left-fault-sample-ready",
+                 lynx__audio_sample(&audio, 400u, &sample));
+    ASSERT_EQ("audio.stereo.left-route", sample.left, 0);
+    ASSERT_EQ("audio.stereo.right-route", sample.right, 2368);
+}
+
+static void case_stereo_right_fault(void)
+{
+    lynx__audio_state audio;
+    lynx__audio_init(&audio);
+    audio.channels[0].output = 37;
+    audio.stereo_disable = 0x01u;
+    lynx_pcm_frame sample = {INT16_MIN, INT16_MIN};
+    ASSERT_NAMED("audio.stereo.right-fault-sample-ready",
+                 lynx__audio_sample(&audio, 400u, &sample));
+    ASSERT_EQ("audio.stereo.left-route", sample.left, 2368);
+    ASSERT_EQ("audio.stereo.right-route", sample.right, 0);
+}
+
+static void case_cadence_399_fault(void)
+{
+    lynx__audio_state audio;
+    lynx__audio_init(&audio);
+    ASSERT_EQ("audio.cadence.ordinal-tick", audio.next_sample_tick, 400u);
+    lynx__audio_mark_sample(&audio);
+    ASSERT_EQ("audio.cadence.ordinal-tick", audio.next_sample_tick, 800u);
+    ASSERT_EQ("audio.cadence.ordinal", audio.next_sample_ordinal, 1u);
+}
+
 static void case_mix(void)
 {
     int8_t outputs[4] = {127, 127, 127, 127};
@@ -2643,6 +2679,118 @@ static void case_snapshot(void)
     machine_close(&source);
 }
 
+static void case_snapshot_phase_fault(void)
+{
+    static const uint8_t looping_guest[] = {0x4Cu, 0x00u, 0x02u};
+    machine_box source;
+    machine_box restored;
+    ASSERT_NAMED("audio.snapshot.phase-source-init",
+                 machine_open(&source, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.snapshot.phase-restored-init",
+                 machine_open(&restored, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (source.machine == NULL || restored.machine == NULL) {
+        machine_close(&restored);
+        machine_close(&source);
+        return;
+    }
+    ASSERT_EQ("audio.snapshot.phase-source-load",
+              load_guest(source.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    ASSERT_EQ("audio.snapshot.phase-restored-load",
+              load_guest(restored.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+
+    av_span_storage boundary_storage;
+    lynx_av_buffers boundary_buffers;
+    lynx_av_result boundary_result;
+    av_span_storage_init(&boundary_storage, &boundary_buffers, 4u,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&boundary_result);
+    ASSERT_EQ("audio.snapshot.phase-boundary-advance", lynx_advance_av(
+        source.machine, 400u, &boundary_buffers, &boundary_result), LYNX_OK);
+    ASSERT_EQ("audio.snapshot.phase-boundary-tick", source.machine->guest_ticks, 400u);
+    source.machine->bus_hold = 1u;
+
+    lynx__audio_state *audio = &source.machine->audio;
+    for (uint8_t channel = 0u; channel < 2u; channel++) {
+        lynx__audio_channel *state = &audio->channels[channel];
+        state->volume = channel == 0u ? 5u : 11u;
+        state->count = 0u;
+        state->control_a = 0x0Fu;
+        state->control_b = 0u;
+        state->feedback = 0u;
+        state->shift = 0u;
+        state->output = channel == 0u ? 4 : -3;
+    }
+    audio->ring_debt[4] = 1u;
+    audio->ring_debt[5] = 1u;
+    audio->ring_cursor = 4u;
+    audio->ring_defer_valid = 1u;
+    audio->ring_defer_tick = 401u;
+    audio->same_tick_device_cursor = LYNX__AUDIO_DEVICE_APPLIED |
+                                     LYNX__AUDIO_RING_VISIT_LIMIT;
+    ASSERT_NAMED("audio.snapshot.phase-ring-state",
+                 lynx__audio_ring_state_valid(audio, 400u));
+
+    size_t snapshot_size = 0u;
+    ASSERT_EQ("audio.snapshot.phase-size",
+              lynx_snapshot_size(source.machine, &snapshot_size), LYNX_OK);
+    uint8_t *snapshot = (uint8_t *)malloc(snapshot_size);
+    ASSERT_NAMED("audio.snapshot.phase-allocation", snapshot != NULL);
+    if (snapshot == NULL) {
+        machine_close(&restored);
+        machine_close(&source);
+        return;
+    }
+    size_t written = 0u;
+    ASSERT_EQ("audio.snapshot.phase-save", lynx_snapshot_save(
+        source.machine, snapshot, snapshot_size, &written), LYNX_OK);
+    ASSERT_EQ("audio.snapshot.phase-written", written, snapshot_size);
+    ASSERT_EQ("audio.snapshot.phase-restore", lynx_snapshot_restore(
+        restored.machine, snapshot, snapshot_size), LYNX_OK);
+
+    av_span_storage source_storage;
+    av_span_storage restore_storage;
+    lynx_av_buffers source_buffers;
+    lynx_av_buffers restore_buffers;
+    lynx_av_result source_result;
+    lynx_av_result restore_result;
+    av_span_storage_init(&source_storage, &source_buffers, 4u,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_span_storage_init(&restore_storage, &restore_buffers, 4u,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&source_result);
+    av_result_init(&restore_result);
+    const lynx_status source_status = lynx_advance_av(
+        source.machine, 2u, &source_buffers, &source_result);
+    const lynx_status restore_status = lynx_advance_av(
+        restored.machine, 2u, &restore_buffers, &restore_result);
+    const size_t pcm_capacity = 4u;
+    const size_t event_capacity = LYNX_AV_MIN_EVENT_CAPACITY;
+    int complete_suffix_equal = source_status == LYNX_OK && restore_status == LYNX_OK &&
+        memcmp(&source_result, &restore_result, sizeof source_result) == 0 &&
+        source_result.pcm_count == 1u && source_result.event_count == 2u &&
+        source_result.pcm_count <= pcm_capacity &&
+        source_result.event_count <= event_capacity;
+    if (complete_suffix_equal != 0) {
+        const lynx_pcm_frame *source_pcm = (const lynx_pcm_frame *)(const void *)source_storage.audio;
+        const lynx_pcm_frame *restore_pcm = (const lynx_pcm_frame *)(const void *)restore_storage.audio;
+        const lynx_audio_event *source_events =
+            (const lynx_audio_event *)(const void *)(source_storage.audio + 256u);
+        const lynx_audio_event *restore_events =
+            (const lynx_audio_event *)(const void *)(restore_storage.audio + 256u);
+        complete_suffix_equal = memcmp(source_pcm, restore_pcm,
+                                        source_result.pcm_count * sizeof *source_pcm) == 0 &&
+            memcmp(source_events, restore_events,
+                   source_result.event_count * sizeof *source_events) == 0 &&
+            source_events[0].tick == 401u && source_events[0].sequence == 0u &&
+            source_events[0].channel == 0u && source_events[1].tick == 401u &&
+            source_events[1].sequence == 1u && source_events[1].channel == 1u;
+    }
+    ASSERT_NAMED("audio.snapshot.complete-suffix", complete_suffix_equal != 0);
+    free(snapshot);
+    machine_close(&restored);
+    machine_close(&source);
+}
+
 typedef struct test_case {
     const char *name;
     void (*run)(void);
@@ -2657,6 +2805,9 @@ static const test_case cases[] = {
     {"integrator", case_integrator},
     {"integrator_clip_fault", case_integrator_clip_fault},
     {"stereo", case_stereo},
+    {"stereo_left_fault", case_stereo_left_fault},
+    {"stereo_right_fault", case_stereo_right_fault},
+    {"cadence_399_fault", case_cadence_399_fault},
     {"mix", case_mix},
     {"order", case_order},
     {"links", case_links},
@@ -2670,13 +2821,14 @@ static const test_case cases[] = {
     {"capacity", case_capacity},
     {"stops", case_stops},
     {"snapshot", case_snapshot},
+    {"snapshot_phase_fault", case_snapshot_phase_fault},
     {"snapshot_refusal", case_snapshot_refusal},
 };
 
 int main(int argc, char **argv)
 {
     if (argc != 2) {
-        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|lfsr_tap_fault|counter|integrator|integrator_clip_fault|stereo|mix|order|links|link_a1_fault|link_a2_fault|link_a3_fault|link_a3_t1_fault|ring_zero|span_refusal|span_alias|capacity|stops|snapshot|snapshot_refusal>\n");
+        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|cadence_399_fault|registers|lfsr|lfsr_tap_fault|counter|integrator|integrator_clip_fault|stereo|stereo_left_fault|stereo_right_fault|mix|order|links|link_a1_fault|link_a2_fault|link_a3_fault|link_a3_t1_fault|ring_zero|span_refusal|span_alias|capacity|stops|snapshot|snapshot_phase_fault|snapshot_refusal>\n");
         return 2;
     }
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i++) {

@@ -39,6 +39,32 @@ lynx1/lynx2. Those source observations retained their 18-row comparisons and
 matched the independent software model. GNU qualification for this source
 commit is recorded with the Plan 10 execution summary.
 
+## Stereo routing, cadence, and snapshot continuation
+
+| CTest | Private source fault | Exact assertion |
+|---|---|---|
+| `audio.fault.stereo_left` | Invert the left-side route-disable decision for channel 0 | `audio.stereo.left-route` |
+| `audio.fault.stereo_right` | Invert the right-side route-disable decision for channel 0 | `audio.stereo.right-route` |
+| `audio.fault.cadence_399` | Change the production sample interval from 400 to 399 ticks | `audio.cadence.ordinal-tick` |
+| `audio.fault.snapshot_phase` | Advance the serialized pending audio-ring cursor by one node | `audio.snapshot.complete-suffix` |
+
+The stereo cases mute one side while requiring exact zero there and the
+expected active value on the opposite side. The cadence case checks both the
+initial tick and the next ordinal boundary. The snapshot case captures two
+pending linked-channel clocks at the excluded sample boundary at tick 400,
+restores the saved state, then compares the complete result, PCM, and ordered
+event suffix at tick 401. The correct suffix contains A0 sequence 0 followed
+by A1 sequence 1. The mutation changes the ring cursor value written at byte
+41 by the current fieldwise snapshot codec; that offset is an internal codec
+detail, not a public ABI constant. Restore must succeed before the suffix can
+count as a detection.
+
+The four native Task 2 fault controls passed. The supporting native selector
+passed `audio.cadence`, `audio.stereo`, `audio.order`, `audio.capacity`,
+`audio.snapshot`, `det.audio_paths`, and all four fresh audio/audio2 source
+observations on lynx1/lynx2. GNU qualification for the Task 2 source commit is
+recorded with the Plan 10 execution summary.
+
 These results establish software fault sensitivity and pinned-source
 repeatability only. They do not qualify a Lynx model or establish hardware
 accuracy.
