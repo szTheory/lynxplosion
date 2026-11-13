@@ -95,6 +95,7 @@ audio.span_refusal	audio
 audio.stereo	audio
 audio.stops	audio
 consumer.av_benchmark	consumer
+consumer.av_benchmark_controls	consumer
 consumer.av_controls	consumer
 consumer.av_edges	consumer
 consumer.av_publication_controls	consumer
