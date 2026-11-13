@@ -231,5 +231,26 @@ the authored hot-volume/event checks now verify output latching until a clock.
 Focused audio, snapshot, sliced/restored transcript and timer regressions pass
 natively. Strict timer row 14 remains legacy `0c` versus source `0d` and video
 policy 1 `0f` versus source `0d`. The existing page-mode blockers and unresolved
-O1/model qualification remain unchanged. Audio record hostility controls and
-cross-compiler/final qualification are still pending the rest of Phase 6.
+O1/model qualification remain unchanged.
+
+`suite.audio.controls` and `suite.audio2.controls` use fresh immutable baselines
+for both profiles. They prove a held guest does not execute, then resume that
+same machine to a real completion; a bounded guest that has not returned is
+rejected. Named controls reject the opposite selected profile, missing or
+changed return/progress/sentinel evidence, zero/short/extra/duplicate result
+rows, zeroed results, result-extent and entry-alias drift, stale content/source/
+tool/build/oracle/layout identity, and out-of-range or overflowing tick records.
+The accepted 256 and 50,000,000 tick record boundaries are explicitly
+manufactured parser evidence, not runs claiming guest completion at those
+times. Audio2 controls reject both a lost row 9 `30|34` source alternative and
+a changed row 9 observation whose comparison record is stale.
+
+`suite.audio.source_controls` runs the direct builder/oracle source-control
+script and checks the exact mode/profile registration plus one fast-inventory
+entry for the ten CPU, timer, page-mode, audio and audio2 observations and three
+audio controls. `suite.selection_controls` independently validates the exact
+ten observation and eight control IDs. The scoped native selector passed;
+page-mode still has exactly its two inherited skips because the source reaches
+an unsupported SERCTL write at `$FD8C`. GNU qualification of the expanded
+Task 2 selector and final Phase 6 qualification remain pending. These software
+checks do not establish hardware accuracy or public profile qualification.

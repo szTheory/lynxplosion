@@ -2978,6 +2978,10 @@ static int write_audio_run_record(const char *path, const char *build_directory,
     char ld65_sha[65];
     char source_main[65];
     char source_asm[65];
+    char raw_sha[65];
+    char comparison_sha[65];
+    char raw_path[4096];
+    char comparison_path[4096];
     char object_sha[65];
     char labels_identity[65];
     char object_key[64];
@@ -3000,6 +3004,16 @@ static int write_audio_run_record(const char *path, const char *build_directory,
         file_sha256(build_record, build_record_sha) != 0) {
         return fail("audio run record build identity is incomplete");
     }
+    {
+        char name[128];
+        if (snprintf(name, sizeof name, "raw-results-%s-%s.tsv", suite, machine_profile) >= (int)sizeof name ||
+            checked_join(raw_path, sizeof raw_path, build_directory, name) != 0 ||
+            snprintf(name, sizeof name, "comparison-%s-%s.tsv", suite, machine_profile) >= (int)sizeof name ||
+            checked_join(comparison_path, sizeof comparison_path, build_directory, name) != 0 ||
+            file_sha256(raw_path, raw_sha) != 0 || file_sha256(comparison_path, comparison_sha) != 0) {
+            return fail("audio run record raw/comparison identity is incomplete");
+        }
+    }
     (void)snprintf(source_main, sizeof source_main, "%s", oracle->main_sha256[suite_index]);
     (void)snprintf(source_asm, sizeof source_asm, "%s", oracle->asm_sha256[suite_index]);
     if (atomic_output_begin(path, &output) != 0) return 1;
@@ -3010,11 +3024,12 @@ static int write_audio_run_record(const char *path, const char *build_directory,
         "source_main_sha256=%s\nsource_assembly_sha256=%s\nwrapper_sha256=%s\n"
         "builder_sha256=%s\nlayout_sha256=%s\nca65_tool_sha256=%s\nld65_tool_sha256=%s\n"
         "object_sha256=%s\nlabels_sha256=%s\nbll_sha256=%s\nlabels_file_sha256=%s\n"
-        "build_record_sha256=%s\noracle_sha256=%s\n"
+        "build_record_sha256=%s\noracle_sha256=%s\nraw_results_sha256=%s\ncomparison_sha256=%s\n"
         "result_extent=18\nexpected_count=18\nmeaningful_count=18\ntick_min=%u\ntick_max=%u\n"
         "ticks_observed=%" PRIu64 "\ncompletion_margin_ticks=%" PRIu64 "\nmaximum_headroom_ticks=%" PRIu64 "\n"
         "guest_ticks=%" PRIu64 "\nminimum_guest_ticks=%u\nmaximum_guest_ticks=%u\n"
-        "guest_progress=%u\ncompletion_sentinel=a5\nzero_page_initialization=full-256-byte-wrapper-clear\n"
+        "guest_progress=%u\ncompletion_sentinel=a5\nguest_return=observed\n"
+        "zero_page_initialization=full-256-byte-wrapper-clear\n"
         "source_agreements=%u\nsource_comparison=separate-record\n"
         "timing_policy=%s\naudio_policy=%s\naudio_rate_num=%u\naudio_rate_den=%u\n"
         "audio_channels=%u\naudio_bits=%u\nhardware_accuracy=unverified\nprofile_qualification=unresolved\n",
@@ -3022,6 +3037,7 @@ static int write_audio_run_record(const char *path, const char *build_directory,
         detected_model < 0 ? "unknown" : profile_label((unsigned)detected_model), probe, marker,
         source_main, source_asm, wrapper_sha, builder_sha, layout_sha, ca65_sha, ld65_sha,
         object_sha, labels_identity, bll_sha, labels_sha, build_record_sha, oracle_sha,
+        raw_sha, comparison_sha,
         AUDIO_MIN_TICKS, AUDIO_MAX_TICKS, ticks, ticks - AUDIO_MIN_TICKS,
         AUDIO_MAX_TICKS - ticks, ticks, AUDIO_MIN_TICKS, AUDIO_MAX_TICKS, (unsigned)progress,
         agreements,
@@ -3048,6 +3064,26 @@ static int profile_index(const char *name, unsigned *index)
         return 0;
     }
     return 1;
+}
+
+static int audio_symbol_layout(const char *labels, size_t labels_length,
+                               const uint8_t *bll, size_t bll_length,
+                               suite_symbols *symbols)
+{
+    if (parse_symbols(labels, labels_length, symbols) != 0 ||
+        ranges_valid(symbols, AUDIO_MEANINGFUL) != 0) return 1;
+    if (symbols->found[12] == 0u || symbols->found[13] == 0u ||
+        symbols->value[1] != symbols->value[8] ||
+        symbols->value[12] < 0x01F7u || symbols->value[12] - 0x01F6u >= bll_length ||
+        bll[symbols->value[12] - 0x01F6u] != 0x60u ||
+        symbols->value[13] < 0x01F9u || symbols->value[13] - 0x01F6u >= bll_length ||
+        bll[symbols->value[13] - 0x01F6u - 3u] != 0x20u ||
+        bll[symbols->value[13] - 0x01F6u - 2u] != (uint8_t)symbols->value[8] ||
+        bll[symbols->value[13] - 0x01F6u - 1u] != (uint8_t)(symbols->value[8] >> 8) ||
+        symbols->value[7] < BLL_HEADER_SIZE || symbols->value[7] - 0x01F6u != bll_length) {
+        return fail("audio symbol extent, aliases or wrapper return gate invalid");
+    }
+    return 0;
 }
 
 static int probe_model(const uint8_t probe, const uint8_t marker)
@@ -3550,16 +3586,7 @@ static int run_audio(const char *suite_name, const char *machine_profile_name,
     }
     if (read_file(bll_path, &bll, &bll_length, 65536u) != 0 ||
         read_text(labels_path, &labels, &labels_length, 16384u) != 0 ||
-        parse_symbols(labels, labels_length, &symbols) != 0 ||
-        ranges_valid(&symbols, AUDIO_MEANINGFUL) != 0 ||
-        symbols.found[12] == 0u || symbols.found[13] == 0u ||
-        symbols.value[1] != symbols.value[8] ||
-        symbols.value[12] < 0x01F7u || symbols.value[12] - 0x01F6u >= bll_length ||
-        bll[symbols.value[12] - 0x01F6u] != 0x60u ||
-        symbols.value[13] < 0x01F9u || symbols.value[13] - 0x01F6u >= bll_length ||
-        bll[symbols.value[13] - 0x01F6u - 3u] != 0x20u ||
-        bll[symbols.value[13] - 0x01F6u - 2u] != (uint8_t)symbols.value[8] ||
-        bll[symbols.value[13] - 0x01F6u - 1u] != (uint8_t)(symbols.value[8] >> 8)) {
+        audio_symbol_layout(labels, labels_length, bll, bll_length, &symbols) != 0) {
         (void)fail("audio symbol extent, aliases or wrapper return gate invalid");
         goto done;
     }
@@ -3714,6 +3741,284 @@ done:
     free(labels);
     free(bll);
     return result;
+}
+
+static int audio_record_field(const char *path, const char *key,
+                              char *value, size_t capacity)
+{
+    char *text = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    unsigned found = 0u;
+    char line[512];
+    if (read_text(path, &text, &length, 32768u) != 0) {
+        return fail("audio record unreadable");
+    }
+    while (offset < length) {
+        size_t line_length = 0u;
+        char *equals;
+        while (offset + line_length < length && text[offset + line_length] != '\n') line_length++;
+        if (line_length == 0u || line_length >= sizeof line) {
+            free(text);
+            return fail("audio record malformed field line");
+        }
+        memcpy(line, text + offset, line_length);
+        line[line_length] = '\0';
+        offset += line_length + (offset + line_length < length ? 1u : 0u);
+        equals = strchr(line, '=');
+        if (equals == NULL || equals == line || equals[1] == '\0' || strchr(equals + 1, '=') != NULL) {
+            free(text);
+            return fail("audio record malformed field line");
+        }
+        *equals = '\0';
+        if (strcmp(line, key) == 0) {
+            if (found++ != 0u || copy_field(value, capacity, equals + 1) != 0) {
+                free(text);
+                return fail("audio record duplicate or oversized field");
+            }
+        }
+    }
+    free(text);
+    if (found != 1u) {
+        char message[128];
+        (void)snprintf(message, sizeof message, "audio record missing field: %s", key);
+        return fail(message);
+    }
+    return 0;
+}
+
+static int audio_record_is(const char *path, const char *key, const char *expected,
+                           const char *diagnostic)
+{
+    char value[512];
+    if (audio_record_field(path, key, value, sizeof value) != 0) return 1;
+    return strcmp(value, expected) == 0 ? 0 : fail(diagnostic);
+}
+
+static int audio_record_number(const char *path, const char *key, uint32_t *out,
+                               const char *diagnostic)
+{
+    char value[64];
+    if (audio_record_field(path, key, value, sizeof value) != 0 || parse_decimal(value, out) != 0) {
+        return fail(diagnostic);
+    }
+    return 0;
+}
+
+static int audio_record_build_field(const char *record_path, const char *build_path,
+                                    const char *record_key, const char *build_key,
+                                    const char *diagnostic)
+{
+    char recorded[128];
+    char built[128];
+    if (audio_record_field(record_path, record_key, recorded, sizeof recorded) != 0 ||
+        record_value(build_path, build_key, built, sizeof built) != 0 ||
+        strcmp(recorded, built) != 0) return fail(diagnostic);
+    return 0;
+}
+
+static int audio_record_file_hash(const char *record_path, const char *key,
+                                  const char *file_path, const char *diagnostic)
+{
+    char recorded[128];
+    char actual[65];
+    if (audio_record_field(record_path, key, recorded, sizeof recorded) != 0 ||
+        file_sha256(file_path, actual) != 0 || !valid_hex(recorded, 64u) ||
+        strcmp(recorded, actual) != 0) return fail(diagnostic);
+    return 0;
+}
+
+static int audio_raw_rows(const char *path, const char *suite, const char *profile,
+                          uint8_t results[AUDIO_MEANINGFUL])
+{
+    char *text = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    char line[256];
+    char *fields[4];
+    uint32_t i;
+    const char *keys[] = {"suite", "machine_profile", "profile_input", "ram_seed", "result_count"};
+    const char *values[5] = {suite, profile, profile, NULL, "18"};
+    char seed[64];
+    if (snprintf(seed, sizeof seed, "%s-%s", suite, profile) >= (int)sizeof seed) {
+        return fail("audio raw record identity is too long");
+    }
+    values[3] = seed;
+    if (read_text(path, &text, &length, 8192u) != 0) return fail("audio raw record unreadable");
+    for (i = 0u; i < 5u; i++) {
+        if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+            split_fields(line, fields, 4u) != 2u || strcmp(fields[0], keys[i]) != 0 ||
+            strcmp(fields[1], values[i]) != 0) {
+            free(text);
+            return fail("audio raw record identity or result count mismatch");
+        }
+    }
+    for (i = 0u; i < AUDIO_MEANINGFUL; i++) {
+        uint32_t index;
+        if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+            split_fields(line, fields, 4u) != 3u || strcmp(fields[0], "result") != 0 ||
+            parse_decimal(fields[1], &index) != 0 || index != i || parse_byte(fields[2], &results[i]) != 0) {
+            free(text);
+            return fail("audio raw record result row count/order mismatch");
+        }
+    }
+    if (offset != length) {
+        free(text);
+        return fail("audio raw record contains extra or duplicate result rows");
+    }
+    free(text);
+    return 0;
+}
+
+static int audio_comparison_rows(const char *path, const suite_audio_oracle *oracle,
+                                 unsigned suite_index, const uint8_t *results)
+{
+    char *text = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    char line[256];
+    char *fields[6];
+    uint32_t i;
+    if (read_text(path, &text, &length, 8192u) != 0) return fail("audio comparison record unreadable");
+    for (i = 0u; i < AUDIO_MEANINGFUL; i++) {
+        char expected[256];
+        size_t pos;
+        size_t j;
+        int accepted = 0;
+        int n;
+        n = snprintf(expected, sizeof expected, "result\t%u\t%02x\tEXPECT(", i, results[i]);
+        if (n < 0 || (size_t)n >= sizeof expected) { free(text); return fail("audio comparison record malformed"); }
+        pos = (size_t)n;
+        for (j = 0u; j < oracle->counts[suite_index][i]; j++) {
+            n = snprintf(expected + pos, sizeof expected - pos, "%s%02x", j == 0u ? "" : "|",
+                         oracle->values[suite_index][i][j]);
+            if (n < 0 || (size_t)n >= sizeof expected - pos) { free(text); return fail("audio comparison record malformed"); }
+            pos += (size_t)n;
+            if (oracle->values[suite_index][i][j] == results[i]) accepted = 1;
+        }
+        n = snprintf(expected + pos, sizeof expected - pos, ")\t%s", accepted != 0 ? "source-accepted" : "source-mismatch");
+        if (n < 0 || (size_t)n >= sizeof expected - pos) { free(text); return fail("audio comparison record malformed"); }
+        if (accepted == 0) { free(text); return fail("audio comparison: source oracle mismatch"); }
+        if (next_line(text, length, &offset, line, sizeof line) != 0 || strcmp(line, expected) != 0) {
+            free(text);
+            return fail("audio comparison record row mismatch");
+        }
+    }
+    if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+        split_fields(line, fields, 4u) != 2u || strcmp(fields[0], "comparison") != 0 ||
+        strcmp(fields[1], "match") != 0 || offset != length) {
+        free(text);
+        return fail("audio comparison record summary mismatch");
+    }
+    free(text);
+    return 0;
+}
+
+static int validate_audio_record_mode(const char *suite, const char *profile,
+                                      const char *directory, const char *raw_path,
+                                      const char *record_path, const char *legacy_oracle_path,
+                                      const char *extended_oracle_path)
+{
+    suite_oracle legacy;
+    suite_audio_oracle audio;
+    uint8_t results[AUDIO_MEANINGFUL];
+    char path[4096];
+    char build_path[4096];
+    char bll_path[4096];
+    char labels_path[4096];
+    char oracle_sha[65];
+    char expected[128];
+    char probe[16];
+    unsigned suite_index;
+    unsigned profile_idx;
+    uint32_t tick_min, tick_max, ticks, guest_ticks, margin, headroom, value;
+    if (strcmp(suite, "audio") == 0) suite_index = 0u;
+    else if (strcmp(suite, "audio2") == 0) suite_index = 1u;
+    else return fail("audio record: invalid suite");
+    if (profile_index(profile, &profile_idx) != 0) return fail("audio record: invalid profile");
+    if (checked_join(build_path, sizeof build_path, directory, "build-record.txt") != 0 ||
+        snprintf(expected, sizeof expected, "%s.bll", suite) >= (int)sizeof expected ||
+        checked_join(bll_path, sizeof bll_path, directory, expected) != 0 ||
+        snprintf(expected, sizeof expected, "%s.lbl", suite) >= (int)sizeof expected ||
+        checked_join(labels_path, sizeof labels_path, directory, expected) != 0 ||
+        parse_oracle(legacy_oracle_path, &legacy) != 0 || read_build_identity(directory, &legacy) != 0 ||
+        parse_audio_oracle(legacy_oracle_path, extended_oracle_path, &audio) != 0 ||
+        verify_audio_build_identity(directory, &audio) != 0) return 1;
+    if (audio_raw_rows(raw_path, suite, profile, results) != 0) return 1;
+    {
+        char name[128];
+        if (snprintf(name, sizeof name, "comparison-%s-%s.tsv", suite, profile) >= (int)sizeof name ||
+            checked_join(path, sizeof path, directory, name) != 0 ||
+            audio_comparison_rows(path, &audio, suite_index, results) != 0) return 1;
+    }
+    if (audio_record_is(record_path, "schema", "lynx-audio-suite-run-v1", "audio record: schema mismatch") != 0 ||
+        audio_record_is(record_path, "suite", suite, "audio record: run identity mismatch") != 0 ||
+        audio_record_is(record_path, "machine_profile", profile, "audio record: run identity mismatch") != 0 ||
+        audio_record_is(record_path, "profile_input", profile, "audio record: run identity mismatch") != 0 ||
+        audio_record_is(record_path, "detected_model", profile, "audio record: detected model does not match guest evidence") != 0 ||
+        audio_record_is(record_path, "source_tuple_model", "not-applicable", "audio record: source tuple model mismatch") != 0) return 1;
+    (void)snprintf(probe, sizeof probe, "%s", profile_idx == 0u ? "01,a1" : "00,a2");
+    if (audio_record_is(record_path, "model_probe_bytes", probe, "audio record: guest model probe mismatch") != 0 ||
+        audio_record_is(record_path, "source_main_sha256", audio.main_sha256[suite_index], "audio record: source identity mismatch") != 0 ||
+        audio_record_is(record_path, "source_assembly_sha256", audio.asm_sha256[suite_index], "audio record: source identity mismatch") != 0) return 1;
+#define AUDIO_BUILD_ID(record_key, build_key, diagnostic) \
+    do { if (audio_record_build_field(record_path, build_path, (record_key), (build_key), (diagnostic)) != 0) return 1; } while (0)
+    (void)snprintf(expected, sizeof expected, "%s_wrapper_sha256", suite);
+    AUDIO_BUILD_ID("wrapper_sha256", expected, "audio record: wrapper identity mismatch");
+    (void)snprintf(expected, sizeof expected, "%s_object_sha256", suite);
+    AUDIO_BUILD_ID("object_sha256", expected, "audio record: object identity mismatch");
+    (void)snprintf(expected, sizeof expected, "%s_labels_sha256", suite);
+    AUDIO_BUILD_ID("labels_sha256", expected, "audio record: labels identity mismatch");
+    AUDIO_BUILD_ID("builder_sha256", "build_script_sha256", "audio record: build identity mismatch");
+    AUDIO_BUILD_ID("layout_sha256", "linker_layout_sha256", "audio record: layout identity mismatch");
+    AUDIO_BUILD_ID("ca65_tool_sha256", "ca65_tool_sha256", "audio record: tool identity mismatch");
+    AUDIO_BUILD_ID("ld65_tool_sha256", "ld65_tool_sha256", "audio record: tool identity mismatch");
+#undef AUDIO_BUILD_ID
+    if (audio_record_file_hash(record_path, "bll_sha256", bll_path, "audio record: content identity mismatch") != 0 ||
+        audio_record_file_hash(record_path, "labels_file_sha256", labels_path, "audio record: labels file identity mismatch") != 0 ||
+        audio_record_file_hash(record_path, "build_record_sha256", build_path, "audio record: build record identity mismatch") != 0 ||
+        file_sha256(legacy_oracle_path, oracle_sha) != 0 ||
+        audio_record_is(record_path, "oracle_sha256", oracle_sha, "audio record: oracle identity mismatch") != 0 ||
+        audio_record_file_hash(record_path, "raw_results_sha256", raw_path, "audio record: changed observation identity") != 0) return 1;
+    {
+        char comparison_path[4096];
+        char name[128];
+        if (snprintf(name, sizeof name, "comparison-%s-%s.tsv", suite, profile) >= (int)sizeof name ||
+            checked_join(comparison_path, sizeof comparison_path, directory, name) != 0 ||
+            audio_record_file_hash(record_path, "comparison_sha256", comparison_path,
+                                   "audio record: comparison identity mismatch") != 0) return 1;
+    }
+    if (audio_record_number(record_path, "result_extent", &value, "audio record: result extent mismatch") != 0 || value != AUDIO_MEANINGFUL ||
+        audio_record_number(record_path, "expected_count", &value, "audio record: result count mismatch") != 0 || value != AUDIO_MEANINGFUL ||
+        audio_record_number(record_path, "meaningful_count", &value, "audio record: result count mismatch") != 0 || value != AUDIO_MEANINGFUL ||
+        audio_record_number(record_path, "tick_min", &tick_min, "audio record: completion bound metadata mismatch") != 0 ||
+        audio_record_number(record_path, "tick_max", &tick_max, "audio record: completion bound metadata mismatch") != 0 ||
+        audio_record_number(record_path, "ticks_observed", &ticks, "audio record: invalid ticks_observed") != 0) return 1;
+    if (tick_min != AUDIO_MIN_TICKS || tick_max != AUDIO_MAX_TICKS) return fail("audio record: completion bound metadata mismatch");
+    if (ticks < tick_min || ticks > tick_max) return fail("audio record: ticks outside completion bounds");
+    if (audio_record_number(record_path, "guest_ticks", &guest_ticks, "audio record: guest tick mismatch") != 0 ||
+        audio_record_number(record_path, "completion_margin_ticks", &margin, "audio record: completion margin mismatch") != 0 ||
+        audio_record_number(record_path, "maximum_headroom_ticks", &headroom, "audio record: maximum headroom mismatch") != 0) return 1;
+    if (guest_ticks != ticks || margin != ticks - tick_min || headroom != tick_max - ticks) {
+        return fail("audio record: tick accounting mismatch");
+    }
+    if (audio_record_is(record_path, "minimum_guest_ticks", "256", "audio record: completion bound metadata mismatch") != 0 ||
+        audio_record_is(record_path, "maximum_guest_ticks", "50000000", "audio record: completion bound metadata mismatch") != 0 ||
+        audio_record_is(record_path, "guest_progress", "8", "audio record: guest progress evidence mismatch") != 0 ||
+        audio_record_is(record_path, "completion_sentinel", "a5", "audio record: completion sentinel mismatch") != 0 ||
+        audio_record_is(record_path, "guest_return", "observed", "audio record: suite return evidence missing") != 0 ||
+        audio_record_is(record_path, "source_agreements", "18", "audio record: source agreement count mismatch") != 0 ||
+        audio_record_is(record_path, "source_comparison", "separate-record", "audio record: source comparison policy mismatch") != 0 ||
+        audio_record_is(record_path, "timing_policy", "legacy-flat5", "audio record: timing policy mismatch") != 0 ||
+        audio_record_is(record_path, "audio_policy", "digital-1", "audio record: audio policy mismatch") != 0 ||
+        audio_record_is(record_path, "audio_rate_num", "40000", "audio record: audio format mismatch") != 0 ||
+        audio_record_is(record_path, "audio_rate_den", "1", "audio record: audio format mismatch") != 0 ||
+        audio_record_is(record_path, "audio_channels", "2", "audio record: audio format mismatch") != 0 ||
+        audio_record_is(record_path, "audio_bits", "16", "audio record: audio format mismatch") != 0 ||
+        audio_record_is(record_path, "hardware_accuracy", "unverified", "audio record: qualification limit mismatch") != 0 ||
+        audio_record_is(record_path, "profile_qualification", "unresolved", "audio record: qualification limit mismatch") != 0) return 1;
+    printf("audio record: complete 18-row capture, source and build identities valid for %s/%s\n", suite, profile);
+    return 0;
 }
 
 static int prepare_timer_ram(machine_instance *instance, const suite_symbols *symbols)
@@ -5094,7 +5399,7 @@ static int validate_time_mode(const char *text)
 static int validate_selection_list(const char *text, const char *kind,
                                    const char *const *allowed, size_t allowed_count)
 {
-    unsigned char seen[8] = {0u};
+    unsigned char seen[16] = {0u};
     char buffer[1024];
     char *cursor;
     size_t length;
@@ -5153,17 +5458,22 @@ static int validate_selection_mode(const char *required, const char *controls)
 {
     static const char *const required_ids[] = {
         "suite.cpu.lynx1", "suite.cpu.lynx2",
-        "suite.timers.observation.lynx1", "suite.timers.observation.lynx2"
+        "suite.timers.observation.lynx1", "suite.timers.observation.lynx2",
+        "suite.page_mode.observation.lynx1", "suite.page_mode.observation.lynx2",
+        "suite.audio.observation.lynx1", "suite.audio.observation.lynx2",
+        "suite.audio2.observation.lynx1", "suite.audio2.observation.lynx2"
     };
     static const char *const control_ids[] = {
         "suite.cpu.no_run", "suite.timers.no_run",
-        "suite.completion_controls", "suite.selection_controls"
+        "suite.completion_controls", "suite.selection_controls",
+        "suite.page_mode.controls", "suite.audio.controls",
+        "suite.audio.source_controls", "suite.audio2.controls"
     };
     if (validate_selection_list(required, "required-suite", required_ids,
                                 sizeof required_ids / sizeof required_ids[0]) != 0 ||
         validate_selection_list(controls, "control", control_ids,
                                 sizeof control_ids / sizeof control_ids[0]) != 0) return 1;
-    puts("suite selection: required=4 controls=4 inventory complete");
+    puts("suite selection: required=10 controls=8 inventory complete");
     return 0;
 }
 
@@ -5424,6 +5734,33 @@ int main(int argc, char **argv)
     }
     if (argc == 8 && strcmp(argv[1], "run-audio-selected") == 0) {
         return run_audio(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], 0, AUDIO_MAX_TICKS);
+    }
+    if (argc == 9 && strcmp(argv[1], "run-audio-bounded") == 0) {
+        uint32_t maximum_ticks;
+        if (parse_decimal(argv[8], &maximum_ticks) != 0) return fail("audio time: invalid guest tick integer");
+        return run_audio(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], 0, maximum_ticks);
+    }
+    if (argc == 9 && strcmp(argv[1], "validate-audio-record") == 0) {
+        return validate_audio_record_mode(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8]);
+    }
+    if (argc == 4 && strcmp(argv[1], "validate-audio-symbols") == 0) {
+        uint8_t *bll = NULL;
+        size_t bll_length = 0u;
+        char *labels = NULL;
+        size_t labels_length = 0u;
+        suite_symbols symbols;
+        int status;
+        if (read_file(argv[3], &bll, &bll_length, 65536u) != 0 ||
+            read_text(argv[2], &labels, &labels_length, 16384u) != 0) {
+            free(bll);
+            free(labels);
+            return 1;
+        }
+        status = audio_symbol_layout(labels, labels_length, bll, bll_length, &symbols);
+        free(bll);
+        free(labels);
+        if (status == 0) puts("audio symbols: linked result extent, aliases and return gate valid");
+        return status;
     }
     if (argc == 3 && strcmp(argv[1], "validate-page-mode-oracle") == 0) {
         page_mode_oracle oracle;
