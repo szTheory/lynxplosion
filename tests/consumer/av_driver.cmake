@@ -377,6 +377,23 @@ elseif(CASE STREQUAL "consumer.av_replay" OR CASE STREQUAL "consumer.av_response
     endif()
     expect_replay_rejection("${silent}" "input-responsive non-silent PCM")
 
+    set(stale_audio "${WORK}/control-stale-pre-input-audio")
+    file(MAKE_DIRECTORY "${stale_audio}")
+    file(COPY "${baseline}/" DESTINATION "${stale_audio}")
+    string(ASCII 1 stale_byte)
+    file(WRITE "${stale_audio}/one-byte" "${stale_byte}")
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      dd "if=${stale_audio}/one-byte" "of=${stale_audio}/audio.pcm" bs=1 seek=0 conv=notrunc
+      TIMEOUT 30 RESULT_VARIABLE stale_pcm_rc OUTPUT_QUIET ERROR_VARIABLE stale_pcm_err)
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      dd "if=${stale_audio}/one-byte" "of=${stale_audio}/audio.wav" bs=1 seek=44 conv=notrunc
+      TIMEOUT 30 RESULT_VARIABLE stale_wav_rc OUTPUT_QUIET ERROR_VARIABLE stale_wav_err)
+    file(REMOVE "${stale_audio}/one-byte")
+    if(NOT stale_pcm_rc STREQUAL "0" OR NOT stale_wav_rc STREQUAL "0")
+      message(FATAL_ERROR "consumer.av_response_controls: could not create the bounded pre-input audio mutation\n${stale_pcm_err}${stale_wav_err}")
+    endif()
+    expect_replay_rejection("${stale_audio}" "input-responsive non-silent PCM")
+
     set(extra_chunk "${WORK}/control-extra-wav-chunk")
     file(MAKE_DIRECTORY "${extra_chunk}")
     file(COPY "${baseline}/" DESTINATION "${extra_chunk}")
@@ -399,11 +416,27 @@ elseif(CASE STREQUAL "consumer.av_replay" OR CASE STREQUAL "consumer.av_response
     file(REMOVE "${truncated_pcm}/audio.pcm.short")
     expect_replay_rejection("${truncated_pcm}" "WAV PCM format or exact data extent")
 
-    set(header_only "${WORK}/control-header-only")
-    file(MAKE_DIRECTORY "${header_only}")
-    file(COPY "${baseline}/" DESTINATION "${header_only}")
-    file(WRITE "${header_only}/frames.raw" "LXAVRAW1")
-    expect_replay_rejection("${header_only}" "complete raw video records, line ticks and rendered palette mapping")
+    set(header_only_wav "${WORK}/control-header-only-wav")
+    file(MAKE_DIRECTORY "${header_only_wav}")
+    file(COPY "${baseline}/" DESTINATION "${header_only_wav}")
+    file(WRITE "${header_only_wav}/audio.pcm" "")
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      dd "if=${header_only_wav}/audio.wav" "of=${header_only_wav}/audio.wav.header" bs=1 count=44
+      TIMEOUT 30 RESULT_VARIABLE header_wav_rc OUTPUT_QUIET ERROR_VARIABLE header_wav_err)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E copy
+      "${header_only_wav}/audio.wav.header" "${header_only_wav}/audio.wav"
+      RESULT_VARIABLE header_wav_copy_rc OUTPUT_QUIET ERROR_VARIABLE header_wav_copy_err)
+    file(REMOVE "${header_only_wav}/audio.wav.header")
+    if(NOT header_wav_rc STREQUAL "0" OR NOT header_wav_copy_rc STREQUAL "0")
+      message(FATAL_ERROR "consumer.av_response_controls: could not create the bounded header-only WAV mutation\n${header_wav_err}${header_wav_copy_err}")
+    endif()
+    expect_replay_rejection("${header_only_wav}" "WAV PCM format or exact data extent")
+
+    set(header_only_frames "${WORK}/control-header-only-frames")
+    file(MAKE_DIRECTORY "${header_only_frames}")
+    file(COPY "${baseline}/" DESTINATION "${header_only_frames}")
+    file(WRITE "${header_only_frames}/frames.raw" "LXAVRAW1")
+    expect_replay_rejection("${header_only_frames}" "complete raw video records, line ticks and rendered palette mapping")
 
     set(wrong_count "${WORK}/control-wrong-sample-count")
     file(MAKE_DIRECTORY "${wrong_count}")
@@ -437,7 +470,7 @@ elseif(CASE STREQUAL "consumer.av_replay" OR CASE STREQUAL "consumer.av_response
 
     # Bracket the mutation corpus with the same real guest baseline.
     check_replay_bundle("${baseline}" "${timeline_sha}")
-    message(STATUS "consumer.av_response_controls: real guest baseline passed before and after no-run/over-bound refusal, unchanged-input, silent/header-only audio, extra/truncated WAV data, sample-count, frame, marker and event-order controls")
+    message(STATUS "consumer.av_response_controls: real guest baseline passed before and after no-run/over-bound refusal, unchanged-input, silent/stale/header-only audio, extra/truncated WAV data, header-only frame, sample-count, frame, marker and event-order controls")
   endif()
 endif()
 file(REMOVE_RECURSE "${WORK}")

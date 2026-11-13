@@ -127,9 +127,9 @@ that checker validates syntax, stream extents, event ordering and guest/frame
 semantics, while the driver performs the SHA-256 comparisons. The normal
 `lynx-consume` process still produces one transcript. Private-copy mutation
 controls go directly to the semantic checker and assert their specific failure
-stage for absent guest output, mismatched input application, silent or
-header-only audio, extra/truncated WAV data, incorrect sample ordinals,
-altered frame metadata, bad guest markers and reordered audio events. Those
-manufactured mutations are parser controls, separate from actual guest
-evidence. These checks establish reproducible same-build output and parser
-behavior only.
+stage for absent guest output, over-bound refusal, mismatched input
+application, silent or pre-input-stale PCM, header-only WAV/frame streams,
+extra/truncated WAV data, incorrect sample ordinals, altered frame metadata,
+bad guest markers and reordered audio events. Those manufactured mutations
+are parser controls, separate from actual guest evidence. These checks
+establish reproducible same-build output and parser behavior only.
