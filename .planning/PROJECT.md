@@ -29,10 +29,22 @@ everything else fails, that link between claim, profile and evidence must hold.
 
 - ✓ Strict BS93/BLL startup tier A on the MAPCTL decoder, full-object identity, pure raw/mapped inspection and explicit unavailable firmware/device routes — Phase 3; timing/readback policies remain labelled unverified.
 - ✓ Original source-built diagnostic reports semantic progress/pass/fail through linked-symbol RAM results; post-write watches and snapshot continuation preserve common-tick repeatability — Phase 3.
-- ✓ Independent public-API consumer produces the labelled 8x8 diagnostic RAM snapshot and valid placeholder-silence WAV with exclusive whole-directory publication and interruption controls — Phase 3 slice; real frames/audio remain Phases 5–6.
+- ✓ Independent public-API consumer produces the labelled 8x8 diagnostic RAM snapshot and valid placeholder-silence WAV with exclusive whole-directory publication and interruption controls — Phase 3 slice; real frames/audio are supplied by the separate Phase5–6 replay modes below.
 
 - ✓ Instance-owned master-tick timer scheduling, stable same-tick ordering, IRQ latching, a private bus-hold seam and format-4 snapshot continuation — Phase 4; fixed phase and bus pricing remain unverified software policies.
 - ✓ Pinned, unchanged public CPU/timer sources with symbol-derived result capture, exact identities and named-fault controls — Phase 4 observation slice. CPU source comparisons agree; timer offset 14 remains explicitly pending under D-10, with strict comparison still failing.
+
+- ✓ Bounded raw-frame/input API and original input-responsive homebrew replay,
+  independently checked from raw pens, palettes, line ticks and rendered PPM —
+  Phase5; all raster/bus policies remain unverified physical behavior.
+- ✓ Four-channel digital stereo PCM, tick-stamped events, bounded timer/audio
+  links, format7 continuation and a public-only A/V consumer with independent
+  frame/WAV/event/input/progress checks — Phase6. All planned software evidence
+  passes native/GNU/hosted qualification; strict timer EVD-02 and SERCTL missing
+  observations remain explicit limits.
+- ✓ Named full homebrew workload with five equal same-build output captures and
+  separate public-API/host/CI timing — Phase6; no core optimization or hardware
+  accuracy claim.
 
 ### Active
 
@@ -47,25 +59,25 @@ requirements live in `.planning/REQUIREMENTS.md`.
 - [ ] A separately evaluated owner-supplied firmware route outside source control, only after owner authority; the firmware-free tier-A path is validated in Phase 3
 - [ ] One named cartridge path (container format, loader, banking/addressing
       behavior) with explicit content identity
-- [ ] A canonical machine core with defined instance ownership, content
+- [x] A canonical machine core with defined instance ownership, content
       load/unload, logical input sampling, bounded guest-time advancement,
       raw outputs, reset, errors and refusal postconditions
-- [ ] Deterministic execution: fresh isolated state + fixed logical input +
+- [x] Deterministic execution: fresh isolated state + fixed logical input +
       fixed guest-time interval yields identical observable results
-- [ ] Separate, connected observations for CPU/device state, guest semantic
+- [x] Separate, connected observations for CPU/device state, guest semantic
       progress, raw video/palette and raw audio samples/events
-- [ ] A headless runner and an independent consumer that drive the core
+- [x] A headless runner and an independent consumer that drive the core
       without host clocks, filesystems, windows or A/V devices inside machine
       logic
-- [ ] Source-backed component tests, then a source-built original or
+- [x] Source-backed component tests, then a source-built original or
       rights-reviewed diagnostic fixture with a manifest (source, recipe,
       checksum, license/notices, allowed use)
-- [ ] Exact test inventories, named-fault negative controls and visible
+- [x] Exact test inventories, named-fault negative controls and visible
       skips/missing/stale evidence
-- [ ] One documented local check command aligned with a fast PR gate
-- [ ] A playable or homebrew scenario visible early so the project does not
+- [x] One documented local check command aligned with a fast PR gate
+- [x] A playable or homebrew scenario visible early so the project does not
       become research-only
-- [ ] Representative named workloads and a correctness baseline before any
+- [x] Representative named workloads and a correctness baseline before any
       performance optimization
 
 ### Out of Scope

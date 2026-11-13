@@ -212,3 +212,10 @@ Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
   inside a sensitivity run that independently checks the changed event and
   unchanged prefix. Measure the owning case on both environments and retain
   independent review when reducing such work.
+
+- At milestone audit, earlier phase verdicts are evidence at their recorded
+  source commits. Later shared-core changes can make their fingerprints stale
+  and reduce the SDK's completed projection. Use current canonical regression
+  evidence plus independent cross-phase integration to assess current behavior;
+  record that projection limit. Do not rerun completed plans or blindly refresh
+  historical fingerprints merely to make a phase counter green.

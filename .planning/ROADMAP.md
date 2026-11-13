@@ -38,7 +38,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Memory Map, Direct-Load Startup and First Diagnostic** - MAPCTL memory map, startup tier A, original diagnostic reporting through a RAM result block, first labelled snapshot via an independent consumer (completed 2026-11-10)
 - [x] **Phase 4: Timers, Interrupts and First Public Suites** - Master-tick scheduler, Mikey timer bank, IRQ and minimal sleep; `timers` and `cpu` suites read from guest RAM with controls (completed 2026-11-11)
 - [x] **Phase 5: Display, Raw Video and Input** - Timer-driven frames, display DMA, per-line palette, raw video and logical input; live input-responsive homebrew frame (completed 2026-11-12)
-- [ ] **Phase 6: Audio and Playable Checkpoint** - Four audio channels and integer PCM; homebrew with sound; v1 suite inventory and throughput baseline
+- [x] **Phase 6: Audio and Playable Checkpoint** - Four audio channels and integer PCM; homebrew with sound; v1 suite inventory and throughput baseline (completed 2026-11-13)
 
 ## Phase Details
 
@@ -276,7 +276,7 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
   5. A named workload (the homebrew with a fixed input timeline) has a recorded throughput baseline with its output digest held constant. No optimisation is done.
 **Owner gates**: O1 for any suite claim. O8 is inherited.
 **Research flag**: Deeper research needed before planning: audio register layout and LFSR taps (no sourced page found); CTLB lower-nibble behaviour; exact-rational output rate choice (AD-07); conflicting low-pass figures.
-**Plans:** 12/12 plans executed
+**Plans:** 12/12 plans complete
 
 Plans:
 **Wave 1**
@@ -340,4 +340,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 9/9 | Complete    | 2026-11-10 |
 | 4. Timers, Interrupts and First Public Suites | 12/12 | Complete    | 2026-11-11 |
 | 5. Display, Raw Video and Input | 12/12 | Complete    | 2026-11-12 |
-| 6. Audio and Playable Checkpoint | 12/12 | In Progress | - |
+| 6. Audio and Playable Checkpoint | 12/12 | Complete    | 2026-11-13 |

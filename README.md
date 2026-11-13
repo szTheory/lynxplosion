@@ -1,12 +1,12 @@
 # Lynxplosion
 
 Lynxplosion is an Atari Lynx emulator core in early development. The current
-slice covers explicit CPU profiles, the CPU memory map, direct-load startup
-tier A, an original guest-RAM diagnostic, timer-driven raw video, logical
-input, and headless public CPU/timer suite observations. Phase 5 adds a bounded
-raw-frame API and a public-only consumer that replays guest-tick input against
-an original source-built homebrew. These are deterministic software
-observations; they do not qualify physical Lynx behavior.
+software checkpoint includes explicit CPU profiles, the CPU memory map,
+direct-load startup tier A, timers, raw video, logical input and four-channel
+digital stereo audio. A public-only consumer replays an original source-built
+homebrew against recorded guest-tick input and writes separate frames, PCM,
+channel events and WAV output. These deterministic software observations do
+not qualify physical Lynx behavior.
 
 ## Current scope and claims
 
@@ -27,7 +27,8 @@ observations; they do not qualify physical Lynx behavior.
 - The diagnostic consumer emits an unscaled 8x8 P3 `SNAPSHOT` using a
   diagnostic-owned palette and an 800-sample silence WAV labelled as
   placeholder audio. These are not a video frame, hardware scanout or real
-  audio output.
+  audio output. The separate A/V replay mode captures the input-responsive
+  homebrew's non-silent audio and full frames; see [A/V replay](docs/av-replay.md).
 - The Phase 5 consumer records packed 4-bpp pens, one raw palette snapshot per
   visible line, guest line ticks, and rendered PPM output as separate evidence.
   Its input timeline is a canonical file of logical masks applied at exact
@@ -46,6 +47,11 @@ observations; they do not qualify physical Lynx behavior.
   `SERCTL` write of `$06` to `$FD8C`. Both exact profile cases are declared
   skips with missing raw results; they are not source agreement or profile
   qualification. See [suite evidence](docs/public-suites.md).
+- Four digital channels expose integer stereo PCM at a fixed 400-guest-tick
+  sample interval and tick-stamped channel events. LFSR, integration, reload,
+  links, stereo routes and continuation have automated controls; audio/audio2
+  source observations are recorded for both explicit profiles. The digital
+  policy and source agreement do not establish analog or hardware accuracy.
 - Matching digests across runs or compilers establish repeatability only. They
   do not establish hardware accuracy.
 
@@ -66,7 +72,12 @@ content, and contributions must never add any without documented permission.
 - [Raw video and input](docs/video-input.md)
 - [Bus and video software policies](docs/bus-video-policy.md)
 - [Input replay](docs/input-replay.md)
-- [Format 5 video snapshot state](docs/snapshot-video.md)
+- [Video snapshot state](docs/snapshot-video.md)
+- [Digital audio policy](docs/audio.md)
+- [Public A/V replay and output bundle](docs/av-replay.md)
+- [Audio snapshot state](docs/snapshot-audio.md)
+- [Audio fault evidence](docs/audio-faults.md)
+- [Named workload and separate CI costs](docs/performance.md)
 - [Video and input fault evidence](docs/video-faults.md)
 - [Claim template](docs/claims/claim.template)
 
@@ -84,12 +95,12 @@ This one command is also what CI runs. It prints tool versions, lints the shell
 scripts, then runs `cmake --workflow --preset check` (configure, build with
 warnings as errors and sanitizers, test), and reports each step's wall time.
 
-At reviewed source `d3fb002`, the canonical gate passed on macOS 26.6.2 arm64,
-a self-contained Ubuntu 24.04 arm64 checkout, and hosted Ubuntu 24.04 CI. Each
-accounted for 202 tests: 200 passed and the two declared page-mode observations
-were skipped. The strict timer-source disagreements and missing page-mode
-observations documented above remain unresolved; these checks do not qualify
-hardware behavior.
+The reviewed audio/playable software checkpoint passed the canonical command
+on native macOS, the existing self-contained GNU/Linux clone and hosted CI.
+[Qualification evidence](.planning/phases/06-audio-and-playable-checkpoint/06-QUALIFICATION.md)
+records the exact source and environments. The strict timer disagreements and
+two missing page-mode observations above remain unresolved; these checks do
+not qualify hardware behavior.
 
 Prerequisites: a C17 compiler, CMake 3.25 or newer, Ninja, shellcheck, make,
 curl, git and iconv.
