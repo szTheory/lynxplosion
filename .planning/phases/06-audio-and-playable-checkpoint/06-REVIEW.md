@@ -1,15 +1,14 @@
 ---
 phase: 06-audio-and-playable-checkpoint
-reviewed: 2026-11-13T14:13:31Z
+reviewed: 2026-11-13T14:42:19Z
 depth: standard
-source_head: 551459579e67eae92c9046157b4d226e6fe3a570
+source_head: 215a4629f5444f043c95432ed2eee97de195464e
 diff_base: f24e281527f6c36fb31d1c3d830aafaa5bfa6ec1
-iteration: 3
-working_diff_sha256: d410efadda9cfebce6d1cf54a640ba32c3f31b275592a402a4e7635fca302681
+iteration: 4
+working_diff_sha256: 0337be79b2446feeb031a27dadcaad69f3421f99dfd15801ef3e3658be5f9a96
 working_diff_files:
-  - tests/api/test_api.c
-  - tests/det/test_det.c
-files_reviewed: 53
+  - tests/consumer/frame_driver.cmake
+files_reviewed: 54
 files_reviewed_list:
   - CMakeLists.txt
   - consumer/main.c
@@ -46,6 +45,7 @@ files_reviewed_list:
   - tests/audio/tests.cmake
   - tests/consumer/av_driver.cmake
   - tests/consumer/check_artifacts.c
+  - tests/consumer/frame_driver.cmake
   - tests/consumer/tests.cmake
   - tests/cpu/test_cpu_vectors.c
   - tests/det/av_driver.cmake
@@ -75,18 +75,18 @@ status: clean
 
 # Phase 06: Code Review Report
 
-**Reviewed:** 2026-11-13T14:13:31Z
+**Reviewed:** 2026-11-13T14:42:19Z
 **Depth:** standard
-**Files Reviewed:** 53
+**Files Reviewed:** 54
 **Status:** clean
 
 ## Summary
 
-Iteration 3 reuses the prior review of the frozen 53-file Phase 6 scope and independently reviews the two-path dirty diff identified above. It corrects tests that still asserted transient timer status after advancing one tick beyond the event. The source contract says ring borrow bits expire on guest-tick advance, while DONE and divider LAST_CLOCK remain; the same-tick CPU read still observes the pulse. The zero initial audio output expectation also matches reset state and the retained-output policy for setup writes. No assertion was weakened or production code changed. I found no unresolved code or test-reliability defects. The parent reports the focused native boundary batch passed; the post-repair canonical gate, GNU gate and CI remain pending, so this review does not qualify the phase.
+Iteration 4 retains the previous 53-file review and adds `tests/consumer/frame_driver.cmake`, the only dirty source path. The removed sensitivity interleaving duplicates the same two-instance full-timeline proof already run for each handedness/profile by the baseline test-consumer path. The independent production replay, all 23-frame equality comparison, full-timeline sensitivity replay, semantic checker, unchanged prefix and changed final-frame checks remain. The stage messages improve timeout attribution. I found no new defect. The parent reports the focused native consumer run passed; GNU and CI qualification remain pending.
 
 ## Narrative Findings (AI reviewer)
 
-No unresolved findings in iteration 3.
+No unresolved findings in iteration 4.
 
 ## Resolved Finding Ledger
 
@@ -94,16 +94,20 @@ No unresolved findings in iteration 3.
 - **CR-02 — former blocker, resolved.** `scripts/check-manifests.sh:71-103,192-226` detects fixture-tree symlinks before validation and rejects symlink path components. `tests/gates/manifests_controls.sh:338-403` covers listed and unlisted links, directory components, dangling links, and symlinked fixture/manifests roots and files.
 - **WR-01 — former warning, coverage obligation addressed; not an implementation defect.** `tests/audio/test_audio.c:2511-2724` now creates active nondefault audio state with samples, events, and ring debt, then checks reset/reload equivalence to fresh state, deinitialized A/V refusal postconditions, same-allocation reinitialization, and caller-span ownership.
 
-The focused test and shell-check results above come from `.planning/phases/06-audio-and-playable-checkpoint/06-REVIEW-FIX.md`; they were not independently rerun in this review. Full canonical qualification and CI are still pending.
+The focused test and shell-check results above come from `.planning/phases/06-audio-and-playable-checkpoint/06-REVIEW-FIX.md`; they were not independently rerun. At iteration 2, full canonical qualification and CI were pending; current qualification status is recorded below.
 
 ## Iteration 3 Re-review
 
 The failed pre-repair native canonical blocks matched stale assertions in `api.scheduler_order`, `api.timer_links`, `api.scheduler_watch`, `api.timer_link_tracer`, `api.snapshot_roundtrip`, and `det.timer_paths`; `timer.fault.order` failed because its clean positive API baseline inherited the stale scheduler assertion. The edited assertions now match the documented sampling boundary: the tests advance through tick 80/1024 and inspect at tick 81/1025, after ring borrow pulses expire. `api.timer_link_tracer` still asserts that the CPU read at tick 1024 returned `0x07` before the call returns at 1025, then checks the expired T3/T5 status and latched IRQ `0x28`. The scheduler and watch cases retain DONE/IRQ and divider LAST_CLOCK checks; the even T0/T2 chain values are unchanged. The link-path table retains count and pending comparisons, and `timer.fault.order` retains its injected ordering mutant as a positive-control requirement. The audio lattice assertion expects the reset OUT value `0` before the first output transition to `1`, consistent with `lynx__audio_init` and `docs/audio.md`.
 
-The reviewed dirty diff is only `tests/api/test_api.c` and `tests/det/test_det.c` (SHA-256 recorded in frontmatter). The native 11-case focused result is from the supplied run log and was not rerun here. The failed native canonical gate predates this test-only repair; a post-repair canonical run is still required. GNU and CI results are also pending.
+The reviewed dirty diff in iteration 3 was only `tests/api/test_api.c` and `tests/det/test_det.c`; its native 11-case focused result was supplied and not rerun. The failed native canonical gate predates that test-only repair; the parent reports the current native canonical gate passed 246 rows with two declared skips. The parent also reports the GNU all-test phase passed on its first attempt but artifact validation failed on two old owned roots; after preserving those roots and verifying artifact preflight, the second GNU gate attempt timed out in `consumer.frame_replay` at 240 seconds (the prior run took 234.34 seconds). This confirms duplicated work and a narrow timeout margin; the exact cleanup-stage cause and any global wall-time cause remain unknown. I did not run or diagnose these gates.
+
+## Iteration 4 Re-review
+
+For every profile and handedness, `frame_replay` still runs the full 12-event, 23-frame baseline with test interleaving enabled; `verify_interleaved_replay` compares two fresh interleaved instances against the active replay transcript at common event ticks. It then runs the full timeline through the production consumer and compares all 23 raw and rendered frames. The modified-input sensitivity path still runs all 12 events and 23 frames through the production consumer, checks the independent semantic expectations (including the final changed input's frame windows), compares the unchanged prefix and requires the final frame to differ. Thus disabling interleaving only for the sensitivity duplicate removes no distinct Phase 5 proof. The new stage labels identify baseline-interleaved, fresh, or sensitivity work per profile/handedness before each replay. The source diff is the one-file working diff identified by the frontmatter hash; no tests were rerun for this review.
 
 ---
 
-_Reviewed: 2026-11-13T14:13:31Z_
+_Reviewed: 2026-11-13T14:42:19Z_
 _Reviewer: the agent (gsd-code-reviewer)_
 _Depth: standard_

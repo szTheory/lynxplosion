@@ -97,3 +97,44 @@ without running the registered full fast inventory early enough. The existing
 AUTONOMY rule now requires that early inventory after broad mapped-device/API/
 snapshot changes, with focused repairs between broad gates. No extra audit,
 cache, dependency or concurrency layer was added.
+
+## GNU qualification environment and workload repairs
+
+The first GNU canonical run at215a462 passed the entire246-row inventory
+(two declared skips), then exited1 at artifact scanning. Two old suite-output
+roots were verified through `build-suites.sh --verify`; the suite-control root
+also had its exact path-bound nonce. Both were moved into private container
+storage at `/tmp/lynx-06-retained-artifacts.60QyDL/`. Complete sorted tar inventories
+(bytes, entry types, modes and metadata) matched before/after each move. The
+unchanged scanner then passed6336 files. The failed gate and actual status remain
+in `/tmp/lynx-06-canonical-gnu.vOLHOH/`. Artifact preflight must cover every reused
+environment before a broad gate; the native preflight did not establish GNU
+scratch cleanliness.
+
+The second GNU canonical invocation retained that exact clean source but
+`consumer.frame_replay` timed out at240.01s; the first invocation took234.34s.
+All other tests passed. Original logs/status8 are retained in
+`/tmp/lynx-06-canonical-gnu.3ZuFMZ/`. The partly cleaned owned root retained its
+nonce, two input timelines and one nested PPM; these actual remaining entries
+were preserved with matching complete before/after tar inventories at
+`/tmp/lynx-06-retained-frame-timeout.wi3ch3/`. No missing guest files are claimed
+as retained. Its scanner preflight again passed. The exact contribution of
+execution, cleanup and environmental variation to the original timeout is
+unmeasured; the timeout is not counted as a semantic negative control.
+
+Inspection identified repeated work in the legacy frame replay matrix. For
+both profiles and both handedness settings, the full baseline already runs two
+additional interleaved instances. The sensitivity transcript changes the final
+release to an A press, a value already present in the baseline, and repeated
+those two instances again. Its replay now uses a fresh production instance;
+the full12-event timeline,23-frame extent, independent parser, unchanged-prefix
+and changed-suffix assertions, corruption controls, fresh replay and baseline
+interleaving for all four combinations remain. No core optimization, timeout,
+expected oracle or inventory change was made. Three per-combination stage labels
+make future failure location visible.
+
+Native configure/build and focused `consumer.frame_replay` passed14.09s in
+`/private/tmp/lynx-06-frame-focused-23jz0h_b/`. Independent review iteration4
+accepted preservation of the distinct coverage obligations. GNU focused timing,
+new final canonical gates and exact-source CI remain required. These local test
+timings are observations, not a controlled emulator-throughput comparison.

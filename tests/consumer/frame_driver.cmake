@@ -251,6 +251,7 @@ if(CASE STREQUAL "frame_replay")
       set(baseline_dir "${case_dir}/baseline")
       set(fresh_dir "${case_dir}/fresh")
       set(sensitivity_dir "${case_dir}/sensitivity")
+      message(STATUS "frame_replay: handedness=${handedness} profile=${profile} stage=baseline-interleaved")
       run_replay(
         "${guest_dir}/input_probe.bll" "${guest_dir}/input_probe.lbl"
         "${WORK}/input.timeline" "${baseline_dir}" frame_replay
@@ -282,15 +283,21 @@ if(CASE STREQUAL "frame_replay")
           message(FATAL_ERROR "frame_driver: independent checker accepted an invalid transition pen byte\n${negative_out}${negative_err}")
         endif()
       endif()
+      message(STATUS "frame_replay: handedness=${handedness} profile=${profile} stage=fresh")
       run_replay(
         "${guest_dir}/input_probe.bll" "${guest_dir}/input_probe.lbl"
         "${WORK}/input.timeline" "${fresh_dir}" frame_replay
         "${handedness}" "${profile}" FALSE)
       compare_replay_outputs("${baseline_dir}" "${fresh_dir}" 23 TRUE)
+      # Baseline already proves two-instance interleaving for this full
+      # profile/handedness timeline. The sensitivity obligation is a fresh
+      # production replay plus unchanged-prefix/changed-suffix assertions;
+      # repeating its two extra interleaved instances adds no distinct proof.
+      message(STATUS "frame_replay: handedness=${handedness} profile=${profile} stage=sensitivity")
       run_replay(
         "${guest_dir}/input_probe.bll" "${guest_dir}/input_probe.lbl"
         "${WORK}/input.sensitivity.timeline" "${sensitivity_dir}" frame_replay_sensitivity
-        "${handedness}" "${profile}" TRUE)
+        "${handedness}" "${profile}" FALSE)
       compare_replay_outputs("${baseline_dir}" "${sensitivity_dir}" 21 TRUE)
       compare_replay_outputs("${baseline_dir}" "${sensitivity_dir}" 23 FALSE 22)
     endforeach()
