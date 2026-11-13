@@ -150,6 +150,11 @@ Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
 - Reuse qualification containers through actual Git fetch and fast-forward
   commands. Verify the exact commit and clean tracked tree before configuring;
   matching overlaid file bytes do not establish an exact-commit build.
+- When an inventory or evidence-bound helper changes, locate its active hash
+  bindings and mutation needles in one search. Re-establish the bound evidence
+  before an identity-only refresh; preserve historical qualification reports.
+  Inventory-owning plans also own the existing repeatability claim's inventory
+  binding and its named evidence checks, avoiding a late unowned repair.
 - Track elapsed implementation, research, review and qualification spans
   separately from measured build/test/CI time. Commit gaps and diff-size token
   proxies do not establish agent activity or API cost. Preserve configured
