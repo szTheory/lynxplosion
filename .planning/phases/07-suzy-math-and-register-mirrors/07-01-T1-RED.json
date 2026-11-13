@@ -4,7 +4,7 @@
   "output": "TAP version 13\n1..1\nnot ok 1 - suzy.tracer completes mapped unsigned multiply\n",
   "targetTest": "suzy.tracer completes mapped unsigned multiply",
   "targetFile": "tests/suzy/test_suzy.c",
-  "expected": "Both CPU profiles execute the BS93 guest mapped writes, record SPRSYS busy, and produce 000001FE.",
+  "expected": "Both CPU profiles execute a BS93 guest writing CD=00FF and AB=0002 through their named ports, capture busy, then publish 000001FE.",
   "actual": "The guest stops with LYNX_STOP_UNAVAILABLE at the first write to $FC52; expected product bytes are absent.",
-  "semanticAssessment": "The named test compiled, ran, and failed on the planned public behavior: FC52 is not mapped and advance stops before completing the guest. This is not a compile, setup, or discovery failure."
+  "semanticAssessment": "The corrected named TAP test compiled, ran, and failed on the planned public behavior: FC52 is not mapped and advance stops before completing the guest. This is not a compile, setup, or discovery failure."
 }

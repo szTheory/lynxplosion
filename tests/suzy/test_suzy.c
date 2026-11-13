@@ -17,10 +17,10 @@ static size_t make_guest(uint8_t *program, uint16_t load_addr)
     size_t length = 0u;
 #define EMIT(v) append(program, &length, (uint8_t)(v))
     EMIT(0x78u);                            /* SEI */
-    EMIT(0xA9u); EMIT(0x00u);              /* LDA #$00 */
-    EMIT(0x8Du); EMIT(0x52u); EMIT(0xFCu); /* STA $FC52: CD low */
     EMIT(0xA9u); EMIT(0xFFu);              /* LDA #$FF */
-    EMIT(0x8Du); EMIT(0x53u); EMIT(0xFCu); /* STA $FC53: CD high */
+    EMIT(0x8Du); EMIT(0x52u); EMIT(0xFCu); /* STA $FC52: D, CD low */
+    EMIT(0xA9u); EMIT(0x00u);              /* LDA #$00 */
+    EMIT(0x8Du); EMIT(0x53u); EMIT(0xFCu); /* STA $FC53: C, CD high */
     EMIT(0xA9u); EMIT(0x02u);              /* LDA #$02 */
     EMIT(0x8Du); EMIT(0x54u); EMIT(0xFCu); /* STA $FC54: AB low */
     EMIT(0xA9u); EMIT(0x00u);              /* LDA #$00 */
