@@ -157,6 +157,13 @@ Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
 - New integration failures must identify the failing invariant or stage and
   preserve attributable artifacts. Compare parsed payloads separately from
   variable metadata; format-valid files alone are insufficient evidence.
+- Keep repeated fault cases focused on their owning contract. Publication
+  controls can reuse a shorter real guest transcript with every output family
+  and independent validation while full replay/checkpoint coverage stays in its
+  owning test. Measure both compiler environments before changing limits.
+  If a narrow delegated diagnosis stops producing evidence, hand it back to
+  the orchestrator with exact commands and logs instead of repeating whole
+  matrices. A direct-child pass alone does not establish a wrapper's cause.
 - After a broad public API, mapped-device or snapshot change, run one early
   full registered fast test inventory after focused repairs. Audit old refusal
   fixtures and evidence-bound helper identities as well as raw readers; a newly
