@@ -1,6 +1,6 @@
 ---
 phase: 06-audio-and-playable-checkpoint
-verified: 2026-11-13T15:38:52Z
+verified: 2026-11-13T15:53:53Z
 status: passed
 score: 45/45 must-haves verified
 covered_files:
@@ -82,7 +82,7 @@ covered_files:
   - "tests/suites/test_public_suites.c"
   - "tests/suites/tests.cmake"
   - "tests/tests.cmake"
-covered_digest: "v4:sha256:642e252c130114bfc39209b2d894b2042c7e6aeb889c95656121878f424d5d23"
+covered_digest: "v4:sha256:6004fcf7a6aca7ede9478d8c186a2aeb5fb6938a059000dfc4422ffaa13c0f5c"
 behavior_unverified: 0
 overrides_applied: 0
 decision_coverage:
@@ -266,7 +266,7 @@ Not applicable. No phase plan or summary declares a probe script or PASS/stage-m
 | DET-05 | 06-01, 06-04, 06-05, 06-06, 06-07, 06-08, 06-10, 06-11, 06-12 | Separate progress/input/video/audio observations on one guest timeline; digests mean repeatability | SATISFIED | Complete stream comparison, snapshot continuation, sensitivity, manifest and five-run identity checks pass. |
 | EVD-06 | 06-02, 06-09, 06-12 | Exact five-suite, source-built tier-A inventory with visible skips | SATISFIED | Final inventory is exact; audio/audio2 observations match all 18 rows; only the two named page-mode observations skip. |
 | PERF-01 | 06-11, 06-12 | Five-run named workload baseline with constant output digest and no optimization | SATISFIED | Final-source native capture holds work and all 13 output streams constant and reports median/range separately from host and CI time. |
-| CON-01 | 06-01, 06-05, 06-07, 06-08, 06-12 | Independent public-only consumer writes frames and audio WAV | SATISFIED | Consumer links only the public API; the independent validator checks actual PNG/PPM/raw, PCM and WAV output. |
+| CON-01 | 06-01, 06-05, 06-07, 06-08, 06-12 | Independent public-only consumer writes frames and audio WAV | SATISFIED | Consumer links only the public API; the independent validator checks actual PPM/raw, PCM and WAV output. |
 | EVD-05 | 06-10, 06-12 | Each device phase has a named fault that fails its intended test | SATISFIED | Ten audio mutants build and fail their named assertion with clean brackets; existing timer/video/input faults remain in the canonical gate. |
 
 All eight Phase 6 requirement IDs in the plans are accounted for. EVD-02 is not a Phase 6 plan requirement or a promised closure; its global strict timer-source mismatch remains open and visible in docs/public-suites.md.
@@ -318,7 +318,9 @@ No Phase 6 roadmap truth, plan truth, required artifact, key link or Phase 6 req
 
 The two page-mode observations remain skipped because the source writes unsupported SERCTL address FD8C before producing results. Strict timer row 14 remains legacy 0x0C/source 0x0D and VIDEO_POLICY1 0x0F/source 0x0D, so global EVD-02 remains open. These are explicit qualification limits, not missing Phase 6 outputs. Same-core repeatability and source observation do not establish hardware accuracy, model qualification, O1, rights clearance or release authority.
 
+Syntax-only refresh: corrected YAML escaping in 06-07 SUMMARY preserves the recorded CTest regex; the qualified source and tests are unchanged.
+
 ---
 
-_Verified: 2026-11-13T15:38:52Z_  
+_Verified: 2026-11-13T15:53:53Z_
 _Verifier: gsd-verifier_

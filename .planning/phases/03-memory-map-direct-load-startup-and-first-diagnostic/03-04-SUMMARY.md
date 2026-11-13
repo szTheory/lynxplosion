@@ -60,7 +60,7 @@ coverage:
     description: The deterministic digest records only the appended public MAPCTL observation after CPU, RAM, and tick equivalence checks.
     verification:
       - kind: unit
-        ref: "ctest --preset check -R '^det\.golden(\.self_test)?$' --no-tests=error --output-on-failure"
+        ref: "ctest --preset check -R '^det\\.golden(\\.self_test)?$' --no-tests=error --output-on-failure"
         status: pass
     human_judgment: false
 duration: 36min

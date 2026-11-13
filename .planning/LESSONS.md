@@ -302,3 +302,12 @@ to advance them as Pending. After checking all sibling evidence, move the slice
 detail to the definition notes and use the supported Pending/Complete status.
 Inspect the per-requirement write set; a zero tool exit does not mean every
 requested requirement was reconciled. Preserve any genuinely open requirement.
+
+
+**Validate summary YAML before handoff.** The milestone audit found four older
+regex references with a single backslash inside YAML double quotes. The strict
+SDK refused each summary instead of returning empty requirements. JSON quoting
+preserved the exact command text while making the frontmatter parseable; all69
+summaries then extracted successfully. Keep parse failure distinct from absent
+coverage, and validate each new summary before committing it. Historical
+verification hashes are not blindly rewritten after this metadata repair.

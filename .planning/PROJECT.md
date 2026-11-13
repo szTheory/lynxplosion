@@ -39,8 +39,8 @@ everything else fails, that link between claim, profile and evidence must hold.
   Phase5; all raster/bus policies remain unverified physical behavior.
 - ✓ Four-channel digital stereo PCM, tick-stamped events, bounded timer/audio
   links, format7 continuation and a public-only A/V consumer with independent
-  frame/WAV/event/input/progress checks — Phase6. All planned software evidence
-  passes native/GNU/hosted qualification; strict timer EVD-02 and SERCTL missing
+  frame/WAV/event/input/progress checks — Phase6. Scoped Phase6 software checks
+  pass native/GNU/hosted qualification; strict timer EVD-02 and SERCTL missing
   observations remain explicit limits.
 - ✓ Named full homebrew workload with five equal same-build output captures and
   separate public-API/host/CI timing — Phase6; no core optimization or hardware

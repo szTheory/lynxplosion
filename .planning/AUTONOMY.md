@@ -219,3 +219,16 @@ Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
   evidence plus independent cross-phase integration to assess current behavior;
   record that projection limit. Do not rerun completed plans or blindly refresh
   historical fingerprints merely to make a phase counter green.
+
+- Validate a completed SUMMARY through the installed SDK's `summary-extract`
+  before its guarded commit. Double-quoted YAML regex references must escape
+  backslashes (JSON string quoting is suitable). A parse error is not missing
+  requirement evidence; repair quoting while preserving literal command text,
+  then recheck extraction. Do not silently treat failed extraction as empty.
+
+- Repository hardening is active: Actions require full commit SHAs; main requires
+  the GitHub Actions `check` context. The verified owner alone has an audited
+  always-mode bypass so the explicitly approved checked-main workflow continues.
+  Local checks/reviews and exact-pushed-HEAD CI inspection remain required. See
+  `.planning/REPO-POLICY.md`; do not remove the bypass or weaken protection as a
+  routine workaround for a failed check.

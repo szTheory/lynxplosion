@@ -59,7 +59,7 @@ coverage:
     requirement: HB-03
     verification:
       - kind: integration
-        ref: "ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_replay|av_response_controls|av_tracer|frame_tracer|snapshot_ppm|silence_wav|av_edges|av_restore)$|^det\.(two_runs|two_instances|golden)$'"
+        ref: "ctest --preset check --no-tests=error --output-on-failure -R '^consumer\\.(av_replay|av_response_controls|av_tracer|frame_tracer|snapshot_ppm|silence_wav|av_edges|av_restore)$|^det\\.(two_runs|two_instances|golden)$'"
         status: pass
     human_judgment: false
   - id: D2

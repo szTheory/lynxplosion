@@ -54,7 +54,7 @@ coverage:
     requirement: EVD-02
     verification:
       - kind: integration
-        ref: "ctest --preset check -R '^suite\.(build|build_controls)$'"
+        ref: "ctest --preset check -R '^suite\\.(build|build_controls)$'"
         status: pass
       - kind: other
         ref: "build/check/tests/lynx-test-diag suite_build for cpu/timers × lynx1/lynx2"

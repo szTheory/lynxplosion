@@ -1,7 +1,7 @@
 ---
 phase: "04"
 slug: timers-interrupts-and-first-public-suites
-status: complete
+status: validated
 audit_status: complete
 qualification_status: qualified
 nyquist_compliant: true
@@ -174,3 +174,15 @@ unchanged. All 25 tasks remain covered, the 11 review findings are fixed, and no
 human verification or unimplemented coverage gap remains. The current flags
 reflect this final evidence; intermediate reopened qualification rows above
 remain history. Global EVD-02/EVD-05 still retain their later-phase scopes.
+
+
+## Validation-schema normalization (2026-11-13)
+
+The historical `complete` marker is normalized to the SDK's `validated` value.
+The final coverage and marker-fix qualification sections above already establish
+all25 task obligations, Nyquist compliance and zero human software UAT at their
+recorded sources. Their original results and earlier planning rows are retained.
+Current v1 native/GNU/hosted canonical regressions also pass the registered timer
+and suite controls. No historical verification fingerprint was rewritten, and
+global strict EVD-02 remains open. This is metadata reconciliation, not new
+hardware qualification or a waiver of the timer comparison.

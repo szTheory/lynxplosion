@@ -3,11 +3,12 @@ gsd_state_version: "1.0"
 current_phase: 6
 current_plan: 12
 status: completed
-stopped_at: Phase 6 complete — all phases complete
-last_updated: "2026-11-13T15:41:21.408Z"
+milestone_status: gaps_found
+stopped_at: All six phases complete; v1 audit 53/54; awaiting owner decision on strict timer gap
+last_updated: "2026-11-13T16:16:12.197Z"
 last_activity: 2026-11-13
 last_activity_desc: Phase 6 complete
-state_head: 3b270112eb8125b640504df34b5af0f1e6d8b7e1
+state_head: f32b113ff2895990e7c2545cc638bbd74a4088f9
 progress:
   total_phases: 6
   completed_phases: 6
@@ -23,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-13)
 
 **Core value:** Every compatibility claim is tied to an exact, named Lynx model/configuration and to reproducible evidence from a deterministic, observable machine.
-**Current focus:** Milestone audit of the completed software checkpoint
+**Current focus:** Owner decision on the remaining strict timer comparison; all software phases complete
 
 ## Current Position
 
 Phase: 6
 Current Plan: 12 (complete)
 Total Plans in Phase: 12
-Status: All phases complete; milestone audit pending
+Status: All phases complete; milestone audit found one unmet global requirement
 Last activity: 2026-11-13 — Phase 6 complete
 
 Progress: [██████████] 100%
@@ -271,26 +272,38 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+Owner decision at the v1 milestone boundary: authorize focused investigation of
+the remaining strict timer comparison, or explicitly accept that unmet
+requirement as a milestone-scope change. See `.planning/v1-MILESTONE-AUDIT.md`.
 
 ### Blockers/Concerns
 
-Phase 4 is complete and its owning verification status is passed. Local macOS, self-contained Ubuntu arm64 and hosted CI qualify the final product/script source baabaee. Formal evidence is in `04-VERIFICATION.md` and `04-QUALIFICATION.md`. Phase 5 discussion is next; Phase 6 has not started.
+All six software phases and69 plans are complete. Phase6 independent verification
+passes45/45, cross-phase integration is6/6, and current native/GNU/hosted source
+qualification passes. CON-01 and recurring EVD-05 are globally complete after
+the actual-frame/audio consumer and final device-fault evidence.
 
-- Both timer runs complete with independent model evidence, but result offset 14 is 0C versus source 0D on both profiles (15/16 accepted). Exact current-model timing explains 12 for every phase; original display/page-mode and counter-initialization preconditions differ. Preserve the strict comparison failure and unchanged oracle while completing Phase 4; exact agreement remains pending Phase 5. No source/profile/hardware qualification is accepted. No owner action is needed for this approved continuation.
-- Plan 09's data-only control matrices use per-invocation fresh observations on both profiles and immutable hash-checked baselines for private fault copies; every mutation retains positive baseline validation before/after and its named diagnostic.
-- Phase 4's five named timer/IRQ mutants now fail their exact independent API assertions; CPU source agreement and D-10 timer observation gates pass. Global EVD-02 remains open for the unchanged index-14 `0D` versus `0C` row in Phase 5. EVD-05 is a recurring Phase 4-6 requirement: its Phase 4 slice is complete, while Phase 5 and Phase 6 device-fault evidence remains open.
+- Global EVD-02 remains open: strict timer row14 is legacy0C/source0D and
+  video-policy1 0F/source0D. The comparison path is wired; its value is unresolved.
+  No oracle change, new exception, profile pass or hardware qualification is accepted.
+- Both page-mode observations remain explicitly skipped at unsupported SERCTL
+  write06→FD8C before results. EVD-06 permits visible blockers; no raw result or
+  source agreement is claimed for those skips.
+- O1 has no adopted hardware baseline. O5 remains all rights reserved with no
+  project licence chosen. O6's clean-room protocol/exposure record remains draft.
+  O9 still gates any shared LibFuturo raw-video contract. Firmware/commercial
+  content, physical tests, release/new-channel and shared-contract stops remain.
+- Historical long-path vector-control fragility and vector/temporary-cleanup
+  hardening are tracked in the integration/audit reports. The bus timestamp is
+  now consumed. Full-history costs are measured per environment; the old
+  1.5s/commit observation is historical, not a current universal growth claim.
+  Required full scans remain; redundant per-plan full scans were removed.
+- Repository followups are verified: Actions require full commit SHAs, and main
+  requires the observed GitHub Actions check with an audited owner-only bypass
+  preserving the approved checked-main workflow. No open PR was found.
 
-Other open owner decisions remain in force:
-
-- O1 (baseline Lynx model/CPU profile): no baseline adopted; profiles are data (`none`, `lynx1`, `lynx2`); claims name profile `none` only.
-- O6 (clean-room protocol): policy and exposure record stay DRAFT; no emulator source opened in Phases 1-2.
-- O5 (licence): no licence file; all rights reserved until decided.
-- O9 (raw video form if it affects LibFuturo): gates freezing the form in Phase 5.
-- Phase 3 goal verification and software qualification pass. CON-01 remains globally open for the actual-frame and actual-audio consumer obligations already scheduled in Phases 5 and 6; the Phase 3 snapshot/silence slice is complete. Research flags remain for Phases 4-6.
-- Carried follow-ups: the timer bank now consumes bus tick stamps with ordering controls; `cpu.vectors.malformed`/`complete_mode` are path-length fragile (about 170 chars); the history scan grows about 1.5 s per commit (candidate: scan each blob once).
-- Final marker validation rejects trailing pin data; its old behavior was reproduced before the fix. All final local/Linux/hosted gates pass. The outage-era queued run remains historical and unexecuted. Source qualification is authoritative in `04-QUALIFICATION.md`; metadata-only closeout needs an exact-head hosted run, without repeating unchanged local/Linux gates.
-- The pinned page-mode source reaches an unsupported SERCTL write at $FD8C before any result write; both profile results remain missing and EVD-02 stays open.
+No new phase, archive, tag or release is started while the milestone scope
+choice is unresolved. Keeping that boundary in place needs no confirmation.
 
 ## Deferred Items
 
@@ -302,6 +315,33 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-13T15:15:34.718Z
-Stopped at: Phase 6 complete — all phases complete
+Last session: 2026-11-13T16:16:10.207Z
+Stopped at: All six phases complete; v1 audit 53/54; awaiting owner decision on strict timer gap
 Resume file: .planning/phases/06-audio-and-playable-checkpoint/06-CONTEXT.md
+
+
+## Milestone boundary — v1 remains open
+
+All six phases and69 plans are executed. Phase6 independent verification is
+45/45, current fingerprint/status passed; scoped security and coverage gates
+are closed. Native/GNU and exact-source hosted qualification pass. The final
+metadata successor is published/checked separately through normal main CI.
+
+The milestone audit reconciles53/54 requirements with no orphan, and independent
+integration finds6/6 flows wired. EVD-02 remains open because strict timer row14
+differs from the unchanged source expectation under both recorded timing policies.
+The two page-mode SERCTL observations remain declared missing observations, not
+suite passes. See[v1 audit](v1-MILESTONE-AUDIT.md) and[integration](v1-INTEGRATION.md).
+
+The recommended next scope is a focused, evidence-led timer investigation using
+existing traces and controls. The owner acts next: authorize that next scope,
+or explicitly accept the comparison gap as a milestone-scope change. Until that
+decision the milestone stays open automatically. No further phase, cleanup,
+tag, release, physical test or new publication channel has been started.
+
+Historical source-scoped phase reports retain their original fingerprints.
+Current canonical regression and integration qualify the connected checkpoint;
+SDK stale-projection counters must not trigger completed-plan reruns. Four
+summary YAML refs were quoted without changing commands; all69 summaries parse.
+Actions full-SHA enforcement and the active main CI rule are verified, with an
+audited owner-only bypass preserving the approved checked-main workflow.

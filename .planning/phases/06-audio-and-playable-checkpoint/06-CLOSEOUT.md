@@ -35,3 +35,11 @@ README and PROJECT now describe the completed A/V checkpoint and link the
 policies, replay, snapshot, fault and performance records. Historical placeholder
 snapshot mode stays clearly labelled. Execution/API usage was not measured;
 recorded handoff elapsed time is kept separate from actual build/test/CI costs.
+
+
+Milestone audit and independent integration subsequently completed:53/54
+requirements,6/6 flows, no new broken connection. EVD-02 remains the explicit
+unmet comparison; the milestone stays open for an owner scope decision. All69
+summaries now parse after four literal-preserving quoting repairs. Phase6's
+current fingerprint/status was independently refreshed; historical phase hashes
+remain historical. Repository followups are verified inREPO-POLICY.md.

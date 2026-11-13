@@ -68,7 +68,7 @@ coverage:
     description: "Timer model, alternatives, result shape, completion metadata, descriptor, companion and proof faults reach their named refusals while the approved pending comparison remains bounded."
     verification:
       - kind: integration
-        ref: "ctest --preset check --no-tests=error --output-on-failure -R '^suite\.timers\.(model_controls|result_controls|pending_controls)$'"
+        ref: "ctest --preset check --no-tests=error --output-on-failure -R '^suite\\.timers\\.(model_controls|result_controls|pending_controls)$'"
         status: pass
     human_judgment: false
 
