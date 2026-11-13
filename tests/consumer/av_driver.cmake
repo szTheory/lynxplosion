@@ -5,7 +5,7 @@ foreach(required CASE ROOT WORK SCRATCH_ROOT CONSUMER TEST_CONSUMER ARTIFACT_CHE
     message(FATAL_ERROR "av_driver: -D${required} is required")
   endif()
 endforeach()
-set(allowed_cases consumer.av_tracer consumer.av_edges consumer.av_restore
+set(allowed_cases consumer.av_tracer consumer.av_controls consumer.av_edges consumer.av_restore
   consumer.av_replay consumer.av_response_controls)
 if(NOT CASE IN_LIST allowed_cases)
   message(FATAL_ERROR "av_driver: unsupported case '${CASE}'")
@@ -131,9 +131,16 @@ function(run_replay binary output control)
 endfunction()
 
 function(run_expected_refusal control expected output)
-  set(command "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin" "${control}"
-    "${TEST_CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
-    --symbols "${WORK}/av_probe.lbl" --timeline "${WORK}/input.timeline"
+  set(input_timeline "${WORK}/input.timeline")
+  if(ARGC GREATER 3)
+    set(input_timeline "${ARGV3}")
+  endif()
+  set(command "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin")
+  if(NOT "${control}" STREQUAL "")
+    list(APPEND command "${control}")
+  endif()
+  list(APPEND command "${TEST_CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
+    --symbols "${WORK}/av_probe.lbl" --timeline "${input_timeline}"
     --out "${output}" --profile none)
   execute_process(COMMAND ${command} TIMEOUT 120 RESULT_VARIABLE run_rc
     OUTPUT_VARIABLE run_out ERROR_VARIABLE run_err)
@@ -315,6 +322,108 @@ elseif(CASE STREQUAL "consumer.av_restore")
   run_expected_refusal("LYNX_TEST_AV_WATCH=1"
     "WATCH stopped before the next input edge; released guest marker is preserved" "${WORK}/output-watch")
   message(STATUS "consumer.av_restore: offset, prefix, identity, and watched-stop controls refused without publishing output")
+elseif(CASE STREQUAL "consumer.av_controls")
+  set(alias_timeline "${WORK}/input.timeline")
+  file(CREATE_LINK "${WORK}/av_probe.bll" "${alias_timeline}" SYMBOLIC RESULT alias_result)
+  if(NOT alias_result STREQUAL "0")
+    message(FATAL_ERROR "consumer.av_controls: could not create the content/timeline alias: ${alias_result}")
+  endif()
+  file(WRITE "${WORK}/outside.marker" "preserve caller-owned bytes\n")
+  file(SHA256 "${WORK}/outside.marker" sentinel_before)
+  set(alias_output "${WORK}/output-content-timeline-alias")
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "${TEST_CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
+      --symbols "${WORK}/av_probe.lbl" --timeline "${alias_timeline}"
+      --out "${alias_output}" --profile none
+    TIMEOUT 30 RESULT_VARIABLE alias_rc OUTPUT_VARIABLE alias_out ERROR_VARIABLE alias_err)
+  file(SHA256 "${WORK}/outside.marker" sentinel_after)
+  if(NOT alias_rc STREQUAL "1" OR
+     NOT "${alias_out}${alias_err}" MATCHES "A/V input paths must refer to distinct files" OR
+     EXISTS "${alias_output}" OR NOT sentinel_before STREQUAL sentinel_after)
+    message(FATAL_ERROR "consumer.av_controls: aliased content/timeline input did not refuse before publication or changed the sentinel (${alias_rc})\n${alias_out}${alias_err}")
+  endif()
+  file(REMOVE "${alias_timeline}")
+  file(CREATE_LINK "${WORK}/av_probe.bll" "${alias_timeline}" RESULT hardlink_result)
+  if(NOT hardlink_result STREQUAL "0")
+    message(FATAL_ERROR "consumer.av_controls: could not create the content/timeline hardlink: ${hardlink_result}")
+  endif()
+  set(hardlink_output "${WORK}/output-content-timeline-hardlink")
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "${TEST_CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
+      --symbols "${WORK}/av_probe.lbl" --timeline "${alias_timeline}"
+      --out "${hardlink_output}" --profile none
+    TIMEOUT 30 RESULT_VARIABLE hardlink_rc OUTPUT_VARIABLE hardlink_out ERROR_VARIABLE hardlink_err)
+  if(NOT hardlink_rc STREQUAL "1" OR
+     NOT "${hardlink_out}${hardlink_err}" MATCHES "A/V input paths must refer to distinct files" OR
+     EXISTS "${hardlink_output}")
+    message(FATAL_ERROR "consumer.av_controls: hard-linked content/timeline inputs did not refuse before publication (${hardlink_rc})\n${hardlink_out}${hardlink_err}")
+  endif()
+
+  file(REMOVE "${alias_timeline}")
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n109321 16\n")
+  foreach(kind schema timeline file-offset sample-ordinal prefix)
+    run_expected_refusal("LYNX_TEST_AV_BAD_CHECKPOINT=${kind}"
+      "A/V host checkpoint refused before restore or output append" "${WORK}/output-bad-${kind}")
+  endforeach()
+
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\nnot-a-number 16\n")
+  run_expected_refusal("" "A/V timeline is not canonical LYNX-INPUT 1 ASCII" "${WORK}/output-bad-token")
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n18446744073709551615 16\n")
+  run_expected_refusal("" "A/V timeline is not canonical LYNX-INPUT 1 ASCII" "${WORK}/output-overflow-number")
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n0 16\n0 0\n")
+  run_expected_refusal("" "A/V timeline is not canonical LYNX-INPUT 1 ASCII" "${WORK}/output-duplicate-tick")
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n2 16\n1 0\n")
+  run_expected_refusal("" "A/V timeline is not canonical LYNX-INPUT 1 ASCII" "${WORK}/output-decreasing-tick")
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n0 512\n")
+  run_expected_refusal("" "A/V timeline is not canonical LYNX-INPUT 1 ASCII" "${WORK}/output-unknown-input-bits")
+  string(REPEAT "0" 131073 overlarge_timeline)
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n${overlarge_timeline}")
+  run_expected_refusal("" "input timeline exceeds its 131072-byte bound" "${WORK}/output-overlarge-timeline")
+  set(overcount_timeline "LYNX-INPUT 1\n")
+  foreach(index RANGE 0 4096)
+    string(APPEND overcount_timeline "${index} 16\n")
+  endforeach()
+  file(WRITE "${WORK}/input.timeline" "${overcount_timeline}")
+  run_expected_refusal("" "A/V timeline is not canonical LYNX-INPUT 1 ASCII" "${WORK}/output-overcount-timeline")
+  file(REMOVE "${WORK}/missing.timeline")
+  run_expected_refusal("" "cannot open input timeline" "${WORK}/output-missing-timeline" "${WORK}/missing.timeline")
+
+  file(MAKE_DIRECTORY "${WORK}/outside-parent")
+  file(WRITE "${WORK}/outside-parent/sentinel" "preserve outside bytes\n")
+  file(SHA256 "${WORK}/outside-parent/sentinel" outside_before)
+  file(CREATE_LINK "${WORK}/outside-parent" "${WORK}/linked-parent" SYMBOLIC RESULT parent_link_result)
+  if(NOT parent_link_result STREQUAL "0")
+    message(FATAL_ERROR "consumer.av_controls: could not create the output-parent symlink: ${parent_link_result}")
+  endif()
+  file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n109321 16\n")
+  run_expected_refusal("" "symbolic-link parent" "${WORK}/linked-parent/output" "${WORK}/input.timeline")
+  file(SHA256 "${WORK}/outside-parent/sentinel" outside_after)
+  if(NOT outside_before STREQUAL outside_after OR EXISTS "${WORK}/outside-parent/output")
+    message(FATAL_ERROR "consumer.av_controls: symbolic output-parent refusal changed the outside sentinel or created output")
+  endif()
+
+  set(boundary_timeline "LYNX-INPUT 1\n0 0\n109321 16\n")
+  foreach(index RANGE 1 4093)
+    math(EXPR tick "109321 + ${index}")
+    string(APPEND boundary_timeline "${tick} 16\n")
+  endforeach()
+  string(APPEND boundary_timeline "1193985 0\n")
+  set(boundary_path "${WORK}/boundary-4096.timeline")
+  file(WRITE "${boundary_path}" "${boundary_timeline}")
+  file(STRINGS "${boundary_path}" boundary_lines)
+  list(LENGTH boundary_lines boundary_line_count)
+  if(NOT boundary_line_count EQUAL 4097)
+    message(FATAL_ERROR "consumer.av_controls: accepted timeline boundary did not contain exactly 4096 rows")
+  endif()
+  file(SHA256 "${boundary_path}" boundary_sha)
+  set(boundary_output "${WORK}/output-boundary-4096")
+  run_replay("${TEST_CONSUMER}" "${boundary_output}" "LYNX_TEST_AV_FINAL_CHECKPOINT_ONLY=1" "${boundary_path}")
+  check_replay_bundle("${boundary_output}" "${boundary_sha}")
+  file(SHA256 "${WORK}/outside.marker" sentinel_final)
+  if(NOT sentinel_before STREQUAL sentinel_final)
+    message(FATAL_ERROR "consumer.av_controls: refusal controls changed the caller-owned sentinel")
+  endif()
+  message(STATUS "consumer.av_controls: malformed inputs and checkpoint fields refused before publication; symlink/hardlink aliases and output-parent symlink preserved sentinels; 4096-event boundary published a valid bundle")
 elseif(CASE STREQUAL "consumer.av_replay" OR CASE STREQUAL "consumer.av_response_controls")
   file(WRITE "${WORK}/input.timeline"
     "LYNX-INPUT 1\n0 0\n108545 16\n217089 32\n325633 1\n434177 2\n542721 4\n651265 8\n759809 64\n868353 128\n976897 256\n1085441 511\n1193985 0\n")

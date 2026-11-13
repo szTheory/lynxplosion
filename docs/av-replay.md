@@ -24,8 +24,10 @@ Replay advances only to the next declared edge, using bounded public
 `lynx_advance_av` calls. A frame or output-span stop is handled with fresh
 caller-owned spans; returned sample ordinals, event/frame counts, and guest
 ticks are checked before continuing. A full-span run can hold at most 3,135
-PCM frames and 8,192 audio events; the complete replay retains at most 32
-rendered frames. The required scenario ends at tick 1,193,985; adding its
+PCM frames and 32,768 audio-event records; the complete replay retains at most
+32 rendered frames. The positive 4,096-row timeline boundary control replays
+the dense one-tick edges through the final post-edge checkpoint and retains its
+complete A/V bundle. The required scenario ends at tick 1,193,985; adding its
 60,000-tick final-frame window gives a floor of 3,134 sample ordinals at 400
 ticks per sample. One additional caller slot lets the final frame advance
 without dropping the last output span. The consumer rejects timelines that

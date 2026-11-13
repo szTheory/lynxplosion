@@ -46,7 +46,7 @@ enum {
     FRAME_OUTPUT_LIMIT = 32,
     FRAME_RAW_BYTES_PER_ROW = 120,
     AV_PCM_CAPACITY = 3135,
-    AV_EVENT_CAPACITY = 8192,
+    AV_EVENT_CAPACITY = 32768,
     AV_INPUT_APPLIED_CAPACITY = 512 * 1024,
     AV_RAW_HEADER_BYTES = 24,
     AV_WAV_HEADER_BYTES = 44
@@ -861,8 +861,8 @@ static int destination_is_absent(const char *directory)
     return 0;
 }
 
-static int frame_input_paths_are_distinct(const char *content, const char *symbols_path,
-                                          const char *timeline)
+static int input_paths_are_distinct(const char *content, const char *symbols_path,
+                                    const char *timeline, const char *error_message)
 {
     const char *paths[3] = {content, symbols_path, timeline};
     struct stat info[3];
@@ -873,7 +873,7 @@ static int frame_input_paths_are_distinct(const char *content, const char *symbo
         for (size_t right = left + 1u; right < 3u; right++) {
             if (have[left] && have[right] && info[left].st_dev == info[right].st_dev &&
                 info[left].st_ino == info[right].st_ino)
-                return report_error("frame input paths must refer to distinct files");
+                return report_error(error_message);
         }
     }
     return 0;
@@ -2022,7 +2022,8 @@ static int run_frame_consumer(const char *content_path, const char *symbols_path
     }
 #endif
     if (replay_sha_vectors() != 0) { (void)report_error("independent SHA-256 vectors failed"); goto done; }
-    if (frame_input_paths_are_distinct(content_path, symbols_path, timeline_path) != 0) goto done;
+    if (input_paths_are_distinct(content_path, symbols_path, timeline_path,
+            "frame input paths must refer to distinct files") != 0) goto done;
     if (read_bounded(timeline_path, TIMELINE_LIMIT, &timeline_bytes, &timeline_len, "input timeline") != 0 ||
         parse_input_timeline(timeline_bytes, timeline_len, &timeline) != 0) {
         (void)report_error("timeline is not canonical LYNX-INPUT 1 ASCII; use strict increasing decimal tick/mask LF rows within the documented bounds"); goto done;
@@ -2429,6 +2430,7 @@ static int av_step(lynx_machine *machine, uint64_t budget,
     lynx_av_buffers buffers = {0};
     uint64_t before = 0u, after = 0u;
     size_t pcm_remaining, event_remaining;
+    int advance_status;
     if (totals->pcm_count >= AV_PCM_CAPACITY || totals->event_count >= AV_EVENT_CAPACITY ||
         lynx_guest_ticks(machine, &before) != LYNX_OK) return 1;
     pcm_remaining = AV_PCM_CAPACITY - totals->pcm_count;
@@ -2446,16 +2448,33 @@ static int av_step(lynx_machine *machine, uint64_t budget,
     buffers.events = totals->events + totals->event_count;
     buffers.event_capacity = event_span_capacity;
     result->struct_size = (uint32_t)sizeof *result;
-    if (lynx_advance_av(machine, budget, &buffers, result) != LYNX_OK ||
-        result->ticks_consumed > budget || result->pcm_count > buffers.pcm_capacity ||
+    advance_status = (int)lynx_advance_av(machine, budget, &buffers, result);
+    if (advance_status != (int)LYNX_OK) {
+        fprintf(stderr, "lynx-consume: public A/V advance returned status %d for budget %" PRIu64 "\n",
+                advance_status, budget);
+        return 1;
+    }
+    if (result->ticks_consumed > budget || result->pcm_count > buffers.pcm_capacity ||
         result->event_count > buffers.event_capacity ||
         result->first_sample_ordinal != totals->next_ordinal ||
         result->next_sample_ordinal < result->first_sample_ordinal ||
-        result->next_sample_ordinal - result->first_sample_ordinal != result->pcm_count ||
-        lynx_guest_ticks(machine, &after) != LYNX_OK || after < before ||
+        result->next_sample_ordinal - result->first_sample_ordinal != result->pcm_count) {
+        fprintf(stderr, "lynx-consume: A/V result contract mismatch budget=%" PRIu64
+                " consumed=%" PRIu64 " stop=%u pcm=%u/%zu events=%u/%zu ordinal=%" PRIu64 "..%" PRIu64 " expected=%" PRIu64 "\n",
+                budget, result->ticks_consumed, (unsigned)result->stop, (unsigned)result->pcm_count,
+                buffers.pcm_capacity, (unsigned)result->event_count, buffers.event_capacity,
+                result->first_sample_ordinal, result->next_sample_ordinal, totals->next_ordinal);
+        return 1;
+    }
+    if (lynx_guest_ticks(machine, &after) != LYNX_OK || after < before ||
         after - before != result->ticks_consumed ||
         (result->stop == LYNX_STOP_OUTPUT && result->ticks_consumed == 0u &&
-         result->pcm_count == 0u && result->event_count == 0u)) return 1;
+         result->pcm_count == 0u && result->event_count == 0u)) {
+        fprintf(stderr, "lynx-consume: A/V progress contract mismatch before=%" PRIu64
+                " after=%" PRIu64 " budget=%" PRIu64 " consumed=%" PRIu64 " stop=%u\n",
+                before, after, budget, result->ticks_consumed, (unsigned)result->stop);
+        return 1;
+    }
     totals->pcm_count += result->pcm_count;
     totals->event_count += result->event_count;
     totals->next_ordinal = result->next_sample_ordinal;
@@ -2905,6 +2924,7 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
     int uninterrupted_control = 0;
 #if defined(LYNX_CONSUMER_TESTING)
     int interleaved_test = 0;
+    int final_checkpoint_only = 0;
     av_interleaved_pair interleaved = {0};
 #endif
     av_capture_totals totals = {0};
@@ -2933,6 +2953,8 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
         uninterrupted_control = value != NULL && strcmp(value, "1") == 0;
         value = getenv("LYNX_TEST_AV_INTERLEAVED");
         interleaved_test = value != NULL && strcmp(value, "1") == 0;
+        value = getenv("LYNX_TEST_AV_FINAL_CHECKPOINT_ONLY");
+        final_checkpoint_only = value != NULL && strcmp(value, "1") == 0;
     }
 #endif
     totals.pcm = calloc(AV_PCM_CAPACITY, sizeof *totals.pcm);
@@ -2941,13 +2963,18 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
     if (totals.pcm == NULL || totals.events == NULL || applied_text == NULL) {
         (void)report_error("cannot allocate bounded A/V capture spans"); goto done;
     }
+    if (input_paths_are_distinct(content_path, symbols_path, timeline_path,
+            "A/V input paths must refer to distinct files") != 0) goto done;
     if (read_bounded(content_path, BLL_LIMIT, &bll, &bll_len, "BLL content") != 0 || bll_len < 11u ||
         read_bounded(symbols_path, SYMBOL_LIMIT, &labels, &labels_len, "ld65 -Ln symbols") != 0 ||
-        read_bounded(timeline_path, TIMELINE_LIMIT, &timeline_bytes, &timeline_len, "input timeline") != 0 ||
-        parse_input_timeline(timeline_bytes, timeline_len, &timeline) != 0 ||
         parse_named_symbol(labels, labels_len, "probe_result", &probe_address) != 0 ||
         probe_address > LYNX_ADDRESS_SPACE - 9u) {
-        (void)report_error("A/V fixture, linked probe symbol or canonical input timeline is invalid"); goto done;
+        (void)report_error("A/V fixture or linked probe symbol is invalid"); goto done;
+    }
+    if (read_bounded(timeline_path, TIMELINE_LIMIT, &timeline_bytes, &timeline_len,
+            "input timeline") != 0) goto done;
+    if (parse_input_timeline(timeline_bytes, timeline_len, &timeline) != 0) {
+        (void)report_error("A/V timeline is not canonical LYNX-INPUT 1 ASCII; use strictly increasing decimal tick/mask LF rows within the documented bounds"); goto done;
     }
     {
         static const char applied_header[] = "LYNX-APPLIED-INPUT 1\n";
@@ -3019,9 +3046,27 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
                 event->tick - now : UINT64_C(60000);
             const size_t pcm_capacity = short_spans != 0 ? LYNX_AV_MIN_PCM_CAPACITY : AV_PCM_CAPACITY;
             const size_t event_capacity = short_spans != 0 ? LYNX_AV_MIN_EVENT_CAPACITY : AV_EVENT_CAPACITY;
-            if (AV_REPLAY_STEP(active.machine, request, pens, palettes, ticks, pcm_capacity,
-                        event_capacity, &totals, &step) != 0 ||
-                lynx_guest_ticks(active.machine, &after) != LYNX_OK || after < now || after > event->tick) {
+            const int step_status = AV_REPLAY_STEP(active.machine, request, pens, palettes, ticks,
+                        pcm_capacity, event_capacity, &totals, &step);
+            if (step_status != 0) {
+#if defined(LYNX_CONSUMER_TESTING)
+                (void)fprintf(stderr,
+                    "A/V test step failure: cursor=%zu now=%llu edge=%llu request=%llu stop=%d consumed=%llu pcm=%u/%zu events=%u/%zu totals=%zu/%zu\n",
+                    cursor, (unsigned long long)now, (unsigned long long)event->tick,
+                    (unsigned long long)request, (int)step.stop,
+                    (unsigned long long)step.ticks_consumed, (unsigned)step.pcm_count, pcm_capacity,
+                    (unsigned)step.event_count, event_capacity, totals.pcm_count, totals.event_count);
+#endif
+                (void)report_error("A/V advance violated its bounded input-edge interval"); goto done;
+            }
+            if (lynx_guest_ticks(active.machine, &after) != LYNX_OK || after < now || after > event->tick) {
+#if defined(LYNX_CONSUMER_TESTING)
+                (void)fprintf(stderr,
+                    "A/V test guest-progress failure: cursor=%zu now=%llu edge=%llu after=%llu request=%llu stop=%d consumed=%llu pcm=%u events=%u\n",
+                    cursor, (unsigned long long)now, (unsigned long long)event->tick,
+                    (unsigned long long)after, (unsigned long long)request, (int)step.stop,
+                    (unsigned long long)step.ticks_consumed, (unsigned)step.pcm_count, (unsigned)step.event_count);
+#endif
                 (void)report_error("A/V advance violated its bounded input-edge interval"); goto done;
             }
             if (step.stop == LYNX_STOP_FRAME) {
@@ -3096,38 +3141,48 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
             const checkpoint_phase phase = phase_index == 0 ? CHECKPOINT_PRE_EDGE : CHECKPOINT_POST_EDGE;
             const size_t checkpoint_cursor = event_index + (phase_index == 0 ? 0u : 1u);
             const uint32_t checkpoint_mask = phase_index == 0 ? current_mask : event->mask;
-            av_replay_checkpoint checkpoint;
-            if (av_checkpoint_capture(&checkpoint, &identity, profile, script_digest, timeline_len,
-                    &timeline, now, checkpoint_cursor, checkpoint_mask, phase, &totals,
-                    frames, frame_count, applied_text, applied_text_len) != 0) {
-                (void)report_error("cannot bind A/V host checkpoint to its complete output prefix"); goto done;
-            }
+            int checkpoint_required = 1;
 #if defined(LYNX_CONSUMER_TESTING)
-            if (bad_checkpoint != 0 && phase_index == 0) {
-                const char *kind = getenv("LYNX_TEST_AV_BAD_CHECKPOINT");
-                if (strcmp(kind, "offset") == 0) checkpoint.file_offset++;
-                else if (strcmp(kind, "prefix") == 0) checkpoint.prefix_digest[0] ^= 1u;
-                else checkpoint.script_digest[0] ^= 1u;
-            }
+            if (final_checkpoint_only != 0 && event_index + 1u < timeline.count)
+                checkpoint_required = 0;
 #endif
-            if (uninterrupted_control == 0) {
-                const size_t pcm_before = totals.pcm_count, events_before = totals.event_count;
-                const size_t frames_before = frame_count;
-                if (av_checkpoint_restore(active.machine, restore_target.machine, &checkpoint,
-                        &identity, profile, script_digest, timeline_len, &timeline, &totals,
-                        frames, frame_count, applied_text, applied_text_len, now,
-                        checkpoint_cursor, checkpoint_mask, phase) != 0) {
-                    uint64_t unchanged_tick = UINT64_MAX;
-                    if (lynx_guest_ticks(active.machine, &unchanged_tick) != LYNX_OK || unchanged_tick != now ||
-                        totals.pcm_count != pcm_before || totals.event_count != events_before ||
-                        frame_count != frames_before) {
-                        (void)report_error("invalid A/V host checkpoint changed guest time or a published output prefix"); goto done;
-                    }
-                    (void)report_error(bad_checkpoint != 0 ?
-                        "A/V host checkpoint refused before restore or output append" :
-                        "A/V host checkpoint identity, extent, cursor or prefix validation failed"); goto done;
+            if (checkpoint_required != 0) {
+                av_replay_checkpoint checkpoint;
+                if (av_checkpoint_capture(&checkpoint, &identity, profile, script_digest, timeline_len,
+                        &timeline, now, checkpoint_cursor, checkpoint_mask, phase, &totals,
+                        frames, frame_count, applied_text, applied_text_len) != 0) {
+                    (void)report_error("cannot bind A/V host checkpoint to its complete output prefix"); goto done;
                 }
-                { machine_storage swap = active; active = restore_target; restore_target = swap; }
+#if defined(LYNX_CONSUMER_TESTING)
+                if (bad_checkpoint != 0 && phase_index == 0) {
+                    const char *kind = getenv("LYNX_TEST_AV_BAD_CHECKPOINT");
+                    if (strcmp(kind, "schema") == 0) checkpoint.schema++;
+                    else if (strcmp(kind, "timeline") == 0) checkpoint.script_digest[0] ^= 1u;
+                    else if (strcmp(kind, "file-offset") == 0) checkpoint.file_offset++;
+                    else if (strcmp(kind, "sample-ordinal") == 0) checkpoint.next_sample_ordinal++;
+                    else if (strcmp(kind, "prefix") == 0) checkpoint.prefix_digest[0] ^= 1u;
+                    else checkpoint.schema = 0u;
+                }
+#endif
+                if (uninterrupted_control == 0) {
+                    const size_t pcm_before = totals.pcm_count, events_before = totals.event_count;
+                    const size_t frames_before = frame_count;
+                    if (av_checkpoint_restore(active.machine, restore_target.machine, &checkpoint,
+                            &identity, profile, script_digest, timeline_len, &timeline, &totals,
+                            frames, frame_count, applied_text, applied_text_len, now,
+                            checkpoint_cursor, checkpoint_mask, phase) != 0) {
+                        uint64_t unchanged_tick = UINT64_MAX;
+                        if (lynx_guest_ticks(active.machine, &unchanged_tick) != LYNX_OK || unchanged_tick != now ||
+                            totals.pcm_count != pcm_before || totals.event_count != events_before ||
+                            frame_count != frames_before) {
+                            (void)report_error("invalid A/V host checkpoint changed guest time or a published output prefix"); goto done;
+                        }
+                        (void)report_error(bad_checkpoint != 0 ?
+                            "A/V host checkpoint refused before restore or output append" :
+                            "A/V host checkpoint identity, extent, cursor or prefix validation failed"); goto done;
+                    }
+                    { machine_storage swap = active; active = restore_target; restore_target = swap; }
+                }
             }
             if (phase_index == 0) {
                 if (lynx_set_input(active.machine, event->mask) != LYNX_OK) {
