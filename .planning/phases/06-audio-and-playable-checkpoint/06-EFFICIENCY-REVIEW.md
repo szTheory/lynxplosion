@@ -3,8 +3,8 @@
 Owner requested a sanity check during the long autonomous session on
 2026-11-12. This is a bounded process review, not Phase 6 completion or a new
 milestone. The initial executor returned a safe checkpoint for this review.
-Implementation has since resumed; Plans01–03 are committed and Plan04 has
-committed source tasks pending integration repair and summary. This report is
+Implementation has since resumed; Plans01–05 and their diagnosed integration
+repairs are committed. Plan06 owns the next snapshot/continuation work. This report is
 process evidence, not a claim that Phase6 or its full gate is complete.
 
 ## Findings and actions
@@ -18,6 +18,8 @@ process evidence, not a claim that Phase6 or its full gate is complete.
 | Released and pressed PPMs have identical 160×102 RGB raster extents and legitimate unequal metadata lengths | Equal whole-file length was an invalid invariant | Parse each raster separately and compare its pixels against raw pens/palettes |
 | The early full Phase6 inventory exposed old unavailable-address assertions, a suite-fixture input omission and an evidence-bound helper identity after focused tests passed | Structural integration includes negative fixtures and provenance consumers, beyond compilation | Run one early full registered inventory after a broad contract change, then repair and retest the affected group |
 | Later CTest discovery and focused calls overwrote the initial full run's per-case logs | Original scanner timeout stages cannot be recovered reliably | Save each integration invocation to a distinct private log with its real exit status before another CTest call |
+| Plan05 started an optional scan of all 390 commits after its scoped implementation checks were complete | Repeated old history adds handoff delay without a new failure class | Require only the plan's new reachable range at handoff; retain full-history scanning in the final canonical gate |
+| Both Plan05 tasks initially grew in the same test harness before the first task commit | Reconstructing intermediate inventories and claim hashes adds avoidable bookkeeping | Complete and commit each task's buildable inventory and evidence binding before expanding the next task |
 
 The 9h35 value includes checkpoints and does not measure active model work.
 Commit timing does not establish CPU time, model tokens or API spend. Exact
@@ -81,8 +83,17 @@ the final reviewed Phase6 gate remains outstanding.
 
 ## Next action
 
-Finish the diagnosed suite-fixture/provenance repairs, check the registered
-scanner entry points, then resume the existing Plan04 executor for its summary
-and continue the remaining reviewed plans. The parent retains phase bookkeeping
-and final independent review/qualification responsibilities. No owner input is
-required for this continuation.
+The suite-fixture/provenance repairs and scoped compiler checks are recorded in
+`06-02-SUMMARY.md`; ring closeout is in `06-04-SUMMARY.md`. Plan05 also repaired
+a real scheduler gap: reserve room for device/link/sample output before state
+mutation, retaining a separately checked later CPU-triggered group. Refusal,
+alias, capacity/retry, caller-buffer isolation, guest-time limit and existing
+regression checks passed on the supported compilers; `06-05-SUMMARY.md` records
+the exact scope and source revisions. Final Phase6 qualification remains open.
+
+The optional full-history scan was stopped through its own tool session, its
+interrupted status was retained privately, and the required new-range scan
+passed. No privacy rule or required proof was removed. Continue Plan06's
+snapshot validation and complete-stream continuation checks, then the remaining
+reviewed plans. The parent retains tracking and final independent acceptance
+responsibilities. No owner input is required.

@@ -45,6 +45,8 @@ key-decisions:
   - "Refresh only the repeatability claim's inventory digest when adding the four registered fast tests."
 
 requirements-completed: [AUD-02, CON-01, DET-05]
+# Scoped span/capacity evidence; global completion still depends on sibling
+# plans and the Phase6 qualification gate.
 coverage:
   - id: D1
     description: "Malformed, overlapping, misaligned, wrapped, or undersized A/V spans are rejected without changing the machine or caller bytes."

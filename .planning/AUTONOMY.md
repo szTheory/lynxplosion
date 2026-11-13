@@ -86,6 +86,11 @@ For every discuss phase (and milestone discussion):
   bytes, verify the live remote boundary, and repair only the evidence path.
   Never rewrite published history or weaken the privacy scanner.
 
+  Do not add an optional all-history scan at each plan closeout. The new reachable
+  range supplies the handoff proof; the final canonical gate owns the full
+  history scan. Preserve the status of interrupted optional work and stop only
+  the attributable process when necessary, without weakening required checks.
+
 - Before invoking GSD state updates, copy and hash any pre-existing untracked
   `.planning/state.json` into private temporary storage. Never stage or delete
   it. The SDK can refresh this derived phase/status/next cache while updating
@@ -132,6 +137,10 @@ Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
   per finding and focused semantic controls. Recheck the changed batch once;
   reopen review only for a new code change, finding or unresolved concern.
   Consolidate evidence updates in the owning report and one metadata commit.
+- Finish and commit each task's buildable test inventory and evidence binding
+  before expanding the next task in the same harness. Shared setup can land
+  with its first user; avoid implementing both tasks and then reconstructing
+  intermediate file versions solely to separate their commits.
 - New integration failures must identify the failing invariant or stage and
   preserve attributable artifacts. Compare parsed payloads separately from
   variable metadata; format-valid files alone are insufficient evidence.
