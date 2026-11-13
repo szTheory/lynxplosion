@@ -419,10 +419,19 @@ static void case_integrator(void)
     lynx__audio_state hot;
     lynx__audio_init(&hot);
     (void)write_register(&hot, 0u, 0u, 0x7Fu);
+    ASSERT_EQ("audio.integrator.volume-write-keeps-output", lynx__audio_peek(&hot, 0xFD22u), 0u);
+    (void)write_register(&hot, 0u, 1u, 1u);
+    (void)write_register(&hot, 0u, 3u, 1u);
+    (void)write_register(&hot, 0u, 7u, 2u);
     ASSERT_EQ("audio.integrator.hot-volume", lynx__audio_peek(&hot, 0xFD22u), 0x81u);
     (void)write_register(&hot, 0u, 0u, 0x80u);
-    ASSERT_EQ("audio.integrator.hot-volume", lynx__audio_peek(&hot, 0xFD22u), 0x7Fu);
+    ASSERT_EQ("audio.integrator.hot-volume-latched", lynx__audio_peek(&hot, 0xFD22u), 0x81u);
     (void)write_register(&hot, 0u, 3u, 1u);
+    (void)write_register(&hot, 0u, 7u, 2u);
+    ASSERT_EQ("audio.integrator.hot-volume", lynx__audio_peek(&hot, 0xFD22u), 0x7Fu);
+    (void)write_register(&hot, 0u, 3u, 0u);
+    ASSERT_EQ("audio.integrator.seed-write-keeps-output", lynx__audio_peek(&hot, 0xFD22u), 0x7Fu);
+    (void)write_register(&hot, 0u, 7u, 2u);
     ASSERT_EQ("audio.integrator.hot-volume-polarity", lynx__audio_peek(&hot, 0xFD22u), 0x80u);
 }
 
@@ -924,7 +933,7 @@ static void case_order(void)
     }
     ASSERT_EQ("audio.order.link-event-target", events[1].channel, 1u);
     ASSERT_EQ("audio.order.register-write-value", m->audio.channels[0].volume, 7u);
-    ASSERT_EQ("audio.order.register-write-after-sample", m->audio.channels[0].output, -7);
+    ASSERT_EQ("audio.order.volume-write-latches-until-clock", m->audio.channels[0].output, -5);
     lynx_watch_event watch;
     ASSERT_EQ("audio.order.watch-read", lynx_watch_get(m, &watch), LYNX_OK);
     ASSERT_EQ("audio.order.watch-hit", watch.hit, 1u);
@@ -1070,7 +1079,7 @@ static void case_stereo(void)
     (void)lynx__audio_apply(&audio, 16u, &sink);
     ASSERT_EQ("audio.stereo.mute-keeps-evolution", lynx__audio_peek(&audio, 0xFD23u), 1u);
     ASSERT_EQ("audio.stereo.mute-keeps-event", sink.count, 1u);
-    ASSERT_EQ("audio.stereo.mute-event-before", event.before_output, -7);
+    ASSERT_EQ("audio.stereo.mute-event-before", event.before_output, 0);
     ASSERT_EQ("audio.stereo.mute-event-after", event.after_output, 7);
     lynx_pcm_frame muted = {INT16_MIN, INT16_MIN};
     ASSERT_NAMED("audio.stereo.muted-sample-ready", lynx__audio_sample(&audio, 400u, &muted));

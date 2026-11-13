@@ -28,6 +28,12 @@ enum {
     TIMER_RESERVED = 2,
     TIMER_MIN_TICKS = 256,
     TIMER_MAX_TICKS = 50000000,
+    AUDIO_MEANINGFUL = 18,
+    AUDIO_MIN_TICKS = 256,
+    AUDIO_MAX_TICKS = 50000000,
+    AUDIO_SUITE_COUNT = 2,
+    AUDIO_CASES_MAX = 7,
+    AUDIO_CASE_LABEL_MAX = 32,
     PAGE_MODE_RESULT_COUNT = 6,
     PAGE_MODE_MIN_TICKS = 40000,
     PAGE_MODE_MAX_TICKS = 50000000,
@@ -63,6 +69,17 @@ typedef struct suite_oracle {
     uint8_t counts[2][RESULT_EXTENT];
     uint8_t tuple[2][4];
 } suite_oracle;
+
+typedef struct suite_audio_oracle {
+    char main_sha256[AUDIO_SUITE_COUNT][65];
+    char asm_sha256[AUDIO_SUITE_COUNT][65];
+    uint8_t values[AUDIO_SUITE_COUNT][AUDIO_MEANINGFUL][EXPECT_VALUES_MAX];
+    uint8_t counts[AUDIO_SUITE_COUNT][AUDIO_MEANINGFUL];
+    uint8_t case_start[AUDIO_SUITE_COUNT][AUDIO_CASES_MAX];
+    uint8_t case_length[AUDIO_SUITE_COUNT][AUDIO_CASES_MAX];
+    char case_label[AUDIO_SUITE_COUNT][AUDIO_CASES_MAX][AUDIO_CASE_LABEL_MAX];
+    uint8_t case_count[AUDIO_SUITE_COUNT];
+} suite_audio_oracle;
 
 typedef struct page_mode_oracle {
     char revision[41];
@@ -649,6 +666,141 @@ static int parse_oracle(const char *path, suite_oracle *out)
         return fail("oracle: timer accepted alternatives were lost");
     }
     free(bytes);
+    return 0;
+}
+
+static int parse_audio_oracle(const char *legacy_path, const char *extended_path,
+                              suite_audio_oracle *out)
+{
+    static const char *const metadata_names[AUDIO_SUITE_COUNT * 2] = {
+        "audio_main", "audio_asm", "audio2_main", "audio2_asm"
+    };
+    static const char *const suite_names[AUDIO_SUITE_COUNT] = {"audio", "audio2"};
+    static const uint8_t expected_cases[AUDIO_SUITE_COUNT] = {6u, 7u};
+    uint8_t *legacy = NULL;
+    char *extended = NULL;
+    size_t legacy_length = 0u;
+    size_t extended_length = 0u;
+    size_t offset;
+    size_t suite;
+    char line[ORACLE_LINE_MAX + 1u];
+    char *fields[12];
+    size_t count;
+
+    memset(out, 0, sizeof *out);
+    if (read_file(legacy_path, &legacy, &legacy_length, 32768u) != 0 ||
+        read_text(extended_path, &extended, &extended_length, 32768u) != 0) {
+        free(legacy);
+        free(extended);
+        return 1;
+    }
+    if (legacy_length > extended_length || memcmp(legacy, extended, legacy_length) != 0) {
+        free(legacy);
+        free(extended);
+        return fail("audio oracle: extended input changed the legacy CPU/timer prefix");
+    }
+    free(legacy);
+    offset = legacy_length;
+    for (suite = 0u; suite < AUDIO_SUITE_COUNT * 2u; suite++) {
+        char *destination = suite % 2u == 0u ? out->main_sha256[suite / 2u] : out->asm_sha256[suite / 2u];
+        if (oracle_line(extended, extended_length, &offset, line, fields, &count) != 0 ||
+            count != 2u || strcmp(fields[0], metadata_names[suite]) != 0 ||
+            !valid_hex(fields[1], 64u) || copy_field(destination, 65u, fields[1]) != 0) {
+            free(extended);
+            return fail("audio oracle: malformed or reordered source identity record");
+        }
+    }
+    for (suite = 0u; suite < AUDIO_SUITE_COUNT; suite++) {
+        uint32_t value;
+        uint32_t next_case_offset = 0u;
+        size_t result_index;
+        size_t case_index;
+        if (oracle_line(extended, extended_length, &offset, line, fields, &count) != 0 ||
+            count != 2u || strcmp(fields[0], "suite") != 0 || strcmp(fields[1], suite_names[suite]) != 0) {
+            free(extended);
+            return fail("audio oracle: missing or reordered suite section");
+        }
+        if (oracle_line(extended, extended_length, &offset, line, fields, &count) != 0 ||
+            count != 2u || strcmp(fields[0], "result_count") != 0 ||
+            parse_decimal(fields[1], &value) != 0 || value != AUDIO_MEANINGFUL) {
+            free(extended);
+            return fail("audio oracle: result count mismatch");
+        }
+        if (oracle_line(extended, extended_length, &offset, line, fields, &count) != 0 ||
+            count != 2u || strcmp(fields[0], "extent") != 0 ||
+            parse_decimal(fields[1], &value) != 0 || value != AUDIO_MEANINGFUL) {
+            free(extended);
+            return fail("audio oracle: result extent mismatch");
+        }
+        if (oracle_line(extended, extended_length, &offset, line, fields, &count) != 0 ||
+            count != 2u || strcmp(fields[0], "meaningful") != 0 ||
+            parse_decimal(fields[1], &value) != 0 || value != AUDIO_MEANINGFUL) {
+            free(extended);
+            return fail("audio oracle: meaningful result count mismatch");
+        }
+        for (result_index = 0u; result_index < AUDIO_MEANINGFUL; result_index++) {
+            uint32_t index;
+            uint32_t accepted;
+            size_t i;
+            if (oracle_line(extended, extended_length, &offset, line, fields, &count) != 0 ||
+                count < 4u || strcmp(fields[0], "result") != 0 ||
+                parse_decimal(fields[1], &index) != 0 || index != result_index ||
+                parse_decimal(fields[2], &accepted) != 0 || accepted == 0u ||
+                accepted > EXPECT_VALUES_MAX || count != 3u + accepted ||
+                (suite == 0u && accepted != 1u) ||
+                (suite == 1u && accepted != (result_index == 9u ? 2u : 1u))) {
+                free(extended);
+                return fail("audio oracle: malformed result row or lost alternative set");
+            }
+            out->counts[suite][result_index] = (uint8_t)accepted;
+            for (i = 0u; i < accepted; i++) {
+                size_t prior;
+                if (parse_byte(fields[3u + i], &out->values[suite][result_index][i]) != 0) {
+                    free(extended);
+                    return fail("audio oracle: malformed result byte");
+                }
+                for (prior = 0u; prior < i; prior++) {
+                    if (out->values[suite][result_index][prior] == out->values[suite][result_index][i]) {
+                        free(extended);
+                        return fail("audio oracle: duplicate result alternative");
+                    }
+                }
+            }
+        }
+        out->case_count[suite] = expected_cases[suite];
+        for (case_index = 0u; case_index < expected_cases[suite]; case_index++) {
+            uint32_t index;
+            uint32_t start;
+            uint32_t length;
+            if (oracle_line(extended, extended_length, &offset, line, fields, &count) != 0 ||
+                count != 5u || strcmp(fields[0], "case") != 0 ||
+                parse_decimal(fields[1], &index) != 0 || index != case_index ||
+                parse_decimal(fields[2], &start) != 0 || start != next_case_offset ||
+                parse_decimal(fields[3], &length) != 0 || length == 0u ||
+                length > AUDIO_MEANINGFUL - start || strlen(fields[4]) == 0u ||
+                strlen(fields[4]) >= AUDIO_CASE_LABEL_MAX) {
+                free(extended);
+                return fail("audio oracle: malformed case coverage");
+            }
+            out->case_start[suite][case_index] = (uint8_t)start;
+            out->case_length[suite][case_index] = (uint8_t)length;
+            if (copy_field(out->case_label[suite][case_index], AUDIO_CASE_LABEL_MAX, fields[4]) != 0) {
+                free(extended);
+                return fail("audio oracle: malformed case label");
+            }
+            next_case_offset = start + length;
+        }
+        if (next_case_offset != AUDIO_MEANINGFUL) {
+            free(extended);
+            return fail("audio oracle: source cases do not cover all 18 results");
+        }
+    }
+    if (offset != extended_length || out->counts[1][9] != 2u ||
+        out->values[1][9][0] != 0x30u || out->values[1][9][1] != 0x34u) {
+        free(extended);
+        return fail("audio oracle: trailing data or audio2 index 9 alternatives changed");
+    }
+    free(extended);
     return 0;
 }
 
@@ -1291,7 +1443,8 @@ static int verify_suite_build_artifacts(const char *directory, const char *suite
     char labels_key[64];
     char expected[128];
     char actual[65];
-    if ((strcmp(suite, "cpu") != 0 && strcmp(suite, "timers") != 0) ||
+    if ((strcmp(suite, "cpu") != 0 && strcmp(suite, "timers") != 0 &&
+         strcmp(suite, "audio") != 0 && strcmp(suite, "audio2") != 0) ||
         checked_join(record_path, sizeof record_path, directory, "build-record.txt") != 0 ||
         snprintf(object_path, sizeof object_path, "%s/%s.bll", directory, suite) >= (int)sizeof object_path ||
         snprintf(labels_path, sizeof labels_path, "%s/%s.lbl", directory, suite) >= (int)sizeof labels_path ||
@@ -1337,6 +1490,44 @@ static int read_build_identity(const char *directory, const suite_oracle *oracle
         verify_pinned_source("timers/tests.s", oracle->timers_asm) != 0 ||
         verify_pinned_source("LICENSE", oracle->license) != 0) {
         return fail("oracle: source identity mismatch");
+    }
+    return 0;
+}
+
+static int verify_audio_build_identity(const char *directory, const suite_audio_oracle *oracle)
+{
+    static const char *const suites[AUDIO_SUITE_COUNT] = {"audio", "audio2"};
+    static const char *const source_fields[AUDIO_SUITE_COUNT][2] = {
+        {"audio_main_sha256", "audio_source_sha256"},
+        {"audio2_main_sha256", "audio2_source_sha256"}
+    };
+    char record_path[4096];
+    char actual[65];
+    char expected[128];
+    size_t suite;
+    if (checked_join(record_path, sizeof record_path, directory, "build-record.txt") != 0) {
+        return fail("audio build record path too long");
+    }
+    for (suite = 0u; suite < AUDIO_SUITE_COUNT; suite++) {
+        const char *main_path = suite == 0u ? "audio/main.c" : "audio2/main.c";
+        const char *asm_path = suite == 0u ? "audio/tests.s" : "audio2/tests.s";
+        if (record_value(record_path, source_fields[suite][0], expected, sizeof expected) != 0 ||
+            strcmp(expected, oracle->main_sha256[suite]) != 0 ||
+            record_value(record_path, source_fields[suite][1], expected, sizeof expected) != 0 ||
+            strcmp(expected, oracle->asm_sha256[suite]) != 0 ||
+            verify_pinned_source(main_path, oracle->main_sha256[suite]) != 0 ||
+            verify_pinned_source(asm_path, oracle->asm_sha256[suite]) != 0 ||
+            verify_suite_build_artifacts(directory, suites[suite]) != 0) {
+            return fail("audio oracle: source/build identity mismatch");
+        }
+    }
+    if (record_value(record_path, "ca65_tool_sha256", expected, sizeof expected) != 0 ||
+        !valid_hex(expected, 64u) ||
+        record_value(record_path, "ld65_tool_sha256", expected, sizeof expected) != 0 ||
+        !valid_hex(expected, 64u) ||
+        record_value(record_path, "linker_layout_sha256", expected, sizeof expected) != 0 ||
+        !valid_hex(expected, 64u) || file_sha256(record_path, actual) != 0) {
+        return fail("audio build record tool/layout identity mismatch");
     }
     return 0;
 }
@@ -2741,6 +2932,106 @@ static int write_timer_comparison(const char *path, const suite_oracle *oracle,
     return 0;
 }
 
+static int write_audio_comparison(const char *path, const suite_audio_oracle *oracle,
+                                  unsigned suite_index, const uint8_t *results,
+                                  uint32_t *agreements)
+{
+    atomic_output output = {0};
+    FILE *file;
+    uint32_t i;
+    uint32_t accepted_rows = 0u;
+    if (suite_index >= AUDIO_SUITE_COUNT || atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
+    for (i = 0u; i < AUDIO_MEANINGFUL; i++) {
+        size_t j;
+        int accepted = 0;
+        (void)fprintf(file, "result\t%" PRIu32 "\t%02x\tEXPECT(", i, results[i]);
+        for (j = 0u; j < oracle->counts[suite_index][i]; j++) {
+            if (j != 0u) (void)fputc('|', file);
+            (void)fprintf(file, "%02x", oracle->values[suite_index][i][j]);
+            if (oracle->values[suite_index][i][j] == results[i]) accepted = 1;
+        }
+        (void)fprintf(file, ")\t%s\n", accepted != 0 ? "source-accepted" : "source-mismatch");
+        if (accepted != 0) accepted_rows++;
+    }
+    (void)fprintf(file, "comparison\t%s\n", accepted_rows == AUDIO_MEANINGFUL ? "match" : "mismatch");
+    if (atomic_output_commit(&output) != 0) return fail("cannot close audio comparison record");
+    *agreements = accepted_rows;
+    return 0;
+}
+
+static int write_audio_run_record(const char *path, const char *build_directory,
+                                  const char *suite, const char *machine_profile,
+                                  const char *selected_profile, const suite_audio_oracle *oracle,
+                                  unsigned suite_index, const lynx_identity *identity,
+                                  const char *bll_sha, const char *labels_sha,
+                                  const char *oracle_sha, uint64_t ticks,
+                                  uint8_t probe, uint8_t marker, uint8_t progress,
+                                  int detected_model, uint32_t agreements)
+{
+    char build_record[4096];
+    char build_record_sha[65];
+    char wrapper_sha[65];
+    char layout_sha[65];
+    char builder_sha[65];
+    char ca65_sha[65];
+    char ld65_sha[65];
+    char source_main[65];
+    char source_asm[65];
+    char object_sha[65];
+    char labels_identity[65];
+    char object_key[64];
+    char labels_key[64];
+    char wrapper_key[64];
+    atomic_output output = {0};
+    FILE *file;
+    if (suite_index >= AUDIO_SUITE_COUNT || checked_join(build_record, sizeof build_record,
+        build_directory, "build-record.txt") != 0 ||
+        snprintf(object_key, sizeof object_key, "%s_object_sha256", suite) >= (int)sizeof object_key ||
+        snprintf(labels_key, sizeof labels_key, "%s_labels_sha256", suite) >= (int)sizeof labels_key ||
+        snprintf(wrapper_key, sizeof wrapper_key, "%s_wrapper_sha256", suite) >= (int)sizeof wrapper_key ||
+        record_value(build_record, wrapper_key, wrapper_sha, sizeof wrapper_sha) != 0 ||
+        record_value(build_record, "linker_layout_sha256", layout_sha, sizeof layout_sha) != 0 ||
+        record_value(build_record, "build_script_sha256", builder_sha, sizeof builder_sha) != 0 ||
+        record_value(build_record, "ca65_tool_sha256", ca65_sha, sizeof ca65_sha) != 0 ||
+        record_value(build_record, "ld65_tool_sha256", ld65_sha, sizeof ld65_sha) != 0 ||
+        record_value(build_record, object_key, object_sha, sizeof object_sha) != 0 ||
+        record_value(build_record, labels_key, labels_identity, sizeof labels_identity) != 0 ||
+        file_sha256(build_record, build_record_sha) != 0) {
+        return fail("audio run record build identity is incomplete");
+    }
+    (void)snprintf(source_main, sizeof source_main, "%s", oracle->main_sha256[suite_index]);
+    (void)snprintf(source_asm, sizeof source_asm, "%s", oracle->asm_sha256[suite_index]);
+    if (atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
+    (void)fprintf(file,
+        "schema=lynx-audio-suite-run-v1\nsuite=%s\nmachine_profile=%s\nprofile_input=%s\n"
+        "detected_model=%s\nsource_tuple_model=not-applicable\nmodel_probe_bytes=%02x,%02x\n"
+        "source_main_sha256=%s\nsource_assembly_sha256=%s\nwrapper_sha256=%s\n"
+        "builder_sha256=%s\nlayout_sha256=%s\nca65_tool_sha256=%s\nld65_tool_sha256=%s\n"
+        "object_sha256=%s\nlabels_sha256=%s\nbll_sha256=%s\nlabels_file_sha256=%s\n"
+        "build_record_sha256=%s\noracle_sha256=%s\n"
+        "result_extent=18\nexpected_count=18\nmeaningful_count=18\ntick_min=%u\ntick_max=%u\n"
+        "ticks_observed=%" PRIu64 "\ncompletion_margin_ticks=%" PRIu64 "\nmaximum_headroom_ticks=%" PRIu64 "\n"
+        "guest_ticks=%" PRIu64 "\nminimum_guest_ticks=%u\nmaximum_guest_ticks=%u\n"
+        "guest_progress=%u\ncompletion_sentinel=a5\nzero_page_initialization=full-256-byte-wrapper-clear\n"
+        "source_agreements=%u\nsource_comparison=separate-record\n"
+        "timing_policy=%s\naudio_policy=%s\naudio_rate_num=%u\naudio_rate_den=%u\n"
+        "audio_channels=%u\naudio_bits=%u\nhardware_accuracy=unverified\nprofile_qualification=unresolved\n",
+        suite, machine_profile, selected_profile,
+        detected_model < 0 ? "unknown" : profile_label((unsigned)detected_model), probe, marker,
+        source_main, source_asm, wrapper_sha, builder_sha, layout_sha, ca65_sha, ld65_sha,
+        object_sha, labels_identity, bll_sha, labels_sha, build_record_sha, oracle_sha,
+        AUDIO_MIN_TICKS, AUDIO_MAX_TICKS, ticks, ticks - AUDIO_MIN_TICKS,
+        AUDIO_MAX_TICKS - ticks, ticks, AUDIO_MIN_TICKS, AUDIO_MAX_TICKS, (unsigned)progress,
+        agreements,
+        identity->timing_policy == LYNX_TIMING_POLICY_LEGACY_FLAT5 ? "legacy-flat5" : "unknown",
+        identity->audio_policy == LYNX_AUDIO_POLICY_DIGITAL_1 ? "digital-1" : "unknown",
+        identity->audio_rate_num, identity->audio_rate_den, identity->audio_channels, identity->audio_bits);
+    if (atomic_output_commit(&output) != 0) return fail("cannot close audio run record");
+    return 0;
+}
+
 static const char *profile_label(unsigned profile)
 {
     return profile == 0u ? "lynx1" : "lynx2";
@@ -3177,6 +3468,247 @@ static int run_cpu(const char *machine_profile_name, const char *selected_profil
     } else if (guest_model != (int)selected_profile) {
         result = fail("detected model does not match selected profile input");
     }
+done:
+    machine_destroy(&instance);
+    free(labels);
+    free(bll);
+    return result;
+}
+
+static int run_audio(const char *suite_name, const char *machine_profile_name,
+                     const char *selected_profile_name, const char *directory,
+                     const char *legacy_oracle_path, const char *extended_oracle_path,
+                     int no_run, uint32_t maximum_ticks)
+{
+    uint8_t *bll = NULL;
+    size_t bll_length = 0u;
+    char *labels = NULL;
+    size_t labels_length = 0u;
+    char bll_path[4096];
+    char labels_path[4096];
+    char record_path[4096];
+    char raw_path[4096];
+    char comparison_path[4096];
+    char oracle_sha[65];
+    char bll_sha[65];
+    char labels_sha[65];
+    char output_key[96];
+    char filename[128];
+    uint8_t results[AUDIO_MEANINGFUL];
+    uint8_t progress = 0u;
+    uint8_t model = 0u;
+    uint8_t done = 0u;
+    uint8_t probe = 0u;
+    uint32_t machine_profile;
+    uint32_t selected_profile;
+    unsigned suite_index;
+    uint64_t guest_ticks = 0u;
+    uint64_t total_consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    lynx_watch_event event;
+    lynx_identity identity;
+    lynx__cpu initial_cpu;
+    machine_instance instance = {0};
+    suite_symbols symbols;
+    suite_oracle legacy_oracle;
+    suite_audio_oracle audio_oracle;
+    int complete = 0;
+    int initial_done_clear_seen = 0;
+    int detected_model = -1;
+    uint32_t source_agreements = 0u;
+    int result = 1;
+
+    if (strcmp(suite_name, "audio") == 0) suite_index = 0u;
+    else if (strcmp(suite_name, "audio2") == 0) suite_index = 1u;
+    else return fail("audio runner requires suite audio or audio2");
+    if (profile_index(machine_profile_name, &machine_profile) != 0 ||
+        profile_index(selected_profile_name, &selected_profile) != 0) {
+        return fail("audio runner requires explicit lynx1 or lynx2 profiles");
+    }
+    if (maximum_ticks < AUDIO_MIN_TICKS || maximum_ticks > AUDIO_MAX_TICKS) {
+        return fail("audio time: guest ticks outside bounded completion window");
+    }
+    machine_profile = machine_profile == 0u ? LYNX_PROFILE_LYNX1 : LYNX_PROFILE_LYNX2;
+    if (validate_owned_output_directory(directory) != 0 ||
+        parse_oracle(legacy_oracle_path, &legacy_oracle) != 0 ||
+        read_build_identity(directory, &legacy_oracle) != 0 ||
+        parse_audio_oracle(legacy_oracle_path, extended_oracle_path, &audio_oracle) != 0 ||
+        verify_audio_build_identity(directory, &audio_oracle) != 0) goto done;
+    if (snprintf(filename, sizeof filename, "%s.bll", suite_name) >= (int)sizeof filename ||
+        checked_join(bll_path, sizeof bll_path, directory, filename) != 0 ||
+        snprintf(filename, sizeof filename, "%s.lbl", suite_name) >= (int)sizeof filename ||
+        checked_join(labels_path, sizeof labels_path, directory, filename) != 0 ||
+        snprintf(output_key, sizeof output_key, "%s-%s", suite_name, machine_profile_name) >= (int)sizeof output_key ||
+        snprintf(filename, sizeof filename, "run-record-%s.txt", output_key) >= (int)sizeof filename ||
+        checked_join(record_path, sizeof record_path, directory, filename) != 0 ||
+        snprintf(filename, sizeof filename, "raw-results-%s.tsv", output_key) >= (int)sizeof filename ||
+        checked_join(raw_path, sizeof raw_path, directory, filename) != 0 ||
+        snprintf(filename, sizeof filename, "comparison-%s.tsv", output_key) >= (int)sizeof filename ||
+        checked_join(comparison_path, sizeof comparison_path, directory, filename) != 0) {
+        (void)fail("audio suite input path too long");
+        goto done;
+    }
+    if (read_file(bll_path, &bll, &bll_length, 65536u) != 0 ||
+        read_text(labels_path, &labels, &labels_length, 16384u) != 0 ||
+        parse_symbols(labels, labels_length, &symbols) != 0 ||
+        ranges_valid(&symbols, AUDIO_MEANINGFUL) != 0 ||
+        symbols.found[12] == 0u || symbols.found[13] == 0u ||
+        symbols.value[1] != symbols.value[8] ||
+        symbols.value[12] < 0x01F7u || symbols.value[12] - 0x01F6u >= bll_length ||
+        bll[symbols.value[12] - 0x01F6u] != 0x60u ||
+        symbols.value[13] < 0x01F9u || symbols.value[13] - 0x01F6u >= bll_length ||
+        bll[symbols.value[13] - 0x01F6u - 3u] != 0x20u ||
+        bll[symbols.value[13] - 0x01F6u - 2u] != (uint8_t)symbols.value[8] ||
+        bll[symbols.value[13] - 0x01F6u - 1u] != (uint8_t)(symbols.value[8] >> 8)) {
+        (void)fail("audio symbol extent, aliases or wrapper return gate invalid");
+        goto done;
+    }
+    if (file_sha256(bll_path, bll_sha) != 0 || file_sha256(labels_path, labels_sha) != 0 ||
+        file_sha256(legacy_oracle_path, oracle_sha) != 0 ||
+        clear_old_outputs(directory, output_key) != 0) goto done;
+    if (machine_create(&instance, bll, bll_length, machine_profile) != 0 ||
+        lynx_get_identity(instance.machine, &identity) != LYNX_OK ||
+        identity.has_content != 1u || identity.content_format != LYNX_CONTENT_BS93 ||
+        identity.startup_tier != LYNX_STARTUP_A || identity.entry_addr != symbols.value[0] ||
+        identity.object_len != bll_length || identity.timing_policy != LYNX_TIMING_POLICY_LEGACY_FLAT5 ||
+        identity.audio_policy != LYNX_AUDIO_POLICY_DIGITAL_1 || identity.audio_rate_num != 40000u ||
+        identity.audio_rate_den != 1u || identity.audio_channels != 2u || identity.audio_bits != 16u ||
+        symbols.value[7] < BLL_HEADER_SIZE || symbols.value[7] - 0x01F6u != bll_length) {
+        (void)fail("audio public BS93 identity, startup tier or immutable audio policy mismatch");
+        goto done;
+    }
+    {
+        lynx__sha256 state;
+        uint8_t digest[32];
+        char content_sha[65];
+        lynx__sha256_init(&state);
+        lynx__sha256_update(&state, bll, bll_length);
+        lynx__sha256_final(&state, digest);
+        lynx__sha256_hex(digest, content_sha);
+        if (memcmp(identity.content_sha256, digest, sizeof digest) != 0 ||
+            verify_suite_build_artifacts(directory, suite_name) != 0) {
+            (void)fail("audio public BLL content or build object identity mismatch");
+            goto done;
+        }
+        (void)content_sha;
+    }
+    for (uint32_t i = 0u; i < 0x100u; i++) {
+        if (instance.machine->ram[i] != 0u) {
+            (void)fail("audio fresh machine zero-page was not clear before guest entry");
+            goto done;
+        }
+    }
+    for (uint32_t i = 0u; i < AUDIO_MEANINGFUL; i++) {
+        if (instance.machine->ram[symbols.value[2] + i] != 0u) {
+            (void)fail("audio fresh machine result block was not clear before guest entry");
+            goto done;
+        }
+    }
+    if (lynx_watch_configure(instance.machine, symbols.value[6], 1u) != LYNX_OK) {
+        (void)fail("audio runner could not arm post-test sentinel watch");
+        goto done;
+    }
+    initial_cpu = instance.machine->cpu;
+    if (no_run != 0) {
+        int completion_result;
+        if (prove_held_no_run(&instance, &symbols, AUDIO_MIN_TICKS, &guest_ticks) != 0) goto done;
+        total_consumed = guest_ticks;
+        completion_result = validate_guest_completion(&instance, &symbols, suite_name, 0, 0, 0,
+                                                      guest_ticks, total_consumed, AUDIO_MIN_TICKS,
+                                                      AUDIO_MAX_TICKS, &done, &progress, &model, &probe);
+        if (completion_result != 1 || lynx__machine_set_bus_hold(instance.machine, 0u) != LYNX_OK ||
+            instance.machine->bus_hold != 0u) {
+            if (completion_result == 0) (void)fail("audio no-run: completion validator accepted a held suite");
+            goto done;
+        }
+        puts("audio no-run control: held guest did not execute; same instance released for resumed completion");
+    }
+    while (total_consumed < maximum_ticks) {
+        uint64_t budget = maximum_ticks - total_consumed;
+        uint64_t used = 0u;
+        uint64_t before = 0u;
+        uint64_t after = 0u;
+        if (budget > 10000u) budget = 10000u;
+        if (lynx_guest_ticks(instance.machine, &before) != LYNX_OK ||
+            lynx_advance(instance.machine, budget, &used, &stop) != LYNX_OK ||
+            used > budget || lynx_guest_ticks(instance.machine, &after) != LYNX_OK || after < before ||
+            after - before != used || after > maximum_ticks) {
+            (void)fail("audio bounded guest advance or tick accounting failed");
+            goto done;
+        }
+        total_consumed += used;
+        guest_ticks = after;
+        if (stop == LYNX_STOP_WATCH) {
+            if (lynx_watch_get(instance.machine, &event) != LYNX_OK || event.hit != 1u ||
+                event.address != symbols.value[6] || event.return_tick != after ||
+                event.return_tick != event.hit_tick + 1u) {
+                (void)fail("audio completion watch did not match a guest sentinel write");
+                goto done;
+            }
+            if (event.value == 0u && initial_done_clear_seen == 0) {
+                uint8_t initial_progress = 0u;
+                uint8_t initial_model = 0u;
+                if (lynx_read_memory(instance.machine, symbols.value[4], &initial_progress, 1u) != LYNX_OK ||
+                    lynx_read_memory(instance.machine, symbols.value[5], &initial_model, 1u) != LYNX_OK ||
+                    initial_progress != 0u || initial_model != 0u ||
+                    lynx_watch_configure(instance.machine, symbols.value[6], 1u) != LYNX_OK) {
+                    (void)fail("audio wrapper initial sentinel clear was not an empty-state prefix");
+                    goto done;
+                }
+                initial_done_clear_seen = 1;
+                continue;
+            }
+            if (event.value == 0xA5u && initial_done_clear_seen != 0) {
+                complete = 1;
+                break;
+            }
+            (void)fail("audio sentinel value or write order mismatch");
+            goto done;
+        }
+        if (stop != LYNX_STOP_BUDGET) {
+            (void)fail("audio guest stopped before completion");
+            goto done;
+        }
+        if (used == 0u || after <= before) {
+            (void)fail("audio guest made no bounded progress toward completion");
+            goto done;
+        }
+    }
+    {
+        const int execution_started = memcmp(&initial_cpu, &instance.machine->cpu, sizeof initial_cpu) != 0;
+        if (validate_guest_completion(&instance, &symbols, suite_name, execution_started, complete,
+                                      initial_done_clear_seen, guest_ticks, total_consumed,
+                                      AUDIO_MIN_TICKS, maximum_ticks,
+                                      &done, &progress, &model, &probe) != 0) goto done;
+    }
+    if (lynx_read_memory(instance.machine, symbols.value[2], results, AUDIO_MEANINGFUL) != LYNX_OK) {
+        (void)fail("audio result block could not be read after completion");
+        goto done;
+    }
+    detected_model = probe_model(probe, model);
+    if (write_raw(raw_path, suite_name, machine_profile_name, selected_profile_name,
+                  output_key, results, AUDIO_MEANINGFUL) != 0 ||
+        write_audio_comparison(comparison_path, &audio_oracle, suite_index, results,
+                               &source_agreements) != 0 ||
+        write_audio_run_record(record_path, directory, suite_name, machine_profile_name,
+                               selected_profile_name, &audio_oracle, suite_index, &identity,
+                               bll_sha, labels_sha, oracle_sha, guest_ticks,
+                               probe, model, progress, detected_model, source_agreements) != 0) goto done;
+    if (detected_model < 0) {
+        result = fail("audio guest model probe/marker evidence is invalid");
+        goto done;
+    }
+    if (detected_model != (int)selected_profile) {
+        result = fail("audio guest model does not match selected profile input");
+        goto done;
+    }
+    printf("audio observation complete: suite=%s profile=%s ticks=%" PRIu64
+           " progress=%u source_rows=18 source_agreements=%u model=%s\n",
+           suite_name, machine_profile_name, guest_ticks, (unsigned)progress,
+           source_agreements, profile_label((unsigned)detected_model));
+    puts("timing_policy=legacy-flat5 audio_policy=digital-1 audio_rate=40000/1 stereo_s16 hardware_accuracy=unverified profile_qualification=unresolved");
+    if (source_agreements != AUDIO_MEANINGFUL) result = fail("audio source oracle comparison mismatch");
+    else result = 0;
 done:
     machine_destroy(&instance);
     free(labels);
@@ -4875,6 +5407,24 @@ static int validate_cpu_record_mode(const char *selected_profile,
 
 int main(int argc, char **argv)
 {
+    if (argc == 5 && strcmp(argv[1], "validate-audio-oracle") == 0) {
+        suite_oracle legacy;
+        suite_audio_oracle audio;
+        if (parse_oracle(argv[2], &legacy) != 0 || read_build_identity(argv[4], &legacy) != 0 ||
+            parse_audio_oracle(argv[2], argv[3], &audio) != 0 ||
+            verify_audio_build_identity(argv[4], &audio) != 0) return 1;
+        puts("audio oracle: exact audio/audio2 source rows, case coverage, and build identities valid");
+        return 0;
+    }
+    if (argc == 8 && strcmp(argv[1], "observe") == 0 && strcmp(argv[2], "audio") == 0) {
+        return run_audio(argv[3], argv[4], argv[4], argv[5], argv[6], argv[7], 0, AUDIO_MAX_TICKS);
+    }
+    if (argc == 8 && strcmp(argv[1], "no-run") == 0 && strcmp(argv[2], "audio") == 0) {
+        return run_audio(argv[3], argv[4], argv[4], argv[5], argv[6], argv[7], 1, AUDIO_MAX_TICKS);
+    }
+    if (argc == 8 && strcmp(argv[1], "run-audio-selected") == 0) {
+        return run_audio(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], 0, AUDIO_MAX_TICKS);
+    }
     if (argc == 3 && strcmp(argv[1], "validate-page-mode-oracle") == 0) {
         page_mode_oracle oracle;
         if (parse_page_mode_oracle(argv[2], &oracle) != 0 ||

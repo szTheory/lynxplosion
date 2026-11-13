@@ -91,6 +91,7 @@ static void machine_set_guest_tick(struct lynx_machine *m, uint64_t tick)
         m->timer_bank.last_event_tick = 0u;
     }
     if (tick > m->guest_ticks) {
+        lynx__timer_audio_expire_status(&m->timer_bank, &m->audio);
         m->audio.same_tick_device_cursor = 0u;
         m->audio.same_tick_sample_cursor = 0u;
         if (m->audio.event_cursor_valid != 0u && tick > m->audio.event_tick) {

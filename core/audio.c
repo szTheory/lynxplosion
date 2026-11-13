@@ -350,7 +350,6 @@ bool lynx__audio_write(lynx__audio_state *audio, uint16_t addr, uint8_t value,
     switch (reg) {
     case AUDIO_VOLUME:
         channel->volume = value;
-        channel_update_output(channel);
         break;
     case AUDIO_FEEDBACK:
         channel->feedback = value;
@@ -361,7 +360,6 @@ bool lynx__audio_write(lynx__audio_state *audio, uint16_t addr, uint8_t value,
         break;
     case AUDIO_SHIFT_LOW:
         channel->shift = (uint16_t)((channel->shift & 0x0F00u) | value);
-        channel_update_output(channel);
         break;
     case AUDIO_BACKUP:
         channel->backup = value;
@@ -374,7 +372,6 @@ bool lynx__audio_write(lynx__audio_state *audio, uint16_t addr, uint8_t value,
         if ((value & AUDIO_CONTROL_A_RESET_DONE) != 0u) {
             channel->control_b = (uint8_t)(channel->control_b & (uint8_t)~AUDIO_CONTROL_B_DONE);
         }
-        channel_update_output(channel);
         break;
     case AUDIO_COUNT:
         channel->count = value;
@@ -383,11 +380,10 @@ bool lynx__audio_write(lynx__audio_state *audio, uint16_t addr, uint8_t value,
         channel->shift = (uint16_t)(((uint32_t)channel->shift & UINT32_C(0x00FF)) |
                                     ((uint32_t)(value & 0xF0u) << 4));
         channel->control_b = (uint8_t)((channel->control_b & 0xF0u) | (value & AUDIO_CONTROL_B_DONE));
-        if ((value & AUDIO_CONTROL_B_BORROW_IN) != 0u && channel_can_advance(channel)) {
+        if ((value & AUDIO_CONTROL_B_BORROW_IN) != 0u) {
             clocked = audio_clock_channel(audio, index, tick, AUDIO_EVENT_CLOCK,
-                                          false, true, sink, NULL);
+                                          false, false, sink, NULL);
         }
-        channel_update_output(channel);
         break;
     }
     if (!clocked) {

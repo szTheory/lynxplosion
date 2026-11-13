@@ -214,3 +214,22 @@ ctest --preset check --no-tests=error --output-on-failure \
 ```
 
 The pinned upstream sources and this project’s wrapper remain subject to their fixture manifests and notices. No firmware or commercial game content is used. These software controls establish parser, identity, bounds and repeatable guest-execution behavior for the pinned source; hardware accuracy and public profile qualification remain unresolved.
+
+
+## Fresh audio observations
+
+The pinned `audio` and `audio2` guests now return on fresh `lynx1` and `lynx2`
+instances with matching independent profile probes, progress and post-return
+sentinels. Each retains exactly eighteen raw bytes and eighteen source comparison
+rows; all rows match the unchanged source alternatives, including audio2 row 9's
+`30|34`. The extended source oracle is requested explicitly with `--include-audio`;
+the default CPU/timer oracle remains separate and unchanged.
+
+The observations exposed software gaps in manual CTLB borrow, output latching
+and ring status lifetime. Those are repaired and documented in `docs/audio.md`;
+the authored hot-volume/event checks now verify output latching until a clock.
+Focused audio, snapshot, sliced/restored transcript and timer regressions pass
+natively. Strict timer row 14 remains legacy `0c` versus source `0d` and video
+policy 1 `0f` versus source `0d`. The existing page-mode blockers and unresolved
+O1/model qualification remain unchanged. Audio record hostility controls and
+cross-compiler/final qualification are still pending the rest of Phase 6.

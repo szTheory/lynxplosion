@@ -51,6 +51,16 @@ updates DONE/reset-DONE policy, then clocks its shifter and output. The zero
 value therefore borrows on the next selected edge. The exact control/status
 lifetime and first edge are deterministic software policy.
 
+Output changes on an audio clock/underflow or an explicit OUT write. Volume,
+seed and control writes retain the current output until that clock; entering
+integrate mode starts from the retained output. A CTLB software borrow clocks
+the counter even with counting disabled, without manufacturing readable clock
+status bits. This behavior is checked against the pinned MIT audio suites.
+For the timer/audio ring, borrow-in/out are guest-tick pulses. Linked LAST_CLOCK
+falls with the pulse; divider LAST_CLOCK retains its last level until another
+clock or CTLB write. DONE remains a separate latch. These lifetime rules are
+software policy supported by those source comparisons, not hardware measurements.
+
 The software link order is T1→T3→T5→T7→A0→A1→A2→A3→T1. Timer 0→2→4 remains
 separate and keeps its prior ordering. A borrow consumes one link pulse and
 emits at most one successor when that next node selects link, including a

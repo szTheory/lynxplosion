@@ -98,7 +98,7 @@ foreach(required MODE ROOT WORK SCRATCH_ROOT TEST_BINARY ENV_EXECUTABLE)
     message(FATAL_ERROR "suite_driver: -D${required} is required")
   endif()
 endforeach()
-if(NOT MODE MATCHES "^(cpu|cpu_no_run|timers_no_run|completion_controls|selection_controls|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls|timer_observation|timer_video_revisit|timer_video_revisit_controls|timer_strict_controls|timer_cascade_model|timer_model_controls|timer_result_controls|timer_pending_controls|page_mode_observation|page_mode_controls)$")
+if(NOT MODE MATCHES "^(cpu|cpu_no_run|timers_no_run|completion_controls|selection_controls|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls|timer_observation|timer_video_revisit|timer_video_revisit_controls|timer_strict_controls|timer_cascade_model|timer_model_controls|timer_result_controls|timer_pending_controls|page_mode_observation|page_mode_controls|audio_observation|audio_controls|audio2_controls|audio_source_controls)$")
   message(FATAL_ERROR "suite_driver: unknown mode")
 endif()
 if(MODE STREQUAL "cpu" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
@@ -106,6 +106,9 @@ if(MODE STREQUAL "cpu" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
 endif()
 if(MODE STREQUAL "page_mode_observation" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
   message(FATAL_ERROR "suite_driver: explicit page-mode PROFILE is required")
+endif()
+if(MODE STREQUAL "audio_observation" AND (NOT PROFILE MATCHES "^(lynx1|lynx2)$" OR NOT SUITE MATCHES "^(audio|audio2)$"))
+  message(FATAL_ERROR "suite_driver: explicit audio SUITE and PROFILE are required")
 endif()
 
 function(write_suite_owner_marker directory)
@@ -182,6 +185,7 @@ if(MODE MATCHES "^page_mode")
 else()
   set(SUITE_BUILD "${WORK}/build")
   set(ORACLE "${WORK}/build/oracle.tsv")
+  set(AUDIO_ORACLE "${WORK}/build/audio-oracle.tsv")
 endif()
 set(FAILURE "")
 
@@ -1838,6 +1842,26 @@ else()
       set(FAILURE "generated oracle validation failed: ${validate_rc} ${validate_out} ${validate_err}")
     endif()
   endif()
+
+  if(FAILURE STREQUAL "" AND MODE MATCHES "^audio")
+    execute_process(
+      COMMAND sh "${ROOT}/scripts/generate-suite-oracle.sh"
+              --source "${ROOT}/build/pins/lynx-tests" --include-audio --out "${AUDIO_ORACLE}"
+      TIMEOUT 15 RESULT_VARIABLE audio_oracle_rc OUTPUT_VARIABLE audio_oracle_out ERROR_VARIABLE audio_oracle_err)
+    if(NOT audio_oracle_rc STREQUAL "0")
+      set(FAILURE "extended audio source oracle generation failed: ${audio_oracle_rc} ${audio_oracle_out} ${audio_oracle_err}")
+    endif()
+  endif()
+
+  if(FAILURE STREQUAL "" AND MODE MATCHES "^audio")
+    execute_process(COMMAND "${TEST_BINARY}" validate-audio-oracle
+      "${ORACLE}" "${AUDIO_ORACLE}" "${SUITE_BUILD}"
+      TIMEOUT 10 RESULT_VARIABLE audio_validate_rc OUTPUT_VARIABLE audio_validate_out ERROR_VARIABLE audio_validate_err)
+    if(NOT audio_validate_rc STREQUAL "0" OR
+       NOT audio_validate_out MATCHES "audio oracle: exact audio/audio2 source rows, case coverage, and build identities valid")
+      set(FAILURE "extended audio oracle/build identity validation failed: ${audio_validate_rc} ${audio_validate_out} ${audio_validate_err}")
+    endif()
+  endif()
 endif()
 
 if(FAILURE STREQUAL "" AND MODE STREQUAL "page_mode_observation")
@@ -1848,6 +1872,38 @@ if(FAILURE STREQUAL "" AND MODE STREQUAL "page_mode_observation")
   expect_success("page-mode record: exact SERCTL blocker and missing six-byte observation valid for ${PROFILE}"
     "${TEST_BINARY}" validate-page-mode-record "${PROFILE}" "${WORK}" "${SUITE_BUILD}" "${ORACLE}" "${record}")
   string(APPEND all_run_out "LYNX-SKIP: page-mode source requires unavailable SERCTL write at $FD8C\n")
+elseif(FAILURE STREQUAL "" AND MODE STREQUAL "audio_observation")
+  set(all_run_out "")
+  expect_success("audio observation complete: suite=${SUITE} profile=${PROFILE}"
+    "${TEST_BINARY}" observe audio "${SUITE}" "${PROFILE}" "${SUITE_BUILD}" "${ORACLE}" "${AUDIO_ORACLE}")
+  set(audio_raw "${SUITE_BUILD}/raw-results-${SUITE}-${PROFILE}.tsv")
+  set(audio_comparison "${SUITE_BUILD}/comparison-${SUITE}-${PROFILE}.tsv")
+  set(audio_record "${SUITE_BUILD}/run-record-${SUITE}-${PROFILE}.txt")
+  if(NOT EXISTS "${audio_raw}" OR NOT EXISTS "${audio_comparison}" OR NOT EXISTS "${audio_record}")
+    message(FATAL_ERROR "suite_driver: fresh audio observation omitted a required record for ${SUITE}/${PROFILE}")
+  endif()
+  file(STRINGS "${audio_raw}" audio_rows REGEX "^result\t[0-9]+\t[0-9a-f][0-9a-f]$")
+  file(STRINGS "${audio_comparison}" audio_comparison_rows REGEX "^result\t[0-9]+\t")
+  list(LENGTH audio_rows audio_count)
+  list(LENGTH audio_comparison_rows audio_comparison_count)
+  set(audio_accepted 0)
+  foreach(row IN LISTS audio_comparison_rows)
+    if(row MATCHES "source-accepted$")
+      math(EXPR audio_accepted "${audio_accepted} + 1")
+    else()
+      message(FATAL_ERROR "suite_driver: source mismatch in fresh audio comparison: ${row}")
+    endif()
+  endforeach()
+  file(READ "${audio_record}" audio_record_text)
+  if(NOT audio_count EQUAL 18 OR NOT audio_comparison_count EQUAL 18 OR NOT audio_accepted EQUAL 18 OR
+     NOT audio_record_text MATCHES "meaningful_count=18" OR
+     NOT audio_record_text MATCHES "source_agreements=18" OR
+     NOT audio_record_text MATCHES "completion_sentinel=a5" OR
+     NOT audio_record_text MATCHES "hardware_accuracy=unverified" OR
+     NOT audio_record_text MATCHES "profile_qualification=unresolved")
+    message(FATAL_ERROR "suite_driver: fresh audio observation evidence shape or policy fields drifted")
+  endif()
+  string(APPEND all_run_out "${SUITE} observation: fresh ${PROFILE} guest returned; 18 raw rows and 18 source-agreement rows retained\n")
 elseif(FAILURE STREQUAL "" AND MODE STREQUAL "page_mode_controls")
   set(all_run_out "")
   foreach(profile lynx1 lynx2)

@@ -213,6 +213,7 @@ lynx__work_status lynx__timer_audio_write(lynx__timer_bank *bank,
                                            uint8_t value, uint64_t tick,
                                            lynx__audio_event_sink *sink);
 void lynx__timer_mark_tick(lynx__timer_bank *bank, uint64_t tick);
+void lynx__timer_audio_expire_status(lynx__timer_bank *bank, lynx__audio_state *audio);
 bool lynx__timer_available(uint16_t addr);
 uint8_t lynx__timer_peek(const lynx__timer_bank *bank, uint16_t addr);
 bool lynx__timer_write(lynx__timer_bank *bank, uint16_t addr, uint8_t value);

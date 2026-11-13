@@ -192,6 +192,10 @@ policy.pins.self_test	policy
 policy.vectors_pin	policy
 policy.vectors_pin.self_test	policy
 runner.cli	runner
+suite.audio.observation.lynx1	suite
+suite.audio.observation.lynx2	suite
+suite.audio2.observation.lynx1	suite
+suite.audio2.observation.lynx2	suite
 suite.build	suite
 suite.build_controls	suite
 suite.completion_controls	suite

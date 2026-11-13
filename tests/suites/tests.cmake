@@ -15,13 +15,18 @@ set_target_properties(lynx-test-suites PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PRO
 find_program(LYNX_SUITES_ENV_EXECUTABLE env REQUIRED)
 function(lynx_suite_test name mode timeout)
   set(profile "")
+  set(suite "")
   if(ARGC GREATER 3)
     set(profile "${ARGV3}")
+  endif()
+  if(ARGC GREATER 4)
+    set(suite "${ARGV4}")
   endif()
   lynx_add_test(NAME ${name}
     COMMAND ${CMAKE_COMMAND}
       -DMODE=${mode}
       -DPROFILE=${profile}
+      -DSUITE=${suite}
       -DROOT=${PROJECT_SOURCE_DIR}
       -DWORK=${LYNX_SCRATCH_DIR}/suites/${name}
       -DSCRATCH_ROOT=${LYNX_SCRATCH_DIR}/suites
@@ -41,6 +46,10 @@ lynx_suite_test(suite.selection_controls selection_controls 30)
 lynx_suite_test(suite.oracle_tracer tracer 60)
 lynx_suite_test(suite.oracle_controls oracle_controls 60)
 lynx_suite_test(suite.symbol_controls symbol_controls 60)
+lynx_suite_test(suite.audio.observation.lynx1 audio_observation 180 lynx1 audio)
+lynx_suite_test(suite.audio.observation.lynx2 audio_observation 180 lynx2 audio)
+lynx_suite_test(suite.audio2.observation.lynx1 audio_observation 180 lynx1 audio2)
+lynx_suite_test(suite.audio2.observation.lynx2 audio_observation 180 lynx2 audio2)
 lynx_suite_test(suite.page_mode.observation.lynx1 page_mode_observation 300 lynx1)
 lynx_suite_test(suite.page_mode.observation.lynx2 page_mode_observation 300 lynx2)
 lynx_suite_test(suite.page_mode.controls page_mode_controls 300)

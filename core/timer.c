@@ -292,6 +292,21 @@ static bool audio_channel_can_advance(const lynx__audio_channel *channel)
             (channel->control_a & 0x50u) != 0u);
 }
 
+/* Borrow indications are guest-tick pulses, not retained DONE latches.
+   A linked clock's last input level falls with the pulse; divider clocks
+   retain their last level until their next clock or register write. */
+void lynx__timer_audio_expire_status(lynx__timer_bank *bank, lynx__audio_state *audio)
+{
+    for (uint8_t node = 0u; node < 4u; node++) {
+        lynx__timer *timer = &bank->timers[timer_ring_index(node)];
+        const uint8_t mask = (timer->control_a & 7u) == TIMER_SOURCE_LINK ? 7u : 3u;
+        timer->control_b = (uint8_t)(timer->control_b & (uint8_t)~mask);
+        lynx__audio_channel *channel = &audio->channels[node];
+        const uint8_t audio_mask = (channel->control_a & 7u) == TIMER_SOURCE_LINK ? 7u : 3u;
+        channel->control_b = (uint8_t)(channel->control_b & (uint8_t)~audio_mask);
+    }
+}
+
 static bool timer_ring_clock(lynx__timer_bank *bank, uint8_t timer_index,
                              bool forced, bool incoming_link, bool expose_status,
                              bool *borrowed_out, uint8_t *borrow_mask)
@@ -598,6 +613,7 @@ static lynx__work_status work_status_for_candidate(lynx__timer_bank *bank,
     lynx__audio_event_sink *work_sink = sink != NULL ? &staged_sink : NULL;
 
     if (tick > current_tick) {
+        lynx__timer_audio_expire_status(&next_bank, &next_audio);
         next_audio.same_tick_device_cursor = 0u;
         next_audio.same_tick_sample_cursor = 0u;
         if (next_audio.event_cursor_valid != 0u && tick > next_audio.event_tick) {
@@ -841,11 +857,13 @@ lynx__work_status lynx__timer_audio_write(lynx__timer_bank *bank,
                                 (uint8_t)((addr - 0xFD20u) / 8u);
         const uint8_t reg = addr == 0xFD50u ? UINT8_MAX :
                             (uint8_t)((addr - 0xFD20u) % 8u);
+        const bool forced_borrow = channel != UINT8_MAX && reg == 7u &&
+                                   (value & 0x02u) != 0u &&
+                                   next_audio.channels[channel].count == 0u;
         if (!lynx__audio_write(&next_audio, addr, value, tick, work_sink)) {
             return LYNX__WORK_CAPACITY;
         }
-        if (channel != UINT8_MAX && reg == 7u && (value & 0x02u) != 0u &&
-            (next_audio.channels[channel].control_b & 0x01u) != 0u &&
+        if (forced_borrow &&
             !ring_queue_successor(&next_bank, &next_audio, (uint8_t)(4u + channel))) {
             return LYNX__WORK_CAPACITY;
         }
