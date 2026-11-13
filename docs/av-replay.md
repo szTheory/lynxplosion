@@ -148,3 +148,6 @@ for one destination and independently validates the single winner. Test-build
 fault controls cover writes and closes for WAV, event, and manifest files,
 abort just before publication, and preserve existing, foreign, markerless,
 replaced-inode, and symlink targets.
+Publication controls use a shorter released/pressed/released timeline with the
+same source-built guest and complete artifact validation; the full replay and
+checkpoint scenario remains in `consumer.av_replay`.

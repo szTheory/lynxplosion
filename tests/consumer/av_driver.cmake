@@ -454,8 +454,11 @@ elseif(CASE STREQUAL "consumer.av_controls")
 elseif(CASE STREQUAL "consumer.av_publication_controls")
   set(publication_progress "${WORK}/.publication-progress")
   file(WRITE "${publication_progress}" "baseline\n")
+  # Publication exercises the same complete file families with a shorter real
+  # released/pressed/released guest transcript. The separate av_replay case
+  # retains the full input and checkpoint scenario.
   file(WRITE "${WORK}/input.timeline"
-    "LYNX-INPUT 1\n0 0\n108545 16\n217089 32\n325633 1\n434177 2\n542721 4\n651265 8\n759809 64\n868353 128\n976897 256\n1085441 511\n1193985 0\n")
+    "LYNX-INPUT 1\n0 0\n108545 16\n217089 0\n")
   file(SHA256 "${WORK}/input.timeline" timeline_sha)
   set(positive "${WORK}/publication-positive")
   run_replay("${CONSUMER}" "${positive}" "")
