@@ -329,6 +329,23 @@ static void case_lfsr(void)
     ASSERT_EQ("audio.lfsr.hot-tap-and-seed", lynx__audio_peek(&hot, 0xFD23u), 2u);
 }
 
+static void case_lfsr_tap_fault(void)
+{
+    lynx__audio_state audio;
+    lynx__audio_init(&audio);
+    ASSERT_NAMED("audio.lfsr.tap-fault.setup", write_register(&audio, 0u, 0u, 5u));
+    ASSERT_NAMED("audio.lfsr.tap-fault.setup", write_register(&audio, 0u, 1u, 0x40u));
+    ASSERT_NAMED("audio.lfsr.tap-fault.setup", write_register(&audio, 0u, 3u, 0u));
+    ASSERT_NAMED("audio.lfsr.tap-fault.setup", write_register(&audio, 0u, 6u, 0u));
+    ASSERT_NAMED("audio.lfsr.tap-fault.setup", write_register(&audio, 0u, 7u, 0x40u));
+    ASSERT_NAMED("audio.lfsr.tap-fault.setup", write_register(&audio, 0u, 5u, 0x08u));
+    (void)lynx__audio_apply(&audio, 16u, NULL);
+    const uint16_t observed =
+        (uint16_t)(((uint16_t)(lynx__audio_peek(&audio, 0xFD27u) & 0xF0u) << 4) |
+                   lynx__audio_peek(&audio, 0xFD23u));
+    ASSERT_EQ("audio.lfsr.tap-map", observed, 0x800u);
+}
+
 static void case_counter(void)
 {
     lynx__audio_state audio;
@@ -433,6 +450,19 @@ static void case_integrator(void)
     ASSERT_EQ("audio.integrator.seed-write-keeps-output", lynx__audio_peek(&hot, 0xFD22u), 0x7Fu);
     (void)write_register(&hot, 0u, 7u, 2u);
     ASSERT_EQ("audio.integrator.hot-volume-polarity", lynx__audio_peek(&hot, 0xFD22u), 0x80u);
+}
+
+static void case_integrator_clip_fault(void)
+{
+    lynx__audio_state audio;
+    lynx__audio_init(&audio);
+    ASSERT_NAMED("audio.integrator.fault.setup", write_register(&audio, 0u, 0u, 0x7Fu));
+    ASSERT_NAMED("audio.integrator.fault.setup", write_register(&audio, 0u, 2u, 120u));
+    ASSERT_NAMED("audio.integrator.fault.setup", write_register(&audio, 0u, 4u, 0u));
+    ASSERT_NAMED("audio.integrator.fault.setup", write_register(&audio, 0u, 6u, 0u));
+    ASSERT_NAMED("audio.integrator.fault.setup", write_register(&audio, 0u, 5u, 0x38u));
+    (void)lynx__audio_apply(&audio, 16u, NULL);
+    ASSERT_EQ("audio.integrator.saturates", lynx__audio_peek(&audio, 0xFD22u), 127u);
 }
 
 static uint8_t audio_pen_scratch[LYNX_FRAME_PENS_CAPACITY];
@@ -1269,6 +1299,67 @@ static void case_links(void)
                   audio.channels[i].control_b & 0x05u, 0x05u);
     }
     check_a3_t1_wake();
+}
+
+static void run_link_edge_fault(uint8_t source, const char *assertion)
+{
+    lynx__timer_bank bank;
+    lynx__audio_state audio;
+    configure_zero_link_ring(&bank, &audio);
+    for (size_t i = 0u; i < 4u; i++) {
+        bank.timers[ring_timer_indexes[i]].control_a = 0u;
+        audio.channels[i].control_a = 0u;
+    }
+    const uint8_t target = (uint8_t)((source + 1u) % LYNX__AUDIO_RING_NODE_COUNT);
+    uint16_t source_ctlb = 0u;
+    if (source < 4u) {
+        const uint8_t timer_index = ring_timer_indexes[source];
+        bank.timers[timer_index].control_a = 0x48u;
+        bank.timers[timer_index].count = 0u;
+        source_ctlb = timer_register(timer_index, 3u);
+    } else {
+        const uint8_t channel = (uint8_t)(source - 4u);
+        audio.channels[channel].control_a = 0x48u;
+        audio.channels[channel].count = 0u;
+        source_ctlb = channel_register(channel, 7u);
+    }
+    if (target < 4u) {
+        const uint8_t timer_index = ring_timer_indexes[target];
+        bank.timers[timer_index].control_a = 0x4Fu;
+        bank.timers[timer_index].count = 1u;
+    } else {
+        const uint8_t channel = (uint8_t)(target - 4u);
+        audio.channels[channel].control_a = 0x4Fu;
+        audio.channels[channel].count = 1u;
+    }
+    ASSERT_NAMED("audio.links.fault-write",
+                 lynx__timer_audio_write(&bank, &audio, source_ctlb,
+                                         0x02u, 0u, NULL) == LYNX__WORK_OK);
+    if (target < 4u) {
+        ASSERT_EQ(assertion, bank.timers[ring_timer_indexes[target]].count, 0u);
+    } else {
+        ASSERT_EQ(assertion, audio.channels[target - 4u].count, 0u);
+    }
+}
+
+static void case_link_a1_fault(void)
+{
+    run_link_edge_fault(4u, "audio.links.a0-a1");
+}
+
+static void case_link_a2_fault(void)
+{
+    run_link_edge_fault(5u, "audio.links.a1-a2");
+}
+
+static void case_link_a3_fault(void)
+{
+    run_link_edge_fault(6u, "audio.links.a2-a3");
+}
+
+static void case_link_a3_t1_fault(void)
+{
+    run_link_edge_fault(7u, "audio.links.a3-t1");
 }
 
 static void case_ring_zero(void)
@@ -2561,12 +2652,18 @@ static const test_case cases[] = {
     {"cadence", case_cadence},
     {"registers", case_registers},
     {"lfsr", case_lfsr},
+    {"lfsr_tap_fault", case_lfsr_tap_fault},
     {"counter", case_counter},
     {"integrator", case_integrator},
+    {"integrator_clip_fault", case_integrator_clip_fault},
     {"stereo", case_stereo},
     {"mix", case_mix},
     {"order", case_order},
     {"links", case_links},
+    {"link_a1_fault", case_link_a1_fault},
+    {"link_a2_fault", case_link_a2_fault},
+    {"link_a3_fault", case_link_a3_fault},
+    {"link_a3_t1_fault", case_link_a3_t1_fault},
     {"ring_zero", case_ring_zero},
     {"span_refusal", case_span_refusal},
     {"span_alias", case_span_alias},
@@ -2579,7 +2676,7 @@ static const test_case cases[] = {
 int main(int argc, char **argv)
 {
     if (argc != 2) {
-        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|counter|integrator|stereo|mix|order|links|ring_zero|span_refusal|span_alias|capacity|stops|snapshot|snapshot_refusal>\n");
+        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|lfsr_tap_fault|counter|integrator|integrator_clip_fault|stereo|mix|order|links|link_a1_fault|link_a2_fault|link_a3_fault|link_a3_t1_fault|ring_zero|span_refusal|span_alias|capacity|stops|snapshot|snapshot_refusal>\n");
         return 2;
     }
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i++) {

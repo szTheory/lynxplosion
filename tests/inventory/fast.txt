@@ -71,6 +71,12 @@ api.watch_post_write	api
 audio.cadence	audio
 audio.capacity	audio
 audio.counter	audio
+audio.fault.integrator_clip	audio
+audio.fault.lfsr_tap	audio
+audio.fault.link_a1	audio
+audio.fault.link_a2	audio
+audio.fault.link_a3	audio
+audio.fault.ring_return	audio
 audio.integrator	audio
 audio.lfsr	audio
 audio.links	audio

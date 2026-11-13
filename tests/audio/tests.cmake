@@ -21,3 +21,15 @@ lynx_add_test(NAME audio.capacity COMMAND lynx-test-audio capacity LABELS audio 
 lynx_add_test(NAME audio.stops COMMAND lynx-test-audio stops LABELS audio TIMEOUT 60)
 lynx_add_test(NAME audio.snapshot COMMAND lynx-test-audio snapshot LABELS audio TIMEOUT 60)
 lynx_add_test(NAME audio.snapshot_refusal COMMAND lynx-test-audio snapshot_refusal LABELS audio TIMEOUT 60)
+
+foreach(fault_id IN ITEMS lfsr_tap integrator_clip link_a1 link_a2 link_a3 ring_return)
+  lynx_add_test(NAME audio.fault.${fault_id}
+    COMMAND ${CMAKE_COMMAND}
+      "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+      "-DBUILD_DIR=${PROJECT_BINARY_DIR}"
+      "-DAUDIO_TEST_BINARY=$<TARGET_FILE:lynx-test-audio>"
+      "-DC_COMPILER=${CMAKE_C_COMPILER}"
+      "-DFAULT_ID=${fault_id}"
+      -P ${PROJECT_SOURCE_DIR}/tests/audio/fault_controls.cmake
+    LABELS audio TIMEOUT 360)
+endforeach()
