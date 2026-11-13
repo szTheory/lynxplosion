@@ -9,6 +9,7 @@
 
 #include "internal.h"
 #include "lynxplosion.h"
+#include "sha256.h"
 
 static int failures;
 
@@ -2096,6 +2097,452 @@ static void case_stops(void)
     machine_close(&box);
 }
 
+enum {
+    AUDIO_SNAPSHOT_PAYLOAD_OFFSET = 65604u + LYNX__VIDEO_SNAPSHOT_LEN,
+    AUDIO_SNAPSHOT_HASH_OFFSET = 220u
+};
+
+typedef struct audio_snapshot_edit {
+    size_t field_offset;
+    uint64_t value;
+    size_t width;
+} audio_snapshot_edit;
+
+static void audio_snapshot_put_le(uint8_t *out, uint64_t value, size_t width)
+{
+    for (size_t i = 0u; i < width; i++) out[i] = (uint8_t)(value >> (i * 8u));
+}
+
+static void audio_snapshot_rehash(uint8_t *snapshot)
+{
+    lynx__sha256 hash;
+    uint8_t digest[32];
+    lynx__sha256_init(&hash);
+    lynx__sha256_update(&hash, snapshot + LYNX__SNAPSHOT_HEADER_LEN,
+                        LYNX__SNAPSHOT_PAYLOAD_LEN);
+    lynx__sha256_final(&hash, digest);
+    memcpy(snapshot + AUDIO_SNAPSHOT_HASH_OFFSET, digest, sizeof digest);
+}
+
+static size_t audio_snapshot_field(size_t field_offset)
+{
+    return (size_t)LYNX__SNAPSHOT_HEADER_LEN + AUDIO_SNAPSHOT_PAYLOAD_OFFSET +
+           field_offset;
+}
+
+static bool audio_snapshot_watch_equal(const lynx_watch_event *left,
+                                      const lynx_watch_event *right)
+{
+    return left->hit == right->hit && left->address == right->address &&
+           left->value == right->value && left->hit_tick == right->hit_tick &&
+           left->return_tick == right->return_tick;
+}
+
+static void audio_snapshot_expect_refused(
+    lynx_machine *machine, const uint8_t *base, uint8_t *candidate,
+    uint8_t *candidate_before, uint8_t *machine_before,
+    size_t snapshot_size, size_t machine_size,
+    const lynx_watch_event *watch_before, const audio_snapshot_edit *edits,
+    size_t edit_count, const char *label)
+{
+    memcpy(candidate, base, snapshot_size);
+    for (size_t i = 0u; i < edit_count; i++) {
+        audio_snapshot_put_le(candidate + audio_snapshot_field(edits[i].field_offset),
+                              edits[i].value, edits[i].width);
+    }
+    audio_snapshot_rehash(candidate);
+    memcpy(candidate_before, candidate, snapshot_size);
+    memcpy(machine_before, machine, machine_size);
+    ASSERT_EQ(label, lynx_snapshot_restore(machine, candidate, snapshot_size),
+              LYNX_ERR_SNAPSHOT_INVALID);
+    ASSERT_NAMED(label, memcmp(machine_before, machine, machine_size) == 0);
+    ASSERT_NAMED(label, memcmp(candidate_before, candidate, snapshot_size) == 0);
+    lynx_watch_event watch_after;
+    memset(&watch_after, 0xA5, sizeof watch_after);
+    ASSERT_EQ(label, lynx_watch_get(machine, &watch_after), LYNX_OK);
+    ASSERT_NAMED(label, audio_snapshot_watch_equal(watch_before, &watch_after));
+}
+
+static void case_snapshot_refusal(void)
+{
+    static const uint8_t watched_guest[] = {
+        0xA9u, 0xFFu,             /* LDA #$FF */
+        0x8Du, 0x20u, 0xFDu,      /* STA A0 volume */
+        0x4Cu, 0x05u, 0x02u       /* JMP to itself */
+    };
+    machine_box box;
+    ASSERT_NAMED("audio.snapshot_refusal.machine-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    ASSERT_EQ("audio.snapshot_refusal.guest-load",
+              load_guest(box.machine, watched_guest, sizeof watched_guest), LYNX_OK);
+    ASSERT_EQ("audio.snapshot_refusal.watch-configure",
+              lynx_watch_configure(box.machine, 0xFD20u, 1u), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    ASSERT_EQ("audio.snapshot_refusal.watch-advance",
+              lynx_advance(box.machine, 1000u, &consumed, &stop), LYNX_OK);
+    ASSERT_EQ("audio.snapshot_refusal.watch-stop", stop, LYNX_STOP_WATCH);
+    lynx_watch_event watch_before;
+    memset(&watch_before, 0, sizeof watch_before);
+    ASSERT_EQ("audio.snapshot_refusal.watch-read",
+              lynx_watch_get(box.machine, &watch_before), LYNX_OK);
+    ASSERT_EQ("audio.snapshot_refusal.watch-hit", watch_before.hit, 1u);
+
+    /* Use a fresh same-content blob so each field mutation differs from the
+       original value regardless of the scheduler stage where the watch hit. */
+    machine_box base_box;
+    ASSERT_NAMED("audio.snapshot_refusal.base-init",
+                 machine_open(&base_box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (base_box.machine == NULL) {
+        machine_close(&box);
+        return;
+    }
+    ASSERT_EQ("audio.snapshot_refusal.base-load",
+              load_guest(base_box.machine, watched_guest, sizeof watched_guest), LYNX_OK);
+
+    size_t snapshot_size = 0u;
+    ASSERT_EQ("audio.snapshot_refusal.size",
+              lynx_snapshot_size(base_box.machine, &snapshot_size), LYNX_OK);
+    const size_t machine_size = lynx_machine_size();
+    uint8_t *base = (uint8_t *)malloc(snapshot_size);
+    uint8_t *candidate = (uint8_t *)malloc(snapshot_size);
+    uint8_t *candidate_before = (uint8_t *)malloc(snapshot_size);
+    uint8_t *machine_before = (uint8_t *)malloc(machine_size);
+    ASSERT_NAMED("audio.snapshot_refusal.allocations",
+                 base != NULL && candidate != NULL && candidate_before != NULL &&
+                 machine_before != NULL);
+    if (base == NULL || candidate == NULL || candidate_before == NULL ||
+        machine_before == NULL) {
+        free(machine_before);
+        free(candidate_before);
+        free(candidate);
+        free(base);
+        machine_close(&base_box);
+        machine_close(&box);
+        return;
+    }
+    size_t written = 0u;
+    ASSERT_EQ("audio.snapshot_refusal.save",
+              lynx_snapshot_save(base_box.machine, base, snapshot_size, &written), LYNX_OK);
+    ASSERT_EQ("audio.snapshot_refusal.written", written, snapshot_size);
+    const uint64_t ticks = base_box.machine->guest_ticks;
+    audio_snapshot_edit edits[10];
+
+#define TRY_AUDIO_SNAPSHOT_REFUSAL(label_value, edits_value) \
+    audio_snapshot_expect_refused( \
+        box.machine, base, candidate, candidate_before, machine_before, \
+        snapshot_size, machine_size, &watch_before, (edits_value), \
+        sizeof(edits_value) / sizeof((edits_value)[0]), (label_value))
+
+    const audio_snapshot_edit ring_cursor[] = {{41u, LYNX__AUDIO_RING_NODE_COUNT, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.ring-cursor", ring_cursor);
+    const audio_snapshot_edit shift_width[] = {{6u, 0x1000u, 2u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.shift-width", shift_width);
+    const audio_snapshot_edit control_b_reserved[] = {{4u, 0x10u, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.control-b-reserved",
+                               control_b_reserved);
+    const audio_snapshot_edit debt_without_deadline[] = {{42u, 1u, 8u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.debt-without-deadline",
+                               debt_without_deadline);
+    const audio_snapshot_edit high_debt_without_deadline[] = {{106u, 1u, 4u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.high-debt-without-deadline",
+                               high_debt_without_deadline);
+    const audio_snapshot_edit deferred_flag[] = {{110u, 2u, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.deferred-flag", deferred_flag);
+    const audio_snapshot_edit device_reserved[] = {{111u, 0x10u, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.device-reserved", device_reserved);
+    const audio_snapshot_edit device_visits[] = {{111u, 9u, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.device-visits", device_visits);
+    const audio_snapshot_edit sample_cursor_width[] = {{112u, 2u, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.sample-cursor-width",
+                               sample_cursor_width);
+    const audio_snapshot_edit sample_cursor_off_lattice[] = {{112u, 1u, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.sample-cursor-off-lattice",
+                               sample_cursor_off_lattice);
+    const audio_snapshot_edit event_cursor_width[] = {{113u, 2u, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.event-cursor-width",
+                               event_cursor_width);
+    const audio_snapshot_edit reserved_114[] = {{114u, 1u, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.reserved-114", reserved_114);
+    const audio_snapshot_edit event_sequence_limit[] = {
+        {113u, 1u, 1u}, {118u, LYNX__AUDIO_MAX_EVENTS_PER_TICK + 1u, 4u}
+    };
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.event-sequence-limit",
+                               event_sequence_limit);
+    const audio_snapshot_edit event_tick[] = {
+        {113u, 1u, 1u}, {122u, ticks + 1u, 8u}
+    };
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.event-tick", event_tick);
+    const audio_snapshot_edit event_sequence_without_cursor[] = {{118u, 1u, 4u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.event-sequence-without-cursor",
+                               event_sequence_without_cursor);
+    const audio_snapshot_edit next_tick_mismatch[] = {{130u, 800u, 8u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.next-tick-mismatch",
+                               next_tick_mismatch);
+    const audio_snapshot_edit next_ordinal_mismatch[] = {{138u, 1u, 8u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.next-ordinal-mismatch",
+                               next_ordinal_mismatch);
+    const audio_snapshot_edit far_future_sample[] = {
+        {130u, 1200u, 8u}, {138u, 2u, 8u}
+    };
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.far-future-sample",
+                               far_future_sample);
+    const audio_snapshot_edit defer_without_debt[] = {
+        {146u, (uint64_t)ticks + 1u, 8u}
+    };
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.defer-without-debt",
+                               defer_without_debt);
+    const audio_snapshot_edit reserved_154[] = {{154u, 1u, 1u}};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.reserved-154", reserved_154);
+
+    for (size_t node = 0u; node < LYNX__AUDIO_RING_NODE_COUNT; node++) {
+        edits[node].field_offset = 42u + node * 8u;
+        edits[node].value = (UINT64_C(9) * ((uint64_t)ticks + 1u)) /
+                           LYNX__AUDIO_RING_NODE_COUNT + 1u;
+        edits[node].width = 8u;
+    }
+    edits[8] = (audio_snapshot_edit){110u, 1u, 1u};
+    edits[9] = (audio_snapshot_edit){146u, (uint64_t)ticks, 8u};
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.aggregate-debt", edits);
+
+    const audio_snapshot_edit delayed_without_exhaustion[] = {
+        {42u, 1u, 8u}, {110u, 1u, 1u},
+        {111u, 0u, 1u}, {146u, (uint64_t)ticks + 1u, 8u}
+    };
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.deferred-before-exhaustion",
+                               delayed_without_exhaustion);
+    const audio_snapshot_edit deadline_too_far[] = {
+        {42u, 1u, 8u}, {110u, 1u, 1u},
+        {111u, LYNX__AUDIO_RING_VISIT_LIMIT, 1u},
+        {146u, (uint64_t)ticks + 2u, 8u}
+    };
+    TRY_AUDIO_SNAPSHOT_REFUSAL("audio.snapshot_refusal.deadline-too-far",
+                               deadline_too_far);
+
+#undef TRY_AUDIO_SNAPSHOT_REFUSAL
+
+    free(machine_before);
+    free(candidate_before);
+    free(candidate);
+    free(base);
+    machine_close(&base_box);
+    machine_close(&box);
+
+    /* At the sample tick, the pre-sample phase is valid. Setting the applied
+       cursor without advancing ordinal/tick would duplicate the frame. */
+    ASSERT_NAMED("audio.snapshot_refusal.phase-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    static const uint8_t looping_guest[] = {0x4Cu, 0x00u, 0x02u};
+    ASSERT_EQ("audio.snapshot_refusal.phase-load", load_guest(
+        box.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    av_span_storage storage;
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    ASSERT_EQ("audio.snapshot_refusal.phase-advance",
+              lynx_advance_av(box.machine, 400u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.snapshot_refusal.phase-tick", box.machine->guest_ticks, 400u);
+    size_t phase_size = 0u;
+    ASSERT_EQ("audio.snapshot_refusal.phase-size",
+              lynx_snapshot_size(box.machine, &phase_size), LYNX_OK);
+    uint8_t *phase_base = (uint8_t *)malloc(phase_size);
+    uint8_t *phase_bad = (uint8_t *)malloc(phase_size);
+    uint8_t *phase_before = (uint8_t *)malloc(phase_size);
+    uint8_t *phase_machine_before = (uint8_t *)malloc(lynx_machine_size());
+    ASSERT_NAMED("audio.snapshot_refusal.phase-allocations",
+                 phase_base != NULL && phase_bad != NULL && phase_before != NULL &&
+                 phase_machine_before != NULL);
+    if (phase_base != NULL && phase_bad != NULL && phase_before != NULL &&
+        phase_machine_before != NULL) {
+        written = 0u;
+        ASSERT_EQ("audio.snapshot_refusal.phase-save", lynx_snapshot_save(
+            box.machine, phase_base, phase_size, &written), LYNX_OK);
+        const audio_snapshot_edit duplicate_sample[] = {{112u, 1u, 1u}};
+        lynx_watch_event no_watch;
+        memset(&no_watch, 0, sizeof no_watch);
+        ASSERT_EQ("audio.snapshot_refusal.phase-no-watch",
+                  lynx_watch_get(box.machine, &no_watch), LYNX_OK);
+        audio_snapshot_expect_refused(box.machine, phase_base, phase_bad,
+                                      phase_before, phase_machine_before,
+                                      phase_size, lynx_machine_size(), &no_watch,
+                                      duplicate_sample, 1u,
+                                      "audio.snapshot_refusal.applied-sample-not-advanced");
+        free(phase_machine_before);
+        free(phase_before);
+        free(phase_bad);
+        free(phase_base);
+    } else {
+        free(phase_machine_before);
+        free(phase_before);
+        free(phase_bad);
+        free(phase_base);
+    }
+    machine_close(&box);
+}
+
+static void case_snapshot(void)
+{
+    static const uint8_t looping_guest[] = {0x4Cu, 0x00u, 0x02u};
+    machine_box source;
+    machine_box restored;
+    ASSERT_NAMED("audio.snapshot.source-init",
+                 machine_open(&source, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.snapshot.restored-init",
+                 machine_open(&restored, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (source.machine == NULL || restored.machine == NULL) {
+        machine_close(&restored);
+        machine_close(&source);
+        return;
+    }
+    ASSERT_EQ("audio.snapshot.source-load",
+              load_guest(source.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    ASSERT_EQ("audio.snapshot.restored-load",
+              load_guest(restored.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+
+    lynx_identity identity;
+    memset(&identity, 0, sizeof identity);
+    ASSERT_EQ("audio.snapshot.identity", lynx_get_identity(source.machine, &identity), LYNX_OK);
+    ASSERT_EQ("audio.snapshot.identity-policy", identity.audio_policy,
+              LYNX_AUDIO_POLICY_DIGITAL_1);
+    ASSERT_EQ("audio.snapshot.identity-rate-num", identity.audio_rate_num,
+              LYNX_AUDIO_RATE_NUM);
+    ASSERT_EQ("audio.snapshot.identity-rate-den", identity.audio_rate_den,
+              LYNX_AUDIO_RATE_DEN);
+    ASSERT_EQ("audio.snapshot.identity-channels", identity.audio_channels,
+              LYNX_AUDIO_PCM_CHANNELS);
+    ASSERT_EQ("audio.snapshot.identity-bits", identity.audio_bits, LYNX_AUDIO_PCM_BITS);
+
+    /* A completed device application may leave a valid event cursor with no
+       emitted events yet; sequence zero is reachable at that scheduler stage. */
+    (void)lynx__audio_apply(&source.machine->audio, source.machine->guest_ticks, NULL);
+    ASSERT_EQ("audio.snapshot.empty-event-cursor-valid",
+              source.machine->audio.event_cursor_valid, 1u);
+    ASSERT_EQ("audio.snapshot.empty-event-cursor-sequence",
+              source.machine->audio.event_sequence, 0u);
+
+    /* Raw guest latches retain their complete byte domains. The format only
+       constrains bits that are structurally reserved by the serializer. */
+    lynx__audio_channel *channel = &source.machine->audio.channels[0];
+    channel->volume = UINT8_MAX;
+    channel->backup = UINT8_MAX;
+    channel->count = UINT8_MAX;
+    channel->control_a = UINT8_MAX;
+    channel->feedback = UINT8_MAX;
+    channel->shift = 0x0FFFu;
+    channel->control_b = 0x0Fu;
+    channel->output = INT8_MIN;
+    channel->integrator = INT8_MAX;
+    source.machine->audio.stereo_disable = UINT8_MAX;
+
+    size_t snapshot_size = 0u;
+    ASSERT_EQ("audio.snapshot.size", lynx_snapshot_size(source.machine, &snapshot_size),
+              LYNX_OK);
+    uint8_t *snapshot = (uint8_t *)malloc(snapshot_size);
+    uint8_t *roundtrip = (uint8_t *)malloc(snapshot_size);
+    ASSERT_NAMED("audio.snapshot.allocations", snapshot != NULL && roundtrip != NULL);
+    if (snapshot == NULL || roundtrip == NULL) {
+        free(roundtrip);
+        free(snapshot);
+        machine_close(&restored);
+        machine_close(&source);
+        return;
+    }
+    size_t written = 0u;
+    ASSERT_EQ("audio.snapshot.save",
+              lynx_snapshot_save(source.machine, snapshot, snapshot_size, &written), LYNX_OK);
+    ASSERT_EQ("audio.snapshot.written", written, snapshot_size);
+    ASSERT_EQ("audio.snapshot.restore",
+              lynx_snapshot_restore(restored.machine, snapshot, snapshot_size), LYNX_OK);
+    ASSERT_EQ("audio.snapshot.resave", lynx_snapshot_save(
+        restored.machine, roundtrip, snapshot_size, &written), LYNX_OK);
+    ASSERT_NAMED("audio.snapshot.fieldwise-roundtrip",
+                 memcmp(snapshot, roundtrip, snapshot_size) == 0);
+    ASSERT_EQ("audio.snapshot.channel-volume", restored.machine->audio.channels[0].volume,
+              UINT8_MAX);
+    ASSERT_EQ("audio.snapshot.channel-backup", restored.machine->audio.channels[0].backup,
+              UINT8_MAX);
+    ASSERT_EQ("audio.snapshot.channel-count", restored.machine->audio.channels[0].count,
+              UINT8_MAX);
+    ASSERT_EQ("audio.snapshot.channel-control-a",
+              restored.machine->audio.channels[0].control_a, UINT8_MAX);
+    ASSERT_EQ("audio.snapshot.channel-feedback",
+              restored.machine->audio.channels[0].feedback, UINT8_MAX);
+    ASSERT_EQ("audio.snapshot.channel-shift", restored.machine->audio.channels[0].shift,
+              0x0FFFu);
+    ASSERT_EQ("audio.snapshot.channel-control-b",
+              restored.machine->audio.channels[0].control_b, 0x0Fu);
+    ASSERT_EQ("audio.snapshot.channel-output", restored.machine->audio.channels[0].output,
+              INT8_MIN);
+    ASSERT_EQ("audio.snapshot.channel-integrator",
+              restored.machine->audio.channels[0].integrator, INT8_MAX);
+    ASSERT_EQ("audio.snapshot.stereo-disable", restored.machine->audio.stereo_disable,
+              UINT8_MAX);
+    free(roundtrip);
+    free(snapshot);
+
+    /* A pending deferred ring suffix and an already emitted sample are a
+       valid continuation exactly at the sample tick. */
+    ASSERT_EQ("audio.snapshot.reload-source",
+              load_guest(source.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    av_span_storage storage;
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    ASSERT_EQ("audio.snapshot.advance-to-sample", lynx_advance_av(
+        source.machine, 400u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.snapshot.sample-boundary-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.snapshot.sample-boundary-tick", source.machine->guest_ticks, 400u);
+    source.machine->audio.ring_debt[4] = 1u;
+    source.machine->audio.ring_cursor = 4u;
+    source.machine->audio.ring_defer_valid = 1u;
+    source.machine->audio.ring_defer_tick = 401u;
+    source.machine->audio.same_tick_device_cursor = LYNX__AUDIO_DEVICE_APPLIED |
+                                                    LYNX__AUDIO_RING_VISIT_LIMIT;
+    lynx__audio_mark_sample(&source.machine->audio);
+    ASSERT_NAMED("audio.snapshot.deferred-ring-valid",
+                 lynx__audio_ring_state_valid(&source.machine->audio, 400u));
+    ASSERT_EQ("audio.snapshot.deferred-sample-tick", source.machine->audio.next_sample_tick,
+              800u);
+    ASSERT_EQ("audio.snapshot.deferred-sample-ordinal",
+              source.machine->audio.next_sample_ordinal, 1u);
+    snapshot_size = 0u;
+    ASSERT_EQ("audio.snapshot.deferred-size",
+              lynx_snapshot_size(source.machine, &snapshot_size), LYNX_OK);
+    snapshot = (uint8_t *)malloc(snapshot_size);
+    roundtrip = (uint8_t *)malloc(snapshot_size);
+    ASSERT_NAMED("audio.snapshot.deferred-allocations",
+                 snapshot != NULL && roundtrip != NULL);
+    if (snapshot != NULL && roundtrip != NULL) {
+        written = 0u;
+        ASSERT_EQ("audio.snapshot.deferred-save", lynx_snapshot_save(
+            source.machine, snapshot, snapshot_size, &written), LYNX_OK);
+        ASSERT_EQ("audio.snapshot.deferred-restore", lynx_snapshot_restore(
+            restored.machine, snapshot, snapshot_size), LYNX_OK);
+        ASSERT_EQ("audio.snapshot.deferred-resave", lynx_snapshot_save(
+            restored.machine, roundtrip, snapshot_size, &written), LYNX_OK);
+        ASSERT_NAMED("audio.snapshot.deferred-roundtrip",
+                     memcmp(snapshot, roundtrip, snapshot_size) == 0);
+        ASSERT_EQ("audio.snapshot.deferred-debt", restored.machine->audio.ring_debt[4], 1u);
+        ASSERT_EQ("audio.snapshot.deferred-deadline",
+                  restored.machine->audio.ring_defer_tick, 401u);
+        ASSERT_EQ("audio.snapshot.deferred-sample-cursor",
+                  restored.machine->audio.same_tick_sample_cursor, 1u);
+        free(roundtrip);
+        free(snapshot);
+    } else {
+        free(roundtrip);
+        free(snapshot);
+    }
+    machine_close(&restored);
+    machine_close(&source);
+}
+
 typedef struct test_case {
     const char *name;
     void (*run)(void);
@@ -2116,12 +2563,14 @@ static const test_case cases[] = {
     {"span_alias", case_span_alias},
     {"capacity", case_capacity},
     {"stops", case_stops},
+    {"snapshot", case_snapshot},
+    {"snapshot_refusal", case_snapshot_refusal},
 };
 
 int main(int argc, char **argv)
 {
     if (argc != 2) {
-        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|counter|integrator|stereo|mix|order|links|ring_zero|span_refusal|span_alias|capacity|stops>\n");
+        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|counter|integrator|stereo|mix|order|links|ring_zero|span_refusal|span_alias|capacity|stops|snapshot|snapshot_refusal>\n");
         return 2;
     }
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i++) {

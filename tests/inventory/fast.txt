@@ -78,6 +78,8 @@ audio.mix	audio
 audio.order	audio
 audio.registers	audio
 audio.ring_zero	audio
+audio.snapshot	audio
+audio.snapshot_refusal	audio
 audio.span_alias	audio
 audio.span_refusal	audio
 audio.stereo	audio

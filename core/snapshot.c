@@ -484,7 +484,9 @@ static int audio_state_valid(const lynx__audio_state *audio, const uint8_t *raw,
     if (audio->same_tick_sample_cursor != 0u && (ticks == 0u || ticks % 400u != 0u)) return 0;
     if (audio->next_sample_ordinal >= UINT64_MAX / 400u) return 0;
     const uint64_t expected_next = (audio->next_sample_ordinal + 1u) * UINT64_C(400);
-    if (audio->next_sample_tick != expected_next || audio->next_sample_tick < ticks) return 0;
+    if (audio->next_sample_tick != expected_next || audio->next_sample_tick < ticks ||
+        audio->next_sample_tick - ticks > UINT64_C(400) ||
+        (audio->same_tick_sample_cursor != 0u && audio->next_sample_tick == ticks)) return 0;
     return 1;
 }
 

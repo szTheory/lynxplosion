@@ -19,3 +19,5 @@ lynx_add_test(NAME audio.span_refusal COMMAND lynx-test-audio span_refusal LABEL
 lynx_add_test(NAME audio.span_alias COMMAND lynx-test-audio span_alias LABELS audio TIMEOUT 60)
 lynx_add_test(NAME audio.capacity COMMAND lynx-test-audio capacity LABELS audio TIMEOUT 60)
 lynx_add_test(NAME audio.stops COMMAND lynx-test-audio stops LABELS audio TIMEOUT 60)
+lynx_add_test(NAME audio.snapshot COMMAND lynx-test-audio snapshot LABELS audio TIMEOUT 60)
+lynx_add_test(NAME audio.snapshot_refusal COMMAND lynx-test-audio snapshot_refusal LABELS audio TIMEOUT 60)
