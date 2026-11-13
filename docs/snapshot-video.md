@@ -1,6 +1,6 @@
-# Format 6 video and audio snapshot state
+# Format 7 video and audio snapshot state
 
-Format 6 records the machine's current guest video, logical input and digital
+Format 7 records the machine's current guest video, logical input and digital
 audio state so an accepted restore can continue the same deterministic A/V
 stream. Snapshot restore
 requires the same build, CPU profile, RAM policy and seed, loaded content, and
@@ -40,31 +40,45 @@ entries. The complete video record is 12,344 bytes.
 | 8,264 | 3,264 | captured per-row palettes |
 | 11,528 | 816 | 102 line-start ticks |
 
-The audio envelope begins at payload offset `77948` and is 88 bytes. Its
+The audio envelope begins at payload offset `77948` and is 160 bytes. Its
 fieldwise little-endian layout is:
 
 | Record offset | Width | Field |
 | ---: | ---: | --- |
-| 0 | 10 × 4 | Channel 0..3 records: volume, backup, count, CTLA, CTLB, feedback, shift `u16`, output `i8`, integrator `i8` |
+| 0 | 40 | Four 10-byte channel records: volume, backup, count, CTLA, CTLB, feedback, shift `u16`, output `i8`, integrator `i8` |
 | 40 | 1 | FD50 stereo-disable register |
-| 41 | 1 | bounded ring cursor |
-| 42 | 8 | bounded pending pulse debt for ring nodes 0..7 |
-| 50 | 1 | same-tick device cursor |
-| 51 | 1 | same-tick sample cursor |
-| 52 | 1 | same-tick event cursor valid flag |
-| 53 | 1 | reserved zero |
-| 54 | 4 | event sequence within the current guest tick |
-| 58 | 8 | event cursor tick |
-| 66 | 8 | next sample guest tick |
-| 74 | 8 | next sample ordinal |
-| 82 | 6 | reserved zero |
+| 41 | 1 | ring work cursor, node 0..7 |
+| 42 | 64 | Eight little-endian `u64` low words of pending pulse debt |
+| 106 | 4 | Packed high nibbles, one per node, completing each 68-bit debt count |
+| 110 | 1 | deferred-deadline valid flag |
+| 111 | 1 | same-tick device state: visit count in bits 0..3, audio-applied bit 7 |
+| 112 | 1 | same-tick sample cursor |
+| 113 | 1 | same-tick event cursor valid flag |
+| 114 | 4 | reserved zero |
+| 118 | 4 | event sequence within the current guest tick |
+| 122 | 8 | event cursor tick |
+| 130 | 8 | next sample guest tick |
+| 138 | 8 | next sample ordinal |
+| 146 | 8 | absolute deferred-work deadline |
+| 154 | 6 | reserved zero |
 
-The payload therefore ends at 78,036 bytes. The event and sampling cursors are
-guest continuation state so output remains identical when an instance is
-advanced in different host-sized slices. Caller spans, host event-script
-cursors and output-file positions remain host state. The ring fields reserve
-the final layout for later channel-link behavior; the current tracer exercises
-only ordinary channel 0 and refuses enabled link mode.
+The payload therefore ends at 78,108 bytes. The event and sampling cursors and
+ring debt are guest continuation state so output remains identical when an
+instance is advanced in different host-sized slices. Caller spans, host
+event-script cursors and output-file positions remain host state. The ring uses
+a fixed eight-visit budget per master tick in stable cursor order. If pulses
+remain, `ring-defer-1` records their absolute next-tick deadline and retains
+their full multiplicity. A snapshot taken exactly at that deadline preserves
+due-now work. With no debt, the valid flag and deadline are both zero.
+
+The complete timer/audio link cycle is T1→T3→T5→T7→A0→A1→A2→A3→T1. A borrow
+consumes one pending pulse and may add at most one successor pulse, whether or
+not the source reloads; reload controls the counter value, while underflow
+controls IRQ/status and link propagation. There are at most eight natural
+ring roots per master tick and one CPU bus write per tick, so cumulative debt
+is bounded by `9 * (guest_ticks + 1)`. Restore validates the sum across all
+eight 68-bit counters against that bound before applying the candidate; per-
+node limits alone would allow forged snapshots to multiply the debt.
 
 The current display address is a 16-bit stream position. At blank ordinal 2,
 the backup address is aligned down to a four-byte boundary and transferred to
@@ -101,7 +115,7 @@ for the selected timing policy: four ticks for flat-five or video policy, and
 thirteen ticks for the test-skew table. Guest time is bounded below the
 64-bit overflow margin, so future release arithmetic is safe.
 
-These checks establish deterministic format-6 restoration within one exact
+These checks establish deterministic format-7 restoration within one exact
 build identity. The video cadence, palette sampling, refresh period, and input
 mapping remain software policy; snapshot equality does not qualify Lynx
 hardware accuracy.
@@ -114,14 +128,14 @@ snapshot and timer controls.
 
 `lynx_state_digest` returns 32 SHA-256 bytes for an initialized instance,
 including one that has not loaded content. Its versioned stream is encoded in
-this order: the NUL-terminated tag `lynxplosion.guest-state.v2`; CPU PC as
+this order: the NUL-terminated tag `lynxplosion.guest-state.v3`; CPU PC as
 little-endian `u16`, A/X/Y/S, P with reserved bits set, flags/opcode/step, EA as
 little-endian `u16`, and TMP; MAPCTL and CPU page latch as bytes; guest ticks
 and CPU-ready tick as little-endian `u64`; all 65,536 RAM bytes; eight timer
 records (backup/count/CTLA/CTLB), pending bits, timer phase policy, the
 current-tick event-applied bit, and bus hold as bytes; then the complete
-fieldwise video record above and the 88-byte audio envelope. The NUL-terminated
-domain is `lynxplosion.guest-state.v2`. Video and audio scalars follow their
+fieldwise video record above and the 160-byte audio envelope. The NUL-terminated
+domain is `lynxplosion.guest-state.v3`. Video and audio scalars follow their
 documented widths and little-endian rules. The timer event bit is derived from the current tick; an
 older cursor timestamp is deliberately omitted. The stream contains no C
 structure padding, immutable machine identity (profile, RAM policy/seed,

@@ -145,19 +145,27 @@ static bool channel_clock_at(const lynx__audio_channel *channel, uint64_t tick)
 }
 
 static bool audio_clock_channel(lynx__audio_state *audio, uint8_t index,
-                                uint64_t tick, uint8_t cause,
-                                lynx__audio_event_sink *sink)
+                                uint64_t tick, uint8_t cause, bool incoming_link,
+                                bool expose_status, lynx__audio_event_sink *sink,
+                                bool *borrowed_out)
 {
     lynx__audio_channel *channel = &audio->channels[index];
     const int8_t before = channel->output;
-    channel->control_b = (uint8_t)(channel->control_b & (uint8_t)~AUDIO_CONTROL_B_STATUS);
-    channel->control_b = (uint8_t)(channel->control_b | AUDIO_CONTROL_B_LAST_CLOCK);
+    if (borrowed_out != NULL) *borrowed_out = false;
+    if (expose_status) {
+        channel->control_b = (uint8_t)(channel->control_b & (uint8_t)~AUDIO_CONTROL_B_STATUS);
+        channel->control_b = (uint8_t)(channel->control_b | AUDIO_CONTROL_B_LAST_CLOCK |
+                                       (incoming_link ? AUDIO_CONTROL_B_BORROW_IN : 0u));
+    }
     if (channel->count != 0u) {
         channel->count--;
         return false;
     }
 
-    channel->control_b = (uint8_t)(channel->control_b | AUDIO_CONTROL_B_BORROW_OUT);
+    if (borrowed_out != NULL) *borrowed_out = true;
+    if (expose_status) {
+        channel->control_b = (uint8_t)(channel->control_b | AUDIO_CONTROL_B_BORROW_OUT);
+    }
     if ((channel->control_a & AUDIO_CONTROL_A_RELOAD) != 0u) channel->count = channel->backup;
     if ((channel->control_a & AUDIO_CONTROL_A_RESET_DONE) != 0u) {
         channel->control_b = (uint8_t)(channel->control_b & (uint8_t)~AUDIO_CONTROL_B_DONE);
@@ -170,6 +178,18 @@ static bool audio_clock_channel(lynx__audio_state *audio, uint8_t index,
         return true;
     }
     return false;
+}
+
+bool lynx__audio_clock_root(lynx__audio_state *audio, uint8_t channel,
+                            uint64_t tick, bool incoming_link,
+                            lynx__audio_event_sink *sink, bool *borrowed_out)
+{
+    if (audio == NULL || channel >= LYNX__AUDIO_CHANNEL_COUNT) {
+        if (borrowed_out != NULL) *borrowed_out = false;
+        return false;
+    }
+    return audio_clock_channel(audio, channel, tick, AUDIO_EVENT_CLOCK,
+                               incoming_link, true, sink, borrowed_out);
 }
 
 void lynx__audio_init(lynx__audio_state *audio)
@@ -193,8 +213,8 @@ bool lynx__audio_next(const lynx__audio_state *audio, uint64_t now, uint64_t *ti
         const uint64_t phase = now % period;
         uint64_t delta = period - phase;
         if (phase == 0u) {
-            if ((audio->same_tick_device_cursor != 0u && audio->event_cursor_valid != 0u &&
-                 audio->event_tick == now) || now == 0u) {
+            if ((audio->same_tick_device_cursor & LYNX__AUDIO_DEVICE_APPLIED) != 0u ||
+                now == 0u) {
                 delta = period;
             } else {
                 delta = 0u;
@@ -221,11 +241,13 @@ size_t lynx__audio_apply(lynx__audio_state *audio, uint64_t tick,
         audio->event_tick = tick;
         audio->event_sequence = 0u;
     }
-    audio->same_tick_device_cursor = 1u;
+    audio->same_tick_device_cursor = (uint8_t)(audio->same_tick_device_cursor |
+                                               LYNX__AUDIO_DEVICE_APPLIED);
     for (uint8_t i = 0u; i < LYNX__AUDIO_CHANNEL_COUNT; i++) {
         lynx__audio_channel *channel = &audio->channels[i];
         if (!channel_can_advance(channel) || !channel_clock_at(channel, tick)) continue;
-        if (audio_clock_channel(audio, i, tick, AUDIO_EVENT_CLOCK, sink)) emitted++;
+        if (audio_clock_channel(audio, i, tick, AUDIO_EVENT_CLOCK, false, true,
+                                sink, NULL)) emitted++;
     }
     return emitted;
 }
@@ -319,8 +341,6 @@ bool lynx__audio_write(lynx__audio_state *audio, uint16_t addr, uint8_t value,
         channel->backup = value;
         break;
     case AUDIO_CONTROL_A:
-        if ((value & 0x07u) == AUDIO_CONTROL_A_LINK &&
-            (value & AUDIO_CONTROL_A_COUNT) != 0u) return false;
         if (((value ^ channel->control_a) & AUDIO_CONTROL_A_INTEGRATE) != 0u) {
             channel->integrator = channel->output;
         }
@@ -338,7 +358,8 @@ bool lynx__audio_write(lynx__audio_state *audio, uint16_t addr, uint8_t value,
                                     ((uint32_t)(value & 0xF0u) << 4));
         channel->control_b = (uint8_t)((channel->control_b & 0xF0u) | (value & AUDIO_CONTROL_B_DONE));
         if ((value & AUDIO_CONTROL_B_BORROW_IN) != 0u && channel_can_advance(channel)) {
-            clocked = audio_clock_channel(audio, index, tick, AUDIO_EVENT_CLOCK, sink);
+            clocked = audio_clock_channel(audio, index, tick, AUDIO_EVENT_CLOCK,
+                                          false, true, sink, NULL);
         }
         channel_update_output(channel);
         break;

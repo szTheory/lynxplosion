@@ -1,4 +1,4 @@
-/* Snapshot save and restore, format version 6.
+/* Snapshot save and restore, format version 7.
 
    A snapshot is a header followed by a payload. Every integer is
    little-endian and is written and read one field at a time, never by copying
@@ -6,7 +6,7 @@
 
    Header (256 bytes), in order:
      0    magic          8 bytes  "LYNXSNAP"
-     8    format_version u32      6
+     8    format_version u32      7
      12   header_len     u32      256
      16   build_id       128      lynx__build_id, NUL-padded to 128
      144  profile        u32
@@ -19,10 +19,10 @@
      204  startup_tier   u32
      208  entry_addr     u32
      212  object_len     u32
-     216  payload_len    u32      78036
+     216  payload_len    u32      78108
      220  payload_sha256 32       SHA-256 of the payload
      252  timing_policy  u32
-   Payload (78036 bytes), offsets relative to its start:
+   Payload (78108 bytes), offsets relative to its start:
      0  pc u16        2  a      3  x      4  y      5  s
      6  p (bits 4 and 5 set)    7  cpu latches (lynx__cpu.flags)
      8  opcode        9  step (cycle index inside the instruction)
@@ -36,7 +36,7 @@
      65602 event-already-applied-at-guest-tick (0 or 1)
      65603 bus ownership hold (0 or 1)
      65604 video/input runtime header and bounded raw capture (format 5 layout)
-     77948 audio state: fieldwise 88-byte format-6 envelope documented in
+     77948 audio state: fieldwise 160-byte format-7 envelope documented in
        docs/snapshot-video.md
    The profile is not in the payload: it is part of the header identity. The
    CPU request and wake_pending are derived state and are never stored; restore
@@ -53,7 +53,7 @@
    cannot fail. A refused restore leaves the instance byte-identical. After
    that guest-state apply succeeds, host-only watch configuration and hit
    reporting are cleared; callers must explicitly rearm after restore.
-   Formats 1 through 5 are refused as version errors.
+   Formats 1 through 6 are refused as version errors.
 
    Reversibility: restore needs the same build, so no old snapshot is ever
    accepted and the format may change in any later build without migration. */
@@ -200,7 +200,8 @@ static int timer_edge_due_now(const lynx__timer_bank *bank, uint64_t now)
 
 static int timer_link_supported(uint8_t index)
 {
-    return index == 2u || index == 3u || index == 4u || index == 5u || index == 7u;
+    return index == 1u || index == 2u || index == 3u || index == 4u ||
+           index == 5u || index == 7u;
 }
 
 static int timer_bank_valid(const lynx__timer_bank *bank, uint64_t ticks,
@@ -291,13 +292,16 @@ static void audio_snapshot_write(uint8_t *out, const lynx__audio_state *audio)
     out[40] = audio->stereo_disable;
     out[41] = audio->ring_cursor;
     memcpy(out + 42, audio->ring_debt, sizeof audio->ring_debt);
-    out[50] = audio->same_tick_device_cursor;
-    out[51] = audio->same_tick_sample_cursor;
-    out[52] = audio->event_cursor_valid;
-    put_u32(out + 54, audio->event_sequence);
-    put_u64(out + 58, audio->event_tick);
-    put_u64(out + 66, audio->next_sample_tick);
-    put_u64(out + 74, audio->next_sample_ordinal);
+    put_u32(out + 106, audio->ring_debt_high);
+    out[110] = audio->ring_defer_valid;
+    out[111] = audio->same_tick_device_cursor;
+    out[112] = audio->same_tick_sample_cursor;
+    out[113] = audio->event_cursor_valid;
+    put_u32(out + 118, audio->event_sequence);
+    put_u64(out + 122, audio->event_tick);
+    put_u64(out + 130, audio->next_sample_tick);
+    put_u64(out + 138, audio->next_sample_ordinal);
+    put_u64(out + 146, audio->ring_defer_tick);
 }
 
 /* Stable guest-state digest encoding. This deliberately shares the snapshot's
@@ -309,7 +313,7 @@ static void audio_snapshot_write(uint8_t *out, const lynx__audio_state *audio)
    observations never enter the hash. */
 static void guest_state_digest_bytes(const lynx_machine *m, uint8_t out[32])
 {
-    static const uint8_t domain[] = "lynxplosion.guest-state.v2";
+    static const uint8_t domain[] = "lynxplosion.guest-state.v3";
     uint8_t cpu[13];
     uint8_t timer_records[LYNX__TIMER_COUNT * 4u + 4u];
     uint8_t video[LYNX__VIDEO_SNAPSHOT_LEN];
@@ -431,13 +435,16 @@ static void audio_snapshot_read(lynx__audio_state *audio, const uint8_t *in)
     audio->stereo_disable = in[40];
     audio->ring_cursor = in[41];
     memcpy(audio->ring_debt, in + 42, sizeof audio->ring_debt);
-    audio->same_tick_device_cursor = in[50];
-    audio->same_tick_sample_cursor = in[51];
-    audio->event_cursor_valid = in[52];
-    audio->event_sequence = get_u32(in + 54);
-    audio->event_tick = get_u64(in + 58);
-    audio->next_sample_tick = get_u64(in + 66);
-    audio->next_sample_ordinal = get_u64(in + 74);
+    audio->ring_debt_high = get_u32(in + 106);
+    audio->ring_defer_valid = in[110];
+    audio->same_tick_device_cursor = in[111];
+    audio->same_tick_sample_cursor = in[112];
+    audio->event_cursor_valid = in[113];
+    audio->event_sequence = get_u32(in + 118);
+    audio->event_tick = get_u64(in + 122);
+    audio->next_sample_tick = get_u64(in + 130);
+    audio->next_sample_ordinal = get_u64(in + 138);
+    audio->ring_defer_tick = get_u64(in + 146);
 }
 
 static int bytes_zero(const uint8_t *bytes, size_t count)
@@ -450,25 +457,30 @@ static int audio_state_valid(const lynx__audio_state *audio, const uint8_t *raw,
                              uint64_t ticks)
 {
     if (audio->ring_cursor >= LYNX__AUDIO_RING_NODE_COUNT ||
-        audio->same_tick_device_cursor > 1u || audio->same_tick_sample_cursor > 1u ||
-        audio->event_cursor_valid > 1u || audio->event_sequence > LYNX_AV_MIN_EVENT_CAPACITY ||
-        !bytes_zero(raw + 53, 1u) || !bytes_zero(raw + 82, 6u)) return 0;
-    for (size_t i = 0u; i < LYNX__AUDIO_RING_NODE_COUNT; i++) {
-        if (audio->ring_debt[i] > LYNX__AUDIO_RING_DEBT_LIMIT) return 0;
-    }
+        (audio->same_tick_device_cursor & LYNX__AUDIO_RING_RESERVED_MASK) != 0u ||
+        (audio->same_tick_device_cursor & LYNX__AUDIO_RING_VISIT_MASK) >
+            LYNX__AUDIO_RING_VISIT_LIMIT ||
+        audio->same_tick_sample_cursor > 1u || audio->event_cursor_valid > 1u ||
+        audio->ring_defer_valid > 1u ||
+        audio->event_sequence > LYNX__AUDIO_MAX_EVENTS_PER_TICK ||
+        !bytes_zero(raw + 114, 4u) || !bytes_zero(raw + 154, 6u)) return 0;
     for (size_t i = 0u; i < LYNX__AUDIO_CHANNEL_COUNT; i++) {
         const lynx__audio_channel *channel = &audio->channels[i];
-        if (channel->shift > 0x0FFFu || (channel->control_b & 0xF0u) != 0u ||
-            ((channel->control_a & 0x07u) == 0x07u && (channel->control_a & 0x08u) != 0u)) {
+        if (channel->shift > 0x0FFFu || (channel->control_b & 0xF0u) != 0u) {
             return 0;
         }
     }
     if (audio->event_cursor_valid != 0u) {
         if (audio->event_tick != ticks) return 0;
-    } else if (audio->event_tick != 0u || audio->event_sequence != 0u ||
-               audio->same_tick_device_cursor != 0u) {
+    } else if (audio->event_tick != 0u || audio->event_sequence != 0u) {
         return 0;
     }
+    int has_ring_debt = audio->ring_debt_high != 0u;
+    for (size_t i = 0u; i < LYNX__AUDIO_RING_NODE_COUNT; i++) {
+        if (audio->ring_debt[i] != 0u) has_ring_debt = 1;
+    }
+    if ((has_ring_debt != 0) != (audio->ring_defer_valid != 0u) ||
+        !lynx__audio_ring_state_valid(audio, ticks)) return 0;
     if (audio->same_tick_sample_cursor != 0u && (ticks == 0u || ticks % 400u != 0u)) return 0;
     if (audio->next_sample_ordinal >= UINT64_MAX / 400u) return 0;
     const uint64_t expected_next = (audio->next_sample_ordinal + 1u) * UINT64_C(400);

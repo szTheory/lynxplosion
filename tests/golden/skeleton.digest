@@ -20,9 +20,10 @@
 # a timing refinement of the cost model), after the CPU vectors and the
 # hand-derived program checks are green, and give the reason in the commit
 # message.
-# Phase 5 expands the observation schema with obs.state.hex, SHA-256 of the
-# public fieldwise guest-state digest. This intentionally changes the oracle
-# while leaving the workload, CPU, RAM, and time observations unchanged; the
-# new API input sensitivity and det.video_sensitivity prove the added stream
-# is nonvacuous.
-1420aa0aebe840917a2cb0e8789ed5e7c9697c6be5c79a497abc0d990550d3c0
+# Phase 5 added obs.state.hex, SHA-256 of the public fieldwise guest-state
+# digest. Phase 6 changes its versioned stream from guest-state.v2 to v3 and
+# includes the widened, counted timer/audio ring debt and deferred deadline.
+# This changes the oracle while leaving the workload, CPU, RAM, and time
+# observations unchanged. det.video_sensitivity proves the state stream and
+# the newly widened ring debt are both nonvacuous.
+4118959d3b07f1b1786e84dfb8f5f584e8e8e493bb8d955cdd019a3df2250342

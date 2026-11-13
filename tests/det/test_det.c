@@ -1499,10 +1499,11 @@ done:
 
 static void case_video_sensitivity(char **args)
 {
-    enum { INPUT, PALETTE, PEN, DMA_OWNER, PAGE_LATCH, AUDIO_ROUTE, HOST_WATCH, FLIP_COUNT };
+    enum { INPUT, PALETTE, PEN, DMA_OWNER, PAGE_LATCH, AUDIO_ROUTE, RING_DEBT,
+           HOST_WATCH, FLIP_COUNT };
     static const char *const names[FLIP_COUNT] = {
         "input mask", "palette component", "partial pen byte", "DMA owner deadline",
-        "CPU page latch", "audio FD50 route", "host watch"
+        "CPU page latch", "audio FD50 route", "audio ring debt", "host watch"
     };
     (void)args;
     instance base = {0};
@@ -1547,6 +1548,13 @@ static void case_video_sensitivity(char **args)
                                     (uint8_t)(copy->audio.stereo_disable ^ 1u),
                                     copy->guest_ticks, NULL));
             break;
+        case RING_DEBT:
+            copy->audio.ring_debt[0] = 1u;
+            copy->audio.ring_defer_valid = 1u;
+            copy->audio.ring_defer_tick = copy->guest_ticks;
+            CHECK_NAMED(lynx__audio_ring_state_valid(&copy->audio, copy->guest_ticks),
+                        "video_sensitivity.reachable-ring-debt-shape");
+            break;
         case HOST_WATCH:
             CHECK_EQ_U64(lynx_watch_configure(copy, 0x0400u, 1u), LYNX_OK);
             break;
@@ -1570,7 +1578,7 @@ static void case_video_sensitivity(char **args)
 
     lynx_machine_deinit(base.m);
     free(base.mem);
-    printf("video_sensitivity: input,palette,partial-pen,DMA-owner,page-latch,audio-route sensitive; host-watch excluded\n");
+    printf("video_sensitivity: input,palette,partial-pen,DMA-owner,page-latch,audio-route,ring-debt sensitive; host-watch excluded\n");
 }
 
 static const struct {

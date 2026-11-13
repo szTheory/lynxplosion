@@ -71,8 +71,10 @@ api.watch_post_write	api
 audio.counter	audio
 audio.integrator	audio
 audio.lfsr	audio
+audio.links	audio
 audio.mix	audio
 audio.registers	audio
+audio.ring_zero	audio
 audio.stereo	audio
 consumer.av_tracer	consumer
 consumer.frame_publication_controls	consumer

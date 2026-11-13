@@ -20,18 +20,18 @@ enum {
     DIAG_MIN_TICKS = 3000,
     DIAG_MAX_TICKS = 4000,
     FINAL_TICK = 5000,
-    SNAP_FORMAT = 6,
+    SNAP_FORMAT = 7,
     SNAP_HEADER_SIZE = 256,
-    SNAP_PAYLOAD_SIZE = 78036,
+    SNAP_PAYLOAD_SIZE = 78108,
     SNAP_PAYLOAD_HASH_OFFSET = 220,
     SNAP_TIMING_POLICY_OFFSET = 252,
     SNAP_RAM_OFFSET = 32,
     SNAP_RESERVED_OFFSET = 15
 };
 _Static_assert(SNAP_PAYLOAD_HASH_OFFSET + 32 == SNAP_TIMING_POLICY_OFFSET,
-               "format 6 payload digest precedes timing-policy identity");
+               "format 7 payload digest precedes timing-policy identity");
 _Static_assert(SNAP_TIMING_POLICY_OFFSET + 4 == SNAP_HEADER_SIZE,
-               "format 6 timing-policy identity ends the header");
+               "format 7 timing-policy identity ends the header");
 
 typedef struct diag_symbols {
     uint32_t result;
@@ -1195,7 +1195,7 @@ static int save_snapshot_for_machine(const lynx_machine *machine, uint8_t **snap
         read_le32(*snapshot + SNAP_HEADER_SIZE + 16u) != FINAL_TICK) {
         free(*snapshot);
         *snapshot = NULL;
-        return fail("public snapshot does not describe format 6, legacy flat5 policy, and final tick");
+        return fail("public snapshot does not describe format 7, legacy flat5 policy, and final tick");
     }
     return 0;
 }

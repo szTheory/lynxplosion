@@ -2426,7 +2426,7 @@ static void case_reset_power_on(void)
 #define SNAP_OFF_PAYLOAD_SHA 220u
 #define SNAP_SEED 0x0123456789abcdefu
 
-/* Payload offsets of format 6 (white-box, from core/snapshot.c). */
+/* Payload offsets of format 7 (white-box, from core/snapshot.c). */
 enum {
     PAY_PC = 0, PAY_P = 6, PAY_FLAGS = 7, PAY_OPCODE = 8, PAY_STEP = 9, PAY_EA = 10, PAY_TMP = 12,
     PAY_COST_MODEL = 13, PAY_MAPCTL = 14, PAY_PAGE_LATCH = 15, PAY_TICKS = 16, PAY_READY_AT = 24,
@@ -2437,6 +2437,21 @@ enum {
     PAY_BUS_HOLD = PAY_TIMER_EVENT_APPLIED + 1,
     PAY_VIDEO = PAY_BUS_HOLD + 1,
     PAY_AUDIO = PAY_VIDEO + (int)LYNX__VIDEO_SNAPSHOT_LEN
+};
+
+enum {
+    AUDIO_RING_DEBT_LOW = 42,
+    AUDIO_RING_DEBT_HIGH = 106,
+    AUDIO_RING_DEFER_VALID = 110,
+    AUDIO_DEVICE_CURSOR = 111,
+    AUDIO_SAMPLE_CURSOR = 112,
+    AUDIO_EVENT_CURSOR_VALID = 113,
+    AUDIO_EVENT_SEQUENCE = 118,
+    AUDIO_EVENT_TICK = 122,
+    AUDIO_NEXT_SAMPLE_TICK = 130,
+    AUDIO_NEXT_SAMPLE_ORDINAL = 138,
+    AUDIO_RING_DEFER_TICK = 146,
+    AUDIO_RESERVED = 154
 };
 
 enum {
@@ -2864,6 +2879,141 @@ static void case_timer_snapshot(void)
            check_failures == failures_before ? "ok" : "not ok");
 }
 
+static void case_av_event_capacity_ring_strobe(void)
+{
+    static const uint8_t strobe_guest[] = {
+        0xA9u, 0x02u,             /* LDA #borrow-in */
+        0x8Du, 0x27u, 0xFDu,      /* STA A0 CTLB */
+        0x4Cu, 0x00u, 0x02u       /* JMP $0200 */
+    };
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    cfg.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        CHECK(m != NULL);
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, strobe_guest, sizeof strobe_guest, 0x0200u), LYNX_OK);
+
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    bool found_strobe = false;
+    for (uint32_t attempt = 0u; attempt < 128u; attempt++) {
+        CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
+        if (m->cpu.req_addr == 0xFD27u &&
+            (m->cpu.req_flags & LYNX__CF_WRITE) != 0u) {
+            found_strobe = true;
+            break;
+        }
+    }
+    CHECK_NAMED(found_strobe, "api.av_event_capacity.posted-strobe");
+    if (!found_strobe) {
+        lynx_machine_deinit(m);
+        return;
+    }
+
+    const uint64_t ready_or_now = m->cpu_ready_at > m->guest_ticks + 1u ?
+                                      m->cpu_ready_at : m->guest_ticks + 1u;
+    const uint64_t target_tick = ((ready_or_now + 15u) / 16u) * 16u;
+    CHECK(target_tick != 0u && target_tick > m->guest_ticks);
+    m->guest_ticks = target_tick - 1u;
+    m->cpu_ready_at = target_tick;
+    lynx__timer_init(&m->timer_bank);
+    lynx__audio_init(&m->audio);
+    for (uint8_t channel = 0u; channel < LYNX__AUDIO_CHANNEL_COUNT; channel++) {
+        lynx__audio_channel *state = &m->audio.channels[channel];
+        state->volume = 1u;
+        state->control_a = 0x58u; /* source 0, count, reload and reset-DONE */
+        state->count = 0u;
+        state->backup = 0u;
+        state->feedback = 1u; /* tap 0 makes the two same-tick clocks alternate */
+        state->shift = 0u;
+        state->output = 0;
+        state->integrator = 0;
+    }
+    m->audio.ring_cursor = 7u;
+    for (uint8_t node = 4u; node < LYNX__AUDIO_RING_NODE_COUNT; node++) {
+        m->audio.ring_debt[node] = 1u;
+    }
+    m->audio.ring_defer_valid = 1u;
+    m->audio.ring_defer_tick = target_tick;
+    m->audio.same_tick_device_cursor = LYNX__AUDIO_RING_VISIT_LIMIT;
+    CHECK_NAMED(lynx__audio_ring_state_valid(&m->audio, target_tick - 1u),
+                "api.av_event_capacity.seed-valid");
+
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY];
+    uint8_t palettes[LYNX_FRAME_PALETTE_CAPACITY];
+    uint64_t line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+    lynx_pcm_frame pcm[1];
+    lynx_audio_event events[LYNX_AV_MIN_EVENT_CAPACITY];
+    memset(pens, 0xA5, sizeof pens);
+    memset(palettes, 0xA5, sizeof palettes);
+    memset(line_ticks, 0xA5, sizeof line_ticks);
+    memset(pcm, 0xA5, sizeof pcm);
+    memset(events, 0xA5, sizeof events);
+    lynx_av_buffers buffers = {0};
+    buffers.struct_size = (uint32_t)sizeof buffers;
+    buffers.frame.struct_size = (uint32_t)sizeof buffers.frame;
+    buffers.frame.pens = pens;
+    buffers.frame.pens_capacity = sizeof pens;
+    buffers.frame.palettes = palettes;
+    buffers.frame.palettes_capacity = sizeof palettes;
+    buffers.frame.line_ticks = line_ticks;
+    buffers.frame.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+    buffers.pcm = pcm;
+    buffers.pcm_capacity = 1u;
+    buffers.events = events;
+    buffers.event_capacity = LYNX_AV_MIN_EVENT_CAPACITY - 1u;
+    lynx_av_result result = {0};
+    result.struct_size = (uint32_t)sizeof result;
+    result.stop = LYNX_STOP_HALT;
+    result.ticks_consumed = UINT64_C(0xA5A5A5A5A5A5A5A5);
+    lynx_av_result result_before = result;
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_advance_av(m, 2u, &buffers, &result), LYNX_ERR_CAPACITY);
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK(memcmp(&result, &result_before, sizeof result) == 0);
+    CHECK(all_bytes_equal(pens, sizeof pens, 0xA5u));
+    CHECK(all_bytes_equal(palettes, sizeof palettes, 0xA5u));
+    CHECK(all_bytes_equal((const uint8_t *)line_ticks, sizeof line_ticks, 0xA5u));
+    CHECK(all_bytes_equal((const uint8_t *)pcm, sizeof pcm, 0xA5u));
+    CHECK(all_bytes_equal((const uint8_t *)events, sizeof events, 0xA5u));
+
+    buffers.event_capacity = LYNX_AV_MIN_EVENT_CAPACITY;
+    result.struct_size = (uint32_t)sizeof result;
+    CHECK_EQ_U64(lynx_advance_av(m, 2u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.stop, LYNX_STOP_OUTPUT);
+    CHECK_EQ_U64(result.ticks_consumed, 1u);
+    CHECK_EQ_U64(result.event_count, 8u);
+    CHECK_EQ_U64(m->guest_ticks, target_tick);
+    CHECK_EQ_U64(m->cpu.req_addr, 0xFD27u);
+    CHECK_EQ_U64(m->cpu.req_flags & LYNX__CF_WRITE, LYNX__CF_WRITE);
+    static const uint8_t channel_order[8] = {3u, 0u, 1u, 2u, 0u, 1u, 2u, 3u};
+    for (uint32_t i = 0u; i < 8u; i++) {
+        CHECK_EQ_U64(events[i].tick, target_tick);
+        CHECK_EQ_U64(events[i].sequence, i);
+        CHECK_EQ_U64(events[i].channel, channel_order[i]);
+        CHECK_EQ_U64(events[i].cause, LYNX_AUDIO_EVENT_CLOCK);
+    }
+    CHECK(events[0].before_output == 0 && events[0].after_output == 1);
+    CHECK(events[4].before_output == 1 && events[4].after_output == -1);
+
+    memset(events, 0xA5, sizeof events);
+    result.struct_size = (uint32_t)sizeof result;
+    CHECK_EQ_U64(lynx_advance_av(m, 1u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(result.ticks_consumed, 1u);
+    CHECK_EQ_U64(result.event_count, 1u);
+    CHECK_EQ_U64(m->guest_ticks, target_tick + 1u);
+    CHECK_EQ_U64(events[0].tick, target_tick);
+    CHECK_EQ_U64(events[0].sequence, 8u);
+    CHECK_EQ_U64(events[0].channel, 0u);
+    CHECK_EQ_U64(events[0].cause, LYNX_AUDIO_EVENT_CLOCK);
+    CHECK(events[0].before_output == -1 && events[0].after_output == 1);
+    lynx_machine_deinit(m);
+}
+
 static void case_av_lattice(void)
 {
     lynx_config cfg;
@@ -2950,8 +3100,8 @@ static void case_av_lattice(void)
     CHECK_EQ_U64(consumed, 1u);
     CHECK_EQ_U64(m->audio.next_sample_ordinal, 3u);
 
-    /* A complete-tick reservation stops before the next transition; resuming
-       with a fresh span captures it once rather than losing it. */
+    /* The exclusive target stops at the first channel edge; advancing one
+       tick delivers each event once into the current caller span. */
     const uint64_t setup_tick = m->guest_ticks;
     CHECK(lynx__audio_write(&m->audio, 0xFD20u, 1u, setup_tick, NULL));
     CHECK(lynx__audio_write(&m->audio, 0xFD21u, 1u, setup_tick, NULL));
@@ -2969,8 +3119,11 @@ static void case_av_lattice(void)
     }
     CHECK_UNCHANGED(machine_buf, snap_a);
     buffers.pcm = pcm_first; buffers.events = events_first;
-    CHECK_EQ_U64(lynx_advance_av(m, 40u, &buffers, &result), LYNX_OK);
-    CHECK_EQ_U64(result.stop, LYNX_STOP_OUTPUT);
+    CHECK_EQ_U64(lynx_advance_av(m, 15u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(result.event_count, 0u);
+    CHECK_EQ_U64(lynx_advance_av(m, 1u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.stop, LYNX_STOP_BUDGET);
     CHECK_EQ_U64(result.event_count, 1u);
     CHECK_EQ_U64(events_first[0].tick, 1216u);
     CHECK_EQ_U64(events_first[0].sequence, 0u);
@@ -2979,7 +3132,9 @@ static void case_av_lattice(void)
     CHECK(events_first[0].before_output == -1);
     CHECK_EQ_U64(events_first[0].after_output, 1u);
     buffers.events = events_second;
-    CHECK_EQ_U64(lynx_advance_av(m, 16u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance_av(m, 15u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.event_count, 0u);
+    CHECK_EQ_U64(lynx_advance_av(m, 1u, &buffers, &result), LYNX_OK);
     CHECK_EQ_U64(result.stop, LYNX_STOP_BUDGET);
     CHECK_EQ_U64(result.event_count, 1u);
     CHECK_EQ_U64(events_second[0].tick, 1232u);
@@ -2989,6 +3144,7 @@ static void case_av_lattice(void)
     CHECK_EQ_U64(events_second[0].before_output, 1u);
     CHECK(events_second[0].after_output == -1);
     lynx_machine_deinit(m);
+    case_av_event_capacity_ring_strobe();
 }
 
 static void case_snapshot_roundtrip(void)
@@ -3020,7 +3176,7 @@ static void case_snapshot_roundtrip(void)
     CHECK_UNCHANGED(machine_buf, snap_a);
     CHECK_EQ_U64(blob_v[SNAP_TOTAL], 0xA5u); /* nothing written past the end */
     CHECK(memcmp(blob_v, "LYNXSNAP", 8u) == 0);
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 6u); /* format 6 */
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 7u); /* format 7 */
     CHECK_EQ_U64(get_le(blob_v + 12u, 4u), LYNX__SNAPSHOT_HEADER_LEN);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
@@ -3029,8 +3185,10 @@ static void case_snapshot_roundtrip(void)
     CHECK_EQ_U64(get_le(blob_v + 216u, 4u), LYNX__SNAPSHOT_PAYLOAD_LEN);
     CHECK_EQ_U64(PAY_AUDIO, 77948);
     CHECK(all_bytes_equal(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO, 40u, 0u));
-    CHECK_EQ_U64(get_le(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + 66u, 8u), 2400u);
-    CHECK_EQ_U64(get_le(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + 74u, 8u), 5u);
+    CHECK_EQ_U64(get_le(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO +
+                        AUDIO_NEXT_SAMPLE_TICK, 8u), 2400u);
+    CHECK_EQ_U64(get_le(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO +
+                        AUDIO_NEXT_SAMPLE_ORDINAL, 8u), 5u);
 
     /* Saving twice, over different garbage, gives the same bytes. */
     memset(blob_bad, 0x5A, sizeof blob_bad);
@@ -3346,8 +3504,10 @@ static void snapshot_tick_limit(void)
     put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, limit, 8u);
     put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_READY_AT, limit + 4u, 8u);
     const uint64_t next_ordinal = limit / UINT64_C(400);
-    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + 74u, next_ordinal, 8u);
-    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + 66u,
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO +
+           AUDIO_NEXT_SAMPLE_ORDINAL, next_ordinal, 8u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO +
+           AUDIO_NEXT_SAMPLE_TICK,
            (next_ordinal + 1u) * UINT64_C(400), 8u);
     rehash_payload(blob_bad);
     CHECK_EQ_U64(lynx_snapshot_restore(dst, blob_bad, SNAP_TOTAL), LYNX_OK);
@@ -3410,8 +3570,8 @@ static void case_snapshot_refusal(void)
     RESTORE_EXPECT(m, blob_v, 0u, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
     RESTORE_EXPECT(m, blob_v, LYNX__SNAPSHOT_HEADER_LEN, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
 
-    /* Formats 1 through 5 are unsupported; format 6 is the current positive case. */
-    CHECK_EQ_U64(blob_bad[8], 6u);
+    /* Formats 1 through 6 are unsupported; format 7 is the current positive case. */
+    CHECK_EQ_U64(blob_bad[8], 7u);
     CHECK_EQ_U64(blob_bad[9] | blob_bad[10] | blob_bad[11], 0u);
     blob_bad[8] = 1u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
@@ -3422,6 +3582,8 @@ static void case_snapshot_refusal(void)
     blob_bad[8] = 4u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
     blob_bad[8] = 5u;
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
+    blob_bad[8] = 6u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
     blob_bad[8] = 6u;
 
@@ -3593,21 +3755,67 @@ static void case_snapshot_refusal(void)
     VALUE_REFUSED(m, blob_v, PAY_TIMER_EVENT_APPLIED, 1u, 1u, snap_a); /* no due edge */
     VALUE_REFUSED(m, blob_v, PAY_BUS_HOLD, 2u, 1u, snap_a);
 
-    /* Audio format-6 fields are validated before any candidate is applied. */
+    /* Audio format-7 fields are validated before any candidate is applied. */
     VALUE_REFUSED(m, blob_v, PAY_AUDIO + 41u, LYNX__AUDIO_RING_NODE_COUNT, 1u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 42u, LYNX__AUDIO_RING_DEBT_LIMIT + 1u, 1u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 50u, 2u, 1u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 51u, 2u, 1u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 52u, 2u, 1u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 53u, 1u, 1u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 54u, LYNX_AV_MIN_EVENT_CAPACITY + 1u, 4u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 58u, 1u, 8u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 66u, 2399u, 8u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 74u, 6u, 8u, snap_a);
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 82u, 1u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_RING_DEBT_LOW, 1u, 8u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_RING_DEBT_HIGH, 1u, 4u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_RING_DEFER_VALID, 2u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_DEVICE_CURSOR, 0x10u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_SAMPLE_CURSOR, 2u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_EVENT_CURSOR_VALID, 2u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 114u, 1u, 1u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_EVENT_SEQUENCE,
+                  LYNX__AUDIO_MAX_EVENTS_PER_TICK + 1u, 4u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_EVENT_TICK, 1u, 8u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_NEXT_SAMPLE_TICK, 2399u, 8u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_NEXT_SAMPLE_ORDINAL, 6u, 8u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_RING_DEFER_TICK, 1u, 8u, snap_a);
+    VALUE_REFUSED(m, blob_v, PAY_AUDIO + AUDIO_RESERVED, 1u, 1u, snap_a);
     VALUE_REFUSED(m, blob_v, PAY_AUDIO + 4u, 0x10u, 1u, snap_a); /* CTLB reserved bits */
     VALUE_REFUSED(m, blob_v, PAY_AUDIO + 6u, 0x1000u, 2u, snap_a); /* shifter wider than 12 bits */
-    VALUE_REFUSED(m, blob_v, PAY_AUDIO + 3u, 0x0Fu, 1u, snap_a); /* unsupported linked count */
+
+    /* Each forged node below is individually small, but their total exceeds
+       the cumulative nine-roots-per-tick reachability bound. The exact due-now
+       deadline is structurally valid, so only the sum check rejects it. */
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
+    const uint64_t audio_ticks = get_le(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_TICKS, 8u);
+    const uint64_t forged_each = (UINT64_C(9) * (audio_ticks + 1u)) / 8u + 1u;
+    for (size_t node = 0u; node < LYNX__AUDIO_RING_NODE_COUNT; node++) {
+        put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO +
+               AUDIO_RING_DEBT_LOW + node * 8u, forged_each, 8u);
+    }
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + AUDIO_RING_DEFER_VALID, 1u, 1u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + AUDIO_RING_DEFER_TICK,
+           audio_ticks, 8u);
+    rehash_payload(blob_bad);
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+
+    /* A pending copy may be due now or at the next master tick only. A farther
+       deadline is not a reachable continuation, even with otherwise valid
+       debt and multiplicity. */
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + AUDIO_RING_DEBT_LOW,
+           1u, 8u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + AUDIO_RING_DEFER_VALID,
+           1u, 1u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + AUDIO_RING_DEFER_TICK,
+           audio_ticks + 2u, 8u);
+    rehash_payload(blob_bad);
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+
+    /* A next-tick suffix is reachable only after exhausting this tick's
+       eight-visit work slice; an empty visit count cannot defer debt. */
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + AUDIO_RING_DEBT_LOW,
+           1u, 8u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + AUDIO_RING_DEFER_VALID,
+           1u, 1u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + AUDIO_DEVICE_CURSOR,
+           0u, 1u);
+    put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO + AUDIO_RING_DEFER_TICK,
+           audio_ticks + 1u, 8u);
+    rehash_payload(blob_bad);
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
 
     /* Control: the untouched blob is accepted and gives the instance as saved,
        so every refusal above was the edit. */
@@ -3702,8 +3910,12 @@ static void case_timer_snapshot_controls(void)
                                        8u, blob_c); /* stale behind-tick readiness */
         timer_snapshot_control_refusal(target, PAY_TIMERS + 2u, 0x8Fu, 1u,
                                        blob_c); /* enabled T0 incoming link is unsupported */
-        timer_snapshot_control_refusal(target, PAY_TIMERS + 4u + 2u, 0x8Fu, 1u,
-                                       blob_c); /* enabled T1 incoming audio link is absent */
+        memcpy(blob_bad, blob_c, SNAP_TOTAL);
+        put_le(blob_bad + LYNX__SNAPSHOT_HEADER_LEN + PAY_TIMERS + 4u + 2u,
+               0x8Fu, 1u); /* enabled T1 incoming audio link is now supported */
+        rehash_payload(blob_bad);
+        CHECK_EQ_U64(lynx_snapshot_restore(target, blob_bad, SNAP_TOTAL), LYNX_OK);
+        CHECK_EQ_U64(target->timer_bank.timers[1].control_a, 0x8Fu);
         timer_snapshot_control_refusal(target, PAY_TIMERS + 6u * 4u + 2u, 0x8Fu, 1u,
                                        blob_c); /* T6 has no supported predecessor */
         timer_snapshot_control_refusal(target, PAY_TIMERS + 3u, 0x02u, 1u,
@@ -5640,16 +5852,62 @@ static void expect_unavailable_guest_write(uint16_t addr, uint8_t value,
     lynx_machine_deinit(m);
 }
 
+static void expect_supported_timer1_previous_write(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        CHECK(m != NULL);
+        return;
+    }
+    static const uint8_t link_loop[] = {
+        0xA9u, 0x0Fu,             /* LDA #COUNT|LINK */
+        0x8Du, 0x05u, 0xFDu,      /* STA T1 CTLA */
+        0x4Cu, 0x00u, 0x02u       /* JMP $0200 */
+    };
+    CHECK_EQ_U64(load_bll_at(m, link_loop, sizeof link_loop, 0x0200u), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    CHECK_EQ_U64(lynx_advance(m, 100u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 100u);
+    CHECK_EQ_U64(m->timer_bank.timers[1].control_a, 0x0Fu);
+    lynx_machine_deinit(m);
+}
+
+static void expect_supported_audio_volume_write(void)
+{
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        CHECK(m != NULL);
+        return;
+    }
+    static const uint8_t audio_loop[] = {
+        0xA9u, 0x5Au,             /* LDA #volume */
+        0x8Du, 0x20u, 0xFDu,      /* STA A0 volume */
+        0x4Cu, 0x00u, 0x02u       /* JMP $0200 */
+    };
+    CHECK_EQ_U64(load_bll_at(m, audio_loop, sizeof audio_loop, 0x0200u), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    CHECK_EQ_U64(lynx_advance(m, 100u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 100u);
+    CHECK_EQ_U64(m->audio.channels[0].volume, 0x5Au);
+    lynx_machine_deinit(m);
+}
+
 static void case_timer_unavailable(void)
 {
     const int failures_before = check_failures;
     size_t cases_run = 0u;
 
-    /* No documented incoming link exists for timer 0 or 6; timer 1's source
-       would be absent audio 3. Enabled selections refuse before CTLA mutation. */
+    /* Timer 0 and 6 still have no supported previous source. T1 now accepts
+       its previous selector because A3 closes the implemented ring. */
     expect_unavailable_guest_write(0xFD01u, 0x0Fu, false, true, 0u, 0u);
-    cases_run++;
-    expect_unavailable_guest_write(0xFD05u, 0x0Fu, false, true, 1u, 0u);
     cases_run++;
     expect_unavailable_guest_write(0xFD19u, 0x0Fu, false, true, 6u, 0u);
     cases_run++;
@@ -5661,10 +5919,7 @@ static void case_timer_unavailable(void)
     expect_unavailable_guest_write(0xFD19u, 0x0Fu, true, true, 6u, 0x07u);
     cases_run++;
 
-    /* Unimplemented Mikey audio and Suzy addresses refuse through the guest
-       bus, preserving both the pending store and hidden backing RAM. */
-    expect_unavailable_guest_write(0xFD20u, 0x5Au, false, false, 0u, 0u);
-    cases_run++;
+    /* Suzy addresses still refuse through the guest bus. */
     expect_unavailable_guest_write(0xFC00u, 0x5Au, false, false, 0u, 0u);
     cases_run++;
 
@@ -5674,6 +5929,12 @@ static void case_timer_unavailable(void)
     if (m != NULL) {
         uint8_t crossing[2] = {0xA5u, 0x5Au};
         CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD1Fu, crossing, sizeof crossing),
+                     LYNX_OK);
+        CHECK_EQ_U64(crossing[0], 0u); /* T7 CTLB */
+        CHECK_EQ_U64(crossing[1], 0u); /* A0 volume */
+        crossing[0] = 0xA5u;
+        crossing[1] = 0x5Au;
+        CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD3Fu, crossing, sizeof crossing),
                      LYNX_ERR_UNAVAILABLE);
         CHECK_EQ_U64(crossing[0], 0xA5u);
         CHECK_EQ_U64(crossing[1], 0x5Au);
@@ -5682,7 +5943,9 @@ static void case_timer_unavailable(void)
         CHECK(m != NULL);
     }
 
-    CHECK_EQ_U64(cases_run, 7u);
+    CHECK_EQ_U64(cases_run, 5u);
+    expect_supported_timer1_previous_write();
+    expect_supported_audio_volume_write();
     printf("TAP version 13\n1..1\n%s 1 - api.timer_unavailable\n",
            check_failures == failures_before ? "ok" : "not ok");
 }

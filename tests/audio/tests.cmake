@@ -11,3 +11,5 @@ lynx_add_test(NAME audio.counter COMMAND lynx-test-audio counter LABELS audio TI
 lynx_add_test(NAME audio.integrator COMMAND lynx-test-audio integrator LABELS audio TIMEOUT 30)
 lynx_add_test(NAME audio.stereo COMMAND lynx-test-audio stereo LABELS audio TIMEOUT 60)
 lynx_add_test(NAME audio.mix COMMAND lynx-test-audio mix LABELS audio TIMEOUT 60)
+lynx_add_test(NAME audio.links COMMAND lynx-test-audio links LABELS audio TIMEOUT 30)
+lynx_add_test(NAME audio.ring_zero COMMAND lynx-test-audio ring_zero LABELS audio TIMEOUT 60)

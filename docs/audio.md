@@ -25,8 +25,8 @@ Primary references: [Mikie audio chapter](https://www.monlynx.de/lynx/lynx7.html
 The cited audio text says FD27's lower nibble behaves as a timer control except
 for bit 3, whose function it does not explain. It also describes CTLB bit 3 as
 a channel status / lifetime control. This version treats the exact CTLB status
-lifetime, manual borrow-in behavior, reset phase and the not-yet-implemented
-linked source mode as software policy rather than claiming a physical
+lifetime, manual borrow-in behavior, reset phase and linked source mode as
+software policy rather than claiming a physical
 interpretation. The cited materials do not settle stereo routing, power-on
 oscillator phase, or exact output amplitude. The upstream audio suites provide
 additional software observations, but do not address MSTEREO and are not
@@ -44,12 +44,29 @@ hardware-qualified rates or phase.
 
 Reset starts counters, divider phase, feedback, shifters, outputs, stereo
 routing and integrators at zero. The selected ordinary channel divider uses
-`16 << (CTLA & 7)` guest ticks for prescaler values 0..6; value 7 is the link
-selection and remains unavailable until the ring plan. A channel decrements a
+`16 << (CTLA & 7)` guest ticks for prescaler values 0..6; value 7 selects the
+previous link source. A channel decrements a
 nonzero count on its clock. At zero it borrows, optionally reloads its backup,
 updates DONE/reset-DONE policy, then clocks its shifter and output. The zero
 value therefore borrows on the next selected edge. The exact control/status
 lifetime and first edge are deterministic software policy.
+
+The software link order is T1→T3→T5→T7→A0→A1→A2→A3→T1. Timer 0→2→4 remains
+separate and keeps its prior ordering. A borrow consumes one link pulse and
+emits at most one successor when that next node selects link, including a
+one-shot underflow with reload disabled. Reload changes the counter value;
+underflow controls DONE, IRQ and linked propagation.
+
+Same-tick link work has a fixed eight-visit budget, starting at the serialized
+ring cursor. Pending work retains its exact per-node multiplicity and advances
+under the `ring-defer-1` software policy at the next master tick. The absolute
+deadline is serialized so a half-open call that stops exactly there, a watch
+return, or a save/restore cannot shift delivery another tick. The eight ring
+nodes have at most eight natural roots per tick, plus one CPU bus-write root;
+propagation itself does not increase total debt. Thus total pending debt is at
+most `9 * (guest_ticks + 1)`. Each node stores a 64-bit low word and four-bit
+high word, and restore checks the summed debt against that cumulative bound.
+This is a bounded software rule, not physical ring timing qualification.
 
 Register volume and output bytes are decoded explicitly as signed 8-bit
 values: `0x80` is -128 and `0xFF` is -1. The shifter uses the FD21 tap
@@ -75,16 +92,21 @@ mix-scale choices are software policy, not claims about measured hardware.
 The public `lynx_advance_av` call copies PCM frames and audio events into
 caller-owned spans. It retains no pointer. Event sequence numbers are stable
 within a guest tick and the event cursor is machine state so slicing and
-snapshot continuation do not change observations. Capture checks event space
-before performing a potentially observable tick and returns
-`LYNX_STOP_OUTPUT` before progressing when a complete-tick event reservation
-or next PCM frame does not fit; it never discards enabled observations.
+snapshot continuation do not change observations. A guest tick is bounded by
+four natural channel roots, eight ring visits, and one CPU audio write or
+strobe; the public event span minimum is 13 entries for this conservative
+same-tick envelope. A device transition stages its state and events together,
+so an insufficient span returns `LYNX_STOP_OUTPUT` without committing that
+transition. If device work already filled the available prefix, the CPU audio
+write remains posted and resumes at the exact tick with a fresh span. A full
+span is never required for a PCM sample, but an absent next frame returns
+`LYNX_STOP_OUTPUT` before sampling it. Enabled observations are never dropped.
 Legacy `lynx_advance` and `lynx_advance_frame` still advance channel and sample
 phase but do not request PCM or event output.
 
 Raw pens/palettes and per-line ticks remain separate from audio samples and
 events. Host timeline cursors, file offsets, clocks, and output buffers are not
-guest state. The complete four-channel state envelope is included in snapshot
-format 6 and the canonical guest-state digest, although this tracer exercises
-only channel 0. Snapshot round trips establish software repeatability within
-the exact build identity, not physical accuracy.
+guest state. The complete four-channel state and deferred ring work are
+included in snapshot format 7 and the canonical guest-state digest, although
+this tracer exercises only channel 0. Snapshot round trips establish software
+repeatability within the exact build identity, not physical accuracy.

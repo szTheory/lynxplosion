@@ -534,6 +534,314 @@ static void case_mix(void)
                         "audio.mix.cancellation-left", "audio.mix.cancellation-right");
 }
 
+static const uint8_t ring_timer_indexes[4] = {1u, 3u, 5u, 7u};
+
+static uint16_t timer_register(uint8_t index, uint8_t reg)
+{
+    return (uint16_t)(0xFD00u + (uint16_t)index * 4u + reg);
+}
+
+static void configure_zero_link_ring(lynx__timer_bank *bank, lynx__audio_state *audio)
+{
+    lynx__timer_init(bank);
+    lynx__audio_init(audio);
+    for (size_t i = 0u; i < 4u; i++) {
+        bank->timers[ring_timer_indexes[i]].control_a = 0x4Fu;
+        bank->timers[ring_timer_indexes[i]].count = 0u;
+        audio->channels[i].control_a = 0x4Fu;
+        audio->channels[i].count = 0u;
+    }
+}
+
+static uint64_t ring_debt_sum(const lynx__audio_state *audio)
+{
+    uint64_t total = 0u;
+    for (size_t i = 0u; i < LYNX__AUDIO_RING_NODE_COUNT; i++) {
+        total += audio->ring_debt[i];
+    }
+    return total;
+}
+
+static void case_links(void)
+{
+    static const char *const edge_names[8] = {
+        "audio.links.t1-t3", "audio.links.t3-t5", "audio.links.t5-t7",
+        "audio.links.t7-a0", "audio.links.a0-a1", "audio.links.a1-a2",
+        "audio.links.a2-a3", "audio.links.a3-t1"
+    };
+    for (uint8_t source = 0u; source < LYNX__AUDIO_RING_NODE_COUNT; source++) {
+        lynx__timer_bank bank;
+        lynx__audio_state audio;
+        configure_zero_link_ring(&bank, &audio);
+        for (size_t i = 0u; i < 4u; i++) {
+            bank.timers[ring_timer_indexes[i]].control_a = 0u;
+            audio.channels[i].control_a = 0u;
+        }
+        const uint8_t target = (uint8_t)((source + 1u) % LYNX__AUDIO_RING_NODE_COUNT);
+        if (source < 4u) {
+            bank.timers[ring_timer_indexes[source]].control_a = 0x48u;
+            bank.timers[ring_timer_indexes[source]].count = 0u;
+        } else {
+            audio.channels[source - 4u].control_a = 0x48u;
+            audio.channels[source - 4u].count = 0u;
+        }
+        if (target < 4u) {
+            bank.timers[ring_timer_indexes[target]].control_a = 0x4Fu;
+            bank.timers[ring_timer_indexes[target]].count = 1u;
+        } else {
+            audio.channels[target - 4u].control_a = 0x4Fu;
+            audio.channels[target - 4u].count = 1u;
+        }
+
+        const uint16_t source_ctlb = source < 4u ?
+            timer_register(ring_timer_indexes[source], 3u) :
+            channel_register((uint8_t)(source - 4u), 7u);
+        const lynx__work_status status = lynx__timer_audio_write(
+            &bank, &audio, source_ctlb, 0x02u, 0u, NULL);
+        ASSERT_EQ(edge_names[source], status, LYNX__WORK_OK);
+        if (target < 4u) {
+            const lynx__timer *timer = &bank.timers[ring_timer_indexes[target]];
+            ASSERT_EQ(edge_names[source], timer->count, 0u);
+            ASSERT_EQ(edge_names[source], timer->control_b & 0x06u, 0x06u);
+        } else {
+            const lynx__audio_channel *channel = &audio.channels[target - 4u];
+            ASSERT_EQ(edge_names[source], channel->count, 0u);
+            ASSERT_EQ(edge_names[source], channel->control_b & 0x06u, 0x06u);
+        }
+        ASSERT_EQ(edge_names[source], ring_debt_sum(&audio), 0u);
+        ASSERT_NAMED(edge_names[source], lynx__audio_ring_state_valid(&audio, 0u));
+    }
+
+    /* A one-shot T1 underflow still emits the T3 pulse when reload is off. */
+    lynx__timer_bank bank;
+    lynx__audio_state audio;
+    configure_zero_link_ring(&bank, &audio);
+    for (size_t i = 0u; i < 4u; i++) {
+        bank.timers[ring_timer_indexes[i]].control_a = 0u;
+        audio.channels[i].control_a = 0u;
+    }
+    bank.timers[1].control_a = 0x0Fu; /* COUNT + link, no reload/reset-DONE */
+    bank.timers[1].count = 0u;
+    bank.timers[3].control_a = 0x4Fu;
+    bank.timers[3].count = 1u;
+    ASSERT_EQ("audio.links.oneshot-underflow", lynx__timer_audio_write(
+        &bank, &audio, timer_register(1u, 3u), 0x02u, 0u, NULL), LYNX__WORK_OK);
+    ASSERT_EQ("audio.links.oneshot-done", bank.timers[1].control_b & 0x08u, 0x08u);
+    ASSERT_EQ("audio.links.oneshot-successor", bank.timers[3].count, 0u);
+
+    /* All eight ordinary source roots may coincide; the scheduler applies each
+       once in timer order followed by audio channel order. */
+    lynx__timer_init(&bank);
+    lynx__audio_init(&audio);
+    for (size_t i = 0u; i < 4u; i++) {
+        bank.timers[ring_timer_indexes[i]].control_a = 0x48u;
+        bank.timers[ring_timer_indexes[i]].count = 0u;
+        audio.channels[i].control_a = 0x48u;
+        audio.channels[i].count = 0u;
+    }
+    uint8_t borrow_mask = 0u;
+    ASSERT_EQ("audio.links.simultaneous-root-work", lynx__timer_audio_apply(
+        &bank, &audio, 16u, 0u, true, true, NULL, &borrow_mask), LYNX__WORK_OK);
+    ASSERT_EQ("audio.links.simultaneous-timer-roots", borrow_mask, 0xAAu);
+    for (size_t i = 0u; i < 4u; i++) {
+        ASSERT_EQ("audio.links.simultaneous-audio-roots",
+                  audio.channels[i].control_b & 0x05u, 0x05u);
+    }
+}
+
+static void case_ring_zero(void)
+{
+    lynx__timer_bank bank;
+    lynx__audio_state audio;
+    configure_zero_link_ring(&bank, &audio);
+    lynx__audio_state malformed_deadline;
+    lynx__audio_init(&malformed_deadline);
+    malformed_deadline.ring_debt[0] = 1u;
+    malformed_deadline.ring_defer_valid = 1u;
+    malformed_deadline.ring_defer_tick = 1u;
+    ASSERT_NAMED("audio.ring_zero.future-deadline-requires-exhausted-slice",
+                 !lynx__audio_ring_state_valid(&malformed_deadline, 0u));
+    malformed_deadline.same_tick_device_cursor = LYNX__AUDIO_RING_VISIT_LIMIT;
+    ASSERT_NAMED("audio.ring_zero.future-deadline-valid-at-limit",
+                 lynx__audio_ring_state_valid(&malformed_deadline, 0u));
+    ASSERT_EQ("audio.ring_zero.seed", lynx__timer_audio_write(
+        &bank, &audio, timer_register(1u, 3u), 0x02u, 0u, NULL), LYNX__WORK_OK);
+    ASSERT_EQ("audio.ring_zero.seed-debt", ring_debt_sum(&audio), 1u);
+    ASSERT_EQ("audio.ring_zero.seed-deadline", audio.ring_defer_tick, 1u);
+
+    for (uint64_t tick = 1u; tick <= 32u; tick++) {
+        uint8_t borrow_mask = 0u;
+        ASSERT_EQ("audio.ring_zero.deferred-tick", lynx__timer_audio_apply(
+            &bank, &audio, tick, tick - 1u, false, false, NULL, &borrow_mask),
+            LYNX__WORK_OK);
+        ASSERT_EQ("audio.ring_zero.manual-injection", lynx__timer_audio_write(
+            &bank, &audio, timer_register(1u, 3u), 0x02u, tick, NULL), LYNX__WORK_OK);
+        ASSERT_EQ("audio.ring_zero.conserved-multiplicity", ring_debt_sum(&audio), tick + 1u);
+        ASSERT_NAMED("audio.ring_zero.guest-time-debt-bound",
+                     lynx__audio_ring_state_valid(&audio, tick));
+    }
+
+    /* A source-mode change cannot erase already queued copies. One pulse goes
+       around to T1 and stops because T3 no longer selects link. */
+    bank.timers[3].control_a = 0x48u;
+    const uint64_t before_mode_change = ring_debt_sum(&audio);
+    ASSERT_EQ("audio.ring_zero.mode-change", lynx__timer_audio_apply(
+        &bank, &audio, 33u, 32u, false, false, NULL, NULL), LYNX__WORK_OK);
+    ASSERT_EQ("audio.ring_zero.mode-change-retains-copies", ring_debt_sum(&audio),
+              before_mode_change - 1u);
+    bank.timers[3].control_a = 0x4Fu;
+    ASSERT_EQ("audio.ring_zero.mode-restore", lynx__timer_audio_apply(
+        &bank, &audio, 34u, 33u, false, false, NULL, NULL), LYNX__WORK_OK);
+    ASSERT_EQ("audio.ring_zero.mode-restore-multiplicity", ring_debt_sum(&audio),
+              before_mode_change - 1u);
+
+    /* Exercise a low-word carry near the guest-time limit while the total is
+       still reachable, then reject an unreachable high nibble atomically. */
+    const uint64_t near_limit = UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM;
+    lynx__timer_init(&bank);
+    lynx__audio_init(&audio);
+    bank.timers[1].control_a = 0x0Fu;
+    bank.timers[1].count = 0u;
+    bank.timers[3].control_a = 0x07u; /* linked but stopped: retain its debt */
+    audio.ring_debt[1] = UINT64_MAX;
+    audio.ring_defer_valid = 1u;
+    audio.ring_defer_tick = near_limit;
+    ASSERT_NAMED("audio.ring_zero.near-u64-bound-valid",
+                 lynx__audio_ring_state_valid(&audio, near_limit));
+    ASSERT_EQ("audio.ring_zero.near-u64-carry", lynx__timer_audio_write(
+        &bank, &audio, timer_register(1u, 3u), 0x02u, near_limit, NULL), LYNX__WORK_OK);
+    ASSERT_EQ("audio.ring_zero.near-u64-low", audio.ring_debt[1], 0u);
+    ASSERT_EQ("audio.ring_zero.near-u64-high",
+              (audio.ring_debt_high >> LYNX__AUDIO_RING_HIGH_BITS) & 0x0Fu, 1u);
+
+    lynx__timer_bank malformed_bank = bank;
+    lynx__audio_state malformed_audio = audio;
+    malformed_audio.ring_debt[1] = UINT64_MAX;
+    malformed_audio.ring_debt_high = 0x0Fu;
+    const lynx__timer_bank before_bank = malformed_bank;
+    const lynx__audio_state before_audio = malformed_audio;
+    ASSERT_EQ("audio.ring_zero.unreachable-add-refused", lynx__timer_audio_write(
+        &malformed_bank, &malformed_audio, timer_register(1u, 3u), 0x02u,
+        near_limit, NULL), LYNX__WORK_CAPACITY);
+    ASSERT_NAMED("audio.ring_zero.unreachable-add-atomic",
+                 memcmp(&malformed_bank, &before_bank, sizeof before_bank) == 0 &&
+                 memcmp(&malformed_audio, &before_audio, sizeof before_audio) == 0);
+
+    /* Machine-level zero-cycle work is bounded, survives an exact-target stop,
+       and resumes at the serialized due-now tick after save/restore. */
+    machine_box source;
+    machine_box restored;
+    ASSERT_NAMED("audio.ring_zero.machine-init", machine_open(
+        &source, LYNX_TIMING_POLICY_LEGACY_FLAT5));
+    if (source.machine == NULL) return;
+    ASSERT_NAMED("audio.ring_zero.restore-init", machine_open(
+        &restored, LYNX_TIMING_POLICY_LEGACY_FLAT5));
+    if (restored.machine == NULL) {
+        machine_close(&source);
+        return;
+    }
+    static const uint8_t ring_guest[] = {0x4Cu, 0x00u, 0x02u};
+    ASSERT_EQ("audio.ring_zero.guest-load", load_guest(
+        source.machine, ring_guest, sizeof ring_guest), LYNX_OK);
+    ASSERT_EQ("audio.ring_zero.restore-guest-load", load_guest(
+        restored.machine, ring_guest, sizeof ring_guest), LYNX_OK);
+    configure_zero_link_ring(&source.machine->timer_bank, &source.machine->audio);
+    source.machine->bus_hold = 1u;
+    ASSERT_EQ("audio.ring_zero.machine-seed", lynx__timer_audio_write(
+        &source.machine->timer_bank, &source.machine->audio, timer_register(1u, 3u),
+        0x02u, 0u, NULL), LYNX__WORK_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    ASSERT_EQ("audio.ring_zero.exact-boundary-advance",
+              lynx_advance(source.machine, 1u, &consumed, &stop), LYNX_OK);
+    ASSERT_EQ("audio.ring_zero.exact-boundary-stop", stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.ring_zero.exact-boundary-tick", source.machine->guest_ticks, 1u);
+    ASSERT_EQ("audio.ring_zero.exact-boundary-due-now",
+              source.machine->audio.ring_defer_tick, source.machine->guest_ticks);
+    size_t snapshot_size = 0u;
+    ASSERT_EQ("audio.ring_zero.snapshot-size",
+              lynx_snapshot_size(source.machine, &snapshot_size), LYNX_OK);
+    uint8_t *snapshot = (uint8_t *)malloc(snapshot_size);
+    ASSERT_NAMED("audio.ring_zero.snapshot-allocation", snapshot != NULL);
+    if (snapshot != NULL) {
+        size_t written = 0u;
+        ASSERT_EQ("audio.ring_zero.snapshot-save",
+                  lynx_snapshot_save(source.machine, snapshot, snapshot_size, &written), LYNX_OK);
+        ASSERT_EQ("audio.ring_zero.snapshot-written", written, snapshot_size);
+        ASSERT_EQ("audio.ring_zero.snapshot-restore",
+                  lynx_snapshot_restore(restored.machine, snapshot, snapshot_size), LYNX_OK);
+        free(snapshot);
+    }
+    for (uint8_t step = 0u; step < 16u; step++) {
+        ASSERT_EQ("audio.ring_zero.source-resume", lynx_advance(
+            source.machine, 1u, &consumed, &stop), LYNX_OK);
+        ASSERT_EQ("audio.ring_zero.restored-resume", lynx_advance(
+            restored.machine, 1u, &consumed, &stop), LYNX_OK);
+        uint8_t source_digest[32];
+        uint8_t restored_digest[32];
+        ASSERT_EQ("audio.ring_zero.source-digest",
+                  lynx_state_digest(source.machine, source_digest), LYNX_OK);
+        ASSERT_EQ("audio.ring_zero.restored-digest",
+                  lynx_state_digest(restored.machine, restored_digest), LYNX_OK);
+        ASSERT_NAMED("audio.ring_zero.snapshot-continuation",
+                     memcmp(source_digest, restored_digest, sizeof source_digest) == 0);
+    }
+    machine_close(&restored);
+    machine_close(&source);
+
+    /* Exercise both CPU bus entry points for manual borrow-in. Each instruction
+       is a distinct timed root, and the cycle keeps both copies pending. */
+    ASSERT_NAMED("audio.ring_zero.cpu-manual-init", machine_open(
+        &source, LYNX_TIMING_POLICY_LEGACY_FLAT5));
+    if (source.machine == NULL) return;
+    static const uint8_t cpu_manual_roots[] = {
+        0xA9u, 0x02u,             /* LDA #BORROW_IN */
+        0x8Du, 0x07u, 0xFDu,      /* STA T1 CTLB */
+        0xA9u, 0x02u,             /* LDA #BORROW_IN */
+        0x8Du, 0x3Fu, 0xFDu,      /* STA A3 CTLB */
+        0x4Cu, 0x0Au, 0x02u       /* JMP $020A */
+    };
+    ASSERT_EQ("audio.ring_zero.cpu-manual-load", load_guest(
+        source.machine, cpu_manual_roots, sizeof cpu_manual_roots), LYNX_OK);
+    configure_zero_link_ring(&source.machine->timer_bank, &source.machine->audio);
+    ASSERT_EQ("audio.ring_zero.cpu-manual-advance", lynx_advance(
+        source.machine, 70u, &consumed, &stop), LYNX_OK);
+    ASSERT_EQ("audio.ring_zero.cpu-manual-stop", stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.ring_zero.cpu-manual-budget", consumed, 70u);
+    ASSERT_EQ("audio.ring_zero.cpu-manual-multiplicity",
+              ring_debt_sum(&source.machine->audio), 2u);
+    ASSERT_EQ("audio.ring_zero.cpu-manual-deadline",
+              source.machine->audio.ring_defer_tick, 70u);
+    machine_close(&source);
+
+    /* A3→T1 also supplies the pending IRQ line before the next CPU poll. */
+    ASSERT_NAMED("audio.links.a3-t1-machine", machine_open(
+        &source, LYNX_TIMING_POLICY_LEGACY_FLAT5));
+    if (source.machine == NULL) return;
+    static const uint8_t irq_loop[] = {0xEAu, 0x4Cu, 0x00u, 0x02u};
+    ASSERT_EQ("audio.links.a3-t1-program",
+              load_guest(source.machine, irq_loop, sizeof irq_loop), LYNX_OK);
+    lynx_machine *m = source.machine;
+    m->timer_bank.timers[1].control_a = 0xCFu; /* link, IRQ, count, reset-DONE */
+    m->timer_bank.timers[1].count = 0u;
+    m->audio.channels[3].control_a = 0x48u; /* A3 natural root */
+    m->audio.channels[3].count = 0u;
+    m->bus_hold = 1u;
+    ASSERT_EQ("audio.links.a3-t1-held-advance", lynx_advance(
+        m, 17u, &consumed, &stop), LYNX_OK);
+    ASSERT_EQ("audio.links.a3-t1-pending", m->timer_bank.pending & 0x02u, 0x02u);
+    ASSERT_EQ("audio.links.a3-t1-wake", m->wake_pending, 1u);
+    m->bus_hold = 0u;
+    lynx__cpu_start_at(&m->cpu, lynx__cpu_table(m->cpu.profile), 0x0200u);
+    m->cpu.p = (uint8_t)(m->cpu.p & (uint8_t)~0x04u);
+    m->cpu_ready_at = m->guest_ticks;
+    ASSERT_EQ("audio.links.a3-t1-cpu-poll-advance", lynx_advance(
+        m, 20u, &consumed, &stop), LYNX_OK);
+    ASSERT_EQ("audio.links.a3-t1-cpu-poll",
+              m->cpu.flags & LYNX__CS_SEQ_MASK, 0x10u);
+    machine_close(&source);
+}
+
 typedef struct test_case {
     const char *name;
     void (*run)(void);
@@ -546,12 +854,14 @@ static const test_case cases[] = {
     {"integrator", case_integrator},
     {"stereo", case_stereo},
     {"mix", case_mix},
+    {"links", case_links},
+    {"ring_zero", case_ring_zero},
 };
 
 int main(int argc, char **argv)
 {
     if (argc != 2) {
-        (void)fprintf(stderr, "usage: lynx-test-audio <registers|lfsr|counter|integrator|stereo|mix>\n");
+        (void)fprintf(stderr, "usage: lynx-test-audio <registers|lfsr|counter|integrator|stereo|mix|links|ring_zero>\n");
         return 2;
     }
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i++) {

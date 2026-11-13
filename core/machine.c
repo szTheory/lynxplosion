@@ -105,6 +105,14 @@ static void machine_set_guest_tick(struct lynx_machine *m, uint64_t tick)
     }
 }
 
+/* timer_audio_apply stages and normalizes the complete device state before it
+   commits. This companion advances only the clock after that transaction. */
+static void machine_set_guest_tick_after_device(struct lynx_machine *m, uint64_t tick)
+{
+    m->guest_ticks = tick;
+    if (m->cpu_ready_at < tick) m->cpu_ready_at = tick;
+}
+
 static void machine_update_wake_request(struct lynx_machine *m)
 {
     m->wake_pending = m->timer_bank.pending != 0u ? 1u : 0u;
@@ -434,8 +442,10 @@ static bool bus_request_available(const struct lynx_machine *m, uint16_t addr, u
    the opcode precheck. Unsupported targets never read or write hidden RAM. */
 static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint8_t flags,
                        uint64_t stamp, uint8_t *result,
-                       lynx__audio_event_sink *audio_events)
+                       lynx__audio_event_sink *audio_events,
+                       bool *output_full)
 {
+    if (output_full != NULL) *output_full = false;
     const bool write = (flags & LYNX__CF_WRITE) != 0u;
     if (m->content_format == LYNX__CONTENT_TEST_FLAT) {
         if (write) {
@@ -480,7 +490,13 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
         }
         if (lynx__audio_available(addr)) {
             if (write) {
-                if (!lynx__audio_write(&m->audio, addr, data, stamp, audio_events)) return false;
+                const lynx__work_status work = lynx__timer_audio_write(
+                    &m->timer_bank, &m->audio, addr, data, stamp, audio_events);
+                if (work == LYNX__WORK_OUTPUT) {
+                    if (output_full != NULL) *output_full = true;
+                    return false;
+                }
+                if (work != LYNX__WORK_OK) return false;
                 *result = data;
             } else {
                 *result = lynx__audio_peek(&m->audio, addr);
@@ -488,7 +504,13 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
             return true;
         }
         if (write) {
-            if (!lynx__timer_write(&m->timer_bank, addr, data)) {
+            const lynx__work_status work = lynx__timer_audio_write(
+                &m->timer_bank, &m->audio, addr, data, stamp, audio_events);
+            if (work == LYNX__WORK_OUTPUT) {
+                if (output_full != NULL) *output_full = true;
+                return false;
+            }
+            if (work != LYNX__WORK_OK) {
                 return false;
             }
             *result = data;
@@ -577,6 +599,17 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
                 has_event = true;
             }
         }
+        uint64_t ring_tick = 0u;
+        if (lynx__timer_audio_next(&m->audio, m->guest_ticks, &ring_tick) &&
+            ring_tick < target) {
+            const lynx__machine_event ring_event = {
+                ring_tick, (uint8_t)LYNX__MACHINE_EVENT_AUDIO_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
+            if (!has_event || lynx__machine_event_before(ring_event, next)) {
+                next = ring_event;
+                has_event = true;
+            }
+        }
         uint64_t video_tick = 0u;
         if (lynx__video_next_dma(&m->video, m->guest_ticks, &video_tick) &&
             video_tick < target) {
@@ -629,12 +662,21 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             machine_set_guest_tick(m, target);
             break;
         }
-        if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_TIMER_PRIORITY) {
-            machine_set_guest_tick(m, next.tick);
-            /* Drain the timer's bounded owned-link prefix before allowing a
-               same-tick CPU bus request to observe the mapped bank. */
-            const uint8_t borrow_mask = lynx__timer_apply(&m->timer_bank, next.tick);
-            const bool frame_complete = lynx__video_timer_apply(&m->video, borrow_mask, next.tick);
+        if (next.priority <= (uint8_t)LYNX__MACHINE_EVENT_AUDIO_PRIORITY) {
+            const bool timer_due = timer_tick == next.tick && timer_tick < target;
+            const bool audio_due = audio_tick == next.tick && audio_tick < target;
+            lynx__audio_event_sink *sink = capture != NULL ? &capture->events : NULL;
+            uint8_t borrow_mask = 0u;
+            const lynx__work_status work = lynx__timer_audio_apply(
+                &m->timer_bank, &m->audio, next.tick, m->guest_ticks,
+                timer_due, audio_due, sink, &borrow_mask);
+            if (work != LYNX__WORK_OK) {
+                *stop = work == LYNX__WORK_OUTPUT ? LYNX_STOP_OUTPUT : LYNX_STOP_UNAVAILABLE;
+                break;
+            }
+            machine_set_guest_tick_after_device(m, next.tick);
+            const bool frame_complete = timer_due ?
+                lynx__video_timer_apply(&m->video, borrow_mask, next.tick) : false;
             machine_update_wake_request(m);
             if (frame_complete) {
                 if (stop_on_frame) {
@@ -643,17 +685,6 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
                 }
                 lynx__video_discard_frame(&m->video, next.tick);
             }
-            continue;
-        }
-        if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_AUDIO_PRIORITY) {
-            if (capture != NULL &&
-                capture->events.capacity - capture->events.count < LYNX_AV_MIN_EVENT_CAPACITY) {
-                *stop = LYNX_STOP_OUTPUT;
-                break;
-            }
-            machine_set_guest_tick(m, next.tick);
-            lynx__audio_event_sink *sink = capture != NULL ? &capture->events : NULL;
-            (void)lynx__audio_apply(&m->audio, next.tick, sink);
             continue;
         }
         if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_VIDEO_PRIORITY) {
@@ -730,8 +761,10 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             break;
         }
         lynx__audio_event_sink *sink = capture != NULL ? &capture->events : NULL;
-        if (!bus_access(m, addr, m->cpu.req_data, flags, grant + price.sample, &data, sink)) {
-            *stop = LYNX_STOP_UNAVAILABLE;
+        bool output_full = false;
+        if (!bus_access(m, addr, m->cpu.req_data, flags, grant + price.sample,
+                        &data, sink, &output_full)) {
+            *stop = output_full ? LYNX_STOP_OUTPUT : LYNX_STOP_UNAVAILABLE;
             break;
         }
         if (m->cfg.timing_policy == LYNX_TIMING_POLICY_VIDEO_POLICY1 &&

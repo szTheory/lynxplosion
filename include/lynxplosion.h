@@ -311,10 +311,9 @@ enum {
     LYNX_AUDIO_RATE_DEN = 1,
     LYNX_AUDIO_PCM_CHANNELS = 2,
     LYNX_AUDIO_PCM_BITS = 16,
-    /* One complete tick may contain four channel transitions and one CPU
-       register write transition. This minimum lets a host resume without
-       losing an event at a same-tick boundary. */
-    LYNX_AV_MIN_EVENT_CAPACITY = 5
+    /* Four ordinary channel roots, up to eight bounded ring visits, and one
+       CPU register write/strobe may emit events at one guest tick. */
+    LYNX_AV_MIN_EVENT_CAPACITY = 13
 };
 
 enum {
@@ -373,7 +372,8 @@ typedef struct lynx_av_result {
    PCM and event pointers/capacities are required, checked for alignment,
    integer wrap and pairwise overlap with the descriptors, result and machine
    before progress. Frame capacities meet the fixed maxima. Event capacity is
-   at least LYNX_AV_MIN_EVENT_CAPACITY. On LYNX_OK, result reports FRAME,
+   at least LYNX_AV_MIN_EVENT_CAPACITY entries, enough for the bounded
+   same-tick audio event envelope. On LYNX_OK, result reports FRAME,
    BUDGET, OUTPUT, or the same CPU stop as lynx_advance; OUTPUT is a valid
    partial-progress stop and resumes at the exact pending record. The core
    retains no caller pointers and never drops enabled observations. Calls on
