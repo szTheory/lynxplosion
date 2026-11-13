@@ -2751,7 +2751,7 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
     int target_created = 0, short_spans = 0, watch_expected = 0, watch_resume = 0, bad_checkpoint = 0;
     int uninterrupted_control = 0;
     av_capture_totals totals = {0};
-    frame_capture frames[FRAME_OUTPUT_LIMIT] = {{0}};
+    frame_capture frames[FRAME_OUTPUT_LIMIT] = {0};
     frame_capture *released_capture = NULL, *pressed_capture = NULL;
     uint8_t *pcm_bytes = NULL, *wav = NULL, *raw_stream = NULL, *ppm_stream = NULL;
     char *event_text = NULL, *applied_text = NULL, *progress_text = NULL;
