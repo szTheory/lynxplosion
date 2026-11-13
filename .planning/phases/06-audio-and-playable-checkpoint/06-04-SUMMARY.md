@@ -57,6 +57,8 @@ key-decisions:
   - "Keep the 400-tick sample lattice as software policy and arithmetically advance it only when PCM is not requested and no real event is skipped."
 
 requirements-completed: [AUD-01, AUD-02, DET-05]
+# Scoped ring/ordering evidence only; sibling plans and Phase6 qualification
+# still control global completion of these requirements.
 
 coverage:
   - id: D1
@@ -107,7 +109,7 @@ plan_head_after: d9cb169f36960a82f1e69ce5299137afe386abab
 
 ## Verification
 
-On native AppleClang, the ring/cadence focused groups, six authored audio regressions plus A3→T1 wake/AV tracing, the affected-reader group (21/21), the API/map controls (4/4), and the claim-template check passed. After the separate integration repairs described below, the parent reported the fresh macOS affected-reader group passed 13/13.
+On native AppleClang, the ring/cadence focused groups, six authored audio regressions plus A3→T1 wake/AV tracing, the affected-reader group (21/21), the API/map controls (4/4), and the claim-template check passed. After the separate integration repairs described below, the parent reported the fresh macOS suite build/oracle/timer control group passed 13/13.
 
 The exact committed source at `ef222b436294ba197dd8c9a0142975986130ec7a` was fast-forwarded into the existing Linux clone and rebuilt with GCC 13.3. The scoped 40-test regression set passed 40/40 in 16.31 seconds. The complete output is preserved at `/private/tmp/lynx-06-04-gnu-ef222b4.log`.
 
