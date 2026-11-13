@@ -6,7 +6,7 @@ foreach(required CASE ROOT WORK SCRATCH_ROOT CONSUMER TEST_CONSUMER ARTIFACT_CHE
   endif()
 endforeach()
 set(allowed_cases consumer.av_tracer consumer.av_controls consumer.av_edges consumer.av_restore
-  consumer.av_replay consumer.av_response_controls)
+  consumer.av_publication_controls consumer.av_replay consumer.av_response_controls)
 if(NOT CASE IN_LIST allowed_cases)
   message(FATAL_ERROR "av_driver: unsupported case '${CASE}'")
 endif()
@@ -87,6 +87,8 @@ execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin" mkdir "${WOR
 if(NOT mkdir_rc STREQUAL "0")
   message(FATAL_ERROR "av_driver: exclusive scratch creation failed: ${mkdir_out}${mkdir_err}")
 endif()
+set(work_owner "${WORK}/.lynx-av-driver-owner")
+file(WRITE "${work_owner}" "${nonce}\n")
 execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
     "CC65_HOME=${ROOT}/build/pins/cc65" "${CA65}" --cpu 65SC02
     -o "${WORK}/av_probe.o" "${SOURCE}"
@@ -149,6 +151,31 @@ function(run_expected_refusal control expected output)
   endif()
   if(EXISTS "${output}")
     message(FATAL_ERROR "${CASE}: refusal control '${control}' published output before rejecting the checkpoint")
+  endif()
+endfunction()
+
+function(expect_av_publication_failure output expected)
+  set(command "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin")
+  foreach(control IN LISTS ARGN)
+    list(APPEND command "${control}")
+  endforeach()
+  list(APPEND command "${TEST_CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
+    --symbols "${WORK}/av_probe.lbl" --timeline "${WORK}/input.timeline"
+    --out "${output}" --profile none)
+  string(JOIN "," control_summary ${ARGN})
+  string(TIMESTAMP child_start "%Y-%m-%dT%H:%M:%S" UTC)
+  file(APPEND "${publication_progress}" "child-start ${control_summary} ${child_start}\n")
+  execute_process(COMMAND ${command} TIMEOUT 120 RESULT_VARIABLE failure_rc
+    OUTPUT_VARIABLE failure_out ERROR_VARIABLE failure_err)
+  string(TIMESTAMP child_end "%Y-%m-%dT%H:%M:%S" UTC)
+  file(WRITE "${output}.child.status" "${failure_rc}\n")
+  file(WRITE "${output}.child.stdout" "${failure_out}")
+  file(WRITE "${output}.child.stderr" "${failure_err}")
+  file(APPEND "${publication_progress}" "child-end ${control_summary} rc=${failure_rc} ${child_end}\n")
+  file(GLOB leftover_stages "${output}.lynxplosion-av-stage-*")
+  if(NOT failure_rc STREQUAL "1" OR EXISTS "${output}" OR leftover_stages OR
+     NOT "${failure_out}${failure_err}" MATCHES "${expected}")
+    message(FATAL_ERROR "${CASE}: A/V publication failure did not preserve an absent destination and clean its owned stage (${failure_rc})\n${failure_out}${failure_err}\nleftover stages: ${leftover_stages}")
   endif()
 endfunction()
 
@@ -424,6 +451,189 @@ elseif(CASE STREQUAL "consumer.av_controls")
     message(FATAL_ERROR "consumer.av_controls: refusal controls changed the caller-owned sentinel")
   endif()
   message(STATUS "consumer.av_controls: malformed inputs and checkpoint fields refused before publication; symlink/hardlink aliases and output-parent symlink preserved sentinels; 4096-event boundary published a valid bundle")
+elseif(CASE STREQUAL "consumer.av_publication_controls")
+  set(publication_progress "${WORK}/.publication-progress")
+  file(WRITE "${publication_progress}" "baseline\n")
+  file(WRITE "${WORK}/input.timeline"
+    "LYNX-INPUT 1\n0 0\n108545 16\n217089 32\n325633 1\n434177 2\n542721 4\n651265 8\n759809 64\n868353 128\n976897 256\n1085441 511\n1193985 0\n")
+  file(SHA256 "${WORK}/input.timeline" timeline_sha)
+  set(positive "${WORK}/publication-positive")
+  run_replay("${CONSUMER}" "${positive}" "")
+  check_replay_bundle("${positive}" "${timeline_sha}")
+
+  set(existing "${WORK}/existing-output")
+  file(MAKE_DIRECTORY "${existing}")
+  file(WRITE "${existing}/caller.marker" "preserve existing A/V output\n")
+  file(SHA256 "${existing}/caller.marker" existing_before)
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "${TEST_CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
+      --symbols "${WORK}/av_probe.lbl" --timeline "${WORK}/input.timeline"
+      --out "${existing}" --profile none
+    TIMEOUT 120 RESULT_VARIABLE existing_rc OUTPUT_VARIABLE existing_out ERROR_VARIABLE existing_err)
+  file(SHA256 "${existing}/caller.marker" existing_after)
+  if(NOT existing_rc STREQUAL "1" OR
+     NOT "${existing_out}${existing_err}" MATCHES "output directory already exists" OR
+     NOT existing_before STREQUAL existing_after)
+    message(FATAL_ERROR "consumer.av_publication_controls: existing-output refusal failed or changed the caller marker (${existing_rc})\n${existing_out}${existing_err}")
+  endif()
+
+  file(WRITE "${publication_progress}" "race\n")
+  set(race_output "${WORK}/publication-race")
+  set(race_log_one "${WORK}/publication-race-one.log")
+  set(race_log_two "${WORK}/publication-race-two.log")
+  set(race_script [=[
+"$1" -i "PATH=/usr/bin:/bin" "$2" --mode av-replay --content "$3" --symbols "$4" --timeline "$5" --out "$6" --profile none > "$7" 2>&1 &
+first=$!
+"$1" -i "PATH=/usr/bin:/bin" "$2" --mode av-replay --content "$3" --symbols "$4" --timeline "$5" --out "$6" --profile none > "$8" 2>&1 &
+second=$!
+wait "$first"; first_rc=$?
+wait "$second"; second_rc=$?
+printf '%s %s\n' "$first_rc" "$second_rc"
+]=])
+  execute_process(COMMAND /bin/sh -c "${race_script}" lynx-av-race
+      "${ENV_EXECUTABLE}" "${CONSUMER}" "${WORK}/av_probe.bll" "${WORK}/av_probe.lbl"
+      "${WORK}/input.timeline" "${race_output}" "${race_log_one}" "${race_log_two}"
+    TIMEOUT 180 RESULT_VARIABLE race_rc OUTPUT_VARIABLE race_out ERROR_VARIABLE race_err)
+  string(STRIP "${race_out}" race_codes)
+  file(READ "${race_log_one}" race_one_text)
+  file(READ "${race_log_two}" race_two_text)
+  if(NOT race_rc STREQUAL "0" OR NOT race_codes MATCHES "^(0 1|1 0)$")
+    message(FATAL_ERROR "consumer.av_publication_controls: two publishers did not produce exactly one success and one refusal (${race_rc}; ${race_codes})\n${race_err}\n--- process one ---\n${race_one_text}\n--- process two ---\n${race_two_text}")
+  endif()
+  if(race_codes STREQUAL "0 1")
+    set(race_loser_text "${race_two_text}")
+  else()
+    set(race_loser_text "${race_one_text}")
+  endif()
+  if(NOT race_loser_text MATCHES "output directory already exists|cannot publish the complete A/V directory without replacement|A/V output must name a bounded new destination directory")
+    message(FATAL_ERROR "consumer.av_publication_controls: losing publisher lacked an explicit destination/ownership refusal\n${race_loser_text}")
+  endif()
+  file(GLOB race_stages "${race_output}.lynxplosion-av-stage-*")
+  if(race_stages)
+    message(FATAL_ERROR "consumer.av_publication_controls: competing publication left an owned or foreign stage behind: ${race_stages}")
+  endif()
+  check_replay_bundle("${race_output}" "${timeline_sha}")
+
+  file(WRITE "${publication_progress}" "fault-write-close\n")
+  foreach(failure IN ITEMS
+      "write:audio.wav" "close:audio.wav" "write:audio.events" "close:audio.events"
+      "write:av.manifest" "close:av.manifest")
+    string(REPLACE ":" "-" failure_name "${failure}")
+    expect_av_publication_failure("${WORK}/failure-${failure_name}"
+      "could not write the complete A/V artifact bundle exclusively"
+      "LYNX_TEST_IO_FAILURE=${failure}")
+    file(WRITE "${publication_progress}" "fault-complete:${failure}\n")
+  endforeach()
+  file(WRITE "${publication_progress}" "fault-before-publish\n")
+  expect_av_publication_failure("${WORK}/failure-before-publish"
+    "test-only A/V interruption before publish" "LYNX_TEST_AV_ABORT=before-publish")
+
+  file(WRITE "${publication_progress}" "foreign-stage\n")
+  set(foreign_output "${WORK}/publication-foreign-stage")
+  set(foreign_stage "${foreign_output}.lynxplosion-av-stage-FOREIGN")
+  set(stale_stage "${foreign_output}.lynxplosion-av-stage-STALE")
+  file(MAKE_DIRECTORY "${foreign_stage}" "${stale_stage}")
+  file(WRITE "${foreign_stage}/.lynx-owner" "other invocation\n")
+  file(WRITE "${foreign_stage}/outside.marker" "preserve foreign stage\n")
+  file(WRITE "${stale_stage}/outside.marker" "preserve markerless stage\n")
+  file(SHA256 "${foreign_stage}/outside.marker" foreign_before)
+  file(SHA256 "${stale_stage}/outside.marker" stale_before)
+  run_replay("${CONSUMER}" "${foreign_output}" "")
+  check_replay_bundle("${foreign_output}" "${timeline_sha}")
+  file(SHA256 "${foreign_stage}/outside.marker" foreign_after)
+  file(SHA256 "${stale_stage}/outside.marker" stale_after)
+  file(READ "${foreign_stage}/.lynx-owner" foreign_owner)
+  if(NOT foreign_before STREQUAL foreign_after OR NOT stale_before STREQUAL stale_after OR
+     NOT foreign_owner STREQUAL "other invocation\n" OR
+     EXISTS "${foreign_stage}/audio.wav" OR EXISTS "${stale_stage}/audio.wav")
+    message(FATAL_ERROR "consumer.av_publication_controls: normal publication changed foreign or markerless sibling staging")
+  endif()
+
+  file(WRITE "${publication_progress}" "replaced-inode\n")
+  set(replaced_output "${WORK}/publication-replaced-inode")
+  set(replaced_sentinel "${WORK}/replaced-stage-sentinel")
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "LYNX_TEST_AV_REPLACE_STAGE=1" "LYNX_TEST_AV_REPLACED_SENTINEL=${replaced_sentinel}"
+      "${TEST_CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
+      --symbols "${WORK}/av_probe.lbl" --timeline "${WORK}/input.timeline"
+      --out "${replaced_output}" --profile none
+    TIMEOUT 120 RESULT_VARIABLE replaced_rc OUTPUT_VARIABLE replaced_out ERROR_VARIABLE replaced_err)
+  file(GLOB replaced_stages "${replaced_output}.lynxplosion-av-stage-*.replaced")
+  list(LENGTH replaced_stages replaced_stage_count)
+  if(replaced_stage_count EQUAL 1)
+    list(GET replaced_stages 0 replaced_stage)
+    string(REGEX REPLACE "\\.replaced$" "" replacement_path "${replaced_stage}")
+    file(READ "${replacement_path}/.lynx-owner" replacement_owner)
+    cmake_path(GET replacement_path FILENAME replacement_basename)
+    file(READ "${replaced_stage}/.lynx-owner" saved_owner)
+  else()
+    set(replacement_owner "")
+    set(replacement_path "missing")
+    set(replacement_basename "missing")
+    set(saved_owner "")
+  endif()
+  string(STRIP "${replacement_owner}" replacement_owner_stripped)
+  string(STRIP "${saved_owner}" saved_owner_stripped)
+  file(READ "${replaced_sentinel}" replaced_sentinel_text)
+  string(STRIP "${replaced_sentinel_text}" replaced_sentinel_stripped)
+  set(replacement_has_output FALSE)
+  foreach(name IN ITEMS released.raw released.ppm pressed.raw pressed.ppm frames.raw frames.ppm
+      input.timeline input.applied guest.progress audio.pcm audio.wav audio.events av.manifest)
+    if(EXISTS "${replacement_path}/${name}")
+      set(replacement_has_output TRUE)
+    endif()
+  endforeach()
+  set(replaced_safe TRUE)
+  if(NOT replaced_rc STREQUAL "1")
+    set(replaced_safe FALSE)
+  endif()
+  if(EXISTS "${replaced_output}")
+    set(replaced_safe FALSE)
+  endif()
+  if(NOT replaced_stage_count EQUAL 1)
+    set(replaced_safe FALSE)
+  endif()
+  if(NOT "${replaced_out}${replaced_err}" MATCHES "A/V staging directory inode or invocation marker changed before writing")
+    set(replaced_safe FALSE)
+  endif()
+  if(NOT replacement_owner_stripped STREQUAL "foreign test stage")
+    set(replaced_safe FALSE)
+  endif()
+  if(NOT saved_owner_stripped STREQUAL replacement_basename)
+    set(replaced_safe FALSE)
+  endif()
+  if(replacement_has_output)
+    set(replaced_safe FALSE)
+  endif()
+  if(NOT replaced_sentinel_stripped STREQUAL "preserve replaced stage bytes")
+    set(replaced_safe FALSE)
+  endif()
+  if(NOT replaced_safe)
+    message(FATAL_ERROR "consumer.av_publication_controls: replaced staging inode was not refused safely (${replaced_rc})\n${replaced_out}${replaced_err}\nforeign marker: ${replacement_owner}\nsaved owner: ${saved_owner}\nreplacement path: ${replacement_path}\ncaller sentinel: ${replaced_sentinel_text}")
+  endif()
+
+  file(WRITE "${publication_progress}" "symlink-target\n")
+  set(outside_target "${WORK}/outside-target")
+  set(linked_target "${WORK}/linked-output")
+  file(MAKE_DIRECTORY "${outside_target}")
+  file(WRITE "${outside_target}/sentinel" "preserve symlink target\n")
+  file(SHA256 "${outside_target}/sentinel" outside_target_before)
+  file(CREATE_LINK "${outside_target}" "${linked_target}" SYMBOLIC RESULT linked_target_result)
+  if(NOT linked_target_result STREQUAL "0")
+    message(FATAL_ERROR "consumer.av_publication_controls: could not create final-output symlink: ${linked_target_result}")
+  endif()
+  execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "${TEST_CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
+      --symbols "${WORK}/av_probe.lbl" --timeline "${WORK}/input.timeline"
+      --out "${linked_target}" --profile none
+    TIMEOUT 30 RESULT_VARIABLE symlink_rc OUTPUT_VARIABLE symlink_out ERROR_VARIABLE symlink_err)
+  file(SHA256 "${outside_target}/sentinel" outside_target_after)
+  if(NOT symlink_rc STREQUAL "1" OR NOT IS_SYMLINK "${linked_target}" OR
+     NOT "${symlink_out}${symlink_err}" MATCHES "output directory already exists" OR
+     NOT outside_target_before STREQUAL outside_target_after OR EXISTS "${outside_target}/audio.wav")
+    message(FATAL_ERROR "consumer.av_publication_controls: final-output symlink refusal changed its outside target (${symlink_rc})\n${symlink_out}${symlink_err}")
+  endif()
+  message(STATUS "consumer.av_publication_controls: race had one independently checked winner; WAV/event/manifest write and close faults plus prepublish abort cleaned owned stages; foreign, markerless, replaced-inode and symlink targets remained intact")
 elseif(CASE STREQUAL "consumer.av_replay" OR CASE STREQUAL "consumer.av_response_controls")
   file(WRITE "${WORK}/input.timeline"
     "LYNX-INPUT 1\n0 0\n108545 16\n217089 32\n325633 1\n434177 2\n542721 4\n651265 8\n759809 64\n868353 128\n976897 256\n1085441 511\n1193985 0\n")
@@ -582,4 +792,22 @@ elseif(CASE STREQUAL "consumer.av_replay" OR CASE STREQUAL "consumer.av_response
     message(STATUS "consumer.av_response_controls: real guest baseline passed before and after no-run/over-bound refusal, unchanged-input, silent/stale/header-only audio, extra/truncated WAV data, header-only frame, sample-count, frame, marker and event-order controls")
   endif()
 endif()
+if(DEFINED publication_progress)
+  string(TIMESTAMP cleanup_start "%Y-%m-%dT%H:%M:%S" UTC)
+  file(APPEND "${publication_progress}" "cleanup-start ${cleanup_start}\n")
+endif()
+file(REAL_PATH "${WORK}" current_work)
+cmake_path(GET current_work PARENT_PATH current_parent)
+if(IS_SYMLINK "${WORK}" OR NOT current_work STREQUAL WORK OR
+   NOT current_parent STREQUAL expected_scratch OR IS_SYMLINK "${work_owner}" OR
+   NOT EXISTS "${work_owner}")
+  message(FATAL_ERROR "av_driver: refusing cleanup of changed or unowned scratch: ${WORK}")
+endif()
+file(READ "${work_owner}" current_owner)
+if(NOT current_owner STREQUAL "${nonce}\n")
+  message(FATAL_ERROR "av_driver: refusing cleanup with changed ownership marker: ${WORK}")
+endif()
 file(REMOVE_RECURSE "${WORK}")
+if(EXISTS "${WORK}" OR IS_SYMLINK "${WORK}")
+  message(FATAL_ERROR "av_driver: successful scratch cleanup failed: ${WORK}")
+endif()

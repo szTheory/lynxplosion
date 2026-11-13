@@ -91,6 +91,14 @@ and `pressed_*` size/hash pairs describe the preview copies. `pcm_bytes`,
 the exact `input.timeline` bytes. Schema 1 contains no output path or host
 clock value.
 
+The host writes files into a unique sibling stage and binds that stage to its
+directory identity and invocation marker. It verifies ownership before writing
+and before exclusive publication into an absent destination. A write, close,
+or publish refusal removes only files under the verified invocation stage;
+stale, foreign, or replaced staging directories remain untouched. Existing
+destinations and final-output symlinks are refused without changing their
+contents.
+
 | File | Contents |
 | --- | --- |
 | `input.timeline` | Exact canonical timeline bytes. |
@@ -135,3 +143,8 @@ extra/truncated WAV data, incorrect sample ordinals, altered frame metadata,
 bad guest markers and reordered audio events. Those manufactured mutations
 are parser controls, separate from actual guest evidence. These checks
 establish reproducible same-build output and parser behavior only.
+`consumer.av_publication_controls` also races two independent normal consumers
+for one destination and independently validates the single winner. Test-build
+fault controls cover writes and closes for WAV, event, and manifest files,
+abort just before publication, and preserve existing, foreign, markerless,
+replaced-inode, and symlink targets.

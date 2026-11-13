@@ -879,7 +879,7 @@ static int input_paths_are_distinct(const char *content, const char *symbols_pat
     return 0;
 }
 
-static int frame_stage_is_owned(const char *staging, const struct stat *created)
+static int output_stage_is_owned(const char *staging, const struct stat *created)
 {
     char owner[4096];
     char expected[4096];
@@ -894,21 +894,21 @@ static int frame_stage_is_owned(const char *staging, const struct stat *created)
         output_path(staging, ".lynx-owner", owner, sizeof owner) != 0 ||
         snprintf(expected, sizeof expected, "%s\n", base) >= (int)sizeof expected)
         return 0;
-    result = read_bounded(owner, 4096u, &bytes, &length, "frame stage owner marker");
+    result = read_bounded(owner, 4096u, &bytes, &length, "output stage owner marker");
     if (result != 0) { free(bytes); return 0; }
     result = length == strlen(expected) && memcmp(bytes, expected, length) == 0;
     free(bytes);
     return result;
 }
 
-static int frame_stage_same_inode(const char *staging, const struct stat *created)
+static int output_stage_same_inode(const char *staging, const struct stat *created)
 {
     struct stat current;
     return lstat(staging, &current) == 0 && S_ISDIR(current.st_mode) &&
         current.st_dev == created->st_dev && current.st_ino == created->st_ino;
 }
 
-static int write_frame_owner(const char *owner, const char *value, size_t length)
+static int write_output_owner(const char *owner, const char *value, size_t length)
 {
     int fd = open(owner, O_WRONLY | O_CREAT | O_EXCL, 0600);
     size_t used = 0u;
@@ -925,13 +925,13 @@ static int write_frame_owner(const char *owner, const char *value, size_t length
     return failed;
 }
 
-static int cleanup_frame_stage(const char *staging, const struct stat *created,
-                               int nonce_verified, char paths[][4096], size_t files)
+static int cleanup_output_stage(const char *staging, const struct stat *created,
+                                int nonce_verified, char paths[][4096], size_t files)
 {
     char owner[4096];
     int cleanup_failed = 0;
-    if (nonce_verified == 0 && !frame_stage_is_owned(staging, created)) return 1;
-    if (nonce_verified != 0 && !frame_stage_same_inode(staging, created)) return 1;
+    if (nonce_verified == 0 && !output_stage_is_owned(staging, created)) return 1;
+    if (nonce_verified != 0 && !output_stage_same_inode(staging, created)) return 1;
     for (size_t index = 0u; index < files; index++) {
         if (paths[index][0] != '\0' && unlink(paths[index]) != 0 && errno != ENOENT)
             cleanup_failed = 1;
@@ -1295,7 +1295,7 @@ static int publish_frame_outputs_generic(const char *directory, const frame_capt
         n = snprintf(owner_value, sizeof owner_value, "%s\n", base);
     }
     if (n < 0 || (size_t)n >= sizeof owner_value ||
-        write_frame_owner(owner, owner_value, (size_t)n) != 0) goto failed;
+        write_output_owner(owner, owner_value, (size_t)n) != 0) goto failed;
     for (size_t i = 0u; i < files; i++) {
         if (output_path(staging, names[i], paths[i], sizeof paths[i]) != 0 ||
             write_exclusive(paths[i], data[i], lengths[i]) != 0) goto failed;
@@ -1306,7 +1306,7 @@ static int publish_frame_outputs_generic(const char *directory, const frame_capt
         if (abort_point != NULL && strcmp(abort_point, "before-publish") == 0) goto failed;
     }
 #endif
-    if (!frame_stage_is_owned(staging, &stage_identity)) goto failed;
+    if (!output_stage_is_owned(staging, &stage_identity)) goto failed;
     nonce_verified = 1;
     if (unlink(owner) != 0) goto failed;
     if (publish_directory_exclusive(staging, normalized) != 0) {
@@ -1316,7 +1316,7 @@ static int publish_frame_outputs_generic(const char *directory, const frame_capt
     made = 0;
     return 0;
 failed:
-    if (made != 0 && stage_identity_valid != 0 && cleanup_frame_stage(staging, &stage_identity, nonce_verified,
+    if (made != 0 && stage_identity_valid != 0 && cleanup_output_stage(staging, &stage_identity, nonce_verified,
                                          paths, files) != 0)
         (void)report_error("frame stage cleanup refused because its invocation nonce or directory identity did not match");
     return report_error("cannot write the complete frame output; this invocation removed its private partial files");
@@ -2381,10 +2381,13 @@ typedef struct av_output_file {
 static int publish_av_outputs(const char *directory, const av_output_file *files,
                               size_t file_count)
 {
-    char normalized[4096], staging[4096], probe[4096], path[4096];
+    char normalized[4096], staging[4096], probe[4096], path[4096], owner[4096];
+    char owner_value[4096];
     char staged_paths[16][4096] = {{0}};
     int stage_length;
     size_t written = 0u;
+    int made_staging = 0, stage_identity_valid = 0, nonce_verified = 0;
+    struct stat stage_identity = {0};
     if (file_count == 0u || file_count > sizeof staged_paths / sizeof staged_paths[0] ||
         normalize_destination(directory, normalized, sizeof normalized) != 0 ||
         destination_is_absent(normalized) != 0)
@@ -2395,22 +2398,72 @@ static int publish_av_outputs(const char *directory, const av_output_file *files
     stage_length = snprintf(staging, sizeof staging, "%s.lynxplosion-av-stage-XXXXXX", normalized);
     if (stage_length < 0 || (size_t)stage_length >= sizeof staging || mkdtemp(staging) == NULL)
         return report_error("cannot create a private sibling A/V staging directory");
-    for (size_t i = 0u; i < file_count; i++) {
-        if (output_path(staging, files[i].name, path, sizeof path) != 0 ||
-            write_exclusive(path, files[i].bytes, files[i].length) != 0) goto failed;
-        memcpy(staged_paths[i], path, strlen(path) + 1u);
-        written++;
+    made_staging = 1;
+    if (lstat(staging, &stage_identity) != 0 || !S_ISDIR(stage_identity.st_mode)) goto failed;
+    stage_identity_valid = 1;
+    if (output_path(staging, ".lynx-owner", owner, sizeof owner) != 0) goto failed;
+    {
+        const char *base = strrchr(staging, '/');
+        base = base == NULL ? staging : base + 1;
+        stage_length = snprintf(owner_value, sizeof owner_value, "%s\n", base);
     }
+    if (stage_length < 0 || (size_t)stage_length >= sizeof owner_value ||
+        write_output_owner(owner, owner_value, (size_t)stage_length) != 0) goto failed;
+#if defined(LYNX_CONSUMER_TESTING)
+    {
+        const char *replace = getenv("LYNX_TEST_AV_REPLACE_STAGE");
+        if (replace != NULL && strcmp(replace, "1") == 0) {
+            static const char foreign_owner[] = "foreign test stage\n";
+            static const char preserved[] = "preserve replaced stage bytes\n";
+            const char *sentinel = getenv("LYNX_TEST_AV_REPLACED_SENTINEL");
+            char replaced[4096], replacement_owner[4096];
+            stage_length = snprintf(replaced, sizeof replaced, "%s.replaced", staging);
+            if (stage_length < 0 || (size_t)stage_length >= sizeof replaced ||
+                rename(staging, replaced) != 0 || mkdir(staging, 0700) != 0 ||
+                output_path(staging, ".lynx-owner", replacement_owner, sizeof replacement_owner) != 0 ||
+                write_output_owner(replacement_owner, foreign_owner, sizeof foreign_owner - 1u) != 0 ||
+                sentinel == NULL ||
+                write_output_owner(sentinel, preserved, sizeof preserved - 1u) != 0) goto failed;
+        }
+    }
+#endif
+    if (!output_stage_is_owned(staging, &stage_identity)) {
+        (void)report_error("A/V staging directory inode or invocation marker changed before writing");
+        goto failed;
+    }
+    for (size_t i = 0u; i < file_count; i++) {
+        if (output_path(staging, files[i].name, path, sizeof path) != 0) goto failed;
+        memcpy(staged_paths[i], path, strlen(path) + 1u);
+        written = i + 1u;
+        if (write_exclusive(path, files[i].bytes, files[i].length) != 0) goto failed;
+    }
+    if (!output_stage_is_owned(staging, &stage_identity)) {
+        (void)report_error("A/V staging directory inode or invocation marker changed before publication");
+        goto failed;
+    }
+    nonce_verified = 1;
+    if (unlink(owner) != 0) goto failed;
+#if defined(LYNX_CONSUMER_TESTING)
+    {
+        const char *abort_point = getenv("LYNX_TEST_AV_ABORT");
+        if (abort_point != NULL && strcmp(abort_point, "before-publish") == 0) {
+            (void)report_error("test-only A/V interruption before publish");
+            goto failed;
+        }
+    }
+#endif
     if (publish_directory_exclusive(staging, normalized) != 0) {
         (void)report_error(errno == EEXIST ?
             "A/V output directory already exists; choose a new destination" :
             "cannot publish the complete A/V directory without replacement");
         goto failed;
     }
+    made_staging = 0;
     return 0;
 failed:
-    for (size_t i = 0u; i < written; i++) (void)unlink(staged_paths[i]);
-    (void)rmdir(staging);
+    if (made_staging != 0 && stage_identity_valid != 0 &&
+        cleanup_output_stage(staging, &stage_identity, nonce_verified, staged_paths, written) != 0)
+        (void)report_error("A/V stage cleanup refused because its invocation marker or directory identity changed");
     return report_error("could not write the complete A/V artifact bundle exclusively");
 }
 
