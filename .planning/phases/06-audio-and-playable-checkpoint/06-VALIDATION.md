@@ -1,21 +1,21 @@
 ---
 phase: "06"
 slug: "audio-and-playable-checkpoint"
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-11-12"
 ---
 
 # Phase 6 — Validation Strategy
 
-Coverage audit draft against source HEAD
-`e7bce5e8a830d9b13b10baa6af7dac54c52c7004`. Plans 01–11 have scoped test
-evidence recorded below and are checked against registered tests and their
-behavioral assertions. Review findings were repaired and the affected focused
-tests passed on native macOS and GNU/Linux. Independent review follow-ups, both
-canonical environment gates, exact-HEAD CI, and final sign-off remain pending.
-This is not final phase qualification or a claim of hardware/model accuracy.
+Coverage reconciliation against final qualified source `bc943eecc7a498b4405a150961c036e6d911e60e`.
+Independent assertion-level audit and repair re-reviews found no remaining
+scoped automation gap. All24 planned task obligations have recorded passing
+evidence; the complete native/GNU/hosted canonical inventories account for246
+rows with244 passes and only two declared SERCTL skips. See06-QUALIFICATION.md
+for exact identities, failed-attempt retention and limits. This establishes the
+scoped software contract, not physical/model accuracy or global EVD-02 closure.
 
 ## Test Infrastructure
 
@@ -43,45 +43,43 @@ This is not final phase qualification or a claim of hardware/model accuracy.
 ## Per-Task Verification Map
 
 Commands remain task-specific. Evidence reports summarize the observed scoped runs
-at their owning task commits; they do not imply that this frozen final source has
-passed Plan 12's final gates. CTest selectors use `--no-tests=error`; exact
-registration and the sorted fast inventory were inspected. Open lifecycle,
-audio-boundary and fixture-symlink obligations are listed separately below.
+at their owning task commits. Final source also passes the complete inventory
+in all three required environments. CTest selectors use `--no-tests=error`; exact
+registration and sorted inventory are enforced. Lifecycle, audio-boundary and
+fixture-symlink obligations are closed separately below.
 
 | Task | Requirements | Automated command | Threat Ref | Evidence |
 |---|---|---|---|---|
-| 06-01-1 | AUD-02, HB-03, CON-01, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_tracer|frame_tracer|snapshot_ppm|silence_wav)$'` | T-06-01 | PASS at Plan 01 task commit: 4/4 on AppleClang and GNU; positive tracer/audio/image/WAV assertions and four checker corruption controls. See 06-01-SUMMARY.md. |
-| 06-01-2 | AUD-02, HB-03, CON-01, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(api\.(header_selfcontained|abi_symbols|snapshot_roundtrip|snapshot_refusal|snapshot_continue|timer_snapshot_controls|video_snapshot|video_snapshot_refusal)|cpu\.vectors\.(lynx1|lynx2|none)|diag\.(result_symbol|result_controls)|det\.(golden|golden\.self_test|video_paths|video_sensitivity)|timer\.fault\.done|video\.fault\.dma_cost_zero)$'` | T-06-02 | PASS at Plan 01 task commit: 19/19 on AppleClang and GNU; ABI/raw-reader/copied-core regressions passed. Final combined qualification remains pending. See 06-01-SUMMARY.md. |
+| 06-01-1 | AUD-02, HB-03, CON-01, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_tracer\|frame_tracer\|snapshot_ppm\|silence_wav)$'` | T-06-01 | PASS at Plan 01 task commit: 4/4 on AppleClang and GNU; positive tracer/audio/image/WAV assertions and four checker corruption controls. See 06-01-SUMMARY.md. |
+| 06-01-2 | AUD-02, HB-03, CON-01, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(api\.(header_selfcontained\|abi_symbols\|snapshot_roundtrip\|snapshot_refusal\|snapshot_continue\|timer_snapshot_controls\|video_snapshot\|video_snapshot_refusal)\|cpu\.vectors\.(lynx1\|lynx2\|none)\|diag\.(result_symbol\|result_controls)\|det\.(golden\|golden\.self_test\|video_paths\|video_sensitivity)\|timer\.fault\.done\|video\.fault\.dma_cost_zero)$'` | T-06-02 | PASS at Plan 01 task commit: 19/19 on AppleClang and GNU; ABI/raw-reader/copied-core regressions passed. Final combined qualification is recorded in06-QUALIFICATION.md. See 06-01-SUMMARY.md. |
 | 06-02-1 | EVD-06 | `sh scripts/build-suites.sh --out build/check/scratch/phase06-suite-build && sh scripts/check-manifests.sh` | T-06-03 | PASS after repair: builder/manifest command plus `hygiene.manifests` and `hygiene.manifests.self_test` passed in the 14-case native/GNU follow-up. New controls reject listed outside-file and directory links, unlisted/dangling links, and symlinked fixture/manifests roots or manifest files before reading external bytes. See `scripts/check-manifests.sh:61–105,188–205,223–226`, `tests/gates/manifests_controls.sh:338–403`, and 06-REVIEW-FIX.md. |
-| 06-02-2 | EVD-06 | `sh scripts/generate-suite-oracle.sh --source build/pins/lynx-tests --include-audio --out build/check/scratch/phase06-audio-oracle.txt && sh tests/gates/audio-script-controls.sh && shellcheck scripts/build-suites.sh scripts/generate-suite-oracle.sh tests/gates/audio-script-controls.sh` | T-06-04 | PASS on macOS/GNU. Extended oracle emitted 18 audio + 18 audio2 rows (including audio2 row 9 alternative 30|34); default remains CPU/timer-only. The explicit `--include-audio` is required to match the extended oracle behavior. See 06-02-SUMMARY.md. |
-| 06-03-1 | AUD-01, AUD-02 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.(registers|lfsr|integrator|counter)$'` | T-06-05 | PASS on AppleClang/GNU; all four channels' registers, LFSR, counters, signed integration/clipping passed with independent expected values. See 06-03-SUMMARY.md. |
-| 06-03-2 | AUD-01, AUD-02 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.(stereo|mix|registers|integrator)$'` | T-06-06 | PASS on AppleClang/GNU; all eight mute routes and exact wide signed mix limits/cancellation passed. See 06-03-SUMMARY.md. |
-| 06-04-1 | AUD-01, AUD-02, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(links|ring_zero)|api\.(timer_links|timer_unavailable|timer_snapshot_controls|video_snapshot)|diag\.result_controls|cpu\.vectors\.(none|lynx1|lynx2))$'` | T-06-07 | PASS in scoped AppleClang/GNU runs; all ring edges including A3→T1 and zero-reload bounded debt/snapshot continuation have exact assertions. Plan 04 also records its earlier broad CTest failure (18 failures, 2 skips) and focused follow-up repairs; no broad rerun is claimed. See 06-04-SUMMARY.md. |
-| 06-04-2 | AUD-01, AUD-02, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(cadence|order|ring_zero)|api\.(scheduler_order|scheduler_watch|scheduler_limits|frame_edges))$'` | T-06-08 | PASS in scoped AppleClang/GNU runs; post-review `audio.order` also proves a CPU CTLA enable at tick 400 has no same-tick natural clock and first clocks at 416, including capacity retry, watched resume, explicit CTLB strobe, and snapshot/restore suffix equality. All 14 affected native/GNU tests passed; see 06-REVIEW-FIX.md and `tests/audio/test_audio.c:845–1110`. |
-| 06-05-1 | AUD-02, CON-01, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.(span_refusal|span_alias)$'` | T-06-09 | PASS 2/2 AppleClang/GNU: full-range pointer/null/alignment/wrap/overlap/capacity refusal preserves machine, result, descriptor and sentinels; one-past-end adjacency is accepted. See 06-05-SUMMARY.md. |
-| 06-05-2 | AUD-02, CON-01, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(capacity|stops|span_refusal)|api\.(frame_stops|frame_refusal|input_refusal|reset_power_on|load_refusal_unchanged))$'` | T-06-10 | PASS after repair: `audio.stops` now starts lifecycle transitions from public A/V progress with nonzero PCM, ordinal 1, channel CLOCK events, and deferred ring debt. Accepted reset/load match fresh state; deinit refusal preserves machine/result/descriptors/spans; same-allocation reinit uses only new spans. `audio.stops` passed in the focused 14-case native/GNU batch. See `tests/audio/test_audio.c:2510–2725` and 06-REVIEW-FIX.md. |
-| 06-06-1 | DET-05, AUD-02 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(snapshot|snapshot_refusal)|api\.(snapshot_refusal|snapshot_roundtrip|timer_snapshot_controls|video_snapshot_refusal))$'` | T-06-11 | PASS: audio snapshot/refusal selector passed on AppleClang and GNU; format-7 audio state, validation-before-apply and exact-build compatibility are covered by fieldwise snapshot and mismatch controls. See 06-06-SUMMARY.md and snapshot-audio.md. |
-| 06-06-2 | DET-05, AUD-02 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(det\.(audio_paths|audio_sensitivity|golden|golden\.self_test|video_paths|video_sensitivity)|api\.header_selfcontained)$'` | T-06-12 | PASS 7/7 AppleClang/GNU at Plan 06 task commit; full/sliced/watched/interleaved/two-instance/restore streams and empty/single/equal-tick suffixes use the source-built av_probe fixture. See 06-06-SUMMARY.md and tests/det/test_det.c. |
-| 06-07-1 | HB-03, DET-05, CON-01 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_edges|av_restore|av_tracer|frame_tracer|snapshot_ppm|silence_wav)$'` | T-06-13 | PASS: scoped Clang set passed 11/11; core plus in-memory host checkpoint, edge and suffix variants are exercised. See 06-07-SUMMARY.md. |
-| 06-07-2 | HB-03, DET-05, CON-01 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_replay|av_response_controls|av_tracer|frame_tracer|snapshot_ppm|silence_wav)$'` | T-06-14 | PASS on AppleClang/GNU: replay and response controls passed; bundle checker validates exact file set, applied-input/progress semantics and all stream hashes/extents. Same-core comparisons are reported as repeatability only. See 06-07-SUMMARY.md. |
-| 06-08-1 | CON-01, HB-03, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_controls|replay_controls|refusal_controls)$'` | T-06-15 | PASS in final scoped native/GNU runs: malformed inputs, in-memory checkpoint identity/offset/prefix and refusal sentinels pass; the plan expressly creates no persisted checkpoint file interface. See 06-08-SUMMARY.md. |
-| 06-08-2 | CON-01, HB-03, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_publication_controls|av_replay|frame_publication_controls)$'` | T-06-16 | PASS: normal independent processes raced for one destination; one winner/one refusal, write/close/interruption/foreign-marker/inode/symlink sentinels all passed in final native/GNU selectors. See 06-08-SUMMARY.md. |
-| 06-09-1 | EVD-06, AUD-01 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.(audio|audio2)\.observation\.(lynx1|lynx2)$'` | T-06-17 | PASS: fresh audio/audio2 guests on lynx1 and lynx2 each retained 18 bytes and 18 source rows, matching unchanged alternatives and independent model evidence. See 06-09-SUMMARY.md. |
-| 06-09-2 | EVD-06, AUD-01 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.(audio\.controls|audio2\.controls|audio\.source_controls|selection_controls|cpu\.(lynx1|lynx2)|page_mode\.(observation\.(lynx1|lynx2)|controls)|timers\.(observation\.(lynx1|lynx2)|strict_comparison_controls|video_revisit|video_revisit_controls))$'` | T-06-18 | PASS: audio/audio2 24/26 named negative controls, source controls and exact five-suite selection passed; only the two inherited page-mode SERCTL observations skipped. Timer row 14 remains legacy 0C/source 0D and video-policy1 0F/source 0D. Selection control is separately listed here because the plan selector omitted it although the summary records it as run. See 06-09-SUMMARY.md. |
-| 06-10-1 | EVD-05, AUD-01, AUD-02, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.fault\.(lfsr_tap|integrator_clip|link_a1|link_a2|link_a3|ring_return)$'` | T-06-19 | PASS: six private production-source mutants built successfully, exited 1 at only their intended assertions, with clean before/after brackets and identity checks; positive source cases passed 7/7 on both builds. See 06-10-SUMMARY.md. |
-| 06-10-2 | EVD-05, AUD-01, AUD-02, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.fault\.(stereo_left|stereo_right|cadence_399|snapshot_phase)$'` | T-06-20 | PASS: four additional actual mutants built and failed only exact assertions; restored-suffix mutant proved snapshot restore before comparison; clean brackets/identities and positive source cases passed 10/10 on AppleClang/GNU. See 06-10-SUMMARY.md. |
-| 06-11-1 | PERF-01, HB-03, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_benchmark|av_replay)$'` | T-06-21 | PASS AppleClang/GNU: five fresh, same-build runs completed 1,248,256 guest ticks (1,253,985 is only the window bound) with 22 frames, 3,120 PCM frames, 1,706 events, 12 inputs and 13 identical stream digests. Clock brackets only public advancement calls. See 06-11-SUMMARY.md and docs/performance.md. |
-| 06-11-2 | PERF-01, HB-03, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_benchmark_controls|av_benchmark)$'` | T-06-22 | PASS AppleClang/GNU: 28 malformed benchmark-report mutations rejected at named parser diagnostics; real no-run guest refused before output. Timing spans validated for public API advance, encoding, assembly, publication and replay total. CI timing remains Plan 12 work. See 06-11-SUMMARY.md. |
-| 06-12-1 | AUD-01, AUD-02, HB-03, DET-05, EVD-06, PERF-01, CON-01, EVD-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(registers|lfsr|integrator|counter|stereo|mix|links|ring_zero|cadence|order|span_refusal|span_alias|capacity|stops|snapshot|snapshot_refusal)|det\.(audio_paths|audio_sensitivity)|consumer\.(av_replay|av_response_controls)|core\.(no_float|includes|nm_undefined|nm_globals)|api\.(header_selfcontained|abi_symbols))$'` | T-06-23 | PENDING: the separate 14-case focused repair batch passed native and GNU/Linux, including all three repaired seams, but this exact Plan 12 group and independent follow-up reviews remain pending. |
-| 06-12-2 | AUD-01, AUD-02, HB-03, DET-05, EVD-06, PERF-01, CON-01, EVD-05 | `sh scripts/check.sh` | T-06-24 | PENDING: one exact final-source canonical macOS run, one exact-commit run in the existing GNU container, and successful CI for the exact pushed HEAD are final obligations, not prior results. |
+| 06-02-2 | EVD-06 | `sh scripts/generate-suite-oracle.sh --source build/pins/lynx-tests --include-audio --out build/check/scratch/phase06-audio-oracle.txt && sh tests/gates/audio-script-controls.sh && shellcheck scripts/build-suites.sh scripts/generate-suite-oracle.sh tests/gates/audio-script-controls.sh` | T-06-04 | PASS on macOS/GNU. Extended oracle emitted 18 audio + 18 audio2 rows (including audio2 row 9 alternative 30\|34); default remains CPU/timer-only. The explicit `--include-audio` is required to match the extended oracle behavior. See 06-02-SUMMARY.md. |
+| 06-03-1 | AUD-01, AUD-02 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.(registers\|lfsr\|integrator\|counter)$'` | T-06-05 | PASS on AppleClang/GNU; all four channels' registers, LFSR, counters, signed integration/clipping passed with independent expected values. See 06-03-SUMMARY.md. |
+| 06-03-2 | AUD-01, AUD-02 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.(stereo\|mix\|registers\|integrator)$'` | T-06-06 | PASS on AppleClang/GNU; all eight mute routes and exact wide signed mix limits/cancellation passed. See 06-03-SUMMARY.md. |
+| 06-04-1 | AUD-01, AUD-02, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(links\|ring_zero)\|api\.(timer_links\|timer_unavailable\|timer_snapshot_controls\|video_snapshot)\|diag\.result_controls\|cpu\.vectors\.(none\|lynx1\|lynx2))$'` | T-06-07 | PASS in scoped AppleClang/GNU runs; all ring edges including A3→T1 and zero-reload bounded debt/snapshot continuation have exact assertions. Plan 04 also records its earlier broad CTest failure (18 failures, 2 skips) and focused follow-up repairs; no broad rerun is claimed. See 06-04-SUMMARY.md. |
+| 06-04-2 | AUD-01, AUD-02, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(cadence\|order\|ring_zero)\|api\.(scheduler_order\|scheduler_watch\|scheduler_limits\|frame_edges))$'` | T-06-08 | PASS in scoped AppleClang/GNU runs; post-review `audio.order` also proves a CPU CTLA enable at tick 400 has no same-tick natural clock and first clocks at 416, including capacity retry, watched resume, explicit CTLB strobe, and snapshot/restore suffix equality. All 14 affected native/GNU tests passed; see 06-REVIEW-FIX.md and `tests/audio/test_audio.c:845–1110`. |
+| 06-05-1 | AUD-02, CON-01, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.(span_refusal\|span_alias)$'` | T-06-09 | PASS 2/2 AppleClang/GNU: full-range pointer/null/alignment/wrap/overlap/capacity refusal preserves machine, result, descriptor and sentinels; one-past-end adjacency is accepted. See 06-05-SUMMARY.md. |
+| 06-05-2 | AUD-02, CON-01, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(capacity\|stops\|span_refusal)\|api\.(frame_stops\|frame_refusal\|input_refusal\|reset_power_on\|load_refusal_unchanged))$'` | T-06-10 | PASS after repair: `audio.stops` now starts lifecycle transitions from public A/V progress with nonzero PCM, ordinal 1, channel CLOCK events, and deferred ring debt. Accepted reset/load match fresh state; deinit refusal preserves machine/result/descriptors/spans; same-allocation reinit uses only new spans. `audio.stops` passed in the focused 14-case native/GNU batch. See `tests/audio/test_audio.c:2510–2725` and 06-REVIEW-FIX.md. |
+| 06-06-1 | DET-05, AUD-02 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(snapshot\|snapshot_refusal)\|api\.(snapshot_refusal\|snapshot_roundtrip\|timer_snapshot_controls\|video_snapshot_refusal))$'` | T-06-11 | PASS: audio snapshot/refusal selector passed on AppleClang and GNU; format-7 audio state, validation-before-apply and exact-build compatibility are covered by fieldwise snapshot and mismatch controls. See 06-06-SUMMARY.md and snapshot-audio.md. |
+| 06-06-2 | DET-05, AUD-02 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(det\.(audio_paths\|audio_sensitivity\|golden\|golden\.self_test\|video_paths\|video_sensitivity)\|api\.header_selfcontained)$'` | T-06-12 | PASS 7/7 AppleClang/GNU at Plan 06 task commit; full/sliced/watched/interleaved/two-instance/restore streams and empty/single/equal-tick suffixes use the source-built av_probe fixture. See 06-06-SUMMARY.md and tests/det/test_det.c. |
+| 06-07-1 | HB-03, DET-05, CON-01 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_edges\|av_restore\|av_tracer\|frame_tracer\|snapshot_ppm\|silence_wav)$'` | T-06-13 | PASS: scoped Clang set passed 11/11; core plus in-memory host checkpoint, edge and suffix variants are exercised. See 06-07-SUMMARY.md. |
+| 06-07-2 | HB-03, DET-05, CON-01 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_replay\|av_response_controls\|av_tracer\|frame_tracer\|snapshot_ppm\|silence_wav)$'` | T-06-14 | PASS on AppleClang/GNU: replay and response controls passed; bundle checker validates exact file set, applied-input/progress semantics and all stream hashes/extents. Same-core comparisons are reported as repeatability only. See 06-07-SUMMARY.md. |
+| 06-08-1 | CON-01, HB-03, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_controls\|replay_controls\|refusal_controls)$'` | T-06-15 | PASS in final scoped native/GNU runs: malformed inputs, in-memory checkpoint identity/offset/prefix and refusal sentinels pass; the plan expressly creates no persisted checkpoint file interface. See 06-08-SUMMARY.md. |
+| 06-08-2 | CON-01, HB-03, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_publication_controls\|av_replay\|frame_publication_controls)$'` | T-06-16 | PASS: normal independent processes raced for one destination; one winner/one refusal, write/close/interruption/foreign-marker/inode/symlink sentinels all passed in final native/GNU selectors. See 06-08-SUMMARY.md. |
+| 06-09-1 | EVD-06, AUD-01 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.(audio\|audio2)\.observation\.(lynx1\|lynx2)$'` | T-06-17 | PASS: fresh audio/audio2 guests on lynx1 and lynx2 each retained 18 bytes and 18 source rows, matching unchanged alternatives and independent model evidence. See 06-09-SUMMARY.md. |
+| 06-09-2 | EVD-06, AUD-01 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^suite\.(audio\.controls\|audio2\.controls\|audio\.source_controls\|selection_controls\|cpu\.(lynx1\|lynx2)\|page_mode\.(observation\.(lynx1\|lynx2)\|controls)\|timers\.(observation\.(lynx1\|lynx2)\|strict_comparison_controls\|video_revisit\|video_revisit_controls))$'` | T-06-18 | PASS: audio/audio2 24/26 named negative controls, source controls and exact five-suite selection passed; only the two inherited page-mode SERCTL observations skipped. Timer row 14 remains legacy 0C/source 0D and video-policy1 0F/source 0D. Selection control is separately listed here because the plan selector omitted it although the summary records it as run. See 06-09-SUMMARY.md. |
+| 06-10-1 | EVD-05, AUD-01, AUD-02, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.fault\.(lfsr_tap\|integrator_clip\|link_a1\|link_a2\|link_a3\|ring_return)$'` | T-06-19 | PASS: six private production-source mutants built successfully, exited 1 at only their intended assertions, with clean before/after brackets and identity checks; positive source cases passed 7/7 on both builds. See 06-10-SUMMARY.md. |
+| 06-10-2 | EVD-05, AUD-01, AUD-02, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^audio\.fault\.(stereo_left\|stereo_right\|cadence_399\|snapshot_phase)$'` | T-06-20 | PASS: four additional actual mutants built and failed only exact assertions; restored-suffix mutant proved snapshot restore before comparison; clean brackets/identities and positive source cases passed 10/10 on AppleClang/GNU. See 06-10-SUMMARY.md. |
+| 06-11-1 | PERF-01, HB-03, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_benchmark\|av_replay)$'` | T-06-21 | PASS AppleClang/GNU: five fresh, same-build runs completed 1,248,256 guest ticks (1,253,985 is only the window bound) with 22 frames, 3,120 PCM frames, 1,706 events, 12 inputs and 13 identical stream digests. Clock brackets only public advancement calls. See 06-11-SUMMARY.md and docs/performance.md. |
+| 06-11-2 | PERF-01, HB-03, DET-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^consumer\.(av_benchmark_controls\|av_benchmark)$'` | T-06-22 | PASS AppleClang/GNU: 28 malformed benchmark-report mutations rejected at named parser diagnostics; real no-run guest refused before output. Timing spans validated for public API advance, encoding, assembly, publication and replay total. CI timing is recorded in06-QUALIFICATION.md. See 06-11-SUMMARY.md. |
+| 06-12-1 | AUD-01, AUD-02, HB-03, DET-05, EVD-06, PERF-01, CON-01, EVD-05 | `cmake --preset check && cmake --build --preset check && ctest --preset check --no-tests=error --output-on-failure -R '^(audio\.(registers\|lfsr\|integrator\|counter\|stereo\|mix\|links\|ring_zero\|cadence\|order\|span_refusal\|span_alias\|capacity\|stops\|snapshot\|snapshot_refusal)\|det\.(audio_paths\|audio_sensitivity)\|consumer\.(av_replay\|av_response_controls)\|core\.(no_float\|includes\|nm_undefined\|nm_globals)\|api\.(header_selfcontained\|abi_symbols))$'` | T-06-23 | PASS: exact26-case group passed; independent54-file review iterations2–4 clean, all repaired seams pass focused checks and final canonical inventories. See06-REVIEW.md and06-QUALIFICATION.md. |
+| 06-12-2 | AUD-01, AUD-02, HB-03, DET-05, EVD-06, PERF-01, CON-01, EVD-05 | `sh scripts/check.sh` | T-06-24 | PASS: canonical native/GNU gates and exact-source hosted run43448772929;246 rows accounted once,244 passes,two declared SERCTL skips,no failures. Timing and retained limits in06-QUALIFICATION.md. |
 
-Plan 12 Task 2 also requires
-`docker exec lynx-phase5-task12-linux-reuse sh -lc 'cd /work/lynxplosion && sh scripts/check.sh'`
-at the recorded exact source commit, and a completed successful `ci.yml` run for
-that exact pushed HEAD. Neither has run as part of this audit. Plan 12 Task 1's
-review findings have been repaired; independent code/security follow-ups and the
-exact planned focused selector remain pending. Do not interpret the separate
-14-case batch as the exact Plan 12 or canonical final-source gates.
+Plan12's planned focused group and independent review are complete. The final
+native/GNU canonical gates and hosted CI pass on the exact source recorded in
+06-QUALIFICATION.md; they include prior-phase regression tests. No duplicate
+broad gate is required for final report prose. Historical scoped results retain
+their own source/build identities.
 
 ## Assertion-level evidence map
 
@@ -98,7 +96,7 @@ registration alone is not counted as coverage.
 | HB-03 / CON-01 consumer response and artifacts | `tests/consumer/av_driver.cmake` `consumer.av_replay` checks sequential and interleaved output; `consumer.av_response_controls` rejects no-run, over-bound, silent/stale/truncated WAV and frame/event mutations. `tests/consumer/check_artifacts.c` validates the expected 13-file bundle, source/input identity, applied-input/progress semantics, output extents and per-stream hashes. | 06-01/07 plus refusal and bundle-control selectors in 06-08; no persisted host-checkpoint file API is claimed. |
 | EVD-06 source observations and fixture scope | `suite.audio.observation.lynx1/lynx2` and `suite.audio2.observation.lynx1/lynx2` compare all 18 source rows to the explicit alternatives; suite/oracle/source/selection negatives remain registered. `tests/gates/manifests_controls.sh` now rejects listed outside links, linked directories, unlisted/dangling links and symlinked roots/manifests before outside bytes are read. | 06-02/09 scoped observations and post-review `hygiene.manifests(.self_test)` passed; the two page-mode SERCTL observations remain the only documented skips. |
 | EVD-05 semantic faults | `tests/audio/test_audio.c` fault cases and their private production-source variants assert each named intended behavior; each mutant must build, exit 1 at its one expected assertion, and pass clean before/after identity brackets. | 10 fault selectors passed on the scoped AppleClang/GNU runs (06-10). |
-| PERF-01 equal-work report | `tests/consumer/av_driver.cmake` validates five fresh runs, shared build/input/environment/stream identity, equal actual work and digests, separate API/encoding/assembly/publication/total durations; controls reject 28 malformed reports and a real no-run guest. | 06-11 benchmark and benchmark-controls selectors; CI timing remains pending. |
+| PERF-01 equal-work report | `tests/consumer/av_driver.cmake` validates five fresh runs, shared build/input/environment/stream identity, equal actual work and digests, separate API/encoding/assembly/publication/total durations; controls reject 28 malformed reports and a real no-run guest. | 06-11 benchmark and benchmark-controls selectors; CI timing is recorded in06-QUALIFICATION.md. |
 
 ## Post-review automated gap closure
 
@@ -132,7 +130,7 @@ Plan 12 focused group or final canonical/CI qualification.
 - [x] Update all raw snapshot-layout consumers and explicit copied-core source
   lists with the audio structure change, retaining historical assertions.
 - [x] Fill the scoped per-task/threat/command map from owning-plan evidence;
-  final-source and Plan 12 evidence remain pending above.
+  final-source and Plan12 evidence are complete in06-QUALIFICATION.md.
 
 Existing test infrastructure is sufficient; no framework installation is needed.
 
@@ -151,9 +149,9 @@ separate from this phase's software acceptance evidence.
 - [x] Lifecycle and review-triggered regression cases are registered and pass in the focused repair batch.
 - [x] No watch-mode or desktop-focus requirement.
 - [x] Feedback latency and slow cases measured in owning-plan summaries.
-- [ ] Final validation audit sets status and Nyquist compliance after Plan 12 gates.
+- [x] Independent coverage audit and final Plan12 evidence reconcile status and Nyquist compliance.
 
-**Approval:** pending execution and independent validation audit.
+**Approval:** independently audited scoped coverage; final native/GNU/CI gates pass. No human software UAT remains.
 
 ## Planning shape, dependencies and source coverage audit
 
@@ -194,7 +192,7 @@ The tracer and its immediate structural repair are explicit bounded integration 
 | RESEARCH | Native tool identity local, source/build recipe portable | COVERED | 01, 02, 09 |
 | RESEARCH | Actual semantic mutants, clean brackets, no production switches | COVERED | 10 |
 | RESEARCH | Five equal-output fresh benchmark samples/monotonic host time | COVERED | 11 |
-| RESEARCH | GCC/Clang and ShellCheck0.9/0.11 early, final exact HEAD gate | PARTIAL | 01, 02, 09; Plan 12 exact final-source gates and CI remain pending |
+| RESEARCH | GCC/Clang and ShellCheck0.9/0.11 early, final exact HEAD gate | COVERED | 01, 02, 09, 12; final native/GNU/CI exact-source qualification |
 | RESEARCH | Security memory/input/capacity/state/publication controls | COVERED | 05, 06, 08, 12; threats in every plan |
 | RESEARCH | Physical reset/link/mix/stereo unknowns remain unqualified | COVERED | 01, 04, 09, 12 |
 | CONTEXT | D-01 documented four digital channels and their natural-clock enable boundary | COVERED | 01, 03; post-review `audio.order` asserts first natural clock at 416 after tick-400 enable |
@@ -212,18 +210,18 @@ The tracer and its immediate structural repair are explicit bounded integration 
 | CONTEXT | D-13 exact five suites, two SERCTL skips and strict timer limits | COVERED | 09, 12 |
 | CONTEXT | D-14 thin tracer/early source/oracle/structural/portability | COVERED | 01, 02, 04, 09 |
 | CONTEXT | D-15 five-run fixed digest baseline/no optimization | COVERED | 11 |
-| CONTEXT | D-16 reuse distinct proof/final environment gates/exact CI | PARTIAL | 11; Plan 12 macOS/GNU canonical gates and exact-HEAD CI remain pending |
+| CONTEXT | D-16 reuse distinct proof/final environment gates/exact CI | COVERED | 11, 12; final native/GNU canonical gates and exact-source CI pass |
 | CONTEXT | D-17 existing authority and owner/rights/model stops | COVERED | 01, 02, 12 |
 
 All source items have an owning plan and the three previously open automated
 seams now have scoped passing evidence. `COVERED` here means the scoped
 requirement has behavioral test evidence from its owning task; it does not mean
-Phase 6 final qualification is complete. CONTEXT deferred ideas, later
-milestone work and
+hardware accuracy is established. Final software qualification is separately
+recorded in06-QUALIFICATION.md. CONTEXT deferred ideas, later milestone work and
 RESEARCH out-of-scope items are excluded: host resampling/filter/live
 presentation, UART/SERCTL unblock, physical qualification, shared LibFuturo
-integration, optimization and release. Project requirements remain globally
-unchecked until final qualification.
+integration, optimization and release. Global EVD-02 remains open; other
+completed requirement records are reconciled through the phase lifecycle.
 
 ## Spec-less edge/prohibition fallback
 
@@ -252,9 +250,10 @@ not new entries fabricated into the 11-item inventory.
 No-silent-drop arithmetic remains 11 raw edge items = 6 explicitly classified
 predicates + 5 surfaced flagged assumptions. The coverage labels above refer to
 observed automation; the unresolved assumption flags are retained as provenance,
-not as additional human-only acceptance criteria. The audit's three open
+not as additional human-only acceptance criteria. The audit's three initial
 automation obligations (lifecycle coverage, natural-clock enable behavior,
-manifest symlink containment) remain visible independently of that inventory.
+manifest symlink containment) are closed by the assertion map above, independently
+of the preserved planning inventory.
 
 Prohibition recall considered per requirement: silent/missing data, wrong channel,
 inaccurate claims, unduly broad model claims, copyrighted assets, emulator-source
@@ -267,13 +266,13 @@ throughput; CON-01 unapproved distribution/content; EVD-05 false mutant
 detection. Precision dropped normal buffer/arithmetic/empty/order/import
 correctness into ordinary tests/review rather than duplicating them as values
 prohibitions. General memory/path controls are mapped to threat controls, but
-the specifically discovered fixture-symlink containment case remains open
-above.
+the discovered fixture-symlink containment case is closed by the repaired gate
+and its seeded controls above.
 
 Three bespoke kept statements were projected using the installed canonical
-projectProhibitions serializer into 06-12 must_haves.prohibitions, with
-unresolved status and flagged-unverified rationale, and no wired check
-descriptor: no physical/suite-qualification misrepresentation; no unapproved
+projectProhibitions serializer into 06-12 must_haves.prohibitions, initially with
+unresolved status and no wired check descriptor; Plan12 now records explicit
+verified security judgments for each statement: no physical/suite-qualification misrepresentation; no unapproved
 assets/implementation-source exposure; no silent extension of
 physical/release/distribution/shared-host authority. These remain scope and
 authority boundaries; none replaces a test for an automatable software case.
@@ -291,12 +290,15 @@ The lexical page-mode UI match has no frontend evidence and is nonblocking: head
 
 ## Audit boundary
 
-This draft reflects source/test inspection and scoped evidence recorded by Plans
-01–11 plus the focused repair batch at the current source revision; it does not
-claim final-source qualification. No implementation or test files were changed
-during this coverage update. The independent review follow-ups, exact planned
-Plan 12 focused group, final-source macOS and existing GNU container canonical
-gates, and successful CI for exact pushed HEAD remain pending. Therefore
-`status: draft`,
-`nyquist_compliant: false`, and
-`wave_0_complete: false` remain intentional.
+Independent coverage inspection, targeted re-reviews and final exact-source
+qualification close the scoped automation obligations. Status is validated,
+Nyquist compliance true, and wave0 complete from observed evidence. No RED was
+fabricated for an already-green coverage case. The six stale temporal assertions
+and inherited clean mutant baseline were repaired without changing production
+or source oracles. The frame replay matrix retains its complete input/profile/
+handedness and assertion scope while avoiding repeated sensitivity interleaving.
+
+All24 task rows are green at their scoped commits and final registered inventory.
+No human-only software UAT remains. O1, rights and physical evidence remain owner
+boundaries; strict timer disagreement and the two SERCTL skips remain visible
+limits. Independent phase-goal verification is the next lifecycle gate.

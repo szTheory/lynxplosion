@@ -48,4 +48,48 @@ The five-run measurement is from the exact source/build identity above. Throughp
 
 The benchmark/control selector passed on native AppleClang 21.0.0.21000101 and GNU 13.3.0. The GNU run was synchronized by fast-forward to committed source SHA `38fd41d4d74a499afa5d3f65882257c6c256854d`; both selectors executed two tests and passed both. Each control invocation independently ran its five real guests once, then exercised the 28 static parser mutations.
 
-CI queue, setup, build, CTest, hygiene, and history timings are a separate category and remain pending the Plan 12 final qualification. That qualification should add or link those measurements without combining them with this local guest-throughput result. No performance optimization was made for this baseline.
+CI queue, setup, build, CTest, hygiene and history timings are a separate category, recorded below and in Phase6 qualification. They are not combined with this guest-throughput result. No core performance optimization was made for this baseline.
+
+
+## Final-source qualification capture
+
+The historical baseline above remains unchanged. A later readonly host probe
+reported model identifier `Mac17,9`; the final native capture reported
+`Apple M5 Pro`. This adds context after the original sandbox-denied query and
+does not retroactively alter its raw measurements.
+
+The final canonical native gate used clean source
+`bc943eecc7a498b4405a150961c036e6d911e60e`, the same Debug AppleClang configuration,
+and the full named workload. Five fresh runs again matched all13 streams and
+1,248,256 actual guest ticks. API durations were280,126,000;268,575,000;
+267,343,000;322,470,000;309,991,000ns. Their median was280,126,000ns and range
+267,343,000–322,470,000ns; median throughput was4,456,051.919 guest ticks/s.
+Frame encoding median139,186,000ns, assembly271,974,000ns, publication5,584,000ns,
+and complete consumer4,320,873,000ns remain separate host measurements.
+
+The five-run combined output identity was
+`4f8394b4587431b22180ca01d05a8631ada163fbebf77a18e5a95d4ac20759b4`.
+That identity includes `av.manifest`, which records the build ID; different
+commits therefore do not define the same combined output identity. This capture
+was part of broad qualification, not a controlled comparison with the historical
+baseline. No core performance optimization or cross-host accuracy claim follows.
+Final qualification and separate CI costs are recorded in the Phase6
+qualification artifact.
+
+
+## Hosted CI cost
+
+[Exact-source run43448772929](https://github.com/szTheory/lynxplosion/actions/runs/43448772929)
+qualified the final source above. Workflow creation to job start3s, setup1s,
+checkout2s, canonical command236s. Pinned cc65 build21s, configure/build about
+7–8s, CTest151.50s, JUnit1s, artifacts2s, full history43s. Pending timer controls
+(72.06s) and result controls (56.16s) were the longest cases; benchmark controls
+28.64s, benchmark25.59s and the full frame replay matrix12.97s were separate
+observed test costs. The one job has no duplicate broad job or matrix.
+
+The replay harness reduction retains full semantic/profile/input proofs and
+unchanged limits; its GNU final case passed138.69s after a234.34s pass and240.01s
+timeout of the older repeated matrix. These are test-workload observations,
+not core optimization or a controlled throughput comparison. Current evidence
+does not justify adding caches, concurrency, dependencies or CI lanes. Full
+history and strict source-comparison controls remain required.

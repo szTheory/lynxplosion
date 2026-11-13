@@ -196,3 +196,19 @@ Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
   proxies do not establish agent activity or API cost. Preserve configured
   models and required independent reviews; add concurrency only for measured
   independent work that the checkout policy permits.
+
+- A later shared timing or device-semantics repair invalidates the earlier
+  integration result even when the public layout is unchanged. After its
+  focused checks, run the full registered fast inventory once before expanding
+  adjacent fault corpora. Include old sampling-boundary assertions; distinguish
+  same-tick guest reads from state inspected after the return tick.
+- Run artifact preflight in each reused qualification environment before its
+  broad gate. Clean native scratch does not establish clean Linux scratch.
+  Preserve only attributable old outputs after nonce/provenance checks and
+  matching complete before/after inventories; keep scanner policy unchanged.
+- Map expensive replay repetitions to distinct evidence obligations. Preserve
+  the complete logical-input classes, profiles, handedness, raw/semantic
+  assertions and limits. A baseline interleaving proof need not be repeated
+  inside a sensitivity run that independently checks the changed event and
+  unchanged prefix. Measure the owning case on both environments and retain
+  independent review when reducing such work.

@@ -1,11 +1,11 @@
 ---
 phase: "06"
 slug: audio-and-playable-checkpoint
-status: draft
-threats_open: 1
+status: verified
+threats_open: 0
 asvs_level: 1
 created: "2026-11-13"
-source_head: e7bce5e8a830d9b13b10baa6af7dac54c52c7004
+source_head: bc943eecc7a498b4405a150961c036e6d911e60e
 ---
 
 # Phase 6 — Security
@@ -43,8 +43,8 @@ Caller/fixture/report inputs cross into bounded deterministic machine state or h
 | T-06-20 | Tampering | tests/audio/fault_controls.cmake | high | mitigate | Both stereo-side, cadence399 and accepted-restored-ring-cursor suffix mutants; private copied sources only. | CLOSED |
 | T-06-21 | Tampering | consumer/main.c | high | mitigate | Host-only CLOCK_MONOTONIC around public advance calls; five equal full13stream bundles; consumer.av_benchmark. | CLOSED |
 | T-06-22 | Tampering | tests/consumer/av_driver.cmake | high | mitigate | Exactly five unique reports;28 named parser refusals and real no-run; separate timing categories in docs/performance.md. | CLOSED |
-| T-06-23 | Tampering | .planning/phases/06-audio-and-playable-checkpoint/06-REVIEW.md | high | mitigate | Joined independent standard53-file review is clean after3checked repairs; coverage follow-up closes all3seams; focused native/GNU14-case batches and shell checks pass. | CLOSED |
-| T-06-24 | Tampering | .planning/phases/06-audio-and-playable-checkpoint/06-QUALIFICATION.md | high | mitigate | PENDING: native/Linux final canonical gates, exact pushed HEAD hosted CI and critical-path inspection have not run. | OPEN |
+| T-06-23 | Tampering | .planning/phases/06-audio-and-playable-checkpoint/06-REVIEW.md | high | mitigate | Joined independent standard54-file review iterations2–4 is clean; all3initial repair seams and later temporal/matrix repairs have focused and final canonical evidence. | CLOSED |
+| T-06-24 | Tampering | .planning/phases/06-audio-and-playable-checkpoint/06-QUALIFICATION.md | high | mitigate | Final native/GNU canonical gates and hosted run43448772929 pass at exactbc943ee source; measured CI critical path and unchanged limits are recorded in06-QUALIFICATION.md. | CLOSED |
 
 ## Accepted Risks Log
 
@@ -60,8 +60,8 @@ No accepted security risks. The inherited timer source disagreement, SERCTL bloc
 
 - Initial ASVS1 inspection found23declared mitigations present and2final-evidence obligations open. Code review subsequently demonstrated an ordering defect and a fixture symlink coverage bypass; those affected initial conclusions were superseded, not treated as exhaustive assurance.
 - Repairs d40db8d,0daef49,e7bce5e have old-failure/fixed-pass evidence or explicitly labeled lifecycle coverage evidence. Native and GNU13.3 sanitizer-focused batches passed14cases; ShellCheck0.11/0.9 and POSIX syntax checks passed.
-- Independent follow-ups confirm both repairs, lifecycle coverage, unchanged source identities and no new code defects. T-06-23 is closed by the joined review/fix/disposition evidence. T-06-24 remains OPEN until actual final gates and exact-HEAD CI evidence exist.
+- Independent follow-ups confirm both repairs, lifecycle coverage, unchanged source identities and no new code defects. T-06-23 is closed by the joined review/fix/disposition evidence. T-06-24 is now closed by the final native/GNU gates, successful exact-source CI and recorded critical-path inspection; original failed attempts remain preserved.
 
 ## Sign-Off
 
-Implementation and review mitigations are verified at the repaired source. Final security/phase sign-off is pending T-06-24; `threats_open: 1` is intentional. Parent performs final qualification next; no user decision or risk acceptance is required.
+All25 declared ASVS1 mitigations and explicit prohibition judgments are verified for the scoped software checkpoint. No high/critical threat remains open and no risk acceptance was used. Final qualification is recorded in06-QUALIFICATION.md; independent phase-goal verification remains next. Hardware/rights/owner limits remain as stated above.

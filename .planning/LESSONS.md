@@ -263,3 +263,42 @@ task, with sizes, identities and checkpoint-prefix ownership. Name the concrete
 record for every required observation class. Decode the fixture's actual byte
 layout and use its response marker; a saturating progress counter need not
 change between otherwise distinct input responses.
+
+
+**Recheck integration after later semantic repairs.** Plan09 corrected audio
+output latching and ring pulse lifetimes against unchanged pinned source
+oracles. The final gate then exposed six older sampling assertions and the
+ordering fault harness's inherited clean baseline. They now distinguish the
+CPU's same-tick pulse read from expired status at the returned tick, preserving
+DONE/IRQ, divider LAST_CLOCK and the separate even timer chain. A full inventory
+after that owning repair would have found this before final review. Repeat the
+early integration check after later shared semantic changes, not only the first
+layout change; keep focused repairs between broad gates.
+
+**Preflight the environment actually being qualified.** The first final GNU
+run passed every test but failed artifact scanning on two older generated suite
+roots. Native cleanup did not cover the reused container. Build-record/nonce
+verification and complete equal before/after tar inventories allowed private
+preservation, followed by the unchanged scanner. Run that environment's artifact
+preflight before paying for the broad gate. Original failed logs/status remain
+separate from qualification.
+
+**Remove repeated work at its proof boundary.** The legacy frame replay matrix
+ran two extra interleaved instances for each sensitivity transcript after
+already proving interleaving for both profiles and handedness on the complete
+baseline. One GNU invocation took234.34s and another timed out at240.01s. The
+sensitivity run now uses a fresh production instance; all12 input events,
+23 frames, profile/handedness combinations, fresh equality, baseline
+interleaving, independent semantic/corruption checks and changed-event assertions
+remain. Focused native/GNU runs passed14.09s/167.93s; final GNU canonical replay
+passed138.69s. These observations establish useful limit margin, not a controlled
+emulator speed comparison or a proven cause for every prior timing variation.
+Stage labels now identify each matrix operation; timeout limits are unchanged.
+
+
+**Keep lifecycle status cells machine-readable.** Shared requirements carried
+phase-slice prose in the traceability Status column, so the SDK correctly refused
+to advance them as Pending. After checking all sibling evidence, move the slice
+detail to the definition notes and use the supported Pending/Complete status.
+Inspect the per-requirement write set; a zero tool exit does not mean every
+requested requirement was reconciled. Preserve any genuinely open requirement.

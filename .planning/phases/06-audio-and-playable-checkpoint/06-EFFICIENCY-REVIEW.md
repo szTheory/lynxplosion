@@ -120,3 +120,49 @@ to the first runnable complete path followed by required negative cases, with
 no further process-audit fan-out and warm reuse for the adjacent consumer plan.
 Continue Plan08's refusal/publication controls, then the remaining reviewed plans. The parent retains tracking and final independent acceptance
 responsibilities. No owner input is required.
+
+
+## Applied through final local qualification (2026-11-13)
+
+Plans08–11 and the Plan12 implementation reviews are complete. Warm executor
+reuse, first-complete-path sequencing and batched repairs remained in effect;
+no further process-audit or research fan-out was started. The publication fault
+matrix uses a focused real transcript while its owning full replay remains.
+
+Final review repaired a genuine tick-order bug, a fixture-symlink bypass and
+active lifecycle coverage. Final integration exposed older pulse/output
+assertions left behind by Plan09. Their two-file test repair retains same-tick
+positive reads, post-tick expiry, DONE/IRQ and even-chain checks. The full fast
+inventory must run after later shared semantic changes as well as initial
+layout changes. The original failed gate is preserved.
+
+The reused GNU clone contained old outputs outside the scanner's declared
+manifest policy. Verified private preservation fixed the environment without
+new exemptions. Missing that environment's preflight wasted one363.46s test
+run before the artifact failure. Preflight is now required separately in every
+reused environment; no source or unrelated scratch was deleted.
+
+The older frame-replay matrix had only seconds of GNU margin before its240s
+limit. Independent review approved removing sensitivity's repeated two-instance
+interleaving while keeping baseline interleaving for all four profile/handedness
+combinations, full12-event transcripts,23 frames and every independent assertion.
+Focused GNU passed167.93s; final canonical GNU passed138.69s versus the prior
+234.34s pass and240.01s timeout. These are observed test timings, not controlled
+core benchmarks. The timeout's exact execution/cleanup/environmental split is
+unknown; limits and production core behavior were unchanged by this repair.
+
+Final local canonical gates atbc943ee both passed with246 accounted rows,
+244 passes and the same two declared SERCTL skips. Native total531s (CTest306.63s,
+history201s); GNU total313s (CTest278.65s, history26s). The measured spread is
+recorded without attributing it to an unmeasured host cause. Hosted qualification,
+CI cost inspection and independent goal verification remain next; this entry is
+not a claim of phase or milestone completion.
+
+
+Hosted source qualification subsequently passed on exactbc943ee in
+run43448772929. Its single canonical command took236s: CTest151.50s,
+history43s, pinned cc65 build21s, configure/build about7–8s, JUnit1s and
+artifacts2s; queue-to-job3s, setup1s and checkout2s. The repaired replay matrix
+passed12.97s there. No duplicate CI job or measured need for cache/concurrency/
+dependency/matrix expansion was found. Independent goal verification and the
+milestone audit follow; no new implementation phase is authorized by this record.

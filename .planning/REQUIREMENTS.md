@@ -51,7 +51,7 @@ sequence, not a ceiling on the project goal.
 - [x] **DET-02**: Two instances run in the same process produce the same digests as separate runs
 - [x] **DET-03**: A run that captures a snapshot mid-way, restores it and continues produces the same digests as an uninterrupted run
 - [x] **DET-04**: Every run writes a manifest recording profile, startup tier, content identity, input digest, tick count and core build identity
-- [ ] **DET-05**: Machine progress, logical input, raw video and raw audio are recorded as separate streams on one guest-tick timeline; same-core digests are labelled repeatability, not accuracy
+- [x] **DET-05**: Machine progress, logical input, raw video and raw audio are recorded as separate streams on one guest-tick timeline; same-core digests are labelled repeatability, not accuracy
 
 ### CPU
 
@@ -86,32 +86,33 @@ sequence, not a ceiling on the project goal.
 
 ### Audio
 
-- [ ] **AUD-01**: Four audio channels (LFSR, integrator, reload, volume, link to timers) and stereo muting are emulated
-- [ ] **AUD-02**: Host receives integer PCM at an exact rational rate derived from the 16 MHz clock, plus tick-stamped channel events; no float, filter or resampling inside the core
+- [x] **AUD-01**: Four audio channels (LFSR, integrator, reload, volume, link to timers) and stereo muting are emulated
+- [x] **AUD-02**: Host receives integer PCM at an exact rational rate derived from the 16 MHz clock, plus tick-stamped channel events; no float, filter or resampling inside the core
 
 ### Test fixtures and evidence
 
 - [x] **EVD-01**: An original, project-authored diagnostic built with the pinned cc65 reports progress and pass/fail through a RAM result block (magic, schema, progress, error, done) read by symbol
 - [ ] **EVD-02**: A lynx-tests harness reads `g_results` by symbol from the build's label file, requires a completion sentinel and a guest-time minimum and bound, and compares against expectations generated from the pinned source with a count check
-  - Owner-approved 2026-11-11 split: Phase 4 completes the harness/control slice;
-    strict agreement for timer result offset 14 (0C versus unchanged 0D) stays
-    explicitly pending for Phase 5's startup/bus/video evidence. Global EVD-02
-    remains open; no other comparison or control is deferred.
+  - Owner-approved 2026-11-11 split completed the Phase4 harness/control slice.
+    The Phase5 revisit and Phase6 preservation are complete, but strict timer
+    row14 agreement remains open: legacy0C/source0D and video-policy1 0F/source0D.
+    Global EVD-02 is not complete; no other comparison or control is deferred.
 - [x] **EVD-03**: A no-run negative control (CPU halted before tests start) makes every suite fail in the harness
 - [x] **EVD-04**: The harness asserts which model a suite detected and fails when it does not match the selected profile
-- [ ] **EVD-05**: Each device phase adds at least one named-fault control that is shown to fail the intended test
-  - Recurring obligation: Phase 4 coverage is completed by its own named-fault
-    work; Phase 5 DMA and Phase 6 audio controls already required by the roadmap
-    remain outstanding. A completed Phase 4 slice does not close all phases.
-- [ ] **EVD-06**: The lynx-tests `timers`, `cpu`, `page-mode`, `audio` and `audio2` suites run headlessly from pinned, source-built, startup-tier-A images with results captured and inventoried; any suite that cannot run that way is a visible, documented skip with its blocker
+- [x] **EVD-05**: Each device phase adds at least one named-fault control that is shown to fail the intended test
+  - Recurring obligation closed across all owning slices: Phase4 timer faults,
+    Phase5 DMA/palette/input faults and Phase6's ten audio mutants have passing
+    clean brackets and actual intended failures. Final qualification preserves
+    those proofs; no individual slice alone establishes global completion.
+- [x] **EVD-06**: The lynx-tests `timers`, `cpu`, `page-mode`, `audio` and `audio2` suites run headlessly from pinned, source-built, startup-tier-A images with results captured and inventoried; any suite that cannot run that way is a visible, documented skip with its blocker
 
 ### Playable scenario and consumer
 
 - [x] **HB-01**: A tick-stamped framebuffer snapshot from an original diagnostic is rendered to a viewable image early, labelled as a snapshot, not a frame
 - [x] **HB-02**: An original homebrew direct-load image shows input-responsive frames when driven by a recorded input timeline
-- [ ] **HB-03**: The homebrew plays sound in response to input (the v1 playable checkpoint)
-- [ ] **CON-01**: An independent consumer program, using only the public C API, drives the core and writes raw frames as PNG or PPM and audio as WAV
-- [ ] **PERF-01**: A named workload (the homebrew with a fixed input timeline) has a recorded throughput baseline with its output digest held constant; no optimization in v1
+- [x] **HB-03**: The homebrew plays sound in response to input (the v1 playable checkpoint)
+- [x] **CON-01**: An independent consumer program, using only the public C API, drives the core and writes raw frames as PNG or PPM and audio as WAV
+- [x] **PERF-01**: A named workload (the homebrew with a fixed input timeline) has a recorded throughput baseline with its output digest held constant; no optimization in v1
 
 ## v2 Requirements
 
@@ -203,7 +204,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DET-02 | Phase 1 | Complete |
 | DET-03 | Phase 3 | Complete |
 | DET-04 | Phase 1 | Complete |
-| DET-05 | Phase 6 | Pending |
+| DET-05 | Phase 6 | Complete |
 | CPU-01 | Phase 2 | Complete |
 | CPU-02 | Phase 2 | Complete |
 | CPU-03 | Phase 2 | Complete |
@@ -223,19 +224,19 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VID-04 | Phase 5 | Complete |
 | VID-05 | Phase 5 | Complete |
 | INP-01 | Phase 5 | Complete |
-| AUD-01 | Phase 6 | Pending |
-| AUD-02 | Phase 6 | Pending |
+| AUD-01 | Phase 6 | Complete |
+| AUD-02 | Phase 6 | Complete |
 | EVD-01 | Phase 3 | Complete |
-| EVD-02 | Phases 4 and 5 | Phase 4 observation/control slice complete; exact timer offset-14 agreement pending Phase 5 |
+| EVD-02 | Phases 4 and 5 | Pending |
 | EVD-03 | Phase 4 | Complete |
 | EVD-04 | Phase 4 | Complete |
-| EVD-05 | Phases 4, 5 and 6 | Phase 4 slice complete; Phase 5 and 6 device-fault obligations remain open |
-| EVD-06 | Phase 6 | Pending |
+| EVD-05 | Phases 4, 5 and 6 | Complete |
+| EVD-06 | Phase 6 | Complete |
 | HB-01 | Phase 3 | Complete |
 | HB-02 | Phase 5 | Complete |
-| HB-03 | Phase 6 | Pending |
-| CON-01 | Phases 3, 5, 6 | Phase 3 snapshot/silence slice complete; actual frames/audio pending |
-| PERF-01 | Phase 6 | Pending |
+| HB-03 | Phase 6 | Complete |
+| CON-01 | Phases 3, 5, 6 | Complete |
+| PERF-01 | Phase 6 | Complete |
 
 **Coverage:**
 - v1 requirements: 54 total
