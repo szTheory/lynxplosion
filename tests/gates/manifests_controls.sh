@@ -335,6 +335,74 @@ printf 'outside\n' >"$t/outside.txt"
 write_manifest "$t/fixtures/manifests/a.manifest" "$hash64" "fixtures/a.txt ../outside.txt"
 expect_reject files_entry_escape "$t" "files entry not a fixture path: ../outside.txt"
 
+# 12a. A listed file symlink to an outside sentinel is refused before the
+# manifest can count bytes outside the canonical fixture tree as covered.
+make_tree "$t"
+printf 'outside fixture sentinel\n' >"$work/outside-fixture.txt"
+ln -s "$work/outside-fixture.txt" "$t/fixtures/listed-link.txt"
+write_manifest "$t/fixtures/manifests/a.manifest" "$hash64" \
+  "fixtures/a.txt fixtures/listed-link.txt"
+expect_reject listed_outside_file_link "$t" \
+  "symbolic link in fixture tree: fixtures/listed-link.txt"
+[ "$(cat "$work/outside-fixture.txt")" = 'outside fixture sentinel' ] ||
+  fail listed_outside_file_link "outside sentinel changed"
+
+# 12b. A symlinked directory component is refused without resolving the listed
+# child through the external directory.
+make_tree "$t"
+mkdir "$work/outside-fixtures"
+printf 'outside directory sentinel\n' >"$work/outside-fixtures/child.txt"
+ln -s "$work/outside-fixtures" "$t/fixtures/external"
+write_manifest "$t/fixtures/manifests/a.manifest" "$hash64" \
+  "fixtures/a.txt fixtures/external/child.txt"
+expect_reject symlink_directory_component "$t" \
+  "symbolic link in fixture tree: fixtures/external"
+[ "$(cat "$work/outside-fixtures/child.txt")" = 'outside directory sentinel' ] ||
+  fail symlink_directory_component "outside child sentinel changed"
+
+# 12c. Unlisted links are still fixture-tree entries and cannot disappear from
+# the coverage inventory merely because find -type f omits links.
+make_tree "$t"
+ln -s a.txt "$t/fixtures/unlisted-link.txt"
+expect_reject unlisted_file_link "$t" \
+  "symbolic link in fixture tree: fixtures/unlisted-link.txt"
+make_tree "$t"
+ln -s missing-target "$t/fixtures/dangling-link.txt"
+expect_reject dangling_link "$t" \
+  "symbolic link in fixture tree: fixtures/dangling-link.txt"
+
+# 12d. The fixtures root, manifests directory and manifest files are all
+# checked before find or validate-kv can resolve them. An external manifest's
+# marker must not leak into validation output or be modified.
+make_tree "$t"
+mv "$t/fixtures" "$t/fixtures-real"
+ln -s "$t/fixtures-real" "$t/fixtures"
+expect_reject symlink_fixtures_root "$t" \
+  "symbolic link in fixture tree: fixtures"
+
+make_tree "$t"
+mkdir "$work/external-manifests"
+printf 'foreign-manifest-sentinel\n' >"$work/external-manifests/a.manifest"
+mv "$t/fixtures/manifests" "$t/fixtures/manifests-real"
+ln -s "$work/external-manifests" "$t/fixtures/manifests"
+expect_reject symlink_manifests_directory "$t" \
+  "symbolic link in fixture tree: fixtures/manifests"
+printf '%s\n' "$out" | grep -qF 'foreign-manifest-sentinel' &&
+  fail symlink_manifests_directory "external manifest bytes were validated"
+[ "$(cat "$work/external-manifests/a.manifest")" = 'foreign-manifest-sentinel' ] ||
+  fail symlink_manifests_directory "external manifest sentinel changed"
+
+make_tree "$t"
+printf 'foreign-manifest-file-sentinel\n' >"$work/external.manifest"
+rm "$t/fixtures/manifests/a.manifest"
+ln -s "$work/external.manifest" "$t/fixtures/manifests/a.manifest"
+expect_reject symlink_manifest_file "$t" \
+  "symbolic link in fixture tree: fixtures/manifests/a.manifest"
+printf '%s\n' "$out" | grep -qF 'foreign-manifest-file-sentinel' &&
+  fail symlink_manifest_file "external manifest bytes were validated"
+[ "$(cat "$work/external.manifest")" = 'foreign-manifest-file-sentinel' ] ||
+  fail symlink_manifest_file "external manifest sentinel changed"
+
 # 13. No manifests at all.
 make_tree "$t"
 rm "$t/fixtures/manifests/a.manifest"

@@ -56,6 +56,64 @@ trap 'rm -rf "$work"' EXIT
 trap 'exit 1' INT TERM
 findings=$work/findings
 : >"$findings"
+
+# A fixture path (including a manifest) must be represented by bytes owned by
+# the real fixture tree. Reject every symlink without traversing it before the
+# manifest finder or validator can open any candidate path. The command-line
+# fixtures component needs its own check because find does not descend through
+# a symlink used as its starting point on every supported implementation.
+fixture_root=$root/fixtures
+fixture_links=$work/fixture-links
+: >"$fixture_links"
+if [ -L "$fixture_root" ]; then
+  printf '%s\n' fixtures >"$fixture_links"
+elif [ -d "$fixture_root" ]; then
+  if ! find "$fixture_root" -type l -print >"$fixture_links" 2>/dev/null; then
+    printf 'check-manifests: fixture tree could not be scanned for symbolic links\n' \
+      >>"$findings"
+  fi
+fi
+while IFS= read -r link; do
+  case $link in
+    "$root"/*) link=${link#"$root"/} ;;
+  esac
+  printf 'check-manifests: symbolic link in fixture tree: %s\n' "$link" >>"$findings"
+done <"$fixture_links"
+if [ -s "$findings" ]; then
+  sort "$findings" >&2
+  printf 'check-manifests: %s finding(s)\n' "$(wc -l <"$findings" | tr -d ' ')" >&2
+  exit 1
+fi
+
+canonical_fixture_root=
+if [ -d "$fixture_root" ]; then
+  canonical_fixture_root=$(CDPATH='' cd -P "$fixture_root" 2>/dev/null && pwd -P) || {
+    echo 'check-manifests: fixture root cannot be resolved' >&2
+    exit 1
+  }
+fi
+
+# Check each path component without following it. The tree scan above protects
+# the validation reads; this per-entry check keeps the regular-file test safe
+# if a path changes between that scan and validation.
+has_symlink_component() {
+  remaining=$1
+  case $remaining in
+    "$root"/*) remaining=${remaining#"$root"/} ;;
+    *) return 1 ;;
+  esac
+  current=$root
+  while [ -n "$remaining" ]; do
+    case $remaining in
+      */*) component=${remaining%%/*}; remaining=${remaining#*/} ;;
+      *) component=$remaining; remaining= ;;
+    esac
+    current=$current/$component
+    if [ -L "$current" ]; then return 0; fi
+  done
+  return 1
+}
+
 find "$root/fixtures/manifests" -maxdepth 1 -type f -name '*.manifest' 2>/dev/null |
   sed "s|^$root/||" | sort >"$work/manifests"
 
@@ -130,11 +188,26 @@ while IFS= read -r manifest; do
         continue
         ;;
     esac
-    if [ ! -f "$root/$entry" ]; then
+    entry_path=$root/$entry
+    if has_symlink_component "$entry_path"; then
+      printf 'check-manifests: %s: files entry contains a symbolic link: %s\n' \
+        "$manifest" "$entry" >>"$findings"
+    elif [ ! -f "$entry_path" ]; then
       printf 'check-manifests: %s: files entry missing: %s\n' \
         "$manifest" "$entry" >>"$findings"
     else
-      printf '%s\n' "$entry" >>"$work/covered"
+      entry_parent=$(dirname "$entry_path")
+      canonical_entry_parent=$(CDPATH='' cd -P "$entry_parent" 2>/dev/null && pwd -P)
+      resolved_entry=$canonical_entry_parent/${entry_path##*/}
+      case $resolved_entry in
+        "$canonical_fixture_root"/*)
+          printf '%s\n' "$entry" >>"$work/covered"
+          ;;
+        *)
+          printf 'check-manifests: %s: files entry is outside canonical fixtures root: %s\n' \
+            "$manifest" "$entry" >>"$findings"
+          ;;
+      esac
     fi
   done <"$work/entries"
 done <"$work/manifests"
@@ -150,7 +223,7 @@ sort -k1,1 -k2,2 "$work/shas" |
 sort -u "$work/covered" >"$work/covered.sorted"
 # Only the manifests themselves, at the top of fixtures/manifests, are exempt:
 # any other file there, or in a directory below it, must be covered like the rest.
-find "$root/fixtures" -type f 2>/dev/null |
+find "$fixture_root" -type f 2>/dev/null |
   sed "s|^$root/||" | grep -v -x 'fixtures/manifests/[^/][^/]*\.manifest' | sort >"$work/present"
 comm -23 "$work/present" "$work/covered.sorted" |
   sed 's|^|check-manifests: uncovered fixture: |' >>"$findings"
