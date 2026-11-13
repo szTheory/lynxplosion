@@ -251,6 +251,8 @@ entry for the ten CPU, timer, page-mode, audio and audio2 observations and three
 audio controls. `suite.selection_controls` independently validates the exact
 ten observation and eight control IDs. The scoped native selector passed;
 page-mode still has exactly its two inherited skips because the source reaches
-an unsupported SERCTL write at `$FD8C`. GNU qualification of the expanded
-Task 2 selector and final Phase 6 qualification remain pending. These software
-checks do not establish hardware accuracy or public profile qualification.
+an unsupported SERCTL write at `$FD8C`. The expanded scoped selector also
+passed on GNU 13.3; in each build, fourteen selected cases ran and passed while
+the same two page-mode observations remained skipped. Final Phase 6
+qualification remains pending. These software checks do not establish hardware
+accuracy or public profile qualification.
