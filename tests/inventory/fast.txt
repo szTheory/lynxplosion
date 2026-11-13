@@ -129,6 +129,8 @@ cpu.vectors.reader_malformed	cpu
 cpu.vectors.sample_identity	cpu
 cpu.vectors.wrong_profile	cpu
 cpu.vectors.wrong_profile_reverse	cpu
+det.audio_paths	det
+det.audio_sensitivity	det
 det.diagnostic_restore	det
 det.diagnostic_restore.self_test	det
 det.golden	det

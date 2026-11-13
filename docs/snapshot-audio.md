@@ -64,6 +64,17 @@ file positions, and write-watch configuration are not serialized or included
 in the digest. Host replay checkpoints must retain their own pre-edge or
 post-edge phase marker and script identity.
 
+Continuation checks compare complete frame buffers and metadata (pens,
+palette, line ticks, sequence and row bounds), logical input edges, PCM values
+and sample ordinals, channel-event fields, and the final guest tick. The host
+copies the input-script cursor separately when restoring. The checked edges
+straddle tick 109321; sample checkpoints cover ticks 399, 400 and 401. A
+capacity stop at the 400-tick device/sample/CPU boundary preserves pending
+ring work, and restore plus retry reproduces the event suffix, including the
+next event sequence, before the deferred ring continues on the following tick.
+Zero-output, one-sample and one-event suffixes are checked against nonempty
+prefixes.
+
 This establishes deterministic format-7 continuation within one exact build
 identity. It does not qualify audio timing or output against physical Lynx
 hardware.

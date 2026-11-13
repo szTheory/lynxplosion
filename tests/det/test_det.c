@@ -17,6 +17,7 @@
 #include "check.h"
 #include "internal.h"
 #include "lynxplosion.h"
+#include "sha256.h"
 
 #define LOAD_ADDR 0x0200u
 #define SEED 0x0123456789abcdefu
@@ -82,6 +83,194 @@ static int read_file(const char *path, uint8_t **data, size_t *len)
     return 0;
 }
 
+static void digest_hex(const uint8_t digest[32], char hex[65]);
+
+/* One machine in a caller buffer, built the way the runner builds it. */
+typedef struct instance {
+    void *mem;
+    lynx_machine *m;
+    uint64_t consumed;
+    int all_budget_stops;
+} instance;
+
+static void sha256_hex(const uint8_t *bytes, size_t length, char out[65])
+{
+    lynx__sha256 hash;
+    uint8_t digest[32];
+    lynx__sha256_init(&hash);
+    lynx__sha256_update(&hash, bytes, length);
+    lynx__sha256_final(&hash, digest);
+    digest_hex(digest, out);
+}
+
+static int read_manifest_value(const char *path, const char *key,
+                               char *out, size_t capacity)
+{
+    char line[256];
+    const size_t key_length = strlen(key);
+    unsigned found = 0u;
+    FILE *file = fopen(path, "rb");
+    if (file == NULL || capacity == 0u) {
+        if (file != NULL) fclose(file);
+        return 1;
+    }
+    while (fgets(line, (int)sizeof line, file) != NULL) {
+        size_t length = strlen(line);
+        while (length > 0u && (line[length - 1u] == '\n' || line[length - 1u] == '\r')) {
+            line[--length] = '\0';
+        }
+        if (length >= key_length + 3u && memcmp(line, key, key_length) == 0 &&
+            line[key_length] == ' ' && line[key_length + 1u] == '=' &&
+            line[key_length + 2u] == ' ') {
+            const char *value = line + key_length + 3u;
+            const size_t value_length = strlen(value);
+            if (found != 0u || value_length == 0u || value_length >= capacity) {
+                fclose(file);
+                return 1;
+            }
+            memcpy(out, value, value_length + 1u);
+            found++;
+        }
+    }
+    int failed = ferror(file);
+    if (fclose(file) != 0) failed = 1;
+    return failed || found != 1u ? 1 : 0;
+}
+
+static int parse_hex_address_token(const char *text, size_t length, uint32_t *out)
+{
+    uint32_t value = 0u;
+    if (length == 0u || length > 8u) return 1;
+    for (size_t i = 0u; i < length; i++) {
+        const unsigned char ch = (unsigned char)text[i];
+        uint32_t digit;
+        if (ch >= (unsigned char)'0' && ch <= (unsigned char)'9') {
+            digit = (uint32_t)(ch - (unsigned char)'0');
+        } else if (ch >= (unsigned char)'a' && ch <= (unsigned char)'f') {
+            digit = (uint32_t)(ch - (unsigned char)'a') + 10u;
+        } else if (ch >= (unsigned char)'A' && ch <= (unsigned char)'F') {
+            digit = (uint32_t)(ch - (unsigned char)'A') + 10u;
+        } else {
+            return 1;
+        }
+        value = (value << 4u) | digit;
+    }
+    *out = value;
+    return 0;
+}
+
+static int read_linked_symbol(const char *path, const char *name, uint32_t *address)
+{
+    char line[256];
+    unsigned found = 0u;
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) return 1;
+    while (fgets(line, (int)sizeof line, file) != NULL) {
+        char kind[16], hex[16], symbol[128], extra;
+        uint32_t candidate = 0u;
+        if (sscanf(line, "%15s %15s %127s %c", kind, hex, symbol, &extra) != 3 ||
+            strcmp(kind, "al") != 0) continue;
+        const char *symbol_name = symbol[0] == '.' ? symbol + 1u : symbol;
+        if (strcmp(symbol_name, name) != 0) continue;
+        if (parse_hex_address_token(hex, strlen(hex), &candidate) != 0 || found != 0u) {
+            fclose(file);
+            return 1;
+        }
+        *address = candidate;
+        found++;
+    }
+    int failed = ferror(file);
+    if (fclose(file) != 0) failed = 1;
+    return failed || found != 1u ? 1 : 0;
+}
+
+typedef struct av_fixture {
+    uint8_t *bll;
+    size_t bll_length;
+    uint32_t probe_result;
+} av_fixture;
+
+static int av_fixture_load(const char *bll_path, const char *labels_path,
+                           const char *manifest_path, av_fixture *fixture)
+{
+    char expected_hash[80];
+    char expected_size[32];
+    char actual_hash[65];
+    char *end = NULL;
+    unsigned long expected_length;
+    memset(fixture, 0, sizeof *fixture);
+    if (read_file(bll_path, &fixture->bll, &fixture->bll_length) != 0 ||
+        read_manifest_value(manifest_path, "av_guest_sha256", expected_hash,
+                            sizeof expected_hash) != 0 ||
+        read_manifest_value(manifest_path, "av_guest_bytes", expected_size,
+                            sizeof expected_size) != 0 ||
+        read_linked_symbol(labels_path, "probe_result", &fixture->probe_result) != 0) {
+        free(fixture->bll);
+        memset(fixture, 0, sizeof *fixture);
+        return 1;
+    }
+    expected_length = strtoul(expected_size, &end, 10);
+    sha256_hex(fixture->bll, fixture->bll_length, actual_hash);
+    if (end == expected_size || *end != '\0' || expected_length != fixture->bll_length ||
+        strcmp(actual_hash, expected_hash) != 0 || fixture->bll_length != 220u ||
+        fixture->probe_result > LYNX_ADDRESS_SPACE - 9u) {
+        free(fixture->bll);
+        memset(fixture, 0, sizeof *fixture);
+        return 1;
+    }
+    return 0;
+}
+
+static void av_fixture_free(av_fixture *fixture)
+{
+    free(fixture->bll);
+    memset(fixture, 0, sizeof *fixture);
+}
+
+static int av_instance_make(instance *in, const av_fixture *fixture)
+{
+    lynx_config config;
+    const size_t size = lynx_machine_size();
+    const size_t alignment = lynx_machine_align();
+    uintptr_t base;
+    size_t offset;
+    void *aligned;
+    lynx_identity identity;
+    memset(in, 0, sizeof *in);
+    in->all_budget_stops = 1;
+    if (size == 0u || alignment == 0u || size > SIZE_MAX - (alignment - 1u)) return 1;
+    in->mem = malloc(size + alignment - 1u);
+    if (in->mem == NULL) return 1;
+    base = (uintptr_t)in->mem;
+    offset = (size_t)((alignment - (base % alignment)) % alignment);
+    aligned = (uint8_t *)in->mem + offset;
+    lynx_config_default(&config);
+    config.profile = LYNX_PROFILE_NONE;
+    config.ram_policy = LYNX_RAM_POLICY_ZERO;
+    config.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    if (lynx_machine_init(aligned, size, &config, &in->m) != LYNX_OK ||
+        lynx_load_bll(in->m, fixture->bll, fixture->bll_length) != LYNX_OK ||
+        lynx_get_identity(in->m, &identity) != LYNX_OK || identity.profile != LYNX_PROFILE_NONE ||
+        identity.ram_policy != LYNX_RAM_POLICY_ZERO ||
+        identity.timing_policy != LYNX_TIMING_POLICY_VIDEO_POLICY1 ||
+        identity.audio_policy != LYNX_AUDIO_POLICY_DIGITAL_1 ||
+        identity.audio_rate_num != 40000u || identity.audio_rate_den != 1u ||
+        identity.audio_channels != 2u || identity.audio_bits != 16u) {
+        if (in->m != NULL) lynx_machine_deinit(in->m);
+        free(in->mem);
+        memset(in, 0, sizeof *in);
+        return 1;
+    }
+    return 0;
+}
+
+static void instance_destroy(instance *in)
+{
+    if (in->m != NULL) lynx_machine_deinit(in->m);
+    free(in->mem);
+    memset(in, 0, sizeof *in);
+}
+
 /* A fresh, empty bundle directory: the known bundle files of an earlier run
    are removed, then the directory is created if it is missing. */
 static int fresh_dir(const char *dir)
@@ -112,14 +301,6 @@ static int ensure_dir(const char *dir)
     }
     return stat(dir, &st) == 0 && S_ISDIR(st.st_mode) ? 0 : 1;
 }
-
-/* One machine in a caller buffer, built the way the runner builds it. */
-typedef struct instance {
-    void *mem;
-    lynx_machine *m;
-    uint64_t consumed;
-    int all_budget_stops;
-} instance;
 
 static int instance_make_p(instance *in, uint32_t profile, const uint8_t *content, size_t len)
 {
@@ -1581,6 +1762,1186 @@ static void case_video_sensitivity(char **args)
     printf("video_sensitivity: input,palette,partial-pen,DMA-owner,page-latch,audio-route,ring-debt sensitive; host-watch excluded\n");
 }
 
+enum {
+    AV_TRACE_FRAME_LIMIT = 4,
+    AV_TRACE_PCM_LIMIT = 512,
+    AV_TRACE_EVENT_LIMIT = 16384
+};
+
+typedef struct av_trace {
+    video_packet frames[AV_TRACE_FRAME_LIMIT];
+    size_t frame_count;
+    lynx_pcm_frame pcm[AV_TRACE_PCM_LIMIT];
+    uint64_t sample_ordinals[AV_TRACE_PCM_LIMIT];
+    size_t pcm_count;
+    lynx_audio_event events[AV_TRACE_EVENT_LIMIT];
+    size_t event_count;
+    uint64_t input_ticks[4];
+    uint32_t input_masks[4];
+    size_t input_count;
+    uint64_t final_tick;
+    uint64_t first_sample_ordinal;
+    uint64_t next_sample_ordinal;
+    unsigned watch_hits;
+    size_t calls;
+} av_trace;
+
+typedef struct av_trace_scratch {
+    video_packet frame;
+    lynx_pcm_frame pcm[1];
+    lynx_audio_event events[LYNX_AV_MIN_EVENT_CAPACITY];
+} av_trace_scratch;
+
+typedef struct av_input_edge {
+    uint64_t tick;
+    uint32_t mask;
+} av_input_edge;
+
+enum av_slice_mode { AV_WHOLE, AV_COARSE, AV_ONE_TICK, AV_IRREGULAR };
+
+static const av_input_edge av_probe_edges[] = {
+    {UINT64_C(109321), LYNX_INPUT_A}
+};
+static const av_input_edge av_sensitivity_edges[] = {
+    {UINT64_C(109321), LYNX_INPUT_A},
+    {UINT64_C(130000), 0u}
+};
+
+static void av_trace_record_input(const char *name, av_trace *trace,
+                                  const av_input_edge *edge)
+{
+    if (trace->input_count >= sizeof trace->input_ticks / sizeof trace->input_ticks[0]) {
+        fprintf(stderr, "ASSERT %s exceeded the logical-input transcript bound\n", name);
+        check_failures++;
+        return;
+    }
+    trace->input_ticks[trace->input_count] = edge->tick;
+    trace->input_masks[trace->input_count] = edge->mask;
+    trace->input_count++;
+}
+
+static int av_trace_has_sequence(const av_trace *trace, uint64_t sequence)
+{
+    for (size_t i = 0u; i < trace->frame_count; i++) {
+        if (trace->frames[i].result.sequence == sequence) return 1;
+    }
+    return 0;
+}
+
+static void av_trace_record_frame(const char *name, av_trace *trace,
+                                  const av_trace_scratch *scratch,
+                                  const lynx_av_result *result)
+{
+    if (trace->frame_count >= AV_TRACE_FRAME_LIMIT) {
+        fprintf(stderr, "ASSERT %s exceeded the complete-frame bound\n", name);
+        check_failures++;
+        return;
+    }
+    video_packet *out = &trace->frames[trace->frame_count++];
+    memcpy(out->pens, scratch->frame.pens, sizeof out->pens);
+    memcpy(out->palettes, scratch->frame.palettes, sizeof out->palettes);
+    memcpy(out->line_ticks, scratch->frame.line_ticks, sizeof out->line_ticks);
+    memset(&out->result, 0, sizeof out->result);
+    out->result.struct_size = (uint32_t)sizeof out->result;
+    out->result.stop = result->stop;
+    out->result.ticks_consumed = result->ticks_consumed;
+    out->result.frame_start_tick = result->frame_start_tick;
+    out->result.frame_end_tick = result->frame_end_tick;
+    out->result.sequence = result->frame_sequence;
+    out->result.row_count = result->row_count;
+    out->result.flags = result->frame_flags;
+    out->total_ticks = result->ticks_consumed;
+    out->complete = result->row_count != 0u;
+    out->empty_frames = result->row_count == 0u ? 1u : 0u;
+}
+
+static int av_trace_step(const char *name, instance *in, av_trace *trace,
+                         av_trace_scratch *scratch, uint64_t target_tick,
+                         uint64_t max_budget, enum av_slice_mode mode,
+                         const av_input_edge *edges, size_t edge_count,
+                         size_t *edge_cursor)
+{
+    static const uint64_t irregular[] = {1u, 17u, 257u, 5u, 61u, 509u, 3u};
+    uint64_t now = in->m->guest_ticks;
+    uint64_t limit;
+    uint64_t budget;
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    if (now >= target_tick) return 0;
+    if (*edge_cursor < edge_count && edges[*edge_cursor].tick < now) {
+        fprintf(stderr, "ASSERT %s skipped a host input edge at tick %llu\n", name,
+                (unsigned long long)edges[*edge_cursor].tick);
+        check_failures++;
+        return 1;
+    }
+    if (*edge_cursor < edge_count && edges[*edge_cursor].tick == now) {
+        CHECK_EQ_U64(lynx_set_input(in->m, edges[*edge_cursor].mask), LYNX_OK);
+        av_trace_record_input(name, trace, &edges[*edge_cursor]);
+        (*edge_cursor)++;
+    }
+    limit = target_tick;
+    if (*edge_cursor < edge_count && edges[*edge_cursor].tick > now &&
+        edges[*edge_cursor].tick < limit) limit = edges[*edge_cursor].tick;
+    budget = limit - now;
+    switch (mode) {
+    case AV_WHOLE:
+        break;
+    case AV_COARSE:
+        if (budget > 4096u) budget = 4096u;
+        break;
+    case AV_ONE_TICK:
+        if (budget > 1u) budget = 1u;
+        break;
+    case AV_IRREGULAR: {
+        const uint64_t piece = irregular[trace->calls %
+                                          (sizeof irregular / sizeof irregular[0])];
+        if (budget > piece) budget = piece;
+        break;
+    }
+    }
+    if (max_budget != 0u && budget > max_budget) budget = max_budget;
+    if (budget == 0u) return 0;
+
+    memset(&scratch->frame, 0xA5, sizeof scratch->frame);
+    memset(&buffers, 0, sizeof buffers);
+    buffers.struct_size = (uint32_t)sizeof buffers;
+    frame_buffers_init(&buffers.frame, &scratch->frame);
+    buffers.pcm = scratch->pcm;
+    buffers.pcm_capacity = sizeof scratch->pcm / sizeof scratch->pcm[0];
+    buffers.events = scratch->events;
+    buffers.event_capacity = sizeof scratch->events / sizeof scratch->events[0];
+    memset(&result, 0, sizeof result);
+    result.struct_size = (uint32_t)sizeof result;
+    CHECK_EQ_U64(lynx_advance_av(in->m, budget, &buffers, &result), LYNX_OK);
+    trace->final_tick = in->m->guest_ticks;
+    trace->calls++;
+    CHECK(result.ticks_consumed <= budget);
+    if (result.pcm_count > 0u) {
+        const size_t produced = (size_t)result.pcm_count;
+        CHECK(produced <= buffers.pcm_capacity);
+        CHECK(produced <= AV_TRACE_PCM_LIMIT - trace->pcm_count);
+        CHECK(result.next_sample_ordinal >= result.first_sample_ordinal);
+        CHECK_EQ_U64(result.next_sample_ordinal - result.first_sample_ordinal, produced);
+        if (trace->pcm_count == 0u) {
+            trace->first_sample_ordinal = result.first_sample_ordinal;
+        } else {
+            CHECK_EQ_U64(result.first_sample_ordinal, trace->next_sample_ordinal);
+        }
+        if (produced <= AV_TRACE_PCM_LIMIT - trace->pcm_count) {
+            for (size_t i = 0u; i < produced; i++) {
+                trace->pcm[trace->pcm_count + i] = scratch->pcm[i];
+                trace->sample_ordinals[trace->pcm_count + i] =
+                    result.first_sample_ordinal + (uint64_t)i;
+            }
+            trace->pcm_count += produced;
+        }
+    }
+    if ((size_t)result.event_count > buffers.event_capacity ||
+        (size_t)result.event_count > AV_TRACE_EVENT_LIMIT - trace->event_count) {
+        fprintf(stderr, "ASSERT %s exceeded the bounded event transcript\n", name);
+        check_failures++;
+    } else {
+        for (size_t i = 0u; i < (size_t)result.event_count; i++) {
+            trace->events[trace->event_count + i] = scratch->events[i];
+        }
+        trace->event_count += (size_t)result.event_count;
+    }
+    trace->next_sample_ordinal = result.next_sample_ordinal;
+    if (result.stop == LYNX_STOP_FRAME) {
+        av_trace_record_frame(name, trace, scratch, &result);
+    } else if (result.stop == LYNX_STOP_WATCH) {
+        lynx_watch_event event;
+        memset(&event, 0, sizeof event);
+        CHECK_EQ_U64(lynx_watch_get(in->m, &event), LYNX_OK);
+        CHECK_EQ_U64(event.hit, 1u);
+        trace->watch_hits++;
+        CHECK_EQ_U64(lynx_watch_clear(in->m), LYNX_OK);
+    } else {
+        CHECK(result.stop == LYNX_STOP_BUDGET || result.stop == LYNX_STOP_OUTPUT);
+    }
+    if (result.ticks_consumed == 0u && result.pcm_count == 0u &&
+        result.event_count == 0u && result.stop != LYNX_STOP_OUTPUT &&
+        result.stop != LYNX_STOP_FRAME && result.stop != LYNX_STOP_WATCH) {
+        fprintf(stderr, "ASSERT %s made no progress before its target\n", name);
+        check_failures++;
+        return 1;
+    }
+    return 0;
+}
+
+static int av_trace_to_tick(const char *name, instance *in, av_trace *trace,
+                            av_trace_scratch *scratch, uint64_t target_tick,
+                            enum av_slice_mode mode,
+                            const av_input_edge *edges, size_t edge_count,
+                            size_t *edge_cursor)
+{
+    const size_t max_calls = (size_t)(target_tick - in->m->guest_ticks) * 4u + 10000u;
+    size_t start_calls = trace->calls;
+    while (in->m->guest_ticks < target_tick && trace->calls - start_calls < max_calls) {
+        if (av_trace_step(name, in, trace, scratch, target_tick, 0u, mode,
+                          edges, edge_count, edge_cursor) != 0) return 1;
+    }
+    if (in->m->guest_ticks != target_tick) {
+        fprintf(stderr, "ASSERT %s stopped at %llu instead of common tick %llu\n", name,
+                (unsigned long long)in->m->guest_ticks, (unsigned long long)target_tick);
+        check_failures++;
+        return 1;
+    }
+    trace->final_tick = in->m->guest_ticks;
+    return 0;
+}
+
+static int av_trace_to_frame_sequence(const char *name, instance *in, av_trace *trace,
+                                      av_trace_scratch *scratch, uint64_t hard_limit,
+                                      enum av_slice_mode mode,
+                                      const av_input_edge *edges, size_t edge_count,
+                                      size_t *edge_cursor, uint64_t sequence)
+{
+    const size_t max_calls = (size_t)hard_limit * 4u + 10000u;
+    size_t start_calls = trace->calls;
+    while (!av_trace_has_sequence(trace, sequence) && in->m->guest_ticks < hard_limit &&
+           trace->calls - start_calls < max_calls) {
+        if (av_trace_step(name, in, trace, scratch, hard_limit, 0u, mode,
+                          edges, edge_count, edge_cursor) != 0) return 1;
+    }
+    if (!av_trace_has_sequence(trace, sequence)) {
+        fprintf(stderr, "ASSERT %s did not produce frame sequence %llu by tick %llu\n", name,
+                (unsigned long long)sequence, (unsigned long long)hard_limit);
+        check_failures++;
+        return 1;
+    }
+    return 0;
+}
+
+static int av_trace_equal(const char *name, const av_trace *a, const av_trace *b)
+{
+    CHECK_NAMED(a->frame_count == b->frame_count, name);
+    CHECK_NAMED(a->pcm_count == b->pcm_count, name);
+    CHECK_NAMED(a->event_count == b->event_count, name);
+    CHECK_NAMED(a->input_count == b->input_count, name);
+    CHECK_EQ_U64(a->final_tick, b->final_tick);
+    CHECK_EQ_U64(a->first_sample_ordinal, b->first_sample_ordinal);
+    CHECK_EQ_U64(a->next_sample_ordinal, b->next_sample_ordinal);
+    if (a->frame_count != b->frame_count || a->pcm_count != b->pcm_count ||
+        a->event_count != b->event_count || a->input_count != b->input_count) return 1;
+    for (size_t i = 0u; i < a->input_count; i++) {
+        CHECK_EQ_U64(a->input_ticks[i], b->input_ticks[i]);
+        CHECK_EQ_U64(a->input_masks[i], b->input_masks[i]);
+    }
+    for (size_t i = 0u; i < a->frame_count; i++) {
+        CHECK_NAMED(video_packet_equal(&a->frames[i], &b->frames[i]), name);
+    }
+    for (size_t i = 0u; i < a->pcm_count; i++) {
+        CHECK_EQ_U64(a->sample_ordinals[i], b->sample_ordinals[i]);
+        CHECK_EQ_U64((uint16_t)a->pcm[i].left, (uint16_t)b->pcm[i].left);
+        CHECK_EQ_U64((uint16_t)a->pcm[i].right, (uint16_t)b->pcm[i].right);
+    }
+    for (size_t i = 0u; i < a->event_count; i++) {
+        const lynx_audio_event *left = &a->events[i];
+        const lynx_audio_event *right = &b->events[i];
+        CHECK_EQ_U64(left->tick, right->tick);
+        CHECK_EQ_U64(left->sequence, right->sequence);
+        CHECK_EQ_U64(left->channel, right->channel);
+        CHECK_EQ_U64(left->cause, right->cause);
+        CHECK_EQ_U64((uint8_t)left->before_output, (uint8_t)right->before_output);
+        CHECK_EQ_U64((uint8_t)left->after_output, (uint8_t)right->after_output);
+    }
+    return 0;
+}
+
+static void av_guest_state_equal(const char *name, const instance *reference,
+                                 const instance *candidate, const av_fixture *fixture)
+{
+    uint64_t ticks_a = 0u, ticks_b = 0u;
+    uint8_t digest_a[32], digest_b[32];
+    uint8_t probe_a[9], probe_b[9];
+    CHECK_EQ_U64(lynx_guest_ticks(reference->m, &ticks_a), LYNX_OK);
+    CHECK_EQ_U64(lynx_guest_ticks(candidate->m, &ticks_b), LYNX_OK);
+    CHECK_EQ_U64(ticks_a, ticks_b);
+    CHECK_EQ_U64(lynx_read_memory(reference->m, fixture->probe_result, probe_a,
+                                  sizeof probe_a), LYNX_OK);
+    CHECK_EQ_U64(lynx_read_memory(candidate->m, fixture->probe_result, probe_b,
+                                  sizeof probe_b), LYNX_OK);
+    CHECK_NAMED(memcmp(probe_a, probe_b, sizeof probe_a) == 0, name);
+    CHECK_EQ_U64(reference->m->video.input_mask, candidate->m->video.input_mask);
+    CHECK_EQ_U64(lynx_state_digest(reference->m, digest_a), LYNX_OK);
+    CHECK_EQ_U64(lynx_state_digest(candidate->m, digest_b), LYNX_OK);
+    CHECK_NAMED(memcmp(digest_a, digest_b, sizeof digest_a) == 0, name);
+}
+
+static int av_apply_edge_now(const char *name, instance *in, av_trace *trace,
+                             const av_input_edge *edges, size_t edge_count,
+                             size_t *edge_cursor)
+{
+    if (*edge_cursor >= edge_count || edges[*edge_cursor].tick != in->m->guest_ticks) {
+        fprintf(stderr, "ASSERT %s has no host input edge at the current guest tick\n", name);
+        check_failures++;
+        return 1;
+    }
+    CHECK_EQ_U64(lynx_set_input(in->m, edges[*edge_cursor].mask), LYNX_OK);
+    av_trace_record_input(name, trace, &edges[*edge_cursor]);
+    (*edge_cursor)++;
+    return 0;
+}
+
+static int av_snapshot(const instance *source, instance *target, uint8_t **snapshot,
+                       size_t *snapshot_size)
+{
+    size_t written = 0u;
+    CHECK_EQ_U64(lynx_snapshot_size(source->m, snapshot_size), LYNX_OK);
+    *snapshot = malloc(*snapshot_size);
+    CHECK(*snapshot != NULL);
+    if (*snapshot == NULL) return 1;
+    CHECK_EQ_U64(lynx_snapshot_save(source->m, *snapshot, *snapshot_size, &written), LYNX_OK);
+    CHECK_EQ_U64(written, *snapshot_size);
+    CHECK_EQ_U64(lynx_snapshot_restore(target->m, *snapshot, *snapshot_size), LYNX_OK);
+    return 0;
+}
+
+static int av_checkpoint_path(const char *name, const av_fixture *fixture,
+                              uint64_t checkpoint_tick, int apply_edge_before_save,
+                              uint64_t final_tick, const av_trace *reference_trace,
+                              const instance *reference_machine)
+{
+    instance source = {0}, restored = {0};
+    av_trace *source_trace = calloc(1u, sizeof *source_trace);
+    av_trace *restored_trace = calloc(1u, sizeof *restored_trace);
+    av_trace_scratch scratch;
+    size_t source_cursor = 0u, restored_cursor = 0u;
+    uint8_t *snapshot = NULL;
+    size_t snapshot_size = 0u;
+    const size_t edge_count = sizeof av_probe_edges / sizeof av_probe_edges[0];
+    int failed = 0;
+
+    CHECK(source_trace != NULL && restored_trace != NULL);
+    if (source_trace == NULL || restored_trace == NULL ||
+        av_instance_make(&source, fixture) != 0 || av_instance_make(&restored, fixture) != 0) {
+        fprintf(stderr, "ASSERT %s failed to allocate checkpoint instances\n", name);
+        check_failures++;
+        failed = 1;
+        goto done;
+    }
+    memset(&scratch, 0, sizeof scratch);
+    if (av_trace_to_tick(name, &source, source_trace, &scratch, checkpoint_tick,
+                         AV_WHOLE, av_probe_edges, edge_count, &source_cursor) != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (apply_edge_before_save != 0 &&
+        av_apply_edge_now(name, &source, source_trace, av_probe_edges, edge_count,
+                          &source_cursor) != 0) {
+        failed = 1;
+        goto done;
+    }
+    if (av_snapshot(&source, &restored, &snapshot, &snapshot_size) != 0) {
+        failed = 1;
+        goto done;
+    }
+    *restored_trace = *source_trace;
+    restored_cursor = source_cursor;
+    if (av_trace_to_tick(name, &restored, restored_trace, &scratch, final_tick,
+                         AV_WHOLE, av_probe_edges, edge_count, &restored_cursor) != 0) {
+        failed = 1;
+        goto done;
+    }
+    av_trace_equal(name, reference_trace, restored_trace);
+    av_guest_state_equal(name, reference_machine, &restored, fixture);
+    CHECK_EQ_U64(restored_cursor, edge_count);
+    CHECK_NAMED(av_trace_has_sequence(restored_trace, 2u), name);
+done:
+    free(snapshot);
+    instance_destroy(&restored);
+    instance_destroy(&source);
+    free(restored_trace);
+    free(source_trace);
+    return failed;
+}
+
+static const video_packet *av_trace_frame(const av_trace *trace, uint64_t sequence)
+{
+    for (size_t i = 0u; i < trace->frame_count; i++) {
+        if (trace->frames[i].result.sequence == sequence) return &trace->frames[i];
+    }
+    return NULL;
+}
+
+static int av_trace_has_nonzero_pcm(const av_trace *trace)
+{
+    for (size_t i = 0u; i < trace->pcm_count; i++) {
+        if (trace->pcm[i].left != 0 || trace->pcm[i].right != 0) return 1;
+    }
+    return 0;
+}
+
+static void av_zero_suffix_restore(const av_fixture *fixture, const instance *source,
+                                   const av_trace *trace)
+{
+    instance restored = {0};
+    av_trace *zero_suffix_trace = malloc(sizeof *zero_suffix_trace);
+    av_trace_scratch scratch;
+    size_t snapshot_size = 0u;
+    uint8_t *snapshot = NULL;
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    uint8_t digest_source[32], digest_restored[32];
+
+    CHECK(zero_suffix_trace != NULL);
+    if (zero_suffix_trace == NULL) goto done;
+    *zero_suffix_trace = *trace;
+    CHECK_EQ_U64(av_instance_make(&restored, fixture), 0u);
+    if (restored.m == NULL) goto done;
+    if (av_snapshot(source, &restored, &snapshot, &snapshot_size) != 0) goto done;
+    memset(&scratch, 0xA5, sizeof scratch);
+    memset(&buffers, 0, sizeof buffers);
+    buffers.struct_size = (uint32_t)sizeof buffers;
+    frame_buffers_init(&buffers.frame, &scratch.frame);
+    buffers.pcm = scratch.pcm;
+    buffers.pcm_capacity = sizeof scratch.pcm / sizeof scratch.pcm[0];
+    buffers.events = scratch.events;
+    buffers.event_capacity = sizeof scratch.events / sizeof scratch.events[0];
+    memset(&result, 0, sizeof result);
+    result.struct_size = (uint32_t)sizeof result;
+    CHECK_EQ_U64(lynx_advance_av(restored.m, 0u, &buffers, &result), LYNX_OK);
+    CHECK_EQ_U64(result.stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(result.ticks_consumed, 0u);
+    CHECK_EQ_U64(result.pcm_count, 0u);
+    CHECK_EQ_U64(result.event_count, 0u);
+    CHECK_EQ_U64(result.next_sample_ordinal, trace->next_sample_ordinal);
+    CHECK_NAMED(scratch.frame.pens[0] == 0xA5u && scratch.frame.palettes[0] == 0xA5u,
+                "audio_paths.zero-suffix-no-frame-write");
+    CHECK_NAMED(zero_suffix_trace->frame_count == trace->frame_count &&
+                    zero_suffix_trace->pcm_count == trace->pcm_count &&
+                    zero_suffix_trace->event_count == trace->event_count,
+                "audio_paths.zero-suffix-no-transcript-append");
+    CHECK_EQ_U64(lynx_state_digest(source->m, digest_source), LYNX_OK);
+    CHECK_EQ_U64(lynx_state_digest(restored.m, digest_restored), LYNX_OK);
+    CHECK_NAMED(memcmp(digest_source, digest_restored, sizeof digest_source) == 0,
+                "audio_paths.zero-suffix-state");
+    CHECK_EQ_U64(av_trace_equal("audio_paths.zero-suffix-complete-prefix",
+                                trace, zero_suffix_trace), 0u);
+done:
+    free(snapshot);
+    instance_destroy(&restored);
+    free(zero_suffix_trace);
+}
+
+static int av_single_sample_suffix(const av_fixture *fixture)
+{
+    instance source = {0}, restored = {0};
+    av_trace *source_trace = calloc(1u, sizeof *source_trace);
+    av_trace *restored_trace = calloc(1u, sizeof *restored_trace);
+    av_trace_scratch scratch;
+    size_t source_cursor = 0u, restored_cursor = 0u;
+    uint8_t *snapshot = NULL;
+    size_t snapshot_size = 0u;
+    const size_t edge_count = sizeof av_probe_edges / sizeof av_probe_edges[0];
+    int failed = 0;
+
+    CHECK(source_trace != NULL && restored_trace != NULL);
+    if (source_trace == NULL || restored_trace == NULL ||
+        av_instance_make(&source, fixture) != 0 || av_instance_make(&restored, fixture) != 0) {
+        fprintf(stderr, "ASSERT audio_paths.single-sample-suffix allocation failed\n");
+        check_failures++;
+        failed = 1;
+        goto done;
+    }
+    memset(&scratch, 0, sizeof scratch);
+    if (av_trace_to_tick("audio_paths.single-sample-prefix", &source, source_trace,
+                         &scratch, 399u, AV_WHOLE, av_probe_edges, edge_count,
+                         &source_cursor) != 0 ||
+        av_snapshot(&source, &restored, &snapshot, &snapshot_size) != 0) {
+        failed = 1;
+        goto done;
+    }
+    *restored_trace = *source_trace;
+    restored_cursor = source_cursor;
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.single-sample-source", &source,
+                  source_trace, &scratch, 401u, AV_WHOLE, av_probe_edges,
+                  edge_count, &source_cursor), 0u);
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.single-sample-restored", &restored,
+                  restored_trace, &scratch, 401u, AV_WHOLE, av_probe_edges,
+                  edge_count, &restored_cursor), 0u);
+    CHECK_EQ_U64(source_trace->pcm_count, 1u);
+    CHECK_EQ_U64(restored_trace->pcm_count, 1u);
+    CHECK_EQ_U64(source_trace->sample_ordinals[0], 0u);
+    CHECK_EQ_U64(source_trace->next_sample_ordinal, 1u);
+    CHECK_EQ_U64(av_trace_equal("audio_paths.single-sample-suffix-equal",
+                                source_trace, restored_trace), 0u);
+    av_guest_state_equal("audio_paths.single-sample-common-state", &source,
+                         &restored, fixture);
+    CHECK_EQ_U64(source_cursor, 0u);
+    CHECK_EQ_U64(restored_cursor, source_cursor);
+done:
+    free(snapshot);
+    instance_destroy(&restored);
+    instance_destroy(&source);
+    free(restored_trace);
+    free(source_trace);
+    return failed;
+}
+
+static int av_single_event_suffix(const av_fixture *fixture,
+                                  const av_trace *reference_trace)
+{
+    uint64_t event_tick = UINT64_MAX;
+    for (size_t i = 0u; i < reference_trace->event_count; i++) {
+        const uint64_t tick = reference_trace->events[i].tick;
+        size_t at_tick = 0u;
+        for (size_t j = 0u; j < reference_trace->event_count; j++) {
+            if (reference_trace->events[j].tick == tick) at_tick++;
+        }
+        if (at_tick == 1u && tick > av_probe_edges[0].tick) {
+            event_tick = tick;
+            break;
+        }
+    }
+    CHECK_NAMED(event_tick != UINT64_MAX,
+                "audio_paths.single-event-reference-has-isolated-record");
+    if (event_tick == UINT64_MAX) return 1;
+
+    instance source = {0}, restored = {0};
+    av_trace *source_trace = calloc(1u, sizeof *source_trace);
+    av_trace *restored_trace = calloc(1u, sizeof *restored_trace);
+    av_trace_scratch scratch;
+    size_t source_cursor = 0u, restored_cursor = 0u;
+    size_t prefix_events = 0u;
+    uint8_t *snapshot = NULL;
+    size_t snapshot_size = 0u;
+    const size_t edge_count = sizeof av_probe_edges / sizeof av_probe_edges[0];
+    int failed = 0;
+
+    CHECK(source_trace != NULL && restored_trace != NULL);
+    if (source_trace == NULL || restored_trace == NULL ||
+        av_instance_make(&source, fixture) != 0 || av_instance_make(&restored, fixture) != 0) {
+        fprintf(stderr, "ASSERT audio_paths.single-event-suffix allocation failed\n");
+        check_failures++;
+        failed = 1;
+        goto done;
+    }
+    memset(&scratch, 0, sizeof scratch);
+    if (av_trace_to_tick("audio_paths.single-event-prefix", &source, source_trace,
+                         &scratch, event_tick, AV_WHOLE, av_probe_edges, edge_count,
+                         &source_cursor) != 0 ||
+        av_snapshot(&source, &restored, &snapshot, &snapshot_size) != 0) {
+        failed = 1;
+        goto done;
+    }
+    prefix_events = source_trace->event_count;
+    *restored_trace = *source_trace;
+    restored_cursor = source_cursor;
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.single-event-source", &source,
+                  source_trace, &scratch, event_tick + 1u, AV_WHOLE,
+                  av_probe_edges, edge_count, &source_cursor), 0u);
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.single-event-restored", &restored,
+                  restored_trace, &scratch, event_tick + 1u, AV_WHOLE,
+                  av_probe_edges, edge_count, &restored_cursor), 0u);
+    CHECK_EQ_U64(source_trace->event_count - prefix_events, 1u);
+    CHECK_EQ_U64(source_trace->events[prefix_events].tick, event_tick);
+    CHECK_EQ_U64(av_trace_equal("audio_paths.single-event-suffix-equal",
+                                source_trace, restored_trace), 0u);
+    av_guest_state_equal("audio_paths.single-event-common-state", &source,
+                         &restored, fixture);
+    CHECK_EQ_U64(restored_cursor, source_cursor);
+done:
+    free(snapshot);
+    instance_destroy(&restored);
+    instance_destroy(&source);
+    free(restored_trace);
+    free(source_trace);
+    return failed;
+}
+
+static int av_seek_audio_write_request(const char *name, instance *in,
+                                       av_trace *trace, av_trace_scratch *scratch,
+                                       size_t *edge_cursor)
+{
+    const uint64_t hard_limit = av_probe_edges[0].tick + UINT64_C(12000);
+    while (in->m->guest_ticks < hard_limit) {
+        if ((in->m->cpu.req_flags & LYNX__CF_WRITE) != 0u &&
+            in->m->cpu.req_addr == 0xFD20u) {
+            CHECK_EQ_U64(in->m->video.input_mask, LYNX_INPUT_A);
+            CHECK_EQ_U64(in->m->cpu.req_data, 1u);
+            return 0;
+        }
+        if (av_trace_step(name, in, trace, scratch, in->m->guest_ticks + 1u,
+                          0u, AV_WHOLE, av_probe_edges,
+                          sizeof av_probe_edges / sizeof av_probe_edges[0],
+                          edge_cursor) != 0) return 1;
+    }
+    fprintf(stderr, "ASSERT %s did not reach the input-triggered audio write request\n", name);
+    check_failures++;
+    return 1;
+}
+
+static uint64_t av_ring_debt_total(const lynx__audio_state *audio)
+{
+    uint64_t total = 0u;
+    for (size_t i = 0u; i < LYNX__AUDIO_RING_NODE_COUNT; i++) {
+        total += audio->ring_debt[i];
+    }
+    return total;
+}
+
+static int av_capacity_ring_continuation(const av_fixture *fixture)
+{
+    instance source = {0}, restored = {0};
+    av_trace *trace = calloc(1u, sizeof *trace);
+    av_trace_scratch scratch;
+    size_t edge_cursor = 0u, restored_cursor = 0u;
+    uint8_t *snapshot = NULL;
+    size_t snapshot_size = 0u;
+    int failed = 0;
+
+    CHECK(trace != NULL);
+    if (trace == NULL || av_instance_make(&source, fixture) != 0 ||
+        av_instance_make(&restored, fixture) != 0) {
+        fprintf(stderr, "ASSERT audio_paths.capacity-ring allocation failed\n");
+        check_failures++;
+        failed = 1;
+        goto done;
+    }
+    memset(&scratch, 0, sizeof scratch);
+    if (av_seek_audio_write_request("audio_paths.capacity-ring-seek", &source,
+                                    trace, &scratch, &edge_cursor) != 0) {
+        failed = 1;
+        goto done;
+    }
+
+    /* Keep the real fixture's posted FD20 write request, then place it at the
+       same accepted scheduler boundary as the capacity/ring control. These
+       synthetic held-device values are unreachable from the guest by design. */
+    source.m->guest_ticks = 399u;
+    source.m->cpu_ready_at = 400u;
+    lynx__timer_init(&source.m->timer_bank);
+    lynx__video_init(&source.m->video, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+    source.m->video.refresh_next_tick = 512u;
+    CHECK_EQ_U64(lynx__input_set(&source.m->video, LYNX_INPUT_A), LYNX_OK);
+    lynx__audio_init(&source.m->audio);
+    for (uint8_t i = 0u; i < LYNX__AUDIO_CHANNEL_COUNT; i++) {
+        lynx__audio_channel *channel = &source.m->audio.channels[i];
+        channel->volume = i == 0u ? 5u : (uint8_t)(i + 1u);
+        channel->feedback = 1u; /* alternating tap-0 feedback makes two records */
+        channel->control_a = 0x5Fu; /* enabled, reload/reset-DONE, linked */
+        channel->count = 0u;
+        channel->backup = 0u;
+    }
+    for (uint8_t i = 4u; i < LYNX__AUDIO_RING_NODE_COUNT; i++) {
+        source.m->audio.ring_debt[i] = 2u;
+    }
+    source.m->audio.ring_cursor = 4u;
+    source.m->audio.ring_defer_valid = 1u;
+    source.m->audio.ring_defer_tick = 400u;
+    source.m->audio.same_tick_device_cursor = LYNX__AUDIO_RING_VISIT_LIMIT;
+    memset(trace, 0, sizeof *trace);
+    trace->input_count = 1u;
+    trace->input_ticks[0] = av_probe_edges[0].tick;
+    trace->input_masks[0] = av_probe_edges[0].mask;
+    trace->final_tick = 399u;
+    CHECK_EQ_U64(sizeof scratch.events / sizeof scratch.events[0],
+                 LYNX_AV_MIN_EVENT_CAPACITY);
+    CHECK_EQ_U64(sizeof scratch.pcm / sizeof scratch.pcm[0],
+                 LYNX_AV_MIN_PCM_CAPACITY);
+    CHECK_NAMED((source.m->cpu.req_flags & LYNX__CF_WRITE) != 0u &&
+                    source.m->cpu.req_addr == 0xFD20u && source.m->cpu.req_data == 1u,
+                "audio_paths.capacity-ring-real-guest-strobe");
+    CHECK_NAMED(lynx__audio_ring_state_valid(&source.m->audio, 399u),
+                "audio_paths.capacity-ring-valid-before-defer");
+
+    CHECK_EQ_U64(av_trace_step("audio_paths.capacity-frontier-exclusive", &source,
+                  trace, &scratch, 401u, 1u, AV_WHOLE, av_probe_edges,
+                  sizeof av_probe_edges / sizeof av_probe_edges[0], &edge_cursor), 0u);
+    CHECK_EQ_U64(source.m->guest_ticks, 400u);
+    CHECK_EQ_U64(av_trace_step("audio_paths.capacity-frontier-device-sample", &source,
+                  trace, &scratch, 401u, 1u, AV_WHOLE, av_probe_edges,
+                  sizeof av_probe_edges / sizeof av_probe_edges[0], &edge_cursor), 0u);
+    CHECK_EQ_U64(trace->event_count, 8u);
+    CHECK_EQ_U64(LYNX_AV_MIN_EVENT_CAPACITY - trace->event_count, 5u);
+    CHECK_EQ_U64(trace->pcm_count, 1u);
+    CHECK_EQ_U64(trace->sample_ordinals[0], 0u);
+    CHECK_EQ_U64(source.m->guest_ticks, 400u);
+    CHECK_EQ_U64(source.m->cpu.req_addr, 0xFD20u);
+    CHECK_EQ_U64(source.m->audio.channels[0].volume, 5u);
+    CHECK_NAMED(av_ring_debt_total(&source.m->audio) != 0u &&
+                    source.m->audio.ring_defer_valid == 1u &&
+                    source.m->audio.ring_defer_tick == 401u &&
+                    lynx__audio_ring_state_valid(&source.m->audio, 400u),
+                "audio_paths.capacity-frontier-retains-deferred-ring");
+    for (size_t i = 0u; i < trace->event_count; i++) {
+        CHECK_EQ_U64(trace->events[i].tick, 400u);
+        CHECK_EQ_U64(trace->events[i].sequence, i);
+        CHECK_EQ_U64(trace->events[i].cause, LYNX_AUDIO_EVENT_CLOCK);
+    }
+
+    if (av_snapshot(&source, &restored, &snapshot, &snapshot_size) != 0) {
+        failed = 1;
+        goto done;
+    }
+    av_trace *restored_trace = calloc(1u, sizeof *restored_trace);
+    if (restored_trace == NULL) {
+        fprintf(stderr, "ASSERT audio_paths.capacity-ring trace allocation failed\n");
+        check_failures++;
+        failed = 1;
+        goto done;
+    }
+    *restored_trace = *trace;
+    restored_cursor = edge_cursor;
+    CHECK_EQ_U64(lynx_watch_configure(source.m, 0xFD20u, 1u), LYNX_OK);
+    CHECK_EQ_U64(lynx_watch_configure(restored.m, 0xFD20u, 1u), LYNX_OK);
+    CHECK_EQ_U64(av_trace_step("audio_paths.capacity-frontier-cpu-write", &source,
+                  trace, &scratch, 401u, 1u, AV_WHOLE, av_probe_edges,
+                  sizeof av_probe_edges / sizeof av_probe_edges[0], &edge_cursor), 0u);
+    CHECK_EQ_U64(av_trace_step("audio_paths.capacity-frontier-restored-write", &restored,
+                  restored_trace, &scratch, 401u, 1u, AV_WHOLE, av_probe_edges,
+                  sizeof av_probe_edges / sizeof av_probe_edges[0], &restored_cursor), 0u);
+    CHECK_EQ_U64(trace->events[8].sequence, 8u);
+    CHECK_EQ_U64(trace->events[8].cause, LYNX_AUDIO_EVENT_WRITE);
+    CHECK_EQ_U64(trace->event_count, 9u);
+    CHECK_EQ_U64(source.m->audio.channels[0].volume, 1u);
+    CHECK_EQ_U64(source.m->guest_ticks, 401u);
+    CHECK_EQ_U64(source.m->audio.next_sample_ordinal, 1u);
+    CHECK_EQ_U64(source.m->audio.ring_defer_tick, 401u);
+    CHECK_EQ_U64(trace->watch_hits, 1u);
+    CHECK_EQ_U64(restored_trace->watch_hits, 1u);
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.deferred-ring-source", &source,
+                  trace, &scratch, 402u, AV_WHOLE, av_probe_edges,
+                  sizeof av_probe_edges / sizeof av_probe_edges[0], &edge_cursor), 0u);
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.deferred-ring-restored", &restored,
+                  restored_trace, &scratch, 402u, AV_WHOLE, av_probe_edges,
+                  sizeof av_probe_edges / sizeof av_probe_edges[0], &restored_cursor), 0u);
+    size_t continuation_slices = 1u;
+    while (source.m->audio.ring_defer_valid != 0u &&
+           source.m->guest_ticks < 410u && continuation_slices < 10u) {
+        uint64_t target = source.m->audio.ring_defer_tick + 1u;
+        if (target <= source.m->guest_ticks) target = source.m->guest_ticks + 1u;
+        CHECK_EQ_U64(av_trace_to_tick("audio_paths.deferred-ring-source-next", &source,
+                      trace, &scratch, target, AV_WHOLE, av_probe_edges,
+                      sizeof av_probe_edges / sizeof av_probe_edges[0], &edge_cursor), 0u);
+        CHECK_EQ_U64(av_trace_to_tick("audio_paths.deferred-ring-restored-next", &restored,
+                      restored_trace, &scratch, target, AV_WHOLE, av_probe_edges,
+                      sizeof av_probe_edges / sizeof av_probe_edges[0], &restored_cursor), 0u);
+        continuation_slices++;
+    }
+    CHECK_NAMED(continuation_slices > 0u,
+                "audio_paths.deferred-ring-resumed-after-stop");
+    CHECK_NAMED(av_trace_equal("audio_paths.deferred-ring-streams", trace,
+                               restored_trace) == 0,
+                "audio_paths.deferred-ring-comparison-ran");
+    av_guest_state_equal("audio_paths.deferred-ring-common-state", &source,
+                         &restored, fixture);
+    CHECK_NAMED(source.m->audio.ring_defer_valid == 0u,
+                "audio_paths.deferred-ring-drained-without-loss");
+    CHECK_EQ_U64(edge_cursor, restored_cursor);
+    free(restored_trace);
+done:
+    free(snapshot);
+    free(trace);
+    instance_destroy(&restored);
+    instance_destroy(&source);
+    return failed;
+}
+
+static int av_audio_record_prefix_equal(const av_trace *a, const av_trace *b,
+                                        size_t frame_count, size_t pcm_count,
+                                        size_t event_count, size_t input_count)
+{
+    for (size_t i = 0u; i < frame_count; i++) {
+        if (!video_packet_equal(&a->frames[i], &b->frames[i])) return 0;
+    }
+    for (size_t i = 0u; i < pcm_count; i++) {
+        if (a->sample_ordinals[i] != b->sample_ordinals[i] ||
+            a->pcm[i].left != b->pcm[i].left || a->pcm[i].right != b->pcm[i].right) {
+            return 0;
+        }
+    }
+    for (size_t i = 0u; i < event_count; i++) {
+        const lynx_audio_event *left = &a->events[i];
+        const lynx_audio_event *right = &b->events[i];
+        if (left->tick != right->tick || left->sequence != right->sequence ||
+            left->channel != right->channel || left->cause != right->cause ||
+            left->before_output != right->before_output ||
+            left->after_output != right->after_output) return 0;
+    }
+    for (size_t i = 0u; i < input_count; i++) {
+        if (a->input_ticks[i] != b->input_ticks[i] ||
+            a->input_masks[i] != b->input_masks[i]) return 0;
+    }
+    return 1;
+}
+
+static void case_audio_sensitivity(char **args)
+{
+    enum { LFSR, INTEGRATOR, COUNTER, DEFERRED_PULSE, SAMPLE_PHASE, LOGICAL_INPUT,
+           STATE_FLIP_COUNT };
+    static const char *const state_names[STATE_FLIP_COUNT] = {
+        "LFSR shift", "integrator", "channel counter", "deferred pulse",
+        "next sample phase", "logical input"
+    };
+    const char *bll_path = args[0];
+    const char *labels_path = args[1];
+    const char *manifest_path = args[2];
+    av_fixture fixture;
+    instance state_base = {0};
+    instance flips[STATE_FLIP_COUNT] = {{0}};
+    uint8_t base_digest[32];
+    uint8_t flip_digests[STATE_FLIP_COUNT][32];
+    instance trace_machine = {0};
+    av_trace *trace = calloc(1u, sizeof *trace);
+    av_trace *variant = calloc(1u, sizeof *variant);
+    av_trace_scratch scratch;
+    size_t cursor = 0u;
+    uint64_t final_tick = 0u;
+    (void)args;
+
+    CHECK_NAMED(av_fixture_load(bll_path, labels_path, manifest_path, &fixture) == 0,
+                "audio_sensitivity.manifest-bound-source-fixture");
+    if (fixture.bll == NULL) return;
+    CHECK(trace != NULL && variant != NULL);
+    if (trace == NULL || variant == NULL || av_instance_make(&state_base, &fixture) != 0 ||
+        av_instance_make(&trace_machine, &fixture) != 0) {
+        fprintf(stderr, "ASSERT audio_sensitivity allocation failed\n");
+        check_failures++;
+        goto cleanup;
+    }
+    CHECK_EQ_U64(lynx_state_digest(state_base.m, base_digest), LYNX_OK);
+    for (size_t i = 0u; i < STATE_FLIP_COUNT; i++) {
+        flips[i].mem = malloc(lynx_machine_size());
+        CHECK(flips[i].mem != NULL);
+        if (flips[i].mem == NULL) continue;
+        memcpy(flips[i].mem, state_base.m, lynx_machine_size());
+        flips[i].m = flips[i].mem;
+        switch (i) {
+        case LFSR:
+            flips[i].m->audio.channels[0].shift ^= 1u;
+            break;
+        case INTEGRATOR:
+            flips[i].m->audio.channels[0].integrator =
+                flips[i].m->audio.channels[0].integrator == INT8_MAX ?
+                    (int8_t)(INT8_MAX - 1) :
+                    (int8_t)(flips[i].m->audio.channels[0].integrator + 1);
+            break;
+        case COUNTER:
+            flips[i].m->audio.channels[0].count ^= 1u;
+            break;
+        case DEFERRED_PULSE:
+            flips[i].m->audio.ring_debt[4] = 1u;
+            flips[i].m->audio.ring_cursor = 4u;
+            flips[i].m->audio.ring_defer_valid = 1u;
+            flips[i].m->audio.ring_defer_tick = flips[i].m->guest_ticks;
+            CHECK_NAMED(lynx__audio_ring_state_valid(&flips[i].m->audio,
+                                                     flips[i].m->guest_ticks),
+                        "audio_sensitivity.valid-deferred-pulse-shape");
+            break;
+        case SAMPLE_PHASE:
+            flips[i].m->audio.next_sample_tick++;
+            break;
+        case LOGICAL_INPUT:
+            CHECK_EQ_U64(lynx__input_set(&flips[i].m->video, LYNX_INPUT_A), LYNX_OK);
+            break;
+        }
+        CHECK_EQ_U64(lynx_state_digest(flips[i].m, flip_digests[i]), LYNX_OK);
+        CHECK_NAMED(memcmp(base_digest, flip_digests[i], sizeof base_digest) != 0,
+                    state_names[i]);
+        for (size_t j = 0u; j < i; j++) {
+            if (flips[j].m != NULL) {
+                CHECK_NAMED(memcmp(flip_digests[i], flip_digests[j],
+                                   sizeof flip_digests[i]) != 0,
+                            "audio_sensitivity.independent-state-fields");
+            }
+        }
+    }
+
+    memset(&scratch, 0, sizeof scratch);
+    CHECK_EQ_U64(av_trace_to_frame_sequence("audio_sensitivity.real-guest",
+                  &trace_machine, trace, &scratch, UINT64_C(200000), AV_WHOLE,
+                  av_sensitivity_edges,
+                  sizeof av_sensitivity_edges / sizeof av_sensitivity_edges[0],
+                  &cursor, 2u), 0u);
+    CHECK_EQ_U64(av_trace_to_tick("audio_sensitivity.frame-boundary",
+                  &trace_machine, trace, &scratch,
+                  trace_machine.m->guest_ticks + 1u, AV_WHOLE,
+                  av_sensitivity_edges,
+                  sizeof av_sensitivity_edges / sizeof av_sensitivity_edges[0],
+                  &cursor), 0u);
+    final_tick = trace_machine.m->guest_ticks;
+    CHECK_NAMED(trace->frame_count >= 3u && trace->pcm_count > 1u &&
+                    trace->event_count > 1u && trace->input_count == 2u,
+                "audio_sensitivity.nonempty-complete-observation-streams");
+    CHECK_EQ_U64(trace->final_tick, final_tick);
+
+    if (trace->frame_count >= 3u && trace->pcm_count > 1u &&
+        trace->event_count > 1u && trace->input_count == 2u) {
+        *variant = *trace;
+        variant->frames[2].pens[0] ^= 1u;
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, 2u,
+                       trace->pcm_count, trace->event_count, trace->input_count),
+                    "audio_sensitivity.raw-frame-unaffected-prefix");
+        CHECK_NAMED(!video_packet_equal(&trace->frames[2], &variant->frames[2]),
+                    "audio_sensitivity.raw-frame-record-detected");
+
+        *variant = *trace;
+        variant->frames[2].palettes[0] ^= 1u;
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, 2u,
+                       trace->pcm_count, trace->event_count, trace->input_count) &&
+                        !video_packet_equal(&trace->frames[2], &variant->frames[2]),
+                    "audio_sensitivity.palette-record-detected-after-equal-prefix");
+
+        *variant = *trace;
+        variant->frames[2].line_ticks[0]++;
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, 2u,
+                       trace->pcm_count, trace->event_count, trace->input_count) &&
+                        !video_packet_equal(&trace->frames[2], &variant->frames[2]),
+                    "audio_sensitivity.line-tick-record-detected-after-equal-prefix");
+
+        *variant = *trace;
+        variant->frames[2].result.frame_end_tick++;
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, 2u,
+                       trace->pcm_count, trace->event_count, trace->input_count) &&
+                        !video_packet_equal(&trace->frames[2], &variant->frames[2]),
+                    "audio_sensitivity.frame-metadata-detected-after-equal-prefix");
+
+        *variant = *trace;
+        variant->pcm[trace->pcm_count - 1u].left =
+            trace->pcm[trace->pcm_count - 1u].left == INT16_MAX ?
+                (int16_t)(INT16_MAX - 1) :
+                (int16_t)(trace->pcm[trace->pcm_count - 1u].left + 1);
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, trace->frame_count,
+                       trace->pcm_count - 1u, trace->event_count, trace->input_count),
+                    "audio_sensitivity.pcm-unaffected-prefix");
+        CHECK_NAMED(trace->pcm[trace->pcm_count - 1u].left !=
+                        variant->pcm[trace->pcm_count - 1u].left,
+                    "audio_sensitivity.pcm-record-detected");
+
+        *variant = *trace;
+        variant->sample_ordinals[trace->pcm_count - 1u]++;
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, trace->frame_count,
+                       trace->pcm_count - 1u, trace->event_count, trace->input_count) &&
+                        variant->sample_ordinals[trace->pcm_count - 1u] !=
+                            trace->sample_ordinals[trace->pcm_count - 1u],
+                    "audio_sensitivity.sample-ordinal-detected-after-equal-prefix");
+
+        *variant = *trace;
+        variant->events[trace->event_count - 1u].after_output =
+            trace->events[trace->event_count - 1u].after_output == INT8_MAX ?
+                (int8_t)(INT8_MAX - 1) :
+                (int8_t)(trace->events[trace->event_count - 1u].after_output + 1);
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, trace->frame_count,
+                       trace->pcm_count, trace->event_count - 1u, trace->input_count),
+                    "audio_sensitivity.event-unaffected-prefix");
+        CHECK_NAMED(variant->events[trace->event_count - 1u].after_output !=
+                        trace->events[trace->event_count - 1u].after_output,
+                    "audio_sensitivity.event-record-detected");
+
+        *variant = *trace;
+        variant->input_masks[1] = LYNX_INPUT_B;
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, trace->frame_count,
+                       trace->pcm_count, trace->event_count, 1u),
+                    "audio_sensitivity.logical-input-unaffected-prefix");
+        CHECK_NAMED(variant->input_masks[1] != trace->input_masks[1],
+                    "audio_sensitivity.logical-input-record-detected");
+
+        *variant = *trace;
+        variant->input_ticks[1]++;
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, trace->frame_count,
+                       trace->pcm_count, trace->event_count, 1u) &&
+                        variant->input_ticks[1] != trace->input_ticks[1],
+                    "audio_sensitivity.logical-input-tick-detected-after-equal-prefix");
+
+        *variant = *trace;
+        variant->final_tick++;
+        CHECK_NAMED(av_audio_record_prefix_equal(trace, variant, trace->frame_count,
+                       trace->pcm_count, trace->event_count, trace->input_count),
+                    "audio_sensitivity.progress-unaffected-streams");
+        CHECK_NAMED(variant->final_tick != trace->final_tick,
+                    "audio_sensitivity.progress-record-detected");
+    }
+    printf("audio_sensitivity: LFSR,integrator,counter,deferred-pulse,sample-phase,input,frame,PCM,event,progress independently sensitive\n");
+
+cleanup:
+    for (size_t i = 0u; i < STATE_FLIP_COUNT; i++) instance_destroy(&flips[i]);
+    instance_destroy(&trace_machine);
+    instance_destroy(&state_base);
+    free(variant);
+    free(trace);
+    av_fixture_free(&fixture);
+}
+
+static void case_audio_paths(char **args)
+{
+    const char *bll_path = args[0];
+    const char *labels_path = args[1];
+    const char *manifest_path = args[2];
+    const size_t edge_count = sizeof av_probe_edges / sizeof av_probe_edges[0];
+    av_fixture fixture;
+    instance whole = {0}, coarse = {0}, one_tick = {0}, irregular = {0};
+    instance watched = {0}, no_input = {0};
+    instance interleaved_press = {0}, interleaved_none = {0};
+    av_trace *traces[8] = {0};
+    av_trace_scratch scratch;
+    size_t cursors[8] = {0};
+    uint64_t final_tick = 0u;
+    int initialized_fixture = 0;
+
+    CHECK_NAMED(av_fixture_load(bll_path, labels_path, manifest_path, &fixture) == 0,
+                "audio_paths.manifest-bound-source-fixture");
+    if (fixture.bll == NULL) return;
+    initialized_fixture = 1;
+    for (size_t i = 0u; i < sizeof traces / sizeof traces[0]; i++) {
+        traces[i] = calloc(1u, sizeof *traces[i]);
+        CHECK(traces[i] != NULL);
+        if (traces[i] == NULL) goto cleanup;
+    }
+    memset(&scratch, 0, sizeof scratch);
+
+    CHECK_EQ_U64(av_instance_make(&whole, &fixture), 0u);
+    if (whole.m == NULL) goto cleanup;
+    CHECK_EQ_U64(av_trace_to_frame_sequence("audio_paths.whole-source", &whole,
+                  traces[0], &scratch, UINT64_C(200000), AV_WHOLE,
+                  av_probe_edges, edge_count, &cursors[0], 2u), 0u);
+    /* A frame stop returns with the completed frame copied, while a tick
+       target is exclusive. Advance one tick after that frame so every other
+       path consumes the same boundary event before stream/state comparison. */
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.whole-boundary", &whole,
+                  traces[0], &scratch, whole.m->guest_ticks + 1u, AV_WHOLE,
+                  av_probe_edges, edge_count, &cursors[0]), 0u);
+    final_tick = whole.m->guest_ticks;
+    CHECK_NAMED(final_tick > av_probe_edges[0].tick, "audio_paths.common-tick-after-edge");
+    CHECK_NAMED(traces[0]->frame_count >= 3u, "audio_paths.raw-frames-nonempty");
+    CHECK_NAMED(traces[0]->pcm_count > 0u && traces[0]->event_count > 0u,
+                "audio_paths.pcm-and-event-transcripts-nonempty");
+    CHECK_NAMED(av_trace_has_nonzero_pcm(traces[0]), "audio_paths.input-audio-nonsilent");
+    CHECK_EQ_U64(cursors[0], edge_count);
+    const video_packet *release_frame = av_trace_frame(traces[0], 1u);
+    const video_packet *pressed_frame = av_trace_frame(traces[0], 2u);
+    CHECK_NAMED(release_frame != NULL && release_frame->result.row_count == LYNX_FRAME_MAX_ROWS,
+                "audio_paths.release-frame-complete");
+    CHECK_NAMED(pressed_frame != NULL && pressed_frame->result.row_count == LYNX_FRAME_MAX_ROWS,
+                "audio_paths.input-frame-complete");
+
+    CHECK_EQ_U64(av_instance_make(&coarse, &fixture), 0u);
+    CHECK_EQ_U64(av_instance_make(&one_tick, &fixture), 0u);
+    CHECK_EQ_U64(av_instance_make(&irregular, &fixture), 0u);
+    CHECK_EQ_U64(av_instance_make(&watched, &fixture), 0u);
+    CHECK_EQ_U64(av_instance_make(&no_input, &fixture), 0u);
+    CHECK_EQ_U64(av_instance_make(&interleaved_press, &fixture), 0u);
+    CHECK_EQ_U64(av_instance_make(&interleaved_none, &fixture), 0u);
+    if (coarse.m == NULL || one_tick.m == NULL || irregular.m == NULL || watched.m == NULL ||
+        no_input.m == NULL || interleaved_press.m == NULL || interleaved_none.m == NULL) {
+        goto cleanup;
+    }
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.coarse", &coarse, traces[1], &scratch,
+                  final_tick, AV_COARSE, av_probe_edges, edge_count, &cursors[1]), 0u);
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.one-tick", &one_tick, traces[2], &scratch,
+                  final_tick, AV_ONE_TICK, av_probe_edges, edge_count, &cursors[2]), 0u);
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.irregular", &irregular, traces[3], &scratch,
+                  final_tick, AV_IRREGULAR, av_probe_edges, edge_count, &cursors[3]), 0u);
+    CHECK_EQ_U64(lynx_watch_configure(watched.m, 0x4000u, 1u), LYNX_OK);
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.watched-resumed", &watched, traces[4], &scratch,
+                  final_tick, AV_WHOLE, av_probe_edges, edge_count, &cursors[4]), 0u);
+    CHECK_NAMED(traces[4]->watch_hits > 0u, "audio_paths.watch-hit-then-resume");
+    CHECK_EQ_U64(av_trace_to_tick("audio_paths.no-input", &no_input, traces[5], &scratch,
+                  final_tick, AV_WHOLE, NULL, 0u, &cursors[5]), 0u);
+    CHECK_NAMED(cursors[1] == edge_count && cursors[2] == edge_count &&
+                    cursors[3] == edge_count && cursors[4] == edge_count,
+                "audio_paths.host-edge-cursor-outside-snapshot");
+
+    av_trace_equal("audio_paths.coarse-streams", traces[0], traces[1]);
+    av_trace_equal("audio_paths.one-tick-streams", traces[0], traces[2]);
+    av_trace_equal("audio_paths.irregular-streams", traces[0], traces[3]);
+    av_trace_equal("audio_paths.watched-streams", traces[0], traces[4]);
+    av_guest_state_equal("audio_paths.coarse-common-state", &whole, &coarse, &fixture);
+    av_guest_state_equal("audio_paths.one-tick-common-state", &whole, &one_tick, &fixture);
+    av_guest_state_equal("audio_paths.irregular-common-state", &whole, &irregular, &fixture);
+    av_guest_state_equal("audio_paths.watched-common-state", &whole, &watched, &fixture);
+
+    CHECK_NAMED(no_input.m->video.input_mask == 0u, "audio_paths.no-input-mask");
+    CHECK_NAMED(whole.m->video.input_mask == LYNX_INPUT_A, "audio_paths.press-input-mask");
+    CHECK_NAMED(traces[0]->event_count > traces[5]->event_count,
+                "audio_paths.input-produces-channel-events");
+    CHECK_NAMED(av_trace_has_nonzero_pcm(traces[0]) && !av_trace_has_nonzero_pcm(traces[5]),
+                "audio_paths.input-produces-pcm");
+    if (pressed_frame != NULL && av_trace_frame(traces[5], 2u) != NULL) {
+        CHECK_NAMED(!video_packet_equal(pressed_frame, av_trace_frame(traces[5], 2u)),
+                    "audio_paths.input-changes-raw-frame");
+    }
+    {
+        uint8_t marker_pressed = 0u, marker_released = 0u;
+        uint8_t probe_pressed = 0u, probe_released = 0u;
+        CHECK_EQ_U64(lynx_read_memory(whole.m, 0x4000u, &marker_pressed, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_read_memory(no_input.m, 0x4000u, &marker_released, 1u), LYNX_OK);
+        CHECK_EQ_HEX(marker_pressed, 0x22u);
+        CHECK_EQ_HEX(marker_released, 0x11u);
+        CHECK_EQ_U64(lynx_read_memory(whole.m, fixture.probe_result + 5u,
+                                      &probe_pressed, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_read_memory(no_input.m, fixture.probe_result + 5u,
+                                      &probe_released, 1u), LYNX_OK);
+        CHECK_NAMED((probe_pressed & 1u) != 0u && probe_released == 0u,
+                    "audio_paths.guest-input-marker");
+    }
+
+    /* Alternate two independent instances while reusing the same caller-owned
+       PCM, event and frame spans; each transcript remains tied to its owner. */
+    {
+        size_t calls = 0u;
+        while ((interleaved_press.m->guest_ticks < final_tick ||
+                interleaved_none.m->guest_ticks < final_tick) && calls++ < 2000000u) {
+            if (interleaved_press.m->guest_ticks < final_tick) {
+                CHECK_EQ_U64(av_trace_step("audio_paths.interleaved-press",
+                    &interleaved_press, traces[6], &scratch, final_tick, 257u, AV_WHOLE,
+                    av_probe_edges, edge_count, &cursors[6]), 0u);
+            }
+            if (interleaved_none.m->guest_ticks < final_tick) {
+                CHECK_EQ_U64(av_trace_step("audio_paths.interleaved-none",
+                    &interleaved_none, traces[7], &scratch, final_tick, 61u, AV_WHOLE,
+                    NULL, 0u, &cursors[7]), 0u);
+            }
+        }
+        CHECK(interleaved_press.m->guest_ticks == final_tick &&
+              interleaved_none.m->guest_ticks == final_tick);
+    }
+    CHECK_EQ_U64(cursors[6], edge_count);
+    CHECK_EQ_U64(cursors[7], 0u);
+    av_trace_equal("audio_paths.interleaved-press-streams", traces[0], traces[6]);
+    av_trace_equal("audio_paths.interleaved-none-streams", traces[5], traces[7]);
+    av_guest_state_equal("audio_paths.interleaved-press-state", &whole,
+                         &interleaved_press, &fixture);
+    av_guest_state_equal("audio_paths.interleaved-none-state", &no_input,
+                         &interleaved_none, &fixture);
+
+    /* Restore on both sides of the host input edge and immediately before,
+       at, and after the 400-tick sample point. The host cursor is copied
+       separately; it is never read from the snapshot. */
+    CHECK_EQ_U64(av_checkpoint_path("audio_paths.sample-399", &fixture, 399u, 0,
+                  final_tick, traces[0], &whole), 0u);
+    CHECK_EQ_U64(av_checkpoint_path("audio_paths.sample-400", &fixture, 400u, 0,
+                  final_tick, traces[0], &whole), 0u);
+    CHECK_EQ_U64(av_checkpoint_path("audio_paths.sample-401", &fixture, 401u, 0,
+                  final_tick, traces[0], &whole), 0u);
+    CHECK_EQ_U64(av_checkpoint_path("audio_paths.pre-input-edge", &fixture,
+                  av_probe_edges[0].tick, 0, final_tick, traces[0], &whole), 0u);
+    CHECK_EQ_U64(av_checkpoint_path("audio_paths.post-input-edge", &fixture,
+                  av_probe_edges[0].tick, 1, final_tick, traces[0], &whole), 0u);
+
+    CHECK_EQ_U64(av_single_sample_suffix(&fixture), 0u);
+    CHECK_EQ_U64(av_single_event_suffix(&fixture, traces[0]), 0u);
+    CHECK_EQ_U64(av_capacity_ring_continuation(&fixture), 0u);
+    av_zero_suffix_restore(&fixture, &whole, traces[0]);
+    printf("audio_paths: tick=%llu frames=%zu pcm=%zu events=%zu variants=whole,coarse,one-tick,irregular,watched,interleaved,restore-edge,sample-boundaries,single-sample,event,zero-suffix\n",
+           (unsigned long long)final_tick, traces[0]->frame_count,
+           traces[0]->pcm_count, traces[0]->event_count);
+
+cleanup:
+    instance_destroy(&whole);
+    instance_destroy(&coarse);
+    instance_destroy(&one_tick);
+    instance_destroy(&irregular);
+    instance_destroy(&watched);
+    instance_destroy(&no_input);
+    instance_destroy(&interleaved_press);
+    instance_destroy(&interleaved_none);
+    for (size_t i = 0u; i < sizeof traces / sizeof traces[0]; i++) free(traces[i]);
+    if (initialized_fixture != 0) av_fixture_free(&fixture);
+}
+
 static const struct {
     const char *name;
     int args; /* arguments after the case name */
@@ -1591,6 +2952,8 @@ static const struct {
     {"timer_paths", 0, case_timer_paths},
     {"video_paths", 0, case_video_paths},
     {"video_sensitivity", 0, case_video_sensitivity},
+    {"audio_paths", 3, case_audio_paths},
+    {"audio_sensitivity", 3, case_audio_sensitivity},
     {"two_instances", 3, case_two_instances},
 };
 
