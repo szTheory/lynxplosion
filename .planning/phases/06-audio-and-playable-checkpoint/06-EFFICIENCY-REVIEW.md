@@ -3,8 +3,8 @@
 Owner requested a sanity check during the long autonomous session on
 2026-11-12. This is a bounded process review, not Phase 6 completion or a new
 milestone. The initial executor returned a safe checkpoint for this review.
-Implementation has since resumed; Plans01–05 and their diagnosed integration
-repairs are committed. Plan06 owns the next snapshot/continuation work. This report is
+Implementation has since resumed; Plans01–06 and their diagnosed integration
+repairs are committed. Plan07 owns consumer replay/checkpoint completion. This report is
 process evidence, not a claim that Phase6 or its full gate is complete.
 
 ## Findings and actions
@@ -20,6 +20,8 @@ process evidence, not a claim that Phase6 or its full gate is complete.
 | Later CTest discovery and focused calls overwrote the initial full run's per-case logs | Original scanner timeout stages cannot be recovered reliably | Save each integration invocation to a distinct private log with its real exit status before another CTest call |
 | Plan05 started an optional scan of all 390 commits after its scoped implementation checks were complete | Repeated old history adds handoff delay without a new failure class | Require only the plan's new reachable range at handoff; retain full-history scanning in the final canonical gate |
 | Both Plan05 tasks initially grew in the same test harness before the first task commit | Reconstructing intermediate inventories and claim hashes adds avoidable bookkeeping | Complete and commit each task's buildable inventory and evidence binding before expanding the next task |
+| Plan06's initial design followed an input-only synthetic helper despite an existing source-built A/V guest | A nearby analog can hide a proven producer and duplicate work | Put concrete fixture, manifest, linked-symbol and consumer paths in the handoff |
+| The new determinism fixture passed its tests but retained an unmanifested compiled guest | Artifact lifecycle is an integration contract separate from functional correctness | Use the established per-case owned scratch lifecycle and check the artifact zone early |
 
 The 9h35 value includes checkpoints and does not measure active model work.
 Commit timing does not establish CPU time, model tokens or API spend. Exact
@@ -62,9 +64,9 @@ Fresh verification after the change:
 
 Raw test artifacts and controls remain private in temporary/build storage.
 The checker and ABI/snapshot-consumer repairs were subsequently committed in
-Plan06-01. The first three plan summaries record their focused compiler checks;
-Plan04 records remain pending. Its early full native inventory failed and is
-not qualification evidence. No hardware accuracy, full audio qualification or
+Plan06-01. Plans01–06 record their scoped compiler checks and follow-ups.
+The early Plan04 full native inventory failed and is not qualification
+evidence. No hardware accuracy, full audio qualification or
 release is claimed.
 
 The scanner follow-up used two 15-second traced probes to locate active case
@@ -93,7 +95,23 @@ the exact scope and source revisions. Final Phase6 qualification remains open.
 
 The optional full-history scan was stopped through its own tool session, its
 interrupted status was retained privately, and the required new-range scan
-passed. No privacy rule or required proof was removed. Continue Plan06's
-snapshot validation and complete-stream continuation checks, then the remaining
+passed. No privacy rule or required proof was removed. Plan06's
+snapshot/continuation evidence is recorded in `06-06-SUMMARY.md`: both supported
+compilers passed the scoped selectors, with no wire-layout bump. An inferred
+sequence-zero restriction was removed when source and positive controls showed
+that state is reachable. The complete real-guest path case was exercised before
+expanding all sensitivity cases, exposing and correcting a harness mismatch
+between inclusive frame stops and exclusive tick targets.
+
+The early artifact check also found retained failed-run outputs. Exact owner
+markers, known guest identity and the recorded suite-build verifier established
+attribution before 22 old roots were moved to private preservation storage.
+Byte/type/mode inventories matched after each atomic move. The new determinism
+fixture now builds in a unique per-case directory and cleans only its owned
+directory after success; failures remain visible. The artifact scan then passed
+with no scanner or manifest exemption change, and the lifecycle cases passed on
+both supported compilers. Follow-up details are in `06-06-SUMMARY.md`.
+
+Continue Plan07's existing public consumer replay mode, then the remaining
 reviewed plans. The parent retains tracking and final independent acceptance
 responsibilities. No owner input is required.

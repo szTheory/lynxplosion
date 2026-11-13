@@ -230,3 +230,28 @@ overlay on an older commit. That run was excluded from final evidence. Explicit
 fetch/merge commands, exact full commit identity, a clean tracked tree and a new
 configure preceded the valid scoped run. Keep source and build identity checks
 concrete in handoffs.
+
+**Name existing fixtures before extending a neighboring helper.** Plan06's
+first continuation design followed the input-only synthetic video helper and
+missed the already source-built A/V guest. The handoff was corrected to name
+`fixtures/diagnostic/av_probe.s`, its linker config, provenance manifest and
+existing consumer driver. The deterministic harness now reuses that guest;
+synthetic state is limited to additional capacity/ring boundaries. Existing
+producer paths and their identity checks belong in the next task's handoff.
+
+**Validate snapshot reachability with accepted boundary controls.** An initial
+inference that a valid event cursor could never have sequence zero was wrong:
+device application can open the cursor without emitting an event. The proposed
+restriction was removed before commit and a positive roundtrip protects this
+state. For refusal controls, use a fresh same-content candidate and a separate
+later watched target; assert that mutations differ from the candidate baseline
+and recompute the payload hash to reach state validation.
+
+**A successful fixture test does not establish artifact ownership.** Plan06
+removed its generated object but retained a compiled guest whose digest was in
+the derived-guest manifest field; the binary scanner permits only its declared
+generic identity exemption. An early artifact scan exposed that output plus
+old retained failures. Keep the rights policy intact, use per-case owned scratch
+with success cleanup, and preserve attributable old failures outside the final
+scan with verified byte/type/mode inventories. Do not infer that every binary
+in a project build tree is permitted or that all old scratch can be deleted.

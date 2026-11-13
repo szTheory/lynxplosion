@@ -276,7 +276,7 @@ Plan 12 local macOS and self-contained Ubuntu qualification passed, and exact-he
   5. A named workload (the homebrew with a fixed input timeline) has a recorded throughput baseline with its output digest held constant. No optimisation is done.
 **Owner gates**: O1 for any suite claim. O8 is inherited.
 **Research flag**: Deeper research needed before planning: audio register layout and LFSR taps (no sourced page found); CTLB lower-nibble behaviour; exact-rational output rate choice (AD-07); conflicting low-pass figures.
-**Plans:** 5/12 plans executed
+**Plans:** 6/12 plans executed
 
 Plans:
 **Wave 1**
@@ -293,7 +293,7 @@ Plans:
 - [x] 06-05-PLAN.md — Transactional A/V spans and lossless capacity stops
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 06-06-PLAN.md — Validate complete audio state and prove all continuation paths
+- [x] 06-06-PLAN.md — Validate complete audio state and prove all continuation paths
 
 **Wave 6** *(blocked on Wave 5 completion)*
 - [ ] 06-07-PLAN.md — Complete public A/V replay, host checkpoint and artifact semantics
@@ -340,4 +340,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Memory Map, Direct-Load Startup and First Diagnostic | 9/9 | Complete    | 2026-11-10 |
 | 4. Timers, Interrupts and First Public Suites | 12/12 | Complete    | 2026-11-11 |
 | 5. Display, Raw Video and Input | 12/12 | Complete    | 2026-11-12 |
-| 6. Audio and Playable Checkpoint | 5/12 | In Progress | - |
+| 6. Audio and Playable Checkpoint | 6/12 | In Progress | - |

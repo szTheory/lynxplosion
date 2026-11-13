@@ -50,6 +50,8 @@ patterns-established:
   - "Continuation comparisons cover input edges, raw frames, PCM ordinals and values, event fields, and final guest time."
 
 requirements-completed: [DET-05, AUD-02]
+# Scoped snapshot/continuation evidence; sibling plans and final Phase6
+# qualification still control global completion.
 
 coverage:
   - id: D1

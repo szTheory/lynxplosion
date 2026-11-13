@@ -129,6 +129,10 @@ Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
   Finish when those questions are answered or explicitly bounded as unknown.
   Pattern mapping is opt-in for an unfamiliar architecture or a concrete missing
   analog; existing pattern maps remain valid planning inputs.
+- Name the existing producer artifacts and their consumer contracts in each
+  handoff. Locate the proven fixture/build recipe before extending a nearby
+  synthetic test helper; keep synthetic boundary controls distinct from the
+  real source-built guest evidence.
 - At the first public-struct, snapshot or core-source-list change, repair its
   compile-time ABI assertions and independent readers/build recipes before
   expanding consumer behavior. Verify that affected group immediately in the
@@ -164,6 +168,13 @@ Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
   before an identity-only refresh; preserve historical qualification reports.
   Inventory-owning plans also own the existing repeatability claim's inventory
   binding and its named evidence checks, avoiding a late unowned repair.
+- Check artifact ownership when adding retained generated files, before the
+  final canonical gate. A derived-guest digest is not automatically a binary
+  exemption under the scanner's supported manifest fields. Reuse per-test
+  owned scratch cleanup on success; retain failures. Move old attributable
+  failure evidence outside the final build scan only after owner/provenance
+  checks and verified content inventories, preserving it rather than widening
+  allowlists or deleting unrelated files.
 - Track elapsed implementation, research, review and qualification spans
   separately from measured build/test/CI time. Commit gaps and diff-size token
   proxies do not establish agent activity or API cost. Preserve configured
