@@ -677,6 +677,26 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             break;
         }
         if (next.priority <= (uint8_t)LYNX__MACHINE_EVENT_AUDIO_PRIORITY) {
+            /* Device/link work can publish several ordered audio events and
+               a same-tick sample follows it. Reserve the whole bounded
+               device/link/sample group before mutating any of that state, so
+               an undersized span cannot leave half of the tick visible. A
+               later CPU-triggered audio write is a separate ordered group;
+               its capacity check remains immediately before the bus write. */
+            if (capture != NULL) {
+                const bool sample_due_here =
+                    m->audio.next_sample_tick == next.tick && next.tick < target;
+                const bool event_span_short =
+                    capture->events.count > capture->events.capacity ||
+                    capture->events.capacity - capture->events.count <
+                        LYNX_AV_MIN_EVENT_CAPACITY;
+                const bool pcm_span_short = sample_due_here &&
+                    capture->pcm_count >= capture->pcm_capacity;
+                if (event_span_short || pcm_span_short) {
+                    *stop = LYNX_STOP_OUTPUT;
+                    break;
+                }
+            }
             const bool timer_due = timer_tick == next.tick && timer_tick < target;
             const bool audio_due = audio_tick == next.tick && audio_tick < target;
             lynx__audio_event_sink *sink = capture != NULL ? &capture->events : NULL;

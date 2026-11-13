@@ -69,6 +69,7 @@ api.watch_controls.self_test	api
 api.watch_independent	api
 api.watch_post_write	api
 audio.cadence	audio
+audio.capacity	audio
 audio.counter	audio
 audio.integrator	audio
 audio.lfsr	audio
@@ -80,6 +81,7 @@ audio.ring_zero	audio
 audio.span_alias	audio
 audio.span_refusal	audio
 audio.stereo	audio
+audio.stops	audio
 consumer.av_tracer	consumer
 consumer.frame_publication_controls	consumer
 consumer.frame_replay	consumer

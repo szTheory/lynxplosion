@@ -1720,6 +1720,352 @@ static void case_span_alias(void)
     machine_close(&box);
 }
 
+static bool audio_event_equal(const lynx_audio_event *left,
+                              const lynx_audio_event *right)
+{
+    return left->tick == right->tick && left->sequence == right->sequence &&
+           left->channel == right->channel && left->cause == right->cause &&
+           left->before_output == right->before_output &&
+           left->after_output == right->after_output;
+}
+
+static void case_capacity(void)
+{
+    static const uint8_t looping_guest[] = {0x4Cu, 0x00u, 0x02u};
+    machine_box sliced;
+    machine_box whole;
+    ASSERT_NAMED("audio.capacity.sliced-init",
+                 machine_open(&sliced, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.capacity.whole-init",
+                 machine_open(&whole, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (sliced.machine == NULL || whole.machine == NULL) {
+        machine_close(&sliced);
+        machine_close(&whole);
+        return;
+    }
+    ASSERT_EQ("audio.capacity.sliced-load", load_guest(sliced.machine, looping_guest,
+                                                         sizeof looping_guest), LYNX_OK);
+    ASSERT_EQ("audio.capacity.whole-load", load_guest(whole.machine, looping_guest,
+                                                        sizeof looping_guest), LYNX_OK);
+    for (uint8_t i = 0u; i < LYNX_AUDIO_CHANNELS; i++) {
+        sliced.machine->audio.channels[i].volume = (uint8_t)(i + 1u);
+        sliced.machine->audio.channels[i].feedback = 1u;
+        sliced.machine->audio.channels[i].control_a = 0x58u; /* reload, reset-DONE, count */
+        whole.machine->audio.channels[i] = sliced.machine->audio.channels[i];
+    }
+
+    lynx_pcm_frame pcm[1];
+    lynx_audio_event first_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_audio_event retry_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_audio_event whole_events[LYNX_AV_MIN_EVENT_CAPACITY * 2u];
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_buffers_init(&buffers, pcm, 1u, first_events, LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.capacity.first-call", av_advance(sliced.machine, 33u,
+                                                        &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.first-stop", result.stop, LYNX_STOP_OUTPUT);
+    ASSERT_EQ("audio.capacity.first-pcm-count", result.pcm_count, 0u);
+    ASSERT_EQ("audio.capacity.first-event-count", result.event_count, 4u);
+    ASSERT_EQ("audio.capacity.first-event-tick", first_events[0].tick, 16u);
+    ASSERT_EQ("audio.capacity.first-next-device-tick",
+              sliced.machine->audio.channels[0].count, 0u);
+    for (uint32_t i = 0u; i < result.event_count; i++) {
+        ASSERT_EQ("audio.capacity.first-sequence", first_events[i].sequence, i);
+        ASSERT_EQ("audio.capacity.first-channel", first_events[i].channel, i);
+        ASSERT_EQ("audio.capacity.first-tick", first_events[i].tick, 16u);
+    }
+
+    const uint64_t retry_budget = 33u - sliced.machine->guest_ticks;
+    av_buffers_init(&buffers, pcm, 1u, retry_events, LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.capacity.retry-call", av_advance(sliced.machine, retry_budget,
+                                                        &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.retry-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.capacity.retry-event-count", result.event_count, 4u);
+    for (uint32_t i = 0u; i < result.event_count; i++) {
+        ASSERT_EQ("audio.capacity.retry-sequence", retry_events[i].sequence, i);
+        ASSERT_EQ("audio.capacity.retry-channel", retry_events[i].channel, i);
+        ASSERT_EQ("audio.capacity.retry-tick", retry_events[i].tick, 32u);
+    }
+
+    lynx_pcm_frame whole_pcm[1];
+    av_buffers_init(&buffers, whole_pcm, 1u, whole_events,
+                    sizeof whole_events / sizeof whole_events[0]);
+    ASSERT_EQ("audio.capacity.whole-call", av_advance(whole.machine, 33u,
+                                                        &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.whole-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.capacity.whole-event-count", result.event_count, 8u);
+    for (uint32_t i = 0u; i < 4u; i++) {
+        ASSERT_NAMED("audio.capacity.first-prefix-equal",
+                     audio_event_equal(&first_events[i], &whole_events[i]));
+        ASSERT_NAMED("audio.capacity.retry-suffix-equal",
+                     audio_event_equal(&retry_events[i], &whole_events[i + 4u]));
+    }
+    uint8_t sliced_digest[32];
+    uint8_t whole_digest[32];
+    ASSERT_EQ("audio.capacity.sliced-digest",
+              lynx_state_digest(sliced.machine, sliced_digest), LYNX_OK);
+    ASSERT_EQ("audio.capacity.whole-digest",
+              lynx_state_digest(whole.machine, whole_digest), LYNX_OK);
+    ASSERT_NAMED("audio.capacity.retry-state-equal",
+                 memcmp(sliced_digest, whole_digest, sizeof sliced_digest) == 0);
+    machine_close(&whole);
+    machine_close(&sliced);
+
+    /* A full one-frame caller span returns the first sample and stops before
+       the second sample frontier. A fresh span resumes ordinal 1 exactly. */
+    machine_box sample_sliced;
+    machine_box sample_whole;
+    ASSERT_NAMED("audio.capacity.sample-sliced-init",
+                 machine_open(&sample_sliced, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.capacity.sample-whole-init",
+                 machine_open(&sample_whole, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (sample_sliced.machine == NULL || sample_whole.machine == NULL) {
+        machine_close(&sample_sliced);
+        machine_close(&sample_whole);
+        return;
+    }
+    ASSERT_EQ("audio.capacity.sample-sliced-load", load_guest(
+        sample_sliced.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    ASSERT_EQ("audio.capacity.sample-whole-load", load_guest(
+        sample_whole.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    lynx_pcm_frame sliced_pcm[1];
+    lynx_pcm_frame whole_pcm_pair[2];
+    lynx_audio_event sliced_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_audio_event resumed_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_audio_event ample_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    av_buffers_init(&buffers, sliced_pcm, 1u, sliced_events,
+                    LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.capacity.sample-first-call", av_advance(
+        sample_sliced.machine, 801u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.sample-output-stop", result.stop, LYNX_STOP_OUTPUT);
+    ASSERT_EQ("audio.capacity.sample-first-count", result.pcm_count, 1u);
+    ASSERT_EQ("audio.capacity.sample-first-ordinal", result.first_sample_ordinal, 0u);
+    ASSERT_EQ("audio.capacity.sample-next-ordinal", result.next_sample_ordinal, 1u);
+    ASSERT_EQ("audio.capacity.sample-next-tick",
+              sample_sliced.machine->audio.next_sample_tick, 800u);
+
+    const uint64_t sample_retry_budget = 801u - sample_sliced.machine->guest_ticks;
+    av_buffers_init(&buffers, sliced_pcm, 1u, resumed_events,
+                    LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.capacity.sample-retry", av_advance(
+        sample_sliced.machine, sample_retry_budget, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.sample-retry-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.capacity.sample-retry-count", result.pcm_count, 1u);
+    ASSERT_EQ("audio.capacity.sample-retry-first-ordinal", result.first_sample_ordinal, 1u);
+    ASSERT_EQ("audio.capacity.sample-retry-next-ordinal", result.next_sample_ordinal, 2u);
+
+    av_buffers_init(&buffers, whole_pcm_pair, 2u, ample_events,
+                    LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.capacity.sample-whole", av_advance(
+        sample_whole.machine, 801u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.sample-whole-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.capacity.sample-whole-count", result.pcm_count, 2u);
+    ASSERT_NAMED("audio.capacity.sample-prefix-equal",
+                 sliced_pcm[0].left == whole_pcm_pair[0].left &&
+                 sliced_pcm[0].right == whole_pcm_pair[0].right);
+    ASSERT_NAMED("audio.capacity.sample-suffix-equal",
+                 sliced_pcm[0].left == whole_pcm_pair[1].left &&
+                 sliced_pcm[0].right == whole_pcm_pair[1].right);
+    ASSERT_EQ("audio.capacity.sample-final-tick", sample_sliced.machine->guest_ticks, 801u);
+    ASSERT_EQ("audio.capacity.sample-whole-tick", sample_whole.machine->guest_ticks, 801u);
+    ASSERT_EQ("audio.capacity.sample-sliced-digest", lynx_state_digest(
+        sample_sliced.machine, sliced_digest), LYNX_OK);
+    ASSERT_EQ("audio.capacity.sample-whole-digest", lynx_state_digest(
+        sample_whole.machine, whole_digest), LYNX_OK);
+    ASSERT_NAMED("audio.capacity.sample-retry-state-equal",
+                 memcmp(sliced_digest, whole_digest, sizeof sliced_digest) == 0);
+    machine_close(&sample_whole);
+    machine_close(&sample_sliced);
+
+    /* Distinct instances remain isolated when their caller buffers are
+       replaced between calls. Mutating the old spans is safe, and a later
+       call writes only to the newly supplied spans. */
+    machine_box first_instance;
+    machine_box second_instance;
+    ASSERT_NAMED("audio.capacity.instance-first-init",
+                 machine_open(&first_instance, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.capacity.instance-second-init",
+                 machine_open(&second_instance, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (first_instance.machine == NULL || second_instance.machine == NULL) {
+        machine_close(&first_instance);
+        machine_close(&second_instance);
+        return;
+    }
+    ASSERT_EQ("audio.capacity.instance-first-load", load_guest(
+        first_instance.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    ASSERT_EQ("audio.capacity.instance-second-load", load_guest(
+        second_instance.machine, looping_guest, sizeof looping_guest), LYNX_OK);
+    av_span_storage first_old_storage;
+    av_span_storage first_new_storage;
+    av_span_storage second_old_storage;
+    av_span_storage second_new_storage;
+    lynx_av_buffers first_old_buffers;
+    lynx_av_buffers first_new_buffers;
+    lynx_av_buffers second_old_buffers;
+    lynx_av_buffers second_new_buffers;
+    av_span_storage_init(&first_old_storage, &first_old_buffers,
+                         LYNX_AV_MIN_PCM_CAPACITY, LYNX_AV_MIN_EVENT_CAPACITY);
+    av_span_storage_init(&first_new_storage, &first_new_buffers,
+                         LYNX_AV_MIN_PCM_CAPACITY, LYNX_AV_MIN_EVENT_CAPACITY);
+    av_span_storage_init(&second_old_storage, &second_old_buffers,
+                         LYNX_AV_MIN_PCM_CAPACITY, LYNX_AV_MIN_EVENT_CAPACITY);
+    av_span_storage_init(&second_new_storage, &second_new_buffers,
+                         LYNX_AV_MIN_PCM_CAPACITY, LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    ASSERT_EQ("audio.capacity.instance-first-sample", lynx_advance_av(
+        first_instance.machine, 401u, &first_old_buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.instance-first-count", result.pcm_count, 1u);
+    const lynx_pcm_frame first_sample = *(const lynx_pcm_frame *)(const void *)
+        first_old_buffers.pcm;
+    memset(&first_old_storage, 0x3Cu, sizeof first_old_storage);
+
+    av_result_init(&result);
+    ASSERT_EQ("audio.capacity.instance-second-sample", lynx_advance_av(
+        second_instance.machine, 401u, &second_old_buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.instance-second-count", result.pcm_count, 1u);
+    ASSERT_NAMED("audio.capacity.instance-old-span-not-retained",
+                 first_old_storage.audio[0] == 0x3Cu &&
+                 first_old_storage.audio[256] == 0x3Cu);
+    const lynx_pcm_frame second_sample = *(const lynx_pcm_frame *)(const void *)
+        second_old_buffers.pcm;
+    memset(&second_old_storage, 0x6Bu, sizeof second_old_storage);
+
+    av_result_init(&result);
+    ASSERT_EQ("audio.capacity.instance-first-resume", lynx_advance_av(
+        first_instance.machine, 400u, &first_new_buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.instance-first-resume-count", result.pcm_count, 1u);
+    ASSERT_EQ("audio.capacity.instance-first-resume-ordinal",
+              result.first_sample_ordinal, 1u);
+    ASSERT_NAMED("audio.capacity.instance-first-new-span-written",
+                 first_new_storage.audio[0] != 0xA5u);
+    ASSERT_NAMED("audio.capacity.instance-first-old-span-preserved",
+                 first_old_storage.audio[0] == 0x3Cu &&
+                 first_old_storage.audio[256] == 0x3Cu);
+
+    av_result_init(&result);
+    ASSERT_EQ("audio.capacity.instance-second-resume", lynx_advance_av(
+        second_instance.machine, 400u, &second_new_buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.capacity.instance-second-resume-count", result.pcm_count, 1u);
+    ASSERT_EQ("audio.capacity.instance-second-resume-ordinal",
+              result.first_sample_ordinal, 1u);
+    ASSERT_NAMED("audio.capacity.instance-second-new-span-written",
+                 second_new_storage.audio[0] != 0xA5u);
+    ASSERT_NAMED("audio.capacity.instance-second-old-span-preserved",
+                 second_old_storage.audio[0] == 0x6Bu &&
+                 second_old_storage.audio[256] == 0x6Bu);
+    ASSERT_NAMED("audio.capacity.instance-first-samples-equal",
+                 first_sample.left == second_sample.left &&
+                 first_sample.right == second_sample.right);
+    uint8_t first_instance_digest[32];
+    uint8_t second_instance_digest[32];
+    ASSERT_EQ("audio.capacity.instance-first-digest", lynx_state_digest(
+        first_instance.machine, first_instance_digest), LYNX_OK);
+    ASSERT_EQ("audio.capacity.instance-second-digest", lynx_state_digest(
+        second_instance.machine, second_instance_digest), LYNX_OK);
+    ASSERT_NAMED("audio.capacity.instance-state-equal",
+                 memcmp(first_instance_digest, second_instance_digest,
+                        sizeof first_instance_digest) == 0);
+    machine_close(&second_instance);
+    machine_close(&first_instance);
+}
+
+static void case_stops(void)
+{
+    static const uint8_t looping_guest[] = {0x4Cu, 0x00u, 0x02u};
+    static const uint8_t unavailable_guest[] = {
+        0xADu, 0x91u, 0xFDu, /* LDA unavailable FD91 */
+        0x4Cu, 0x00u, 0x02u
+    };
+    machine_box box;
+    ASSERT_NAMED("audio.stops.machine-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    ASSERT_EQ("audio.stops.guest-load", load_guest(box.machine, looping_guest,
+                                                    sizeof looping_guest), LYNX_OK);
+    av_span_storage storage;
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    uint8_t *machine_before = (uint8_t *)malloc(lynx_machine_size());
+    ASSERT_NAMED("audio.stops.snapshot-allocation", machine_before != NULL);
+    if (machine_before != NULL) {
+        memcpy(machine_before, box.machine, lynx_machine_size());
+        ASSERT_EQ("audio.stops.zero-budget-call", lynx_advance_av(
+            box.machine, 0u, &buffers, &result), LYNX_OK);
+        ASSERT_EQ("audio.stops.zero-budget-reason", result.stop, LYNX_STOP_BUDGET);
+        ASSERT_EQ("audio.stops.zero-budget-ticks", result.ticks_consumed, 0u);
+        ASSERT_EQ("audio.stops.zero-budget-pcm", result.pcm_count, 0u);
+        ASSERT_EQ("audio.stops.zero-budget-events", result.event_count, 0u);
+        ASSERT_NAMED("audio.stops.zero-budget-machine",
+                     memcmp(machine_before, box.machine, lynx_machine_size()) == 0);
+        ASSERT_NAMED("audio.stops.zero-budget-buffers",
+                     storage.pens[0] == 0xA5u && storage.palettes[0] == 0xA5u &&
+                     storage.line_ticks[0] == UINT64_C(0xA5A5A5A5A5A5A5A5) &&
+                     storage.audio[0] == 0xA5u && storage.audio[256] == 0xA5u);
+        free(machine_before);
+    }
+    machine_close(&box);
+
+    ASSERT_NAMED("audio.stops.undefined-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    uint8_t undefined_opcode = 0u;
+    bool found_undefined = false;
+    for (uint32_t candidate = 0u; candidate <= UINT8_MAX; candidate++) {
+        if (!lynx__cpu_opcode_defined(box.machine->cpu.profile, (uint8_t)candidate)) {
+            undefined_opcode = (uint8_t)candidate;
+            found_undefined = true;
+            break;
+        }
+    }
+    ASSERT_NAMED("audio.stops.undefined-opcode-available", found_undefined);
+    if (!found_undefined) {
+        machine_close(&box);
+        return;
+    }
+    const uint8_t undefined_guest[1] = {undefined_opcode};
+    ASSERT_EQ("audio.stops.undefined-load", load_guest(box.machine, undefined_guest,
+                                                         sizeof undefined_guest), LYNX_OK);
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.stops.undefined-call", av_advance(box.machine, 20u,
+                                                        &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.stops.undefined-reason", result.stop, LYNX_STOP_UNDEFINED);
+    ASSERT_EQ("audio.stops.undefined-no-pcm", result.pcm_count, 0u);
+    ASSERT_EQ("audio.stops.undefined-no-events", result.event_count, 0u);
+    ASSERT_NAMED("audio.stops.undefined-no-stale-payload",
+                 storage.audio[0] == 0xA5u && storage.audio[256] == 0xA5u);
+    machine_close(&box);
+
+    ASSERT_NAMED("audio.stops.unavailable-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    ASSERT_EQ("audio.stops.unavailable-load", load_guest(
+        box.machine, unavailable_guest, sizeof unavailable_guest), LYNX_OK);
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    ASSERT_EQ("audio.stops.unavailable-call", av_advance(box.machine, 100u,
+                                                          &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.stops.unavailable-reason", result.stop, LYNX_STOP_UNAVAILABLE);
+    ASSERT_EQ("audio.stops.unavailable-no-pcm", result.pcm_count, 0u);
+    ASSERT_EQ("audio.stops.unavailable-no-events", result.event_count, 0u);
+    ASSERT_NAMED("audio.stops.unavailable-no-stale-payload",
+                 storage.audio[0] == 0xA5u && storage.audio[256] == 0xA5u);
+    machine_close(&box);
+
+    ASSERT_NAMED("audio.stops.no-content-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_STATE, "audio.stops.no-content-unchanged");
+    machine_close(&box);
+}
+
 typedef struct test_case {
     const char *name;
     void (*run)(void);
@@ -1738,12 +2084,14 @@ static const test_case cases[] = {
     {"ring_zero", case_ring_zero},
     {"span_refusal", case_span_refusal},
     {"span_alias", case_span_alias},
+    {"capacity", case_capacity},
+    {"stops", case_stops},
 };
 
 int main(int argc, char **argv)
 {
     if (argc != 2) {
-        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|counter|integrator|stereo|mix|order|links|ring_zero|span_refusal|span_alias>\n");
+        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|counter|integrator|stereo|mix|order|links|ring_zero|span_refusal|span_alias|capacity|stops>\n");
         return 2;
     }
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i++) {
