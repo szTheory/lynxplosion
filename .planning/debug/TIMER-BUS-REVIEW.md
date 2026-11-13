@@ -1,6 +1,6 @@
 ---
 phase: timer-bus-investigation
-reviewed: 2026-11-13T16:56:17Z
+reviewed: 2026-11-13T17:02:53Z
 depth: standard
 files_reviewed: 7
 files_reviewed_list:
@@ -22,7 +22,7 @@ status: clean
 
 # Timer and Bus Focused Review
 
-**Reviewed:** 2026-11-13T16:56:17Z
+**Reviewed:** 2026-11-13T17:02:53Z
 **Depth:** standard
 **Files Reviewed:** 7
 **Status:** clean
@@ -47,8 +47,12 @@ No new actionable findings in the re-reviewed snapshot validator, regression, or
 **Resolution:** `video_state_valid` now receives the already validated `ready` tick and admits an overdue request only when `due < ticks <= ready`, `ready - due < 5`, and both historical device release ticks are strictly before the request. The existing overdue guards remain in place. A separate check rejects `ready > ticks` when either device release is still in the future.
 **Evidence:** `check_snapshot_cpu_delayed_bus` covers refresh-only, DMA-only, and combined requests, snapshots inside the CPU interval and at exact release, then checks resumed grants and continuation equivalence. The evidence note records the pre-repair refusal and post-repair focused pass.
 
+## Final Fixture Re-review
+
+The five-line `video_dma_cost_fault` fixture change waits for `cpu_ready_at` before setting the synthetic burst start. `advance_ticks` calls `lynx_advance` for exactly the requested interval and asserts both full tick consumption and `LYNX_STOP_BUDGET`, so the wait reaches the CPU release tick while the half-open budget leaves the posted CPU request ungranted. The burst can then test the intended same-tick video/refresh/CPU priority without overlapping the preceding real operand cycle. The parent reports the canonical failure was limited to this stale fixture and the focused fault case now passes, including its compiled mutant and semantic assertion; no production code changed. No new finding.
+
 ---
 
-_Reviewed: 2026-11-13T16:56:17Z_
+_Reviewed: 2026-11-13T17:02:53Z_
 _Reviewer: the agent (gsd-code-reviewer)_
 _Depth: standard_

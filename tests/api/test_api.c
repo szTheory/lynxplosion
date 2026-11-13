@@ -7149,6 +7149,11 @@ static void case_video_dma_cost_fault(void)
                                 (m->cpu.req_flags & LYNX__CF_WRITE) != 0u); i++) {
             CHECK_EQ_U64(lynx_advance(m, 1u, &consumed, &stop), LYNX_OK);
         }
+        /* Match the arbitration tie fixture: the preceding operand cycle
+           must release before the synthetic DMA burst starts. */
+        if (m->cpu_ready_at > m->guest_ticks) {
+            advance_ticks(m, m->cpu_ready_at - m->guest_ticks);
+        }
         const uint64_t start = m->guest_ticks;
         CHECK_EQ_U64(lynx_watch_configure(m, 0x0400u, 1u), LYNX_OK);
         m->cpu.p = (uint8_t)(m->cpu.p | 0x04u);
