@@ -255,3 +255,11 @@ old retained failures. Keep the rights policy intact, use per-case owned scratch
 with success cleanup, and preserve attributable old failures outside the final
 scan with verified byte/type/mode inventories. Do not infer that every binary
 in a project build tree is permitted or that all old scratch can be deleted.
+
+**Close the observation-record handshake before checker expansion.** Plan07's
+first bundle retained frame/audio streams but lacked explicit applied-input and
+complete guest-progress records. These were added before closing the producer
+task, with sizes, identities and checkpoint-prefix ownership. Name the concrete
+record for every required observation class. Decode the fixture's actual byte
+layout and use its response marker; a saturating progress counter need not
+change between otherwise distinct input responses.

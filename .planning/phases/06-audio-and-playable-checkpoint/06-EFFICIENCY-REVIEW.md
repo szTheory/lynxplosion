@@ -3,8 +3,8 @@
 Owner requested a sanity check during the long autonomous session on
 2026-11-12. This is a bounded process review, not Phase 6 completion or a new
 milestone. The initial executor returned a safe checkpoint for this review.
-Implementation has since resumed; Plans01–06 and their diagnosed integration
-repairs are committed. Plan07 owns consumer replay/checkpoint completion. This report is
+Implementation has since resumed; Plans01–07 and their diagnosed integration
+repairs are committed. Plan08 owns consumer refusal/publication completion. This report is
 process evidence, not a claim that Phase6 or its full gate is complete.
 
 ## Findings and actions
@@ -112,6 +112,11 @@ directory after success; failures remain visible. The artifact scan then passed
 with no scanner or manifest exemption change, and the lifecycle cases passed on
 both supported compilers. Follow-up details are in `06-06-SUMMARY.md`.
 
-Continue Plan07's existing public consumer replay mode, then the remaining
-reviewed plans. The parent retains tracking and final independent acceptance
+Plan07's existing replay mode now has complete applied-input, progress, frame,
+event and PCM records and scoped compiler evidence; its in-memory checkpoint
+contract and two-stage identity/semantic checker are documented in
+`06-07-SUMMARY.md`. At the repeated 24-hour owner check, execution was narrowed
+to the first runnable complete path followed by required negative cases, with
+no further process-audit fan-out and warm reuse for the adjacent consumer plan.
+Continue Plan08's refusal/publication controls, then the remaining reviewed plans. The parent retains tracking and final independent acceptance
 responsibilities. No owner input is required.

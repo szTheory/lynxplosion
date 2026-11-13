@@ -120,6 +120,15 @@ changed and why in the phase summary so the review is not repeated.
 Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
 `06-EFFICIENCY-REVIEW.md`.
 
+- At the owner's repeated 24-hour sanity check, keep execution focused on the
+  first runnable complete path, then its required negative cases. Reuse the
+  loaded consumer executor for the adjacent replay/publication plans. Fold new
+  lessons into normal closeout rather than starting further process audits;
+  retain the planned independent reviews and final qualification gates.
+- Persist the plan dispatch timestamp in private temporary storage so elapsed
+  handoff time survives context recovery. Keep it distinct from active model
+  time and API usage; report missing historical timing as unknown.
+
 - Use GSD's supported compact content mode. Read mandatory contracts once
   per owning context; locate large source files by symbol and bounded sections.
   Keep each batched tool response within its output budget so truncation does

@@ -29,9 +29,9 @@ tech-stack:
 
 key-files:
   created:
-    - tests/consumer/check_artifacts.c
     - docs/av-replay.md
   modified:
+    - tests/consumer/check_artifacts.c
     - consumer/main.c
     - tests/consumer/av_driver.cmake
     - tests/consumer/tests.cmake
@@ -50,6 +50,8 @@ patterns-established:
   - "Real positive bundles are hash-checked; manufactured mutation copies enter the semantic checker directly and must fail at their named assertion."
 
 requirements-completed: [HB-03, DET-05, CON-01]
+# Scoped replay/bundle evidence; publication controls and final Phase6
+# qualification still control global completion.
 
 coverage:
   - id: D1
