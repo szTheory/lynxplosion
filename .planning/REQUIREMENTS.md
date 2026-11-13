@@ -114,6 +114,28 @@ sequence, not a ceiling on the project goal.
 - [x] **CON-01**: An independent consumer program, using only the public C API, drives the core and writes raw frames as PNG or PPM and audio as WAV
 - [x] **PERF-01**: A named workload (the homebrew with a fixed input timeline) has a recorded throughput baseline with its output digest held constant; no optimization in v1
 
+## Approved roadmap extension: Suzy math and register mirrors
+
+Owner-selected 2026-11-13 after the inline progress recommendation. These
+requirements add a software-only Phase 7 to the open milestone. They do not
+complete EVD-02 or promote the broader deferred SUZ-02 whole-suite obligation.
+
+- [ ] **SMR-01**: CPU and public inspection use the same Suzy register/mirror
+  decoding and byte-write side effects; existing mapped input and unsupported
+  mixed-span refusal guarantees remain covered.
+- [ ] **SMR-02**: Multiply/divide, signed arithmetic, accumulation and status
+  flags agree with independent vectors and the scoped pinned arithmetic and
+  register comparisons, including divide-by-zero and documented edge cases.
+- [ ] **SMR-03**: Math busy/completion is driven by deterministic guest time;
+  reset and snapshot continuation/refusal are verified at operation boundaries
+  and during work, including coarse/sliced advance and independent instances.
+- [ ] **SMR-04**: Source-built pinned math/memio observations have exact result
+  inventories and real completion/bounds/negative controls on both CPU
+  profiles. Arithmetic/register correctness is gated independently; all timing
+  comparisons remain visible and strict mismatches cannot become suite-pass or
+  hardware-accuracy claims. Existing timing gap and source expectations remain
+  unchanged. Native and hosted regression gates qualify the reviewed software.
+
 ## v2 Requirements
 
 Deferred to later milestones. Tracked, not in the current roadmap.
@@ -126,7 +148,9 @@ Deferred to later milestones. Tracked, not in the current roadmap.
 ### Suzy
 
 - **SUZ-01**: Suzy bus-master state machine (request, grant, done latch, SDONEACK, CPUSLEEP) passes `sdoneack`
-- **SUZ-02**: Math unit passes `math`; register mirrors pass `memio`
+- **SUZ-02**: Math unit passes full `math`; register mirrors pass `memio`.
+  Phase 7 advances arithmetic/register prerequisites; whole-suite timing
+  agreement remains pending unless independently established there.
 - **SUZ-03**: Sprite painter (literal, packed, types, clipping, collisions, scaling) passes `sprites3`
 - **SUZ-04**: Sprite timing passes `sprites1`, `sprites2`, `sprites4`, `sprites5` (O7 for the `sprites2` literal)
 
@@ -239,8 +263,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PERF-01 | Phase 6 | Complete |
 
 **Coverage:**
-- v1 requirements: 54 total
-- Mapped to phases: 54
+The initial v1 audit covers its original 54 requirements; the owner-approved
+Phase 7 extension adds four scoped requirements without closing that audit gap.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| SMR-01 | Phase 7 | Pending |
+| SMR-02 | Phase 7 | Pending |
+| SMR-03 | Phase 7 | Pending |
+| SMR-04 | Phase 7 | Pending |
+
+- Current requirements: 58 total (54 initial + 4 extension)
+- Mapped to phases: 58
 - Unmapped: 0 ✓
 
 ---

@@ -3,7 +3,8 @@
 ## Overview
 
 v1 builds a rights-clean, deterministic, observable Atari Lynx core in six
-vertical slices. Each slice ends in a runnable, deterministic, checkable
+initial vertical slices, followed by the owner-approved Suzy math/register
+extension. Each slice ends in a runnable, deterministic, checkable
 artifact. The slices are: an evidence harness and walking-skeleton API; a CPU
 proven by per-opcode vectors under data-defined profiles; the memory map with
 direct-load startup (tier A) and a first original diagnostic and labelled
@@ -39,6 +40,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Timers, Interrupts and First Public Suites** - Master-tick scheduler, Mikey timer bank, IRQ and minimal sleep; `timers` and `cpu` suites read from guest RAM with controls (completed 2026-11-11)
 - [x] **Phase 5: Display, Raw Video and Input** - Timer-driven frames, display DMA, per-line palette, raw video and logical input; live input-responsive homebrew frame (completed 2026-11-12)
 - [x] **Phase 6: Audio and Playable Checkpoint** - Four audio channels and integer PCM; homebrew with sound; v1 suite inventory and throughput baseline (completed 2026-11-13)
+- [ ] **Phase 7: Suzy Math and Register Mirrors**
 
 ## Phase Details
 
@@ -313,6 +315,34 @@ Plans:
 **Wave 11** *(blocked on Wave 10 completion)*
 - [x] 06-12-PLAN.md — Review, bounded fixes and exact-source qualification
 
+### Phase 7: Suzy Math and Register Mirrors
+
+**Goal:** CPU-visible Suzy arithmetic and register mirrors have independently
+checked results, deterministic operation progress and snapshot continuation,
+with source-built math/memio evidence and separately reported timing comparisons.
+**Requirements**: SMR-01, SMR-02, SMR-03, SMR-04
+**Depends on:** Phase 6
+**Boundary:** Owner-approved addition to the open roadmap; EVD-02, physical
+testing and milestone closure remain pending. Full deferred SUZ-02 agreement
+is not implied by scoped arithmetic/register checks.
+**Success Criteria:**
+  1. CPU access and public inspection agree on registers/mirrors and byte side
+     effects while input behavior and unsupported-span refusal remain covered.
+  2. Independent arithmetic vectors and scoped pinned comparisons establish
+     multiplication/division, signed/accumulation/flags and edge behavior.
+  3. Guest-timed busy completion is deterministic across slicing, instances,
+     reset and mid-operation snapshot continuation/refusal.
+  4. Source-built math/memio observations on both CPU profiles have completed
+     bounded progress, exact inventories and negative controls. Timing rows
+     and strict mismatches remain visible without a whole-suite accuracy claim.
+**Plans:** 4 plans
+
+Plans:
+- [ ] 07-01-PLAN.md — Complete mapped unsigned tracer and coherent state integration
+- [ ] 07-02-PLAN.md — Arithmetic, aliases, lifecycle and independent faults (after 07-01)
+- [ ] 07-03-PLAN.md — Source-built math/memio evidence and strict timing visibility (after 07-02)
+- [ ] 07-04-PLAN.md — Independent review and exact-source qualification (after 07-03)
+
 ## Later Milestones (unscheduled)
 
 These come from REQUIREMENTS.md v2. They are listed so the roadmap stays
@@ -331,7 +361,7 @@ gates.
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -341,3 +371,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 4. Timers, Interrupts and First Public Suites | 12/12 | Complete    | 2026-11-11 |
 | 5. Display, Raw Video and Input | 12/12 | Complete    | 2026-11-12 |
 | 6. Audio and Playable Checkpoint | 12/12 | Complete    | 2026-11-13 |
+| 7. Suzy Math and Register Mirrors | 0/4 | Planning | — |

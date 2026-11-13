@@ -13,6 +13,14 @@ how GSD workflows apply it. Update it when the owner changes a default.
 
 ## Owner decisions already given
 
+- 2026-11-13: after the inline next-scope review, the owner said "follow ur
+  recs" to Suzy math and register mirrors. Add and carry Phase 7 through the
+  configured planning, implementation and qualification workflow within the
+  existing open milestone. This supersedes the earlier no-new-phase boundary
+  for this selected addition only; the timer gap, physical stop, rights and
+  release boundaries remain. Arithmetic correctness and timing comparisons
+  stay separate, and full SUZ-02 is not silently redefined as a subset pass.
+
 - 2026-11-13: after the completed timer software package, the owner could not
   identify a console/loader and asked to follow recommendations and unblock
   work. Treat equipment as unavailable for planning; do not ask the same
