@@ -45,7 +45,7 @@ enum {
     FRAME_MANIFEST_CAP = 8192,
     FRAME_OUTPUT_LIMIT = 32,
     FRAME_RAW_BYTES_PER_ROW = 120,
-    AV_PCM_CAPACITY = 1024,
+    AV_PCM_CAPACITY = 3135,
     AV_EVENT_CAPACITY = 8192,
     AV_INPUT_APPLIED_CAPACITY = 512 * 1024,
     AV_RAW_HEADER_BYTES = 24,
@@ -2462,6 +2462,159 @@ static int av_step(lynx_machine *machine, uint64_t budget,
     return 0;
 }
 
+#if defined(LYNX_CONSUMER_TESTING)
+typedef struct av_interleaved_pair {
+    machine_storage first;
+    machine_storage second;
+    av_capture_totals first_totals;
+    av_capture_totals second_totals;
+    int enabled;
+} av_interleaved_pair;
+
+static int av_result_equal(const lynx_av_result *left, const lynx_av_result *right)
+{
+    return left->struct_size == right->struct_size && left->stop == right->stop &&
+        left->ticks_consumed == right->ticks_consumed &&
+        left->frame_start_tick == right->frame_start_tick &&
+        left->frame_end_tick == right->frame_end_tick &&
+        left->frame_sequence == right->frame_sequence && left->row_count == right->row_count &&
+        left->frame_flags == right->frame_flags &&
+        left->first_sample_ordinal == right->first_sample_ordinal &&
+        left->next_sample_ordinal == right->next_sample_ordinal &&
+        left->pcm_count == right->pcm_count && left->event_count == right->event_count;
+}
+
+static int av_totals_delta_equal(const av_capture_totals *left, size_t left_pcm_before,
+                                 size_t left_event_before, const av_capture_totals *right,
+                                 size_t right_pcm_before, size_t right_event_before)
+{
+    const size_t left_pcm_count = left->pcm_count - left_pcm_before;
+    const size_t right_pcm_count = right->pcm_count - right_pcm_before;
+    const size_t left_event_count = left->event_count - left_event_before;
+    const size_t right_event_count = right->event_count - right_event_before;
+    if (left_pcm_count != right_pcm_count || left_event_count != right_event_count ||
+        left->next_ordinal != right->next_ordinal) return 1;
+    for (size_t i = 0u; i < left_pcm_count; i++) {
+        if (left->pcm[left_pcm_before + i].left != right->pcm[right_pcm_before + i].left ||
+            left->pcm[left_pcm_before + i].right != right->pcm[right_pcm_before + i].right) return 1;
+    }
+    for (size_t i = 0u; i < left_event_count; i++) {
+        const lynx_audio_event *a = &left->events[left_event_before + i];
+        const lynx_audio_event *b = &right->events[right_event_before + i];
+        if (a->tick != b->tick || a->sequence != b->sequence || a->channel != b->channel ||
+            a->cause != b->cause || a->before_output != b->before_output ||
+            a->after_output != b->after_output) return 1;
+    }
+    return 0;
+}
+
+static int av_interleaved_init(av_interleaved_pair *pair, const uint8_t *bll,
+                               size_t bll_len, uint32_t profile,
+                               const lynx_identity *expected)
+{
+    lynx_identity first_identity, second_identity;
+    memset(pair, 0, sizeof *pair);
+    pair->first_totals.pcm = calloc(AV_PCM_CAPACITY, sizeof *pair->first_totals.pcm);
+    pair->second_totals.pcm = calloc(AV_PCM_CAPACITY, sizeof *pair->second_totals.pcm);
+    pair->first_totals.events = calloc(AV_EVENT_CAPACITY, sizeof *pair->first_totals.events);
+    pair->second_totals.events = calloc(AV_EVENT_CAPACITY, sizeof *pair->second_totals.events);
+    if (pair->first_totals.pcm == NULL || pair->second_totals.pcm == NULL ||
+        pair->first_totals.events == NULL || pair->second_totals.events == NULL ||
+        create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1,
+                       &pair->first, &first_identity) != 0 ||
+        create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1,
+                       &pair->second, &second_identity) != 0 ||
+        first_identity.profile != expected->profile || second_identity.profile != expected->profile ||
+        first_identity.timing_policy != expected->timing_policy ||
+        second_identity.timing_policy != expected->timing_policy ||
+        first_identity.audio_policy != expected->audio_policy ||
+        second_identity.audio_policy != expected->audio_policy ||
+        memcmp(first_identity.content_sha256, expected->content_sha256, 32u) != 0 ||
+        memcmp(second_identity.content_sha256, expected->content_sha256, 32u) != 0) return 1;
+    pair->enabled = 1;
+    return 0;
+}
+
+static void av_interleaved_destroy(av_interleaved_pair *pair)
+{
+    destroy_machine(&pair->first);
+    destroy_machine(&pair->second);
+    free(pair->first_totals.pcm);
+    free(pair->second_totals.pcm);
+    free(pair->first_totals.events);
+    free(pair->second_totals.events);
+    memset(pair, 0, sizeof *pair);
+}
+
+static int av_interleaved_set_input(av_interleaved_pair *pair, uint32_t mask)
+{
+    if (pair->enabled == 0) return 0;
+    if (lynx_set_input(pair->first.machine, mask) != LYNX_OK ||
+        lynx_set_input(pair->second.machine, mask) != LYNX_OK) return 1;
+    {
+        uint8_t first[32], second[32];
+        if (lynx_state_digest(pair->first.machine, first) != LYNX_OK ||
+            lynx_state_digest(pair->second.machine, second) != LYNX_OK ||
+            memcmp(first, second, sizeof first) != 0) return 1;
+    }
+    return 0;
+}
+
+static int av_step_interleaved(lynx_machine *primary, uint64_t budget,
+                               uint8_t *pens, uint8_t *palettes, uint64_t *ticks,
+                               size_t pcm_capacity, size_t event_capacity,
+                               av_capture_totals *primary_totals, lynx_av_result *primary_result,
+                               av_interleaved_pair *pair)
+{
+    if (av_step(primary, budget, pens, palettes, ticks, pcm_capacity,
+                event_capacity, primary_totals, primary_result) != 0) return 1;
+    if (pair->enabled != 0) {
+        uint8_t first_pens[LYNX_FRAME_PENS_CAPACITY], first_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+        uint8_t second_pens[LYNX_FRAME_PENS_CAPACITY], second_palettes[LYNX_FRAME_PALETTE_CAPACITY];
+        uint64_t first_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY], second_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
+        lynx_av_result first_result = {0}, second_result = {0};
+        const size_t primary_pcm_before = primary_totals->pcm_count - primary_result->pcm_count;
+        const size_t primary_event_before = primary_totals->event_count - primary_result->event_count;
+        const size_t first_pcm_before = pair->first_totals.pcm_count;
+        const size_t first_event_before = pair->first_totals.event_count;
+        const size_t second_pcm_before = pair->second_totals.pcm_count;
+        const size_t second_event_before = pair->second_totals.event_count;
+        uint8_t primary_digest[32], first_digest[32], second_digest[32];
+        if (av_step(pair->first.machine, budget, first_pens, first_palettes, first_ticks,
+                    pcm_capacity, event_capacity, &pair->first_totals, &first_result) != 0 ||
+            av_step(pair->second.machine, budget, second_pens, second_palettes, second_ticks,
+                    pcm_capacity, event_capacity, &pair->second_totals, &second_result) != 0 ||
+            !av_result_equal(primary_result, &first_result) ||
+            !av_result_equal(primary_result, &second_result) ||
+            av_totals_delta_equal(primary_totals, primary_pcm_before, primary_event_before,
+                                  &pair->first_totals, first_pcm_before, first_event_before) != 0 ||
+            av_totals_delta_equal(primary_totals, primary_pcm_before, primary_event_before,
+                                  &pair->second_totals, second_pcm_before, second_event_before) != 0 ||
+            (primary_result->row_count != 0u &&
+             (memcmp(pens, first_pens, (size_t)primary_result->row_count * LYNX_FRAME_ROW_BYTES) != 0 ||
+              memcmp(pens, second_pens, (size_t)primary_result->row_count * LYNX_FRAME_ROW_BYTES) != 0 ||
+              memcmp(palettes, first_palettes, (size_t)primary_result->row_count * 32u) != 0 ||
+              memcmp(palettes, second_palettes, (size_t)primary_result->row_count * 32u) != 0 ||
+              memcmp(ticks, first_ticks, (size_t)primary_result->row_count * sizeof *ticks) != 0 ||
+              memcmp(ticks, second_ticks, (size_t)primary_result->row_count * sizeof *ticks) != 0)) ||
+            lynx_state_digest(primary, primary_digest) != LYNX_OK ||
+            lynx_state_digest(pair->first.machine, first_digest) != LYNX_OK ||
+            lynx_state_digest(pair->second.machine, second_digest) != LYNX_OK ||
+            memcmp(primary_digest, first_digest, sizeof primary_digest) != 0 ||
+            memcmp(primary_digest, second_digest, sizeof primary_digest) != 0) return 1;
+    }
+    return 0;
+}
+
+#define AV_REPLAY_STEP(machine, budget, pens, palettes, ticks, pcm_capacity, event_capacity, totals, result) \
+    av_step_interleaved((machine), (budget), (pens), (palettes), (ticks), (pcm_capacity), \
+                        (event_capacity), (totals), (result), &interleaved)
+#else
+#define AV_REPLAY_STEP(machine, budget, pens, palettes, ticks, pcm_capacity, event_capacity, totals, result) \
+    av_step((machine), (budget), (pens), (palettes), (ticks), (pcm_capacity), \
+            (event_capacity), (totals), (result))
+#endif
+
 static int av_frame_result(const lynx_av_result *source, lynx_frame_result *out)
 {
     if (source->stop != LYNX_STOP_FRAME || source->row_count > LYNX_FRAME_MAX_ROWS) return 1;
@@ -2750,6 +2903,10 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
     char normalized_output[4096];
     int target_created = 0, short_spans = 0, watch_expected = 0, watch_resume = 0, bad_checkpoint = 0;
     int uninterrupted_control = 0;
+#if defined(LYNX_CONSUMER_TESTING)
+    int interleaved_test = 0;
+    av_interleaved_pair interleaved = {0};
+#endif
     av_capture_totals totals = {0};
     frame_capture frames[FRAME_OUTPUT_LIMIT] = {0};
     frame_capture *released_capture = NULL, *pressed_capture = NULL;
@@ -2774,6 +2931,8 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
         bad_checkpoint = value != NULL && value[0] != '\0';
         value = getenv("LYNX_TEST_AV_UNINTERRUPTED");
         uninterrupted_control = value != NULL && strcmp(value, "1") == 0;
+        value = getenv("LYNX_TEST_AV_INTERLEAVED");
+        interleaved_test = value != NULL && strcmp(value, "1") == 0;
     }
 #endif
     totals.pcm = calloc(AV_PCM_CAPACITY, sizeof *totals.pcm);
@@ -2809,7 +2968,7 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
         (void)report_error("A/V replay needs a bounded timeline containing an A press"); goto done;
     }
     endpoint = last_tick + UINT64_C(60000);
-    if (endpoint / UINT64_C(400) > AV_PCM_CAPACITY) {
+    if (endpoint / UINT64_C(400) >= AV_PCM_CAPACITY) {
         (void)report_error("A/V timeline exceeds the bounded output window or destination path limit"); goto done;
     }
     host_sha_digest(timeline_bytes, timeline_len, script_digest);
@@ -2834,6 +2993,11 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
         memcmp(identity.content_sha256, restore_identity.content_sha256, 32u) != 0) {
         (void)report_error("public machine identity does not match the fixed digital stereo PCM contract"); goto done;
     }
+#if defined(LYNX_CONSUMER_TESTING)
+    if (interleaved_test != 0 && av_interleaved_init(&interleaved, bll, bll_len, profile, &identity) != 0) {
+        (void)report_error("could not initialize two fresh A/V instances for interleaved conformance"); goto done;
+    }
+#endif
     host_sha_hex(identity.content_sha256, content_hash);
     if (lynx_advance_av(active.machine, 60000u, NULL, NULL) != LYNX_ERR_ARGUMENT) {
         (void)report_error("invalid A/V descriptors were not rejected before progress"); goto done;
@@ -2855,7 +3019,7 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
                 event->tick - now : UINT64_C(60000);
             const size_t pcm_capacity = short_spans != 0 ? LYNX_AV_MIN_PCM_CAPACITY : AV_PCM_CAPACITY;
             const size_t event_capacity = short_spans != 0 ? LYNX_AV_MIN_EVENT_CAPACITY : AV_EVENT_CAPACITY;
-            if (av_step(active.machine, request, pens, palettes, ticks, pcm_capacity,
+            if (AV_REPLAY_STEP(active.machine, request, pens, palettes, ticks, pcm_capacity,
                         event_capacity, &totals, &step) != 0 ||
                 lynx_guest_ticks(active.machine, &after) != LYNX_OK || after < now || after > event->tick) {
                 (void)report_error("A/V advance violated its bounded input-edge interval"); goto done;
@@ -2969,6 +3133,11 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
                 if (lynx_set_input(active.machine, event->mask) != LYNX_OK) {
                     (void)report_error("public input setter refused a validated event at its exact guest tick"); goto done;
                 }
+#if defined(LYNX_CONSUMER_TESTING)
+                if (av_interleaved_set_input(&interleaved, event->mask) != 0) {
+                    (void)report_error("interleaved fresh A/V instances refused the same validated input at its guest tick"); goto done;
+                }
+#endif
                 if (av_append_applied_input(applied_text, AV_INPUT_APPLIED_CAPACITY,
                         &applied_text_len, event_index, event, current_mask) != 0) {
                     (void)report_error("bounded applied-input transcript could not record a successful edge"); goto done;
@@ -2990,7 +3159,7 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
             (void)report_error("no complete guest frame followed the final input edge within its bound"); goto done;
         }
         remaining = endpoint - now;
-        if (av_step(active.machine, remaining, pens, palettes, ticks, pcm_capacity,
+        if (AV_REPLAY_STEP(active.machine, remaining, pens, palettes, ticks, pcm_capacity,
                     event_capacity, &totals, &step) != 0 ||
             lynx_guest_ticks(active.machine, &after) != LYNX_OK || after < now || after > endpoint) {
             (void)report_error("final A/V frame interval violated its guest-time bound"); goto done;
@@ -3132,6 +3301,10 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
     }
     printf("lynx-consume: replayed %zu input edges and published %zu complete frame/progress records with applied input, PCM and event streams to %s\n",
            timeline.count, frame_count, output_directory);
+#if defined(LYNX_CONSUMER_TESTING)
+    if (interleaved_test != 0)
+        puts("lynx-consume-test: two fresh A/V instances matched every interleaved frame, PCM, event and state boundary");
+#endif
     result = 0;
 done:
     free(bll); free(labels); free(timeline_bytes); free(timeline.events);
@@ -3141,6 +3314,9 @@ done:
     for (size_t i = 0u; i < FRAME_OUTPUT_LIMIT; i++) { free(frames[i].raw); free(frames[i].ppm); }
     destroy_machine(&active);
     if (target_created != 0) destroy_machine(&restore_target);
+#if defined(LYNX_CONSUMER_TESTING)
+    av_interleaved_destroy(&interleaved);
+#endif
     return result;
 }
 

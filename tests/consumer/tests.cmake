@@ -56,6 +56,8 @@ function(lynx_av_test name timeout)
 endfunction()
 lynx_av_test(consumer.av_tracer 120)
 lynx_av_test(consumer.av_edges 180)
+lynx_av_test(consumer.av_replay 240)
+lynx_av_test(consumer.av_response_controls 240)
 lynx_av_test(consumer.av_restore 180)
 function(lynx_frame_test name scenario timeout)
   lynx_add_test(NAME ${name}

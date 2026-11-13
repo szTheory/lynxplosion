@@ -161,6 +161,71 @@ function(compare_bundles left right)
   endforeach()
 endfunction()
 
+function(check_stream_identity directory filename size_key sha_key)
+  file(SIZE "${directory}/${filename}" actual_size)
+  file(SHA256 "${directory}/${filename}" actual_sha)
+  file(STRINGS "${directory}/av.manifest" manifest_size REGEX "^${size_key} = ")
+  file(STRINGS "${directory}/av.manifest" manifest_sha REGEX "^${sha_key} = ")
+  list(LENGTH manifest_size size_count)
+  list(LENGTH manifest_sha sha_count)
+  if(NOT size_count EQUAL 1 OR NOT sha_count EQUAL 1 OR
+     NOT manifest_size STREQUAL "${size_key} = ${actual_size}" OR
+     NOT manifest_sha STREQUAL "${sha_key} = ${actual_sha}")
+    message(FATAL_ERROR "${CASE}: av.manifest does not bind ${filename} to its exact extent and bytes")
+  endif()
+endfunction()
+
+function(check_replay_bundle directory timeline_sha)
+  file(STRINGS "${directory}/av.manifest" content_identity REGEX "^content_sha256 = ")
+  file(STRINGS "${directory}/av.manifest" input_identity REGEX "^input_sha256 = ")
+  file(STRINGS "${directory}/av.manifest" timeline_identity REGEX "^timeline_sha256 = ")
+  file(STRINGS "${directory}/av.manifest" timeline_stream_identity REGEX "^timeline_stream_sha256 = ")
+  if(NOT content_identity STREQUAL "content_sha256 = ${guest_sha}" OR
+     NOT input_identity STREQUAL "input_sha256 = ${timeline_sha}" OR
+     NOT timeline_identity STREQUAL "timeline_sha256 = ${timeline_sha}" OR
+     NOT timeline_stream_identity STREQUAL "timeline_stream_sha256 = ${timeline_sha}")
+    message(FATAL_ERROR "${CASE}: manifest content/timeline identity does not match the source-built guest and canonical input")
+  endif()
+  check_stream_identity("${directory}" input.timeline input_bytes input_sha256)
+  check_stream_identity("${directory}" input.applied input_applied_bytes input_applied_sha256)
+  check_stream_identity("${directory}" guest.progress guest_progress_bytes guest_progress_sha256)
+  check_stream_identity("${directory}" frames.raw frames_raw_bytes frames_raw_sha256)
+  check_stream_identity("${directory}" frames.ppm frames_ppm_bytes frames_ppm_sha256)
+  check_stream_identity("${directory}" released.raw released_raw_bytes released_raw_sha256)
+  check_stream_identity("${directory}" released.ppm released_ppm_bytes released_ppm_sha256)
+  check_stream_identity("${directory}" pressed.raw pressed_raw_bytes pressed_raw_sha256)
+  check_stream_identity("${directory}" pressed.ppm pressed_ppm_bytes pressed_ppm_sha256)
+  check_stream_identity("${directory}" audio.pcm pcm_bytes pcm_sha256)
+  check_stream_identity("${directory}" audio.wav wav_bytes wav_sha256)
+  check_stream_identity("${directory}" audio.events events_bytes events_sha256)
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" av-replay "${directory}" "${guest_sha}" "${timeline_sha}"
+    TIMEOUT 30 RESULT_VARIABLE checker_rc OUTPUT_VARIABLE checker_out ERROR_VARIABLE checker_err)
+  if(NOT checker_rc STREQUAL "0")
+    message(FATAL_ERROR "${CASE}: independent full-stream checker failed (${checker_rc})\n${checker_out}${checker_err}\nArtifacts retained under ${directory}")
+  endif()
+endfunction()
+
+function(expect_replay_rejection directory expected)
+  execute_process(COMMAND "${ARTIFACT_CHECKER}" av-replay "${directory}" "${guest_sha}" "${timeline_sha}"
+    TIMEOUT 30 RESULT_VARIABLE checker_rc OUTPUT_VARIABLE checker_out ERROR_VARIABLE checker_err)
+  if(checker_rc STREQUAL "0" OR NOT "${checker_out}${checker_err}" MATCHES "${expected}")
+    message(FATAL_ERROR "${CASE}: mutation was not rejected at '${expected}' (${checker_rc})\n${checker_out}${checker_err}")
+  endif()
+endfunction()
+
+function(replace_text_file path before after)
+  file(READ "${path}" original)
+  string(FIND "${original}" "${before}" position)
+  if(position LESS 0)
+    message(FATAL_ERROR "${CASE}: mutation source text is absent from ${path}")
+  endif()
+  string(REPLACE "${before}" "${after}" updated "${original}")
+  if(updated STREQUAL original)
+    message(FATAL_ERROR "${CASE}: requested mutation made no change to ${path}")
+  endif()
+  file(WRITE "${path}" "${updated}")
+endfunction()
+
 if(CASE STREQUAL "consumer.av_tracer")
   file(WRITE "${WORK}/input.timeline" "LYNX-INPUT 1\n109321 16\n")
   file(SHA256 "${WORK}/input.timeline" input_sha)
@@ -250,5 +315,129 @@ elseif(CASE STREQUAL "consumer.av_restore")
   run_expected_refusal("LYNX_TEST_AV_WATCH=1"
     "WATCH stopped before the next input edge; released guest marker is preserved" "${WORK}/output-watch")
   message(STATUS "consumer.av_restore: offset, prefix, identity, and watched-stop controls refused without publishing output")
+elseif(CASE STREQUAL "consumer.av_replay" OR CASE STREQUAL "consumer.av_response_controls")
+  file(WRITE "${WORK}/input.timeline"
+    "LYNX-INPUT 1\n0 0\n108545 16\n217089 32\n325633 1\n434177 2\n542721 4\n651265 8\n759809 64\n868353 128\n976897 256\n1085441 511\n1193985 0\n")
+  file(SHA256 "${WORK}/input.timeline" timeline_sha)
+  set(baseline "${WORK}/output-sequential")
+  set(interleaved "${WORK}/output-interleaved")
+  if(CASE STREQUAL "consumer.av_replay")
+    run_replay("${CONSUMER}" "${baseline}" "")
+    check_replay_bundle("${baseline}" "${timeline_sha}")
+    run_replay("${TEST_CONSUMER}" "${interleaved}" "LYNX_TEST_AV_INTERLEAVED=1")
+    compare_bundles("${baseline}" "${interleaved}")
+    check_replay_bundle("${interleaved}" "${timeline_sha}")
+    message(STATUS "consumer.av_replay: full guest-authored input, progress, raw/rendered frames, PCM and event bundles match across sequential and two interleaved fresh instances")
+  else()
+    run_replay("${CONSUMER}" "${baseline}" "")
+    check_replay_bundle("${baseline}" "${timeline_sha}")
+
+    # A missing guest run must not be mistaken for a valid response bundle.
+    file(WRITE "${WORK}/no-run.timeline" "LYNX-INPUT 1\n0 0\n")
+    set(no_run_output "${WORK}/output-no-run")
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "${CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
+      --symbols "${WORK}/av_probe.lbl" --timeline "${WORK}/no-run.timeline"
+      --out "${no_run_output}" --profile none
+      TIMEOUT 60 RESULT_VARIABLE no_run_rc OUTPUT_VARIABLE no_run_out ERROR_VARIABLE no_run_err)
+    if(no_run_rc STREQUAL "0" OR NOT "${no_run_out}${no_run_err}" MATCHES "A/V replay needs a bounded timeline containing an A press" OR EXISTS "${no_run_output}")
+      message(FATAL_ERROR "consumer.av_response_controls: no-run guest did not refuse before publishing (${no_run_rc})\n${no_run_out}${no_run_err}")
+    endif()
+    expect_replay_rejection("${no_run_output}" "cannot open artifact")
+
+    file(WRITE "${WORK}/over-bound.timeline" "LYNX-INPUT 1\n1200000 16\n")
+    set(over_bound_output "${WORK}/output-over-bound")
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      "${CONSUMER}" --mode av-replay --content "${WORK}/av_probe.bll"
+      --symbols "${WORK}/av_probe.lbl" --timeline "${WORK}/over-bound.timeline"
+      --out "${over_bound_output}" --profile none
+      TIMEOUT 60 RESULT_VARIABLE bound_rc OUTPUT_VARIABLE bound_out ERROR_VARIABLE bound_err)
+    if(bound_rc STREQUAL "0" OR NOT "${bound_out}${bound_err}" MATCHES "A/V timeline exceeds the bounded output window" OR EXISTS "${over_bound_output}")
+      message(FATAL_ERROR "consumer.av_response_controls: derived PCM/output bound did not refuse before publication (${bound_rc})\n${bound_out}${bound_err}")
+    endif()
+
+    set(unchanged "${WORK}/control-unchanged-input")
+    file(MAKE_DIRECTORY "${unchanged}")
+    file(COPY "${baseline}/" DESTINATION "${unchanged}")
+    replace_text_file("${unchanged}/input.applied" "0 13 0 0 0\n" "0 13 0 0 16\n")
+    expect_replay_rejection("${unchanged}" "applied-input records do not match successful public calls")
+
+    set(silent "${WORK}/control-silent-audio")
+    file(MAKE_DIRECTORY "${silent}")
+    file(COPY "${baseline}/" DESTINATION "${silent}")
+    file(SIZE "${silent}/audio.pcm" pcm_size)
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      dd if=/dev/zero "of=${silent}/audio.pcm" bs=1 "count=${pcm_size}"
+      TIMEOUT 30 RESULT_VARIABLE zero_pcm_rc OUTPUT_QUIET ERROR_VARIABLE zero_pcm_err)
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      dd if=/dev/zero "of=${silent}/audio.wav" bs=1 seek=44 "count=${pcm_size}" conv=notrunc
+      TIMEOUT 30 RESULT_VARIABLE zero_wav_rc OUTPUT_QUIET ERROR_VARIABLE zero_wav_err)
+    if(NOT zero_pcm_rc STREQUAL "0" OR NOT zero_wav_rc STREQUAL "0")
+      message(FATAL_ERROR "consumer.av_response_controls: could not create the bounded silent PCM mutation\n${zero_pcm_err}${zero_wav_err}")
+    endif()
+    expect_replay_rejection("${silent}" "input-responsive non-silent PCM")
+
+    set(extra_chunk "${WORK}/control-extra-wav-chunk")
+    file(MAKE_DIRECTORY "${extra_chunk}")
+    file(COPY "${baseline}/" DESTINATION "${extra_chunk}")
+    file(APPEND "${extra_chunk}/audio.wav" "JUNK")
+    expect_replay_rejection("${extra_chunk}" "WAV PCM format or exact data extent")
+
+    set(truncated_pcm "${WORK}/control-truncated-pcm")
+    file(MAKE_DIRECTORY "${truncated_pcm}")
+    file(COPY "${baseline}/" DESTINATION "${truncated_pcm}")
+    file(SIZE "${truncated_pcm}/audio.pcm" pcm_size)
+    math(EXPR short_pcm_size "${pcm_size} - 1")
+    execute_process(COMMAND "${ENV_EXECUTABLE}" -i "PATH=/usr/bin:/bin"
+      dd "if=${truncated_pcm}/audio.pcm" "of=${truncated_pcm}/audio.pcm.short" bs=1 "count=${short_pcm_size}"
+      TIMEOUT 30 RESULT_VARIABLE truncate_pcm_rc OUTPUT_QUIET ERROR_VARIABLE truncate_pcm_err)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E copy "${truncated_pcm}/audio.pcm.short" "${truncated_pcm}/audio.pcm"
+      RESULT_VARIABLE install_short_rc OUTPUT_QUIET ERROR_VARIABLE install_short_err)
+    if(NOT truncate_pcm_rc STREQUAL "0" OR NOT install_short_rc STREQUAL "0")
+      message(FATAL_ERROR "consumer.av_response_controls: could not create the bounded truncated PCM mutation\n${truncate_pcm_err}${install_short_err}")
+    endif()
+    file(REMOVE "${truncated_pcm}/audio.pcm.short")
+    expect_replay_rejection("${truncated_pcm}" "WAV PCM format or exact data extent")
+
+    set(header_only "${WORK}/control-header-only")
+    file(MAKE_DIRECTORY "${header_only}")
+    file(COPY "${baseline}/" DESTINATION "${header_only}")
+    file(WRITE "${header_only}/frames.raw" "LXAVRAW1")
+    expect_replay_rejection("${header_only}" "complete raw video records, line ticks and rendered palette mapping")
+
+    set(wrong_count "${WORK}/control-wrong-sample-count")
+    file(MAKE_DIRECTORY "${wrong_count}")
+    file(COPY "${baseline}/" DESTINATION "${wrong_count}")
+    replace_text_file("${wrong_count}/av.manifest" "first_sample_ordinal = 0\n" "first_sample_ordinal = 1\n")
+    expect_replay_rejection("${wrong_count}" "PCM sample ordinal range")
+
+    set(changed_frame "${WORK}/control-changed-frame")
+    file(MAKE_DIRECTORY "${changed_frame}")
+    file(COPY "${baseline}/" DESTINATION "${changed_frame}")
+    replace_text_file("${changed_frame}/frames.ppm" "# sample_a = 0\n" "# sample_a = 1\n")
+    expect_replay_rejection("${changed_frame}" "complete raw video records, line ticks and rendered palette mapping")
+
+    set(bad_marker "${WORK}/control-bad-marker")
+    file(MAKE_DIRECTORY "${bad_marker}")
+    file(COPY "${baseline}/" DESTINATION "${bad_marker}")
+    replace_text_file("${bad_marker}/guest.progress" " 17 1\n" " 99 1\n")
+    expect_replay_rejection("${bad_marker}" "guest progress records are incomplete or not tied to raw frame boundaries")
+
+    set(out_of_order "${WORK}/control-event-order")
+    file(MAKE_DIRECTORY "${out_of_order}")
+    file(COPY "${baseline}/" DESTINATION "${out_of_order}")
+    file(STRINGS "${out_of_order}/audio.events" event_rows)
+    list(LENGTH event_rows event_row_count)
+    if(event_row_count LESS 2)
+      message(FATAL_ERROR "consumer.av_response_controls: baseline has no real channel event to mutate")
+    endif()
+    list(GET event_rows 1 first_event)
+    file(APPEND "${out_of_order}/audio.events" "${first_event}\n")
+    expect_replay_rejection("${out_of_order}" "channel event order and post-input response")
+
+    # Bracket the mutation corpus with the same real guest baseline.
+    check_replay_bundle("${baseline}" "${timeline_sha}")
+    message(STATUS "consumer.av_response_controls: real guest baseline passed before and after no-run/over-bound refusal, unchanged-input, silent/header-only audio, extra/truncated WAV data, sample-count, frame, marker and event-order controls")
+  endif()
 endif()
 file(REMOVE_RECURSE "${WORK}")

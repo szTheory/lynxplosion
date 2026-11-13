@@ -23,10 +23,14 @@ response.
 Replay advances only to the next declared edge, using bounded public
 `lynx_advance_av` calls. A frame or output-span stop is handled with fresh
 caller-owned spans; returned sample ordinals, event/frame counts, and guest
-ticks are checked before continuing. A full-span run can hold at most 1,024 PCM
-frames and 8,192 audio events; the complete replay retains at most 32 rendered
-frames. It observes through the first complete frame ending after the last
-input edge, with a 60,000-tick bound for that final interval.
+ticks are checked before continuing. A full-span run can hold at most 3,135
+PCM frames and 8,192 audio events; the complete replay retains at most 32
+rendered frames. The required scenario ends at tick 1,193,985; adding its
+60,000-tick final-frame window gives a floor of 3,134 sample ordinals at 400
+ticks per sample. One additional caller slot lets the final frame advance
+without dropping the last output span. The consumer rejects timelines that
+exceed this fixed bound. It observes through the first complete frame ending
+after the last input edge, with a 60,000-tick bound for that final interval.
 
 If a frame ends exactly at an input tick, that frame belongs to the state
 before the edge. The host then applies the new mask at that exact guest tick.
@@ -114,3 +118,18 @@ The source-built `av_probe` fixture supplies the input-responsive guest
 markers and audio writes. Its provenance and permitted diagnostic use are
 recorded in `fixtures/manifests/av-probe.manifest`; its response is project
 test evidence, not a substitute for an accuracy oracle.
+
+The `consumer.av_replay` test driver first checks every manifest size and
+SHA-256 against the real sequential bundle, then compares every file, including
+the manifest, with a test-only pair of fresh instances advanced in alternating
+A/V spans. It then runs the independent C checker over each positive bundle;
+that checker validates syntax, stream extents, event ordering and guest/frame
+semantics, while the driver performs the SHA-256 comparisons. The normal
+`lynx-consume` process still produces one transcript. Private-copy mutation
+controls go directly to the semantic checker and assert their specific failure
+stage for absent guest output, mismatched input application, silent or
+header-only audio, extra/truncated WAV data, incorrect sample ordinals,
+altered frame metadata, bad guest markers and reordered audio events. Those
+manufactured mutations are parser controls, separate from actual guest
+evidence. These checks establish reproducible same-build output and parser
+behavior only.

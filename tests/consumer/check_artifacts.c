@@ -542,6 +542,20 @@ static int has_sha_field(const uint8_t *bytes, size_t length, const char *name)
     return 0;
 }
 
+static int has_nonempty_field(const uint8_t *bytes, size_t length, const char *name)
+{
+    const size_t prefix_len = strlen(name);
+    size_t offset = 0u;
+    unsigned matches = 0u;
+    while (offset < length) {
+        size_t end = offset;
+        while (end < length && bytes[end] != (uint8_t)'\n') end++;
+        if (end - offset > prefix_len && memcmp(bytes + offset, name, prefix_len) == 0) matches++;
+        offset = end < length ? end + 1u : end;
+    }
+    return matches == 1u;
+}
+
 static int validate_frame_ppm(const char *path, unsigned frame_index,
                               uint64_t start_tick, uint64_t end_tick,
                               uint32_t input_mask, uint32_t sample_a,
@@ -817,6 +831,540 @@ invalid:
     (void)snprintf(error, error_cap, "A/V validation failed: %s", failed_stage);
 done:
     free(released_raw); free(pressed_raw); free(released_ppm); free(pressed_ppm);
+    free(pcm); free(wav); free(events); free(manifest);
+    return result;
+}
+
+typedef struct av_input_record {
+    uint64_t tick;
+    uint64_t offset;
+    uint32_t mask;
+} av_input_record;
+
+typedef struct av_progress_record {
+    uint64_t value[12];
+} av_progress_record;
+
+static int parse_decimal_columns(const uint8_t *line, size_t length,
+                                 uint64_t *values, size_t count)
+{
+    size_t offset = 0u;
+    for (size_t column = 0u; column < count; column++) {
+        uint64_t value = 0u;
+        size_t digits = 0u;
+        if (offset >= length || line[offset] < (uint8_t)'0' || line[offset] > (uint8_t)'9') return 1;
+        while (offset < length && line[offset] >= (uint8_t)'0' && line[offset] <= (uint8_t)'9') {
+            const uint64_t digit = (uint64_t)(line[offset] - (uint8_t)'0');
+            if (value > (UINT64_MAX - digit) / 10u) return 1;
+            value = value * 10u + digit;
+            offset++;
+            digits++;
+        }
+        if (digits > 1u && line[offset - digits] == (uint8_t)'0') return 1;
+        values[column] = value;
+        if (column + 1u < count) {
+            if (offset >= length || line[offset] != (uint8_t)' ') return 1;
+            offset++;
+        }
+    }
+    return offset == length ? 0 : 1;
+}
+
+static int expect_av_manifest(const uint8_t *manifest, size_t length,
+                              const char *key, const char *value)
+{
+    char line[256];
+    char prefix[128];
+    size_t offset = 0u;
+    unsigned key_matches = 0u;
+    const int n = snprintf(line, sizeof line, "%s = %s", key, value);
+    const int prefix_len = snprintf(prefix, sizeof prefix, "%s = ", key);
+    if (n < 0 || (size_t)n >= sizeof line || prefix_len < 0 || (size_t)prefix_len >= sizeof prefix) return 1;
+    while (offset < length) {
+        size_t end = offset;
+        while (end < length && manifest[end] != (uint8_t)'\n') end++;
+        if (end - offset >= (size_t)prefix_len && memcmp(manifest + offset, prefix, (size_t)prefix_len) == 0)
+            key_matches++;
+        offset = end < length ? end + 1u : end;
+    }
+    return key_matches != 1u || !has_exact_line(manifest, length, line);
+}
+
+static int expect_av_manifest_size(const uint8_t *manifest, size_t length,
+                                   const char *key, size_t value)
+{
+    char number[32];
+    (void)snprintf(number, sizeof number, "%zu", value);
+    return expect_av_manifest(manifest, length, key, number);
+}
+
+static int read_av_file(const char *directory, const char *name, size_t limit,
+                        uint8_t **bytes, size_t *length, char *error,
+                        size_t error_cap)
+{
+    char path[4096];
+    if (path_join(directory, name, path, sizeof path) != 0) {
+        set_error(error, error_cap, "A/V artifact path exceeds its bound");
+        return 1;
+    }
+    return read_bounded(path, limit, bytes, length, error, error_cap);
+}
+
+static int validate_av_file_set(const char *directory)
+{
+    static const char *const names[] = {
+        "input.timeline", "input.applied", "guest.progress", "frames.raw", "frames.ppm",
+        "released.raw", "released.ppm", "pressed.raw", "pressed.ppm", "audio.pcm",
+        "audio.wav", "audio.events", "av.manifest"
+    };
+    DIR *dir = opendir(directory);
+    struct dirent *entry;
+    unsigned seen = 0u;
+    if (dir == NULL) return 1;
+    while ((entry = readdir(dir)) != NULL) {
+        unsigned index;
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        for (index = 0u; index < sizeof names / sizeof names[0]; index++)
+            if (strcmp(entry->d_name, names[index]) == 0) break;
+        if (index == sizeof names / sizeof names[0] || (seen & (1u << index)) != 0u) {
+            (void)closedir(dir);
+            return 1;
+        }
+        seen |= 1u << index;
+    }
+    if (closedir(dir) != 0) return 1;
+    return seen == (1u << (sizeof names / sizeof names[0])) - 1u ? 0 : 1;
+}
+
+static int parse_av_timeline(const uint8_t *bytes, size_t length,
+                             av_input_record records[4096], size_t *count)
+{
+    static const char header[] = "LYNX-INPUT 1\n";
+    size_t offset = sizeof header - 1u, used = 0u;
+    uint64_t previous_tick = 0u;
+    if (length < sizeof header - 1u || memcmp(bytes, header, sizeof header - 1u) != 0 ||
+        memchr(bytes, '\0', length) != NULL || bytes[length - 1u] != (uint8_t)'\n') return 1;
+    while (offset < length) {
+        size_t end = offset;
+        uint64_t values[2];
+        while (end < length && bytes[end] != (uint8_t)'\n') end++;
+        if (end == length || end == offset || used >= 4096u ||
+            parse_decimal_columns(bytes + offset, end - offset, values, 2u) != 0 ||
+            values[1] > 0x1FFu || (used != 0u && values[0] <= previous_tick)) return 1;
+        records[used].tick = values[0];
+        records[used].mask = (uint32_t)values[1];
+        records[used].offset = (uint64_t)offset;
+        previous_tick = values[0];
+        used++;
+        offset = end + 1u;
+    }
+    *count = used;
+    return 0;
+}
+
+static int parse_av_progress(const uint8_t *bytes, size_t length,
+                             av_progress_record records[32], size_t *count)
+{
+    static const char header[] = "LYNX-GUEST-PROGRESS 1\n";
+    size_t offset = sizeof header - 1u, used = 0u;
+    if (length < sizeof header - 1u || memcmp(bytes, header, sizeof header - 1u) != 0 ||
+        memchr(bytes, '\0', length) != NULL || bytes[length - 1u] != (uint8_t)'\n') return 1;
+    while (offset < length) {
+        size_t end = offset;
+        while (end < length && bytes[end] != (uint8_t)'\n') end++;
+        if (end == length || end == offset || used >= 32u ||
+            parse_decimal_columns(bytes + offset, end - offset, records[used].value, 12u) != 0) return 1;
+        offset = end + 1u;
+        used++;
+    }
+    *count = used;
+    return 0;
+}
+
+static int parse_decimal_token(const uint8_t *line, size_t length, size_t *offset,
+                               uint64_t *value)
+{
+    size_t start = *offset;
+    uint64_t parsed = 0u;
+    if (start >= length || line[start] < (uint8_t)'0' || line[start] > (uint8_t)'9') return 1;
+    while (*offset < length && line[*offset] >= (uint8_t)'0' && line[*offset] <= (uint8_t)'9') {
+        const uint64_t digit = (uint64_t)(line[*offset] - (uint8_t)'0');
+        if (parsed > (UINT64_MAX - digit) / 10u) return 1;
+        parsed = parsed * 10u + digit;
+        (*offset)++;
+    }
+    if (*offset - start > 1u && line[start] == (uint8_t)'0') return 1;
+    *value = parsed;
+    return 0;
+}
+
+static int parse_av_level(const uint8_t *line, size_t length, size_t *offset, int *value)
+{
+    int sign = 1;
+    uint64_t magnitude = 0u;
+    if (*offset < length && line[*offset] == (uint8_t)'-') {
+        sign = -1;
+        (*offset)++;
+    }
+    if (parse_decimal_token(line, length, offset, &magnitude) != 0 || magnitude > 1u ||
+        (sign < 0 && magnitude == 0u)) return 1;
+    *value = sign < 0 ? -(int)magnitude : (int)magnitude;
+    return 0;
+}
+
+static int parse_av_events(const uint8_t *bytes, size_t length,
+                           uint64_t after_tick, size_t *count)
+{
+    static const char header[] = "LYNX-AUDIO-EVENTS 1\n";
+    size_t offset = sizeof header - 1u, used = 0u;
+    uint64_t prior_tick = 0u;
+    uint32_t prior_sequence = 0u;
+    int found_after = 0;
+    if (length < sizeof header - 1u || memcmp(bytes, header, sizeof header - 1u) != 0 ||
+        memchr(bytes, '\0', length) != NULL || bytes[length - 1u] != (uint8_t)'\n') return 1;
+    while (offset < length) {
+        size_t end = offset;
+        size_t cursor;
+        uint64_t tick = 0u, sequence = 0u, channel = 0u;
+        int before = 0, after = 0;
+        const uint8_t *cause;
+        size_t cause_len;
+        while (end < length && bytes[end] != (uint8_t)'\n') end++;
+        if (end == length || end == offset) return 1;
+        cursor = offset;
+        if (parse_decimal_token(bytes, end, &cursor, &tick) != 0 || cursor >= end || bytes[cursor++] != (uint8_t)' ' ||
+            parse_decimal_token(bytes, end, &cursor, &sequence) != 0 || sequence > UINT32_MAX ||
+            cursor >= end || bytes[cursor++] != (uint8_t)' ' ||
+            parse_decimal_token(bytes, end, &cursor, &channel) != 0 || channel != 0u ||
+            cursor >= end || bytes[cursor++] != (uint8_t)' ') return 1;
+        cause = bytes + cursor;
+        while (cursor < end && bytes[cursor] != (uint8_t)' ') cursor++;
+        cause_len = (size_t)(bytes + cursor - cause);
+        if (cursor >= end || cause_len != 5u ||
+            (memcmp(cause, "write", 5u) != 0 && memcmp(cause, "clock", 5u) != 0)) return 1;
+        cursor++;
+        if (parse_av_level(bytes, end, &cursor, &before) != 0 || cursor >= end ||
+            bytes[cursor++] != (uint8_t)' ' || parse_av_level(bytes, end, &cursor, &after) != 0 || cursor != end ||
+            (used == 0u ? sequence != 0u :
+             ((uint64_t)tick < prior_tick ||
+              ((uint64_t)tick == prior_tick && sequence != prior_sequence + 1u) ||
+              ((uint64_t)tick > prior_tick && sequence != 0u)))) return 1;
+        if (tick >= after_tick) found_after = 1;
+        prior_tick = tick;
+        prior_sequence = (uint32_t)sequence;
+        used++;
+        offset = end + 1u;
+    }
+    *count = used;
+    return used == 0u || found_after == 0;
+}
+
+static int av_ppm_record(const uint8_t *ppm, size_t length, size_t offset,
+                         unsigned rows, size_t *header_end, size_t *raster_end)
+{
+    char marker[64];
+    const int n = snprintf(marker, sizeof marker, "\n160 %u\n255\n", rows);
+    if (n < 0 || (size_t)n >= sizeof marker || offset + 3u > length ||
+        memcmp(ppm + offset, "P6\n", 3u) != 0) return 1;
+    for (size_t at = offset + 3u; at + (size_t)n <= length; at++) {
+        if (memcmp(ppm + at, marker, (size_t)n) == 0) {
+            const size_t raster = at + (size_t)n;
+            const size_t raster_bytes = (size_t)160u * rows * 3u;
+            if (raster_bytes > length - raster) return 1;
+            *header_end = at;
+            *raster_end = raster + raster_bytes;
+            return 0;
+        }
+        if (at - offset > 1024u) break;
+    }
+    return 1;
+}
+
+static int validate_av_replay_directory(const char *directory,
+                                        const char *expected_content_sha,
+                                        const char *expected_timeline_sha,
+                                        char *error, size_t error_cap)
+{
+    uint8_t *timeline = NULL, *applied = NULL, *progress = NULL, *raw = NULL, *ppm = NULL;
+    uint8_t *released_raw = NULL, *released_ppm = NULL, *pressed_raw = NULL, *pressed_ppm = NULL;
+    uint8_t *pcm = NULL, *wav = NULL, *events = NULL, *manifest = NULL;
+    size_t timeline_len = 0u, applied_len = 0u, progress_len = 0u, raw_len = 0u, ppm_len = 0u;
+    size_t released_raw_len = 0u, released_ppm_len = 0u, pressed_raw_len = 0u, pressed_ppm_len = 0u;
+    size_t pcm_len = 0u, wav_len = 0u, events_len = 0u, manifest_len = 0u;
+    av_input_record input_records[4096];
+    av_progress_record progress_records[32];
+    size_t input_count = 0u, progress_count = 0u;
+    size_t event_count = 0u, raw_offset = 0u, ppm_offset = 0u;
+    size_t released_index = SIZE_MAX, pressed_index = SIZE_MAX;
+    uint64_t first_a_tick = UINT64_MAX, prior_end = 0u;
+    uint32_t current_mask = 0u;
+    size_t input_cursor = 0u;
+    const uint8_t *released_pixels = NULL, *pressed_pixels = NULL;
+    char path[4096], line[256];
+    const char *failed_stage = "complete schema-1 stream set";
+    int result = 1;
+#define READ_REPLAY(name, limit, target, target_len) \
+    do { if (read_av_file(directory, (name), (limit), &(target), &(target_len), error, error_cap) != 0) goto done; } while (0)
+    if (directory == NULL || strlen(directory) >= sizeof path - sizeof "/frames.ppm") {
+        set_error(error, error_cap, "A/V replay output path exceeds its bound");
+        goto done;
+    }
+    READ_REPLAY("input.timeline", 128u * 1024u, timeline, timeline_len);
+    READ_REPLAY("input.applied", 512u * 1024u, applied, applied_len);
+    READ_REPLAY("guest.progress", 8192u, progress, progress_len);
+    READ_REPLAY("frames.raw", 512u * 1024u, raw, raw_len);
+    READ_REPLAY("frames.ppm", 2u * 1024u * 1024u, ppm, ppm_len);
+    READ_REPLAY("released.raw", 13000u, released_raw, released_raw_len);
+    READ_REPLAY("released.ppm", FRAME_PPM_LIMIT, released_ppm, released_ppm_len);
+    READ_REPLAY("pressed.raw", 13000u, pressed_raw, pressed_raw_len);
+    READ_REPLAY("pressed.ppm", FRAME_PPM_LIMIT, pressed_ppm, pressed_ppm_len);
+    READ_REPLAY("audio.pcm", 32768u, pcm, pcm_len);
+    READ_REPLAY("audio.wav", 32812u, wav, wav_len);
+    READ_REPLAY("audio.events", 1024u * 1024u, events, events_len);
+    READ_REPLAY("av.manifest", 16384u, manifest, manifest_len);
+#undef READ_REPLAY
+    failed_stage = "canonical timeline identity and bounds";
+    if (parse_av_timeline(timeline, timeline_len, input_records, &input_count) != 0 || input_count == 0u ||
+        !valid_sha256(expected_content_sha) || !valid_sha256(expected_timeline_sha) ||
+        expect_av_manifest(manifest, manifest_len, "schema_version", "1") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "artifact", "AV_TRACE") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "profile", "none") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "startup", "A") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "timing_policy", "video-policy1-unverified") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "audio_policy", "digital-1") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "audio_rate_num", "40000") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "audio_rate_den", "1") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "audio_channels", "2") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "audio_bits", "16") != 0 ||
+        expect_av_manifest(manifest, manifest_len, "content_sha256", expected_content_sha) != 0 ||
+        expect_av_manifest(manifest, manifest_len, "input_sha256", expected_timeline_sha) != 0 ||
+        expect_av_manifest(manifest, manifest_len, "timeline_sha256", expected_timeline_sha) != 0 ||
+        expect_av_manifest(manifest, manifest_len, "timeline_stream_sha256", expected_timeline_sha) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "input_bytes", timeline_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "input_event_count", input_count) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "input_event_tick", (size_t)input_records[0].tick) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "input_event_mask", input_records[0].mask) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "last_input_tick", (size_t)input_records[input_count - 1u].tick) != 0 ||
+        !has_nonempty_field(manifest, manifest_len, "build_id = ") ||
+        !has_sha_field(manifest, manifest_len, "input_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "timeline_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "timeline_stream_sha256 = ")) goto invalid;
+    for (size_t i = 0u; i < input_count; i++) {
+        if (first_a_tick == UINT64_MAX && (current_mask & 16u) == 0u && (input_records[i].mask & 16u) != 0u)
+            first_a_tick = input_records[i].tick;
+        current_mask = input_records[i].mask;
+    }
+    if (first_a_tick == UINT64_MAX) goto invalid;
+    failed_stage = "applied-input records do not match successful public calls at timeline ticks";
+    {
+        static const char header[] = "LYNX-APPLIED-INPUT 1\n";
+        size_t offset = sizeof header - 1u;
+        uint32_t previous_mask = 0u;
+        if (applied_len < sizeof header - 1u || memcmp(applied, header, sizeof header - 1u) != 0 ||
+            memchr(applied, '\0', applied_len) != NULL || applied[applied_len - 1u] != (uint8_t)'\n') goto invalid;
+        for (size_t i = 0u; i < input_count; i++) {
+            size_t end = offset;
+            uint64_t values[5];
+            while (end < applied_len && applied[end] != (uint8_t)'\n') end++;
+            if (end == applied_len || parse_decimal_columns(applied + offset, end - offset, values, 5u) != 0 ||
+                values[0] != i || values[1] != input_records[i].offset || values[2] != input_records[i].tick ||
+                values[3] != previous_mask || values[4] != input_records[i].mask) goto invalid;
+            previous_mask = input_records[i].mask;
+            offset = end + 1u;
+        }
+        if (offset != applied_len) goto invalid;
+    }
+    failed_stage = "guest progress records are incomplete or not tied to raw frame boundaries";
+    if (parse_av_progress(progress, progress_len, progress_records, &progress_count) != 0 ||
+        progress_count == 0u || progress_count > 32u || raw_len == 0u || ppm_len == 0u) goto invalid;
+    for (size_t i = 0u; i < progress_count; i++) {
+        const uint64_t *v = progress_records[i].value;
+        if (v[0] != i + 1u || v[2] <= v[1] || v[2] <= prior_end ||
+            (i != 0u && v[1] != prior_end) || v[3] > 0x1FFu || v[4] > 0xFFu ||
+            v[5] > 0xFFu || v[6] == 0u || v[6] > 63u || v[7] != 1u || v[8] != 0u ||
+            v[9] > 1u || (v[10] != 0x11u && v[10] != 0x22u) || v[11] != 1u) goto invalid;
+        while (input_cursor < input_count && input_records[input_cursor].tick < v[2]) {
+            current_mask = input_records[input_cursor].mask;
+            input_cursor++;
+        }
+        if ((current_mask & 16u) != 0u) {
+            if (v[10] != 0x22u || (v[4] & 1u) == 0u || v[9] != 1u) goto invalid;
+        } else if (v[10] != 0x11u || (v[4] & 1u) != 0u || v[9] != 0u) goto invalid;
+        prior_end = v[2];
+    }
+    if (input_cursor != input_count || expect_av_manifest_size(manifest, manifest_len, "frame_count", progress_count) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "guest_progress_count", progress_count) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "guest_progress_bytes", progress_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "input_applied_count", input_count) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "input_applied_bytes", applied_len) != 0) goto invalid;
+    failed_stage = "complete raw video records, line ticks and rendered palette mapping";
+    for (size_t i = 0u; i < progress_count; i++) {
+        const uint64_t *v = progress_records[i].value;
+        const size_t frame_len = 24u + (size_t)102u * 120u;
+        size_t ppm_header_end = 0u, ppm_raster_end = 0u;
+        const uint8_t *frame_raw, *frame_raster;
+        if (frame_len > raw_len - raw_offset || memcmp(raw + raw_offset, "LXAVRAW1", 8u) != 0 ||
+            load_u32le(raw + raw_offset + 8u) != 102u || load_u64le(raw + raw_offset + 12u) != v[0] ||
+            load_u32le(raw + raw_offset + 20u) != 0u ||
+            av_ppm_record(ppm, ppm_len, ppm_offset, 102u, &ppm_header_end, &ppm_raster_end) != 0) goto invalid;
+        frame_raw = raw + raw_offset;
+        frame_raster = ppm + ppm_header_end + strlen("\n160 102\n255\n");
+        if (ppm_raster_end - (ppm_header_end + strlen("\n160 102\n255\n")) != 160u * 102u * 3u ||
+            av_raster_matches_raw(frame_raster, frame_raw) != 0 ||
+            frame_raw[24] != (uint8_t)v[10]) goto invalid;
+        for (size_t row = 0u; row < 102u; row++) {
+            const uint8_t *raw_row = frame_raw + 24u + row * 120u;
+            const uint64_t tick = load_u64le(frame_raw + 24u + row * 120u + 112u);
+            if (tick < v[1] || tick >= v[2] || (row != 0u && tick <= load_u64le(frame_raw + 24u + (row - 1u) * 120u + 112u))) goto invalid;
+            for (size_t byte = 0u; byte < 80u; byte++) {
+                const uint8_t expected_pen = row == 0u && byte == 0u ? (uint8_t)v[10] : 0u;
+                if (raw_row[byte] != expected_pen) goto invalid;
+            }
+            for (size_t color = 0u; color < 32u; color++) {
+                const uint8_t expected_palette = color == 1u || color == 18u ? 15u : 0u;
+                if (raw_row[80u + color] != expected_palette) goto invalid;
+            }
+        }
+        (void)snprintf(line, sizeof line, "# sequence = %" PRIu64, v[0]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# frame_start_tick = %" PRIu64, v[1]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# frame_end_tick = %" PRIu64, v[2]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# rows = 102");
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# input_mask_at_end = %" PRIu64, v[3]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# sample_a = %" PRIu64, v[4] & 1u);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# sample_joystick = %" PRIu64, v[4]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# sample_switches = %" PRIu64, v[5]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# poll_progress = %" PRIu64, v[6]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# error = %" PRIu64, v[8]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# done = %" PRIu64, v[7]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        (void)snprintf(line, sizeof line, "# handedness = %" PRIu64, v[11]);
+        if (!has_exact_line(ppm + ppm_offset, ppm_header_end - ppm_offset, line)) goto invalid;
+        if (released_index == SIZE_MAX && v[10] == 0x11u) {
+            released_index = i;
+            released_pixels = frame_raster;
+        }
+        if (pressed_index == SIZE_MAX && v[10] == 0x22u && v[2] > first_a_tick) {
+            pressed_index = i;
+            pressed_pixels = frame_raster;
+        }
+        raw_offset += frame_len;
+        ppm_offset = ppm_raster_end;
+    }
+    if (raw_offset != raw_len || ppm_offset != ppm_len || released_index == SIZE_MAX || pressed_index == SIZE_MAX ||
+        released_pixels == NULL || pressed_pixels == NULL ||
+        memcmp(released_pixels, pressed_pixels, 160u * 102u * 3u) == 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "frames_raw_bytes", raw_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "frames_ppm_bytes", ppm_len) != 0) goto invalid;
+    failed_stage = "released and pressed preview ownership or manifest metadata";
+    {
+        const uint64_t *released = progress_records[released_index].value;
+        const uint64_t *pressed = progress_records[pressed_index].value;
+        const size_t raw_record_len = 24u + 102u * 120u;
+        size_t r_header = 0u, r_end = 0u, p_header = 0u, p_end = 0u;
+        size_t r_ppm_offset = 0u, p_ppm_offset = 0u;
+        for (size_t i = 0u; i < released_index; i++) {
+            size_t h, e;
+            if (av_ppm_record(ppm, ppm_len, r_ppm_offset, 102u, &h, &e) != 0) goto invalid;
+            r_ppm_offset = e;
+        }
+        for (size_t i = 0u; i < pressed_index; i++) {
+            size_t h, e;
+            if (av_ppm_record(ppm, ppm_len, p_ppm_offset, 102u, &h, &e) != 0) goto invalid;
+            p_ppm_offset = e;
+        }
+        if (av_ppm_record(ppm, ppm_len, r_ppm_offset, 102u, &r_header, &r_end) != 0 ||
+            av_ppm_record(ppm, ppm_len, p_ppm_offset, 102u, &p_header, &p_end) != 0) goto invalid;
+        (void)r_header;
+        (void)p_header;
+        if (released_raw_len != raw_record_len || pressed_raw_len != raw_record_len ||
+            memcmp(released_raw, raw + released_index * raw_record_len, raw_record_len) != 0 ||
+            memcmp(pressed_raw, raw + pressed_index * raw_record_len, raw_record_len) != 0 ||
+            released_ppm_len != r_end - r_ppm_offset || pressed_ppm_len != p_end - p_ppm_offset ||
+            memcmp(released_ppm, ppm + r_ppm_offset, released_ppm_len) != 0 ||
+            memcmp(pressed_ppm, ppm + p_ppm_offset, pressed_ppm_len) != 0 ||
+            released[0] == 0u || pressed[0] <= released[0] ||
+            expect_av_manifest_size(manifest, manifest_len, "released_sequence", (size_t)released[0]) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "released_start_tick", (size_t)released[1]) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "released_end_tick", (size_t)released[2]) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "released_rows", 102u) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "released_raw_bytes", released_raw_len) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "released_ppm_bytes", released_ppm_len) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "pressed_sequence", (size_t)pressed[0]) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "pressed_start_tick", (size_t)pressed[1]) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "pressed_end_tick", (size_t)pressed[2]) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "pressed_rows", 102u) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "pressed_raw_bytes", pressed_raw_len) != 0 ||
+            expect_av_manifest_size(manifest, manifest_len, "pressed_ppm_bytes", pressed_ppm_len) != 0) goto invalid;
+    }
+    failed_stage = "WAV PCM format or exact data extent";
+    if (pcm_len == 0u || pcm_len % 4u != 0u || wav_len != pcm_len + 44u ||
+        memcmp(wav, "RIFF", 4u) != 0 || memcmp(wav + 8u, "WAVEfmt ", 8u) != 0 ||
+        memcmp(wav + 36u, "data", 4u) != 0 || load_u32le(wav + 4u) != wav_len - 8u ||
+        load_u32le(wav + 16u) != 16u || load_u16le(wav + 20u) != 1u || load_u16le(wav + 22u) != 2u ||
+        load_u32le(wav + 24u) != 40000u || load_u32le(wav + 28u) != 160000u ||
+        load_u16le(wav + 32u) != 4u || load_u16le(wav + 34u) != 16u ||
+        load_u32le(wav + 40u) != pcm_len || memcmp(wav + 44u, pcm, pcm_len) != 0) goto invalid;
+    failed_stage = "PCM sample ordinal range";
+    if (pcm_len / 4u != prior_end / 400u ||
+        expect_av_manifest(manifest, manifest_len, "first_sample_ordinal", "0") != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "next_sample_ordinal", pcm_len / 4u) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "pcm_frame_count", pcm_len / 4u) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "pcm_bytes", pcm_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "wav_bytes", wav_len) != 0) goto invalid;
+    {
+        int audible_after_a = 0, audible_before_a = 0;
+        for (size_t i = 0u; i < pcm_len / 4u; i++) {
+            const uint64_t sample_tick = ((uint64_t)i + 1u) * 400u;
+            const int nonzero = pcm[i * 4u] != 0u || pcm[i * 4u + 1u] != 0u ||
+                pcm[i * 4u + 2u] != 0u || pcm[i * 4u + 3u] != 0u;
+            if (sample_tick >= first_a_tick && nonzero != 0) audible_after_a = 1;
+            if (sample_tick < first_a_tick && nonzero != 0) audible_before_a = 1;
+        }
+        failed_stage = "input-responsive non-silent PCM";
+        if (audible_after_a == 0 || audible_before_a != 0) goto invalid;
+    }
+    failed_stage = "channel event order and post-input response";
+    if (parse_av_events(events, events_len, first_a_tick, &event_count) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "event_count", event_count) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "events_bytes", events_len) != 0) goto invalid;
+    failed_stage = "A/V output stream extent identities";
+    if (expect_av_manifest_size(manifest, manifest_len, "input_applied_bytes", applied_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "guest_progress_bytes", progress_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "frames_raw_bytes", raw_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "frames_ppm_bytes", ppm_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "pcm_bytes", pcm_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "wav_bytes", wav_len) != 0 ||
+        expect_av_manifest_size(manifest, manifest_len, "events_bytes", events_len) != 0 ||
+        !has_sha_field(manifest, manifest_len, "input_applied_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "guest_progress_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "frames_raw_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "frames_ppm_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "released_raw_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "released_ppm_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "pressed_raw_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "pressed_ppm_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "pcm_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "wav_sha256 = ") ||
+        !has_sha_field(manifest, manifest_len, "events_sha256 = ")) goto invalid;
+    failed_stage = "complete bundle file set";
+    if (validate_av_file_set(directory) != 0) goto invalid;
+    result = 0;
+    goto done;
+invalid:
+    (void)snprintf(error, error_cap, "A/V replay validation failed: %s", failed_stage);
+done:
+    free(timeline); free(applied); free(progress); free(raw); free(ppm);
+    free(released_raw); free(released_ppm); free(pressed_raw); free(pressed_ppm);
     free(pcm); free(wav); free(events); free(manifest);
     return result;
 }
@@ -2125,6 +2673,14 @@ int main(int argc, char **argv)
     if (argc == 3 && strcmp(argv[1], "av") == 0) {
         if (validate_av_directory(argv[2], error, sizeof error) == 0) {
             puts("artifact-check: released/A raw images and fixed-rate stereo WAV spans are valid");
+            return 0;
+        }
+        fprintf(stderr, "artifact-check: %s\n", error);
+        return 1;
+    }
+    if (argc == 5 && strcmp(argv[1], "av-replay") == 0) {
+        if (validate_av_replay_directory(argv[2], argv[3], argv[4], error, sizeof error) == 0) {
+            puts("artifact-check: complete A/V timeline, applied inputs, progress, frame, event, PCM and WAV streams are valid");
             return 0;
         }
         fprintf(stderr, "artifact-check: %s\n", error);
