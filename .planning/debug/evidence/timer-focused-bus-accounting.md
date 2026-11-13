@@ -132,6 +132,14 @@ device owners. The regression is red against the preceding validator at the
 intended round-trip assertion and green after repair. The complete affected
 group passes16/16 after these changes.
 
+The first canonical run at646b3ba accounted for all246 registered cases and
+found exactly one failure: the clean bracket of `video.fault.dma_cost_zero`
+still started its synthetic DMA burst before the preceding operand released.
+The same boundary adjustment preserves that control's original tie assertion.
+After correction its actual compiled mutant and clean brackets pass; independent
+review accepts the fixture repair. The reviewed followup source is
+`7db8ef6`; final qualification is in [the qualification record](timer-bus-qualification.md).
+
 Direct strict runs after the repair still exit1 with exactly one disagreement:
 
 | Profile | Legacy completion/count | Video-policy1 completion/count | Source count |
@@ -162,3 +170,6 @@ display state and CPU/video grants to its count. The existing physical-testing
 stop remains in force. Repeating phase/layout/provenance searches or sweeping
 DMA costs until13 appears would not supply that evidence. EVD-02 and milestone
 closure remain open.
+
+A [concrete next evidence proposal](timer-next-evidence-protocol.md) is prepared
+for owner review. It does not start or authorize physical execution.

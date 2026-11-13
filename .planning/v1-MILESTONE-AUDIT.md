@@ -46,7 +46,7 @@ tech_debt:
 # v1 milestone audit — checkpoint qualified, milestone open
 
 All six planned software phases and69 plans are executed. The independent
-Phase6 verifier passes45/45 truths, and the independent integration audit finds
+Phase6 verifier passes45/45 truths at its recorded source, and the independent integration audit finds
 all six end-to-end flows connected with no new wiring blocker. The reviewed
 implementation has native/GNU/hosted canonical qualification at the exact source
 recorded inPhase6 qualification. This does **not** satisfy the unchanged full
@@ -74,6 +74,10 @@ add an exception or tune to0D without source-supported behavioral evidence.
 The owner approved the recommended focused investigation on2026-11-13. It found
 and repaired a CPU/video/refresh grant overlap; strict counts remain12/15 versus13.
 See the [focused investigation](debug/evidence/timer-focused-bus-accounting.md).
+The reviewed followup also repairs snapshot acceptance for CPU-delayed work;
+its [canonical qualification](debug/evidence/timer-bus-qualification.md) preserves
+the unchanged strict failure. A [bounded next evidence proposal](debug/evidence/timer-next-evidence-protocol.md)
+is prepared; physical execution needs owner hardware details and explicit approval.
 This approval does not accept the unmet comparison as a milestone-scope change.
 The milestone remains open automatically; no confirmation is needed
 to keep the existing hardware/rights/release stops in place. No new phase,

@@ -4,8 +4,8 @@ current_phase: 6
 current_plan: 12
 status: completed
 milestone_status: gaps_found
-stopped_at: All six phases complete; focused timer investigation authorized; v1 audit remains 53/54
-last_updated: "2026-11-13T16:16:12.197Z"
+stopped_at: All six phases complete; Focused timer investigation complete; bus/snapshot repair qualified locally; strict gap remains
+last_updated: "2026-11-13T17:09:46.142889+00:00"
 last_activity: 2026-11-13
 last_activity_desc: Phase 6 complete
 state_head: f32b113ff2895990e7c2545cc638bbd74a4088f9
@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-13)
 
 **Core value:** Every compatibility claim is tied to an exact, named Lynx model/configuration and to reproducible evidence from a deterministic, observable machine.
-**Current focus:** Owner approved the recommended focused timer investigation; strict comparison and milestone closure remain open. Routine diagnosis, evidence-backed fixes and verification proceed autonomously.
+**Current focus:** Focused timer investigation and bus/snapshot repair complete; reviewed source passes canonical local gate. Strict comparison and milestone closure remain open. The owner acts next on hardware access/physical evidence; no physical test is authorized.
 
 ## Current Position
 
@@ -316,16 +316,17 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-11-13T16:16:10.207Z
-Stopped at: All six phases complete; focused timer investigation authorized; bus repair under review/qualification; strict comparison still open
+Stopped at: All six phases complete; focused timer investigation authorized; bus/snapshot repair reviewed and qualified; strict comparison still open; next evidence needs hardware/source decision
 Resume file: .planning/phases/06-audio-and-playable-checkpoint/06-CONTEXT.md
 
 
 ## Milestone boundary — v1 remains open
 
 All six phases and69 plans are executed. Phase6 independent verification is
-45/45, current fingerprint/status passed; scoped security and coverage gates
-are closed. Native/GNU and exact-source hosted qualification pass. The final
-metadata successor is published/checked separately through normal main CI.
+45/45 at its recorded qualification source; scoped security and coverage gates
+are closed there. The focused bus/snapshot followup has independent review and
+new regression evidence; current qualification is recorded in the linked focused
+report. Historical fingerprints are not refreshed for this later shared-core fix.
 
 The milestone audit reconciles53/54 requirements with no orphan, and independent
 integration finds6/6 flows wired. EVD-02 remains open because strict timer row14
@@ -333,11 +334,14 @@ differs from the unchanged source expectation under both recorded timing policie
 The two page-mode SERCTL observations remain declared missing observations, not
 suite passes. See[v1 audit](v1-MILESTONE-AUDIT.md) and[integration](v1-INTEGRATION.md).
 
-The recommended next scope is a focused, evidence-led timer investigation using
-existing traces and controls. The owner acts next: authorize that next scope,
-or explicitly accept the comparison gap as a milestone-scope change. Until that
-decision the milestone stays open automatically. No further phase, cleanup,
-tag, release, physical test or new publication channel has been started.
+The owner approved the focused timer investigation. It found and repaired
+overlapping CPU/video/refresh grants and their snapshot boundary, while strict
+counts remain12/15 against13. See [the investigation](debug/evidence/timer-focused-bus-accounting.md).
+The next decisive evidence requires fuller independent bus documentation or a
+hardware observation. A [bounded hardware proposal](debug/evidence/timer-next-evidence-protocol.md)
+is prepared; the owner acts next to identify available equipment and decide
+whether to authorize physical testing. Physical execution remains unapproved.
+The milestone stays open; no new phase, cleanup, tag or release has started.
 
 Historical source-scoped phase reports retain their original fingerprints.
 Current canonical regression and integration qualify the connected checkpoint;

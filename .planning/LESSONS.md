@@ -325,3 +325,9 @@ verification hashes are not blindly rewritten after this metadata repair.
   phase and the number of stalls. Account for actual intervals and counts;
   differences between complete runs are not additive timing corrections.
   See `.planning/debug/evidence/timer-focused-bus-accounting.md`.
+- Select affected tests by their owning contracts, including fault-control
+  prefixes, rather than only `api.*`. The first full inventory caught an old
+  DMA fault fixture that duplicated the same pre-release setup; its clean
+  positive had been omitted from the narrow API selection. Align the fixture
+  with the release boundary, retain its actual mutant and clean brackets, and
+  rerun the final gate only after that concrete change.
