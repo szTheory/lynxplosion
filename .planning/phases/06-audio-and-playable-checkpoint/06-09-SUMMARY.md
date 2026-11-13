@@ -58,8 +58,8 @@ patterns-established:
   - "Audio controls validate records against a per-profile immutable baseline and recheck its identity around mutations."
   - "The exact selection control checks ten observation IDs and eight controls across the five public suites."
 
-# The scoped deliverables are complete; global requirement status remains pending pending O1 and Phase 6 qualification.
-requirements-completed: []
+# Scoped software deliverables only; sibling plans and final qualification govern global completion.
+requirements-completed: [AUD-01, EVD-06]
 coverage:
   - id: D1
     description: "Four fresh audio/audio2 observations contain all 18 source-comparison rows and agree with the independent software model."
@@ -68,8 +68,8 @@ coverage:
       - kind: integration
         ref: "CTest audio/audio2 observations on lynx1 and lynx2 at source commit f5fb299b34fdbfb0d745688ebf90f8c819d520ac"
         status: pass
-    human_judgment: true
-    rationale: "These checks establish software behavior and source agreement, while the Lynx model decision and hardware accuracy remain unresolved."
+    human_judgment: false
+    rationale: "The scoped software checks are automated; model selection and physical accuracy are separate unresolved questions."
   - id: D2
     description: "The scoped five-suite selection and its negative controls preserve the exact inventory and visible skips."
     requirement: EVD-06
@@ -80,8 +80,8 @@ coverage:
       - kind: other
         ref: "sh scripts/check-claims.sh"
         status: pass
-    human_judgment: true
-    rationale: "O1 blocks official suite-pass qualification; the page-mode observations remain visible skips with the SERCTL blocker."
+    human_judgment: false
+    rationale: "The exact software inventory is automated. O1 remains open and the two SERCTL skips remain visible."
 
 # Metrics
 duration: 69 minutes
@@ -95,7 +95,7 @@ status: complete
 
 ## Performance
 
-- **Duration:** 69 minutes
+- **Duration:** 69 minutes through Task 2; parent handoff and progress bookkeeping reached about 73 minutes
 - **Started:** 2026-11-13T09:23:39Z
 - **Completed:** 2026-11-13T10:32:36Z
 - **Tasks:** 2
@@ -162,3 +162,5 @@ Plan 10 is next for private semantic audio-fault controls, followed by Plan 11's
 - The plan-start-to-Task2 range contains exactly two task commits.
 - Native and GNU scoped selector logs report 14 executed passes and the same two page-mode skips; the GNU tree is clean at the tested source SHA.
 - `git diff --check` passed before the guarded metadata commit.
+
+Parent closeout preserved all eight attributable failed audio-suite run directories outside the build scan after verifying exact path-bound nonce markers and complete byte/type/mode/link inventories. No failure evidence was deleted and no scanner exemption was added.
