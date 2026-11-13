@@ -46,4 +46,6 @@ The five-run measurement is from the exact source/build identity above. Throughp
 
 `consumer.av_benchmark_controls` builds one separate five-run real baseline, validates its 13 streams and identities, then derives malformed records from that immutable corpus. Those named parser controls reject missing, duplicate, extra, incomplete, unlike, non-progressing, invalid-duration, overflow, and nonmonotonic records. The mutated records are parser evidence; they are not benchmark samples.
 
+The benchmark/control selector passed on native AppleClang 21.0.0.21000101 and GNU 13.3.0. The GNU run was synchronized by fast-forward to committed source SHA `38fd41d4d74a499afa5d3f65882257c6c256854d`; both selectors executed two tests and passed both. Each control invocation independently ran its five real guests once, then exercised the 28 static parser mutations.
+
 CI queue, setup, build, CTest, hygiene, and history timings are a separate category and remain pending the Plan 12 final qualification. That qualification should add or link those measurements without combining them with this local guest-throughput result. No performance optimization was made for this baseline.
