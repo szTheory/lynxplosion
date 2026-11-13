@@ -2,8 +2,10 @@
 
 Owner requested a sanity check during the long autonomous session on
 2026-11-12. This is a bounded process review, not Phase 6 completion or a new
-milestone. The active executor returned a safe checkpoint; no process remains
-running and its unfinished source changes are preserved.
+milestone. The initial executor returned a safe checkpoint for this review.
+Implementation has since resumed; Plans01–03 are committed and Plan04 has
+committed source tasks pending integration repair and summary. This report is
+process evidence, not a claim that Phase6 or its full gate is complete.
 
 ## Findings and actions
 
@@ -14,6 +16,8 @@ running and its unfinished source changes are preserved.
 | Phase6 first full build encountered the old identity-size assertion while library/consumer targets compiled | A known structural integration repair remained pending during consumer expansion | Repair ABI assertions/readers/copied targets at the first structure change |
 | The first A/V guest ran and published a bundle, but its checker combined unrelated conditions into one diagnostic | Useful evidence existed, but the error obscured the first failed invariant | Add stage-specific errors and inspect retained artifacts before another run |
 | Released and pressed PPMs have identical 160×102 RGB raster extents and legitimate unequal metadata lengths | Equal whole-file length was an invalid invariant | Parse each raster separately and compare its pixels against raw pens/palettes |
+| The early full Phase6 inventory exposed old unavailable-address assertions, a suite-fixture input omission and an evidence-bound helper identity after focused tests passed | Structural integration includes negative fixtures and provenance consumers, beyond compilation | Run one early full registered inventory after a broad contract change, then repair and retest the affected group |
+| Later CTest discovery and focused calls overwrote the initial full run's per-case logs | Original scanner timeout stages cannot be recovered reliably | Save each integration invocation to a distinct private log with its real exit status before another CTest call |
 
 The 9h35 value includes checkpoints and does not measure active model work.
 Commit timing does not establish CPU time, model tokens or API spend. Exact
@@ -55,16 +59,30 @@ Fresh verification after the change:
   1 at its intended named stage. The unchanged bundle passed before and after.
 
 Raw test artifacts and controls remain private in temporary/build storage.
-The source work is still uncommitted and belongs to Plan06-01; the efficiency
-metadata commit does not stage or qualify that unfinished feature. The full
-preset still needs the planned ABI/snapshot-consumer integration repairs,
-followed by focused Clang/GCC checks and normal task commits. Phase6 remains in
-progress; no hardware accuracy, full audio qualification or release is claimed.
+The checker and ABI/snapshot-consumer repairs were subsequently committed in
+Plan06-01. The first three plan summaries record their focused compiler checks;
+Plan04 records remain pending. Its early full native inventory failed and is
+not qualification evidence. No hardware accuracy, full audio qualification or
+release is claimed.
+
+The scanner follow-up used two 15-second traced probes to locate active case
+progress, then serial stage-timed diagnostics bounded by the existing
+60-second limit. The firmware and privacy controls completed with exit0 in
+19.42 and 24.50 seconds, respectively. No scanner source, timeout or assertion
+was changed. These later results do not establish why the original CTest runs
+timed out; their stage output was not retained. Raw logs stay private.
+
+The unchanged registered CTest entry points then passed serially: firmware
+18.37 seconds and privacy15.55 seconds, total33.93 seconds, exit0. The command
+selected exactly those two self-tests with `--no-tests=error`, `-j 1` and the
+existing timeout. No whole-machine restart, unrelated process cleanup or
+foreground application activation was needed. This is scoped recovery evidence;
+the final reviewed Phase6 gate remains outstanding.
 
 ## Next action
 
-Resume the existing executor from its preserved checkpoint with these findings.
-Repair the known ABI assertions and raw-layout/build consumers before expanding
-the feature; reuse the verified tracer and named controls. The parent retains
-phase bookkeeping and final independent review/qualification responsibilities.
-No owner input is required for this continuation.
+Finish the diagnosed suite-fixture/provenance repairs, check the registered
+scanner entry points, then resume the existing Plan04 executor for its summary
+and continue the remaining reviewed plans. The parent retains phase bookkeeping
+and final independent review/qualification responsibilities. No owner input is
+required for this continuation.

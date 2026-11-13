@@ -204,3 +204,29 @@ an equal-file-length assertion hid that distinction behind an aggregate error.
 The checker now validates each raster against raw pens/palettes and reports its
 failing stage. Clean captures and pixel/metadata/silence/WAV corruption controls
 establish the remedy without loosening audio or image semantics.
+
+**Check the existing inventory after a broad contract change.** Phase6 focused
+audio tests passed while the early full inventory exposed stale unavailable
+address assertions, an incomplete private suite-builder fixture and a helper
+identity bound into the timer pending descriptor. Audit refusal boundaries,
+synthetic fixture inputs and evidence-bound helper hashes alongside raw readers
+and copied build lists. Preserve each failure class at a still-valid boundary;
+an identity migration needs old/new output equivalence and unchanged comparison
+scope. Use the early full inventory to discover integration work, then focused
+repairs before final qualification.
+
+**Preserve failure logs before the next CTest call.** Phase6's initial full run
+had failures whose per-case output was overwritten by later discovery and
+focused runs. Capture each integration invocation in a distinct private log
+with its real exit status. Two scanner timeout causes could not be recovered
+from the lost output; bounded traces later showed active case progression and
+serial diagnostics completed within the existing limit. That establishes the
+later behavior, not the cause of the original timeouts. Do not increase limits,
+drop controls or blame host pressure without attributable evidence.
+
+**Use real Git synchronization for qualification.** A shorthand request to
+fast-forward a reused Linux clone was misread as a command and led to a patch
+overlay on an older commit. That run was excluded from final evidence. Explicit
+fetch/merge commands, exact full commit identity, a clean tracked tree and a new
+configure preceded the valid scoped run. Keep source and build identity checks
+concrete in handoffs.

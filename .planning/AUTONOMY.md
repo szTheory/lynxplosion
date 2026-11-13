@@ -135,6 +135,21 @@ Owner-requested sanity review, 2026-11-12; evidence is in Phase 6
 - New integration failures must identify the failing invariant or stage and
   preserve attributable artifacts. Compare parsed payloads separately from
   variable metadata; format-valid files alone are insufficient evidence.
+- After a broad public API, mapped-device or snapshot change, run one early
+  full registered fast test inventory after focused repairs. Audit old refusal
+  fixtures and evidence-bound helper identities as well as raw readers; a newly
+  supported address must not remove the mixed-span refusal proof. Reserve final
+  canonical qualification for the reviewed source, and repeat only affected
+  checks while repairing diagnosed failures.
+- Capture integration stdout/stderr in a unique private log while preserving
+  the command's exit status. CTest's LastTest.log and JUnit output are mutable,
+  including during discovery; they are not durable failure evidence. If a
+  timeout's stage is unknown, use a bounded attributable diagnostic before
+  retrying. Preserve limits and controls, and report an unreproduced cause as
+  unknown rather than inferring host pressure from elapsed time alone.
+- Reuse qualification containers through actual Git fetch and fast-forward
+  commands. Verify the exact commit and clean tracked tree before configuring;
+  matching overlaid file bytes do not establish an exact-commit build.
 - Track elapsed implementation, research, review and qualification spans
   separately from measured build/test/CI time. Commit gaps and diff-size token
   proxies do not establish agent activity or API cost. Preserve configured
