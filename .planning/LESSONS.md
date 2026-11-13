@@ -19,6 +19,10 @@
   the unchanged group limits. Keep the failed Debug evidence and let hosted
   Debug own the ordinary CI gate. Do not turn this local qualification into
   another CI matrix or a global build-policy change.
+- Include the already-installed Linux ShellCheck in the first focused portability
+  check. Native 0.11 accepted guard chains that hosted 0.9 flagged as SC2015.
+  Rewrite those guards explicitly, verify both versions, then retry CI only
+  after the source repair. Optimized GNU execution alone is not a lint check.
 
 See [the software preparation summary](quick/261113-h5w-prepare-a-source-built-timer-hardware-ev/261113-h5w-SUMMARY.md).
 

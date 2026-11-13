@@ -82,12 +82,25 @@ No dependency or package install was introduced.
 
 ## CI and remaining boundary
 
-This metadata is committed before its final push. **The same-HEAD hosted Debug
-workflow must succeed before the final owner handoff.** Its live GitHub run is
-the authoritative post-commit receipt; it is not represented here as a run
-already completed. Retain the raw job log and critical-path review privately,
-and provide the successful run link in chat. This permits one final push and
-avoids a second CI run merely to commit a receipt about the first.
+**The same-HEAD hosted Debug workflow must succeed before the final owner
+handoff.** Its live GitHub run is the authoritative post-commit receipt; this
+summary is committed before that run and does not predict its result. Retain
+the raw job log and critical-path review privately, and provide the successful
+run link in chat. Do not trigger another run merely to commit its receipt.
+
+The first pushed batch (d3dfbb2, run 43499267151) failed at ShellCheck 0.9's
+SC2015 guard diagnostics, which native ShellCheck 0.11 did not report. This was
+a missed local portability check. Guards were rewritten as explicit conditionals
+without weakening their checks. Both installed ShellCheck versions then passed,
+and all three affected native groups passed again (25.64 seconds). The original
+full native gate remains anchored to 0e5d5da; the lint repair has these fresh
+focused checks plus the subsequent same-HEAD hosted canonical gate. Source/tool
+pins, guest bytes, identities and comparison expectations did not change.
+
+The failed CI run stopped before tests: cc65 setup was 13 seconds, ShellCheck
+about 5 seconds. It did not repeat a completed test lane. An additional push is
+required for the actual source repair, not for bookkeeping. No cache, matrix,
+concurrency or global build-policy change is justified by that failure.
 
 EVD-02 is intentionally absent from `requirements-completed`: this task
 prepares evidence without satisfying the historical strict comparison. Counts

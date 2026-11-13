@@ -31,7 +31,7 @@ while [ "$#" -gt 0 ]; do
     *) usage ;;
   esac
 done
-[ -n "$MODE" ] && [ -n "$OUT_ARG" ] || usage
+if [ -z "$MODE" ] || [ -z "$OUT_ARG" ]; then usage; fi
 if printf '%s' "$OUT_ARG" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null; then
   printf 'timer evidence: output path contains control characters\n' >&2; exit 1
 fi
@@ -123,11 +123,11 @@ validate_layout() {
   # od emits decimal bytes; split its numeric fields for positional checks.
   # shellcheck disable=SC2046
   set -- $(dd if="$bll" bs=1 skip=10 count=4 2>/dev/null | od -An -tu1)
-  [ "$#" -eq 4 ] && [ "$1" -eq 120 ] && [ "$2" -eq 76 ] &&
+  if ! { [ "$#" -eq 4 ] && [ "$1" -eq 120 ] && [ "$2" -eq 76 ] &&
     [ "$3" -eq $((stack_helper_dec & 255)) ] &&
-    [ "$4" -eq $(((stack_helper_dec >> 8) & 255)) ] || {
+    [ "$4" -eq $(((stack_helper_dec >> 8) & 255)) ]; }; then
       printf 'timer evidence: BLL entry must begin SEI+JMP to the stack helper\n' >&2; return 1;
-    }
+  fi
   ext_size=$(symbol "$lbl" __EXTENSION_SIZE__)
   ext_end=$((0x000500 + 0x$ext_size))
   ext_end_hex=$(printf '%06X' "$ext_end")
@@ -137,31 +137,31 @@ validate_layout() {
   display_request=$(symbol "$lbl" suite_dispctl_request)
   display_after=$(symbol "$lbl" suite_dispctl_after)
   display_request_dec=$((0x$display_request))
-  [ "$display_request_dec" -ge $((0x000500)) ] &&
+  if ! { [ "$display_request_dec" -ge $((0x000500)) ] &&
     [ "$((0x$display_after))" -eq "$((display_request_dec + 3))" ] &&
-    [ "$((0x$display_after))" -le "$ext_end" ] || {
+    [ "$((0x$display_after))" -le "$ext_end" ]; }; then
       printf 'timer evidence: display write labels escape the extension\n' >&2; return 1;
-    }
+  fi
   # od emits decimal bytes; split its numeric fields for positional checks.
   # shellcheck disable=SC2046
   set -- $(dd if="$bll" bs=1 skip="$((display_request_dec - 2 - 512 + 10))" count=5 2>/dev/null | od -An -tu1)
-  [ "$#" -eq 5 ] && [ "$1" -eq 169 ] && [ "$2" -eq "$layout_request" ] &&
-    [ "$3" -eq 141 ] && [ "$4" -eq 146 ] && [ "$5" -eq 253 ] || {
+  if ! { [ "$#" -eq 5 ] && [ "$1" -eq 169 ] && [ "$2" -eq "$layout_request" ] &&
+    [ "$3" -eq 141 ] && [ "$4" -eq 146 ] && [ "$5" -eq 253 ]; }; then
     printf 'timer evidence: display stop marker is not the requested LDA/STA DISPCTL\n' >&2; return 1;
-  }
+  fi
   display_restore=$(symbol "$lbl" suite_dispctl_restore)
   display_restore_dec=$((0x$display_restore))
-  [ "$display_restore_dec" -ge "$((0x000500))" ] &&
-    [ "$((display_restore_dec + 5))" -le "$ext_end" ] || {
+  if ! { [ "$display_restore_dec" -ge "$((0x000500))" ] &&
+    [ "$((display_restore_dec + 5))" -le "$ext_end" ]; }; then
       printf 'timer evidence: display restore escapes the extension\n' >&2; return 1;
-    }
+  fi
   # od emits decimal bytes; split its numeric fields for positional checks.
   # shellcheck disable=SC2046
   set -- $(dd if="$bll" bs=1 skip="$((display_restore_dec - 512 + 10))" count=5 2>/dev/null | od -An -tu1)
-  [ "$#" -eq 5 ] && [ "$1" -eq 169 ] && [ "$2" -eq "$layout_restore" ] &&
-    [ "$3" -eq 141 ] && [ "$4" -eq 146 ] && [ "$5" -eq 253 ] || {
+  if ! { [ "$#" -eq 5 ] && [ "$1" -eq 169 ] && [ "$2" -eq "$layout_restore" ] &&
+    [ "$3" -eq 141 ] && [ "$4" -eq 146 ] && [ "$5" -eq 253 ]; }; then
     printf 'timer evidence: display restore does not match its family\n' >&2; return 1;
-  }
+  fi
   framebuffer_end=$((0x006000 + 0x001FE0))
   [ "$framebuffer_end" -le $((0x008000)) ] || { printf 'timer evidence: framebuffer overlaps BSS\n' >&2; return 1; }
   bss_size=$(symbol "$lbl" __BSS_SIZE__)
@@ -172,11 +172,11 @@ validate_layout() {
   # od emits decimal bytes; split its numeric fields for positional checks.
   # shellcheck disable=SC2046
   set -- $(od -An -tu1 -N10 "$bll")
-  [ "$#" -eq 10 ] && [ "$1" -eq 128 ] && [ "$2" -eq 8 ] &&
+  if ! { [ "$#" -eq 10 ] && [ "$1" -eq 128 ] && [ "$2" -eq 8 ] &&
     [ "$3" -eq 2 ] && [ "$4" -eq 0 ] && [ "$7" -eq 66 ] &&
-    [ "$8" -eq 83 ] && [ "$9" -eq 57 ] && [ "${10}" -eq 51 ] || {
+    [ "$8" -eq 83 ] && [ "$9" -eq 57 ] && [ "${10}" -eq 51 ]; }; then
       printf 'timer evidence: BLL header does not describe the expected BS93 payload\n' >&2; return 1;
-    }
+  fi
   header_length=$(( $5 * 256 + $6 ))
   file_length=$(wc -c < "$bll" | tr -d ' ')
   [ "$header_length" -eq "$file_length" ] || { printf 'timer evidence: BLL length does not cover its loadable payload\n' >&2; return 1; }
@@ -229,7 +229,9 @@ LYNX_URL=$(pin_url lynx-tests)
 LYNX_REVISION=$(printf '%s\n' "$LYNX_URL" | sed 's#.*/archive/##; s/\.tar\.gz$//')
 [ "$(cat "$SUITES_DIR/.lynx-pin")" = "$LYNX_PIN" ] || { printf 'timer evidence: lynx-tests pin marker mismatch\n' >&2; exit 1; }
 [ "$(cat "$CC65_DIR/.lynx-pin")" = "$CC65_PIN" ] || { printf 'timer evidence: cc65 pin marker mismatch\n' >&2; exit 1; }
-[ -x "$CC65_DIR/bin/ca65" ] && [ -x "$CC65_DIR/bin/ld65" ] || { printf 'timer evidence: pinned cc65 tools are missing\n' >&2; exit 1; }
+if [ ! -x "$CC65_DIR/bin/ca65" ] || [ ! -x "$CC65_DIR/bin/ld65" ]; then
+  printf 'timer evidence: pinned cc65 tools are missing\n' >&2; exit 1
+fi
 if ! awk -v pin="$CC65_PIN" '$1 == "pin_sha256" && $2 == "=" { p=$3; pc++ } $1 == "recipe" && $2 == "=" { r=$3; rc++ } $1 == "build_seconds" && $2 == "=" { s=$3; sc++ } END { if (pc != 1 || p != pin || rc != 1 || r != "1" || sc != 1 || s !~ /^(0|[1-9][0-9]*)$/) exit 1 }' "$CC65_DIR/.lynx-build"; then
   printf 'timer evidence: cc65 successful pinned recipe record is invalid\n' >&2; exit 1
 fi
@@ -261,15 +263,17 @@ else
   }
   for entry in "$OUT"/* "$OUT"/.[!.]* "$OUT"/..?*; do
     if [ -e "$entry" ] || [ -L "$entry" ]; then
-      [ -f "$entry" ] && [ ! -L "$entry" ] || {
+      if [ ! -f "$entry" ] || [ -L "$entry" ]; then
         printf 'timer evidence: refusing non-regular package entry before reading records\n' >&2; exit 1;
-      }
+      fi
     fi
   done
   if [ -n "$(find "$OUT" -type l -print)" ]; then
     printf 'timer evidence: refusing symlink package entry before reading records\n' >&2; exit 1
   fi
-  [ -f "$OUT/.lynx-timer-owner" ] && [ ! -L "$OUT/.lynx-timer-owner" ] || { printf 'timer evidence: output owner marker missing or invalid\n' >&2; exit 1; }
+  if [ ! -f "$OUT/.lynx-timer-owner" ] || [ -L "$OUT/.lynx-timer-owner" ]; then
+    printf 'timer evidence: output owner marker missing or invalid\n' >&2; exit 1
+  fi
   awk -v dir="$OUT" 'NR == 1 && $0 == "lynx-timer-output-v1" { a=1 } NR == 2 && $0 == dir { b=1 } NR == 3 && length($0) == 48 && $0 ~ /^[0-9a-f]+$/ { c=1 } END { if (NR != 3 || !a || !b || !c) exit 1 }' "$OUT/.lynx-timer-owner" || { printf 'timer evidence: output owner marker mismatch\n' >&2; exit 1; }
   [ -f "$OUT/build-record.txt" ] || { printf 'timer evidence: build record missing\n' >&2; exit 1; }
   cmp -s "$ROOT/fixtures/timer-evidence/NOTICE" "$OUT/NOTICE" || { printf 'timer evidence: NOTICE mismatch\n' >&2; exit 1; }
@@ -376,7 +380,10 @@ build_case() {
       printf '%s_code_sha256=%s\n' "$case_name" "$case_code_sha"
     } >> "$OUT/build-record.txt"
   else
-    [ -f "$OUT/$case_name.bll" ] && [ -f "$OUT/$case_name.lbl" ] && [ -f "$OUT/$case_name.map" ] && [ -f "$OUT/$case_name.case.txt" ] || { printf 'timer evidence: package case missing: %s\n' "$case_name" >&2; return 1; }
+    if [ ! -f "$OUT/$case_name.bll" ] || [ ! -f "$OUT/$case_name.lbl" ] ||
+       [ ! -f "$OUT/$case_name.map" ] || [ ! -f "$OUT/$case_name.case.txt" ]; then
+      printf 'timer evidence: package case missing: %s\n' "$case_name" >&2; return 1
+    fi
     case_code_sha=$(code_hash "$OUT/$case_name.bll" "$BASE/base-case-code.bin")
     [ "$case_code_sha" = "$BASE_CODE_SHA" ] || { printf 'timer evidence: package CODE no longer matches pinned baseline\n' >&2; return 1; }
     object_sha=$(sha256 "$OUT/$case_name.bll")
