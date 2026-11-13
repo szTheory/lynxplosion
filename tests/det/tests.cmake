@@ -61,36 +61,7 @@ lynx_warnings(lynx-test-det)
 lynx_sanitize(lynx-test-det)
 set_target_properties(lynx-test-det PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
 
-# Build the existing source-authored A/V guest with the same pinned recipe as
-# consumer.av_tracer. The deterministic path tests consume its BLL and linked
-# probe_result symbol directly rather than maintaining a second guest image.
-set(LYNX_AV_PROBE_SOURCE ${PROJECT_SOURCE_DIR}/fixtures/diagnostic/av_probe.s)
-set(LYNX_AV_PROBE_CONFIG ${PROJECT_SOURCE_DIR}/fixtures/diagnostic/av_probe.cfg)
-set(LYNX_AV_PROBE_MANIFEST ${PROJECT_SOURCE_DIR}/fixtures/manifests/av-probe.manifest)
-set(LYNX_CC65_HOME ${PROJECT_SOURCE_DIR}/build/pins/cc65)
-set(LYNX_CA65 ${LYNX_CC65_HOME}/bin/ca65)
-set(LYNX_LD65 ${LYNX_CC65_HOME}/bin/ld65)
-if(NOT EXISTS ${LYNX_CA65} OR NOT EXISTS ${LYNX_LD65} OR
-   NOT EXISTS ${LYNX_CC65_HOME}/.lynx-build-files)
-  message(FATAL_ERROR "det.audio_paths requires the pinned ca65/ld65 build used by consumer.av_tracer")
-endif()
-set(LYNX_AV_PROBE_DIR ${PROJECT_BINARY_DIR}/generated/av-probe)
-set(LYNX_AV_PROBE_OBJECT ${LYNX_AV_PROBE_DIR}/av_probe.o)
-set(LYNX_AV_PROBE_BLL ${LYNX_AV_PROBE_DIR}/av_probe.bll)
-set(LYNX_AV_PROBE_LABELS ${LYNX_AV_PROBE_DIR}/av_probe.lbl)
-add_custom_command(OUTPUT ${LYNX_AV_PROBE_BLL} ${LYNX_AV_PROBE_LABELS}
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${LYNX_AV_PROBE_DIR}
-  COMMAND ${CMAKE_COMMAND} -E env "PATH=/usr/bin:/bin" "CC65_HOME=${LYNX_CC65_HOME}"
-    ${LYNX_CA65} --cpu 65SC02 -o ${LYNX_AV_PROBE_OBJECT} ${LYNX_AV_PROBE_SOURCE}
-  COMMAND ${CMAKE_COMMAND} -E env "PATH=/usr/bin:/bin" "CC65_HOME=${LYNX_CC65_HOME}"
-    ${LYNX_LD65} -C ${LYNX_AV_PROBE_CONFIG} -Ln ${LYNX_AV_PROBE_LABELS}
-    -o ${LYNX_AV_PROBE_BLL} ${LYNX_AV_PROBE_OBJECT}
-  COMMAND ${CMAKE_COMMAND} -E rm -f ${LYNX_AV_PROBE_OBJECT}
-  DEPENDS ${LYNX_AV_PROBE_SOURCE} ${LYNX_AV_PROBE_CONFIG} ${LYNX_AV_PROBE_MANIFEST}
-    ${PROJECT_SOURCE_DIR}/pins.txt ${LYNX_CC65_HOME}/.lynx-build-files
-  VERBATIM)
-add_custom_target(lynx-det-av-probe-fixture DEPENDS ${LYNX_AV_PROBE_BLL} ${LYNX_AV_PROBE_LABELS})
-add_dependencies(lynx-test-det lynx-det-av-probe-fixture)
+set(LYNX_DET_AV_DRIVER ${CMAKE_CURRENT_LIST_DIR}/av_driver.cmake)
 
 lynx_add_test(NAME det.golden
   COMMAND ${CMAKE_COMMAND}
@@ -149,13 +120,21 @@ lynx_add_test(NAME det.video_sensitivity
   LABELS det TIMEOUT 60)
 
 lynx_add_test(NAME det.audio_paths
-  COMMAND lynx-test-det audio_paths ${LYNX_AV_PROBE_BLL} ${LYNX_AV_PROBE_LABELS}
-    ${LYNX_AV_PROBE_MANIFEST}
+  COMMAND ${CMAKE_COMMAND}
+    "-DROOT=${PROJECT_SOURCE_DIR}"
+    "-DWORK=${LYNX_SCRATCH_DIR}/det"
+    "-DCASE=audio_paths"
+    "-DDET=$<TARGET_FILE:lynx-test-det>"
+    -P "${LYNX_DET_AV_DRIVER}"
   LABELS det TIMEOUT 300)
 
 lynx_add_test(NAME det.audio_sensitivity
-  COMMAND lynx-test-det audio_sensitivity ${LYNX_AV_PROBE_BLL} ${LYNX_AV_PROBE_LABELS}
-    ${LYNX_AV_PROBE_MANIFEST}
+  COMMAND ${CMAKE_COMMAND}
+    "-DROOT=${PROJECT_SOURCE_DIR}"
+    "-DWORK=${LYNX_SCRATCH_DIR}/det"
+    "-DCASE=audio_sensitivity"
+    "-DDET=$<TARGET_FILE:lynx-test-det>"
+    -P "${LYNX_DET_AV_DRIVER}"
   LABELS det TIMEOUT 120)
 
 # The strict key = value validator, over real runner manifests and over built
