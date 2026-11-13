@@ -615,8 +615,9 @@ function(run_timer_video_revisit_controls)
     "oracle_sha256=08b5a4f48caf0f92e7bc177d9f3a6ac8ff68d757b57b9bc346aad8bd4c698b4f"
     "oracle_sha256=0000000000000000000000000000000000000000000000000000000000000000"
     "timer video record: oracle identity mismatch")
+  file(SHA256 "${WORK}/video-baseline/lynx1/build-record.txt" video_build_record_sha)
   video_rewrite_case("build-hash-changed" "timer-video-revisit-lynx1.txt"
-    "build_record_sha256=0cccecb88b0fb3ea080ece5980c28a4e6fe00c8b045f4d20bb75168a53443033"
+    "build_record_sha256=${video_build_record_sha}"
     "build_record_sha256=0000000000000000000000000000000000000000000000000000000000000000"
     "timer video record: build identity mismatch")
   video_rewrite_case("layout-hash-changed" "timer-video-revisit-lynx1.txt"
