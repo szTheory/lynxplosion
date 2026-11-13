@@ -2004,6 +2004,36 @@ static void case_stops(void)
                      storage.pens[0] == 0xA5u && storage.palettes[0] == 0xA5u &&
                      storage.line_ticks[0] == UINT64_C(0xA5A5A5A5A5A5A5A5) &&
                      storage.audio[0] == 0xA5u && storage.audio[256] == 0xA5u);
+
+        const uint64_t guest_limit = UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM;
+        box.machine->guest_ticks = guest_limit - 7u;
+        box.machine->cpu_ready_at = box.machine->guest_ticks;
+        box.machine->bus_hold = 1u;
+        box.machine->audio.next_sample_tick = UINT64_MAX;
+        av_result_init(&result);
+        ASSERT_EQ("audio.stops.headroom-call", lynx_advance_av(
+            box.machine, UINT64_MAX, &buffers, &result), LYNX_OK);
+        ASSERT_EQ("audio.stops.headroom-reason", result.stop, LYNX_STOP_BUDGET);
+        ASSERT_EQ("audio.stops.headroom-consumed", result.ticks_consumed, 7u);
+        ASSERT_EQ("audio.stops.headroom-tick", box.machine->guest_ticks, guest_limit);
+        ASSERT_EQ("audio.stops.headroom-pcm", result.pcm_count, 0u);
+        ASSERT_EQ("audio.stops.headroom-events", result.event_count, 0u);
+        ASSERT_NAMED("audio.stops.headroom-preserves-payload",
+                     storage.pens[0] == 0xA5u && storage.palettes[0] == 0xA5u &&
+                     storage.line_ticks[0] == UINT64_C(0xA5A5A5A5A5A5A5A5) &&
+                     storage.audio[0] == 0xA5u && storage.audio[256] == 0xA5u);
+        memcpy(machine_before, box.machine, lynx_machine_size());
+        av_result_init(&result);
+        ASSERT_EQ("audio.stops.headroom-repeat", lynx_advance_av(
+            box.machine, UINT64_MAX, &buffers, &result), LYNX_OK);
+        ASSERT_EQ("audio.stops.headroom-repeat-reason", result.stop, LYNX_STOP_BUDGET);
+        ASSERT_EQ("audio.stops.headroom-repeat-zero-progress", result.ticks_consumed, 0u);
+        ASSERT_NAMED("audio.stops.headroom-repeat-machine",
+                     memcmp(machine_before, box.machine, lynx_machine_size()) == 0);
+        ASSERT_NAMED("audio.stops.headroom-repeat-preserves-payload",
+                     storage.pens[0] == 0xA5u && storage.palettes[0] == 0xA5u &&
+                     storage.line_ticks[0] == UINT64_C(0xA5A5A5A5A5A5A5A5) &&
+                     storage.audio[0] == 0xA5u && storage.audio[256] == 0xA5u);
         free(machine_before);
     }
     machine_close(&box);
