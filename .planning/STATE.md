@@ -3,18 +3,18 @@ gsd_state_version: "1.0"
 current_phase: 6
 current_plan: 12
 status: completed
-milestone_status: gaps_found
-stopped_at: All six phases complete; Focused timer investigation complete; bus/snapshot repair qualified locally; strict gap remains
-last_updated: "2026-11-13T17:09:46.142889+00:00"
+stopped_at: All phases complete; timer study software prepared; hosted CI gates handoff; physical approval and strict gap remain open
+last_updated: "2026-11-13T20:10:12.268Z"
 last_activity: 2026-11-13
-last_activity_desc: Phase 6 complete
-state_head: f32b113ff2895990e7c2545cc638bbd74a4088f9
+last_activity_desc: Timer evidence software prepared; physical execution unapproved
+state_head: 0e5d5da1623416a7b64c3f93a61a16ca253e06d6
 progress:
   total_phases: 6
   completed_phases: 6
   total_plans: 69
   completed_plans: 69
   percent: 100
+milestone_status: gaps_found
 ---
 
 # Project State
@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-13)
 
 **Core value:** Every compatibility claim is tied to an exact, named Lynx model/configuration and to reproducible evidence from a deterministic, observable machine.
-**Current focus:** Focused timer investigation and bus/snapshot repair complete; reviewed source passes canonical local gate. Strict comparison and milestone closure remain open. The owner acts next on hardware access/physical evidence; no physical test is authorized.
+**Current focus:** Timer study software is prepared, reviewed and locally qualified; final same-HEAD hosted Debug CI gates the owner handoff. Physical execution stays unapproved; equipment and loader compatibility remain unknown. The strict timer gap and milestone remain open.
 
 ## Current Position
 
@@ -32,7 +32,7 @@ Phase: 6
 Current Plan: 12 (complete)
 Total Plans in Phase: 12
 Status: All phases complete; milestone audit found one unmet global requirement
-Last activity: 2026-11-13 — Phase 6 complete
+Last activity: 2026-11-13 — Source-built timer evidence package prepared; physical execution unapproved
 
 Progress: [██████████] 100%
 
@@ -305,6 +305,11 @@ the actual-frame/audio consumer and final device-fault evidence.
 No new phase, archive, tag or release is started while the milestone scope
 choice is unresolved. Keeping that boundary in place needs no confirmation.
 
+## Quick Tasks Completed
+
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+
 ## Deferred Items
 
 Items acknowledged and deferred at milestone close, most recent first:
@@ -312,11 +317,12 @@ Items acknowledged and deferred at milestone close, most recent first:
 | Category | Item | Status | Deferred At | Milestone |
 |----------|------|--------|-------------|-----------|
 | Technical follow-up | Investigate restore accepting a forged `cpu_ready_at` span of 255 ticks; inherited from `origin/main`, documented in Phase 3 code review, and outside Plan 03-09's change scope. | Resolved in Phase 4 Plan 06 with reachable residual bounds and hostile snapshot controls; see 04-06-SUMMARY.md. | Phase 03 Plan 09 | v1 |
+| 261113-h5w | Prepare source-built timer study; physical execution unapproved | 2026-11-13 | 0e5d5da | Software prepared; CI gates handoff | [261113-h5w-prepare-a-source-built-timer-hardware-ev](./quick/261113-h5w-prepare-a-source-built-timer-hardware-ev/) |
 
 ## Session Continuity
 
 Last session: 2026-11-13T16:16:10.207Z
-Stopped at: All six phases complete; focused timer investigation authorized; bus/snapshot repair reviewed and qualified; strict comparison still open; next evidence needs hardware/source decision
+Stopped at: All phases complete; timer software package locally qualified; hosted exact-head CI gates final approval request; physical execution unapproved
 Resume file: .planning/phases/06-audio-and-playable-checkpoint/06-CONTEXT.md
 
 
@@ -338,9 +344,10 @@ The owner approved the focused timer investigation. It found and repaired
 overlapping CPU/video/refresh grants and their snapshot boundary, while strict
 counts remain12/15 against13. See [the investigation](debug/evidence/timer-focused-bus-accounting.md).
 The next decisive evidence requires fuller independent bus documentation or a
-hardware observation. A [bounded hardware proposal](debug/evidence/timer-next-evidence-protocol.md)
-is prepared; the owner acts next to identify available equipment and decide
-whether to authorize physical testing. Physical execution remains unapproved.
+hardware observation. The [source-built approval packet](quick/261113-h5w-prepare-a-source-built-timer-hardware-ev/APPROVAL-PACKET.md)
+is locally qualified with private software captures and empty physical slots.
+After exact-head hosted CI passes, the owner acts next to identify available
+equipment and decide on the bounded protocol. Physical execution remains unapproved.
 The milestone stays open; no new phase, cleanup, tag or release has started.
 
 Historical source-scoped phase reports retain their original fingerprints.

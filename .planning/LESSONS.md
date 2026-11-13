@@ -1,5 +1,27 @@
 # Lessons (rolling)
 
+## Timer evidence preparation (2026-11-13)
+
+- Reach a complete guest-to-pixel path before expanding the case matrix.
+  Independent glyph/palette checks found a wrong palette pen; viewing the full
+  captured frame found uncleared pixels hidden by the fresh software palette.
+  Verify unused screen areas and actual guest probe/completion values too.
+- Private artifact retention requires permissions, not just a scratch name.
+  Use owner-only leaves before writing content, reject widened package modes,
+  and test that refusal. Preserve earlier failure artifacts with complete
+  inventories under private storage before removing them from the build scan.
+- Preserve timed CODE independently of wrapper/UI instrumentation and bind the
+  entire image to an approved identity list. A refreshed self-reported receipt
+  must not authorize changed code. Explicit startup can change observations;
+  matching a source count does not establish historical CRT equivalence.
+- Measure timeout cost before changing limits. A local GNU Debug case used
+  23.900 CPU seconds; the optimized build retained both sanitizers and passed
+  the unchanged group limits. Keep the failed Debug evidence and let hosted
+  Debug own the ordinary CI gate. Do not turn this local qualification into
+  another CI matrix or a global build-policy change.
+
+See [the software preparation summary](quick/261113-h5w-prepare-a-source-built-timer-hardware-ev/261113-h5w-SUMMARY.md).
+
 Lessons carried forward between phases and, per AGENTS.md, between emulator projects.
 Each entry names the evidence. Update at every phase transition and milestone close.
 

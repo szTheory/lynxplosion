@@ -9,7 +9,8 @@ are unknown.
 
 Use the project's existing pinned source and cc65 tools, prepared by the normal
 check setup. No BIOS, commercial game, CRT, TGI or cartridge bootstrap is used.
-The manifest and full MIT notice are in `fixtures/timer-evidence/`. Generated
+The manifest is in `fixtures/manifests/timer-evidence.manifest`; the full MIT
+notice is in `fixtures/timer-evidence/NOTICE`. Generated
 images and captures stay in private scratch; they are not release artifacts.
 
 From the repository root, with an existing canonical private temporary root:
