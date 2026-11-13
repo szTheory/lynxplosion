@@ -32,12 +32,14 @@ channel output. The four link controls each clock one source/target pair and
 assert the target count directly. The broader `audio.links` case remains the
 positive regression for the complete eight-node ring and its A3→T1 wake path.
 
-The six native fault controls passed individually in the Task 1 selector. The
-supporting native positive selector also passed `audio.order`, `audio.capacity`,
-`det.audio_paths`, and all four fresh audio/audio2 source observations on
-lynx1/lynx2. Those source observations retained their 18-row comparisons and
-matched the independent software model. GNU qualification for this source
-commit is recorded with the Plan 10 execution summary.
+The six fault controls passed in both the native Clang selector and the GNU
+13.3 Linux/aarch64 selector at source commit
+`0445c1569d628b0a33c12f57afa48c313856ffd4`. The supporting seven-case positive
+selector passed `audio.order`, `audio.capacity`, `det.audio_paths`, and all
+four fresh audio/audio2 source observations on lynx1/lynx2. Those source
+observations retained their 18-row comparisons and matched the independent
+software model. The three determinism claim proofs and claim checker also
+passed on both builds.
 
 ## Stereo routing, cadence, and snapshot continuation
 
@@ -59,11 +61,14 @@ by A1 sequence 1. The mutation changes the ring cursor value written at byte
 detail, not a public ABI constant. Restore must succeed before the suffix can
 count as a detection.
 
-The four native Task 2 fault controls passed. The supporting native selector
+The four fault controls passed in both the native Clang selector and the GNU
+13.3 Linux/aarch64 selector at source commit
+`0753170ed4217881426f0417f385111c13d8b08a`. The supporting ten-case selector
 passed `audio.cadence`, `audio.stereo`, `audio.order`, `audio.capacity`,
 `audio.snapshot`, `det.audio_paths`, and all four fresh audio/audio2 source
-observations on lynx1/lynx2. GNU qualification for the Task 2 source commit is
-recorded with the Plan 10 execution summary.
+observations on lynx1/lynx2. Those four observations retained their 18-row
+comparisons. The three determinism claim proofs and claim checker also passed
+on both builds.
 
 These results establish software fault sensitivity and pinned-source
 repeatability only. They do not qualify a Lynx model or establish hardware
