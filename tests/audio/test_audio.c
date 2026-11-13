@@ -2378,6 +2378,8 @@ static void case_capacity(void)
     machine_close(&first_instance);
 }
 
+static void check_audio_lifecycle(void);
+
 static void case_stops(void)
 {
     static const uint8_t looping_guest[] = {0x4Cu, 0x00u, 0x02u};
@@ -2503,6 +2505,226 @@ static void case_stops(void)
     check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
                                LYNX_ERR_STATE, "audio.stops.no-content-unchanged");
     machine_close(&box);
+    check_audio_lifecycle();
+}
+
+static int build_lifecycle_guest(byte_program *program)
+{
+    memset(program, 0, sizeof *program);
+    for (uint8_t channel = 0u; channel < LYNX_AUDIO_CHANNELS; channel++) {
+        const uint8_t volume = (uint8_t)(channel + 2u);
+        if (!emit_store_imm(program, channel_register(channel, 0u), volume)) {
+            return 0;
+        }
+    }
+    return emit_store_imm(program, timer_register(1u, 3u), 0x02u) &&
+           append_loop(program);
+}
+
+static void advance_lifecycle_av_to(lynx_machine *machine, uint64_t target,
+                                    const char *label, lynx_pcm_frame *pcm,
+                                    lynx_audio_event *events, size_t event_capacity,
+                                    lynx_av_buffers *buffers, lynx_av_result *result)
+{
+    size_t total_pcm = 0u;
+    size_t total_events = 0u;
+    bool saw_clock = false;
+    bool saw_nonzero_sample = false;
+    while (machine->guest_ticks < target) {
+        const uint64_t before = machine->guest_ticks;
+        av_buffers_init(buffers, pcm, 2u, events, event_capacity);
+        ASSERT_EQ(label, av_advance(machine, target - before, buffers, result), LYNX_OK);
+        total_pcm += result->pcm_count;
+        total_events += result->event_count;
+        for (uint32_t i = 0u; i < result->event_count; i++) {
+            if (events[i].cause == LYNX_AUDIO_EVENT_CLOCK) saw_clock = true;
+        }
+        for (uint32_t i = 0u; i < result->pcm_count; i++) {
+            if (pcm[i].left != 0 || pcm[i].right != 0) saw_nonzero_sample = true;
+        }
+        if (machine->guest_ticks == before) {
+            ASSERT_NAMED(label, 0);
+            break;
+        }
+        if (machine->guest_ticks < target && result->stop != LYNX_STOP_FRAME &&
+            result->stop != LYNX_STOP_OUTPUT) {
+            ASSERT_NAMED(label, 0);
+            break;
+        }
+    }
+    ASSERT_EQ(label, machine->guest_ticks, target);
+    ASSERT_EQ(label, total_pcm, 1u);
+    ASSERT_NAMED("audio.lifecycle.active-events", total_events > 0u);
+    ASSERT_NAMED("audio.lifecycle.active-clock", saw_clock);
+    ASSERT_NAMED("audio.lifecycle.active-ring-debt", ring_debt_sum(&machine->audio) > 0u);
+    ASSERT_EQ(label, machine->audio.next_sample_tick, target + 399u);
+    ASSERT_EQ(label, machine->audio.next_sample_ordinal, target / 400u);
+    for (uint8_t channel = 0u; channel < LYNX_AUDIO_CHANNELS; channel++) {
+        ASSERT_EQ(label, machine->audio.channels[channel].control_a, 0x4Fu);
+    }
+    ASSERT_NAMED("audio.lifecycle.active-nonzero-sample", saw_nonzero_sample);
+}
+
+static void run_lifecycle_av(lynx_machine *machine, const char *label,
+                             lynx_pcm_frame *pcm, lynx_audio_event *events,
+                             size_t event_capacity, lynx_av_buffers *buffers,
+                             lynx_av_result *result)
+{
+    configure_zero_link_ring(&machine->timer_bank, &machine->audio);
+    advance_lifecycle_av_to(machine, machine->guest_ticks + 401u, label, pcm,
+                            events, event_capacity, buffers, result);
+}
+
+static void check_audio_lifecycle(void)
+{
+    byte_program program;
+    ASSERT_NAMED("audio.lifecycle.guest-build", build_lifecycle_guest(&program));
+    if (program.length == 0u) return;
+
+    machine_box active;
+    machine_box fresh;
+    ASSERT_NAMED("audio.lifecycle.active-init",
+                 machine_open(&active, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    ASSERT_NAMED("audio.lifecycle.fresh-init",
+                 machine_open(&fresh, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (active.machine == NULL || fresh.machine == NULL) {
+        machine_close(&fresh);
+        machine_close(&active);
+        return;
+    }
+
+    lynx_pcm_frame pcm[2];
+    lynx_audio_event events[4096];
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    ASSERT_EQ("audio.lifecycle.reset-active-load",
+              load_guest(active.machine, program.bytes, program.length), LYNX_OK);
+    run_lifecycle_av(active.machine, "audio.lifecycle.reset-active-state",
+                     pcm, events, sizeof events / sizeof events[0], &buffers, &result);
+    ASSERT_EQ("audio.lifecycle.reset-accepted", lynx_reset(active.machine), LYNX_OK);
+    ASSERT_NAMED("audio.lifecycle.reset-fresh-byte-equivalence",
+                 memcmp(active.machine, fresh.machine, lynx_machine_size()) == 0);
+    ASSERT_EQ("audio.lifecycle.reset-tick", active.machine->guest_ticks, 0u);
+    ASSERT_EQ("audio.lifecycle.reset-sample-tick",
+              active.machine->audio.next_sample_tick, 400u);
+    ASSERT_EQ("audio.lifecycle.reset-sample-ordinal",
+              active.machine->audio.next_sample_ordinal, 0u);
+    ASSERT_EQ("audio.lifecycle.reset-ring-debt",
+              ring_debt_sum(&active.machine->audio), 0u);
+    lynx_identity identity;
+    memset(&identity, 0, sizeof identity);
+    ASSERT_EQ("audio.lifecycle.reset-identity",
+              lynx_get_identity(active.machine, &identity), LYNX_OK);
+    ASSERT_EQ("audio.lifecycle.reset-no-content", identity.has_content, 0u);
+
+    ASSERT_EQ("audio.lifecycle.load-prestate",
+              load_guest(active.machine, program.bytes, program.length), LYNX_OK);
+    run_lifecycle_av(active.machine, "audio.lifecycle.load-active-state",
+                     pcm, events, sizeof events / sizeof events[0], &buffers, &result);
+    ASSERT_EQ("audio.lifecycle.load-accepted",
+              load_guest(active.machine, program.bytes, program.length), LYNX_OK);
+    ASSERT_EQ("audio.lifecycle.load-reference",
+              load_guest(fresh.machine, program.bytes, program.length), LYNX_OK);
+    ASSERT_NAMED("audio.lifecycle.load-fresh-byte-equivalence",
+                 memcmp(active.machine, fresh.machine, lynx_machine_size()) == 0);
+    ASSERT_EQ("audio.lifecycle.load-tick", active.machine->guest_ticks, 0u);
+    ASSERT_EQ("audio.lifecycle.load-sample-tick",
+              active.machine->audio.next_sample_tick, 400u);
+    ASSERT_EQ("audio.lifecycle.load-sample-ordinal",
+              active.machine->audio.next_sample_ordinal, 0u);
+    ASSERT_EQ("audio.lifecycle.load-ring-debt",
+              ring_debt_sum(&active.machine->audio), 0u);
+    memset(&identity, 0, sizeof identity);
+    ASSERT_EQ("audio.lifecycle.load-identity",
+              lynx_get_identity(active.machine, &identity), LYNX_OK);
+    ASSERT_EQ("audio.lifecycle.load-content", identity.has_content, 1u);
+    ASSERT_EQ("audio.lifecycle.load-format", identity.content_format, LYNX_CONTENT_BS93);
+    ASSERT_EQ("audio.lifecycle.load-address", identity.content_addr, 0x0200u);
+    ASSERT_EQ("audio.lifecycle.load-content-length", identity.content_len,
+              program.length);
+    ASSERT_EQ("audio.lifecycle.load-startup", identity.startup_tier, LYNX_STARTUP_A);
+    ASSERT_EQ("audio.lifecycle.load-entry", identity.entry_addr, 0x0200u);
+    ASSERT_EQ("audio.lifecycle.load-object-length", identity.object_len,
+              program.length + 10u);
+
+    ASSERT_EQ("audio.lifecycle.deinit-active-load",
+              load_guest(active.machine, program.bytes, program.length), LYNX_OK);
+    configure_zero_link_ring(&active.machine->timer_bank, &active.machine->audio);
+    av_span_storage old_storage;
+    lynx_av_buffers old_buffers;
+    lynx_av_result old_result;
+    av_span_storage_init(&old_storage, &old_buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&old_result);
+    ASSERT_EQ("audio.lifecycle.old-span-advance",
+              av_advance(active.machine, 80u, &old_buffers, &old_result), LYNX_OK);
+    ASSERT_EQ("audio.lifecycle.old-span-stop", old_result.stop, LYNX_STOP_OUTPUT);
+    ASSERT_NAMED("audio.lifecycle.old-span-produced-events", old_result.event_count > 0u);
+    ASSERT_NAMED("audio.lifecycle.old-span-partial-progress",
+                 active.machine->guest_ticks > 0u && active.machine->guest_ticks < 401u);
+    advance_lifecycle_av_to(active.machine, 401u, "audio.lifecycle.deinit-active-state",
+                            pcm, events, sizeof events / sizeof events[0],
+                            &buffers, &result);
+
+    lynx_machine_deinit(active.machine);
+    memset(&old_storage, 0x5Bu, sizeof old_storage);
+    av_result_init(&old_result);
+    av_span_storage storage_before = old_storage;
+    lynx_av_buffers buffers_before = old_buffers;
+    lynx_av_result result_before = old_result;
+    const size_t machine_size = lynx_machine_size();
+    uint8_t *machine_before = (uint8_t *)malloc(machine_size);
+    ASSERT_NAMED("audio.lifecycle.deinit-snapshot-allocation", machine_before != NULL);
+    if (machine_before == NULL) {
+        machine_close(&fresh);
+        machine_close(&active);
+        return;
+    }
+    memcpy(machine_before, active.machine, machine_size);
+    ASSERT_EQ("audio.lifecycle.deinit-av-refusal",
+              lynx_advance_av(active.machine, 1u, &old_buffers, &old_result),
+              LYNX_ERR_STATE);
+    ASSERT_NAMED("audio.lifecycle.deinit-instance-unchanged",
+                 memcmp(machine_before, active.machine, machine_size) == 0);
+    ASSERT_NAMED("audio.lifecycle.deinit-result-unchanged",
+                 memcmp(&result_before, &old_result, sizeof old_result) == 0);
+    ASSERT_NAMED("audio.lifecycle.deinit-descriptor-unchanged",
+                 memcmp(&buffers_before, &old_buffers, sizeof old_buffers) == 0);
+    ASSERT_NAMED("audio.lifecycle.deinit-caller-spans-unchanged",
+                 memcmp(&storage_before, &old_storage, sizeof old_storage) == 0);
+    free(machine_before);
+
+    lynx_config config;
+    lynx_config_default(&config);
+    config.timing_policy = LYNX_TIMING_POLICY_VIDEO_POLICY1;
+    lynx_machine *reinitialized = NULL;
+    ASSERT_EQ("audio.lifecycle.same-allocation-init",
+              lynx_machine_init(active.machine, machine_size, &config,
+                                &reinitialized), LYNX_OK);
+    ASSERT_NAMED("audio.lifecycle.same-allocation-pointer",
+                 reinitialized == active.machine);
+    active.machine = reinitialized;
+    ASSERT_EQ("audio.lifecycle.same-allocation-reload",
+              load_guest(active.machine, program.bytes, program.length), LYNX_OK);
+    ASSERT_NAMED("audio.lifecycle.same-allocation-fresh-equivalence",
+                 memcmp(active.machine, fresh.machine, machine_size) == 0);
+
+    av_span_storage new_storage;
+    lynx_av_buffers new_buffers;
+    lynx_av_result new_result;
+    av_span_storage_init(&new_storage, &new_buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&new_result);
+    ASSERT_EQ("audio.lifecycle.new-span-advance",
+              av_advance(active.machine, 401u, &new_buffers, &new_result), LYNX_OK);
+    ASSERT_NAMED("audio.lifecycle.new-span-produced-events", new_result.event_count > 0u);
+    ASSERT_NAMED("audio.lifecycle.new-span-written",
+                 new_storage.audio[256] != 0xA5u);
+    ASSERT_NAMED("audio.lifecycle.old-span-not-retained",
+                 memcmp(&storage_before, &old_storage, sizeof old_storage) == 0);
+
+    machine_close(&fresh);
+    machine_close(&active);
 }
 
 enum {
