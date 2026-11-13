@@ -15,3 +15,5 @@ lynx_add_test(NAME audio.mix COMMAND lynx-test-audio mix LABELS audio TIMEOUT 60
 lynx_add_test(NAME audio.order COMMAND lynx-test-audio order LABELS audio TIMEOUT 30)
 lynx_add_test(NAME audio.links COMMAND lynx-test-audio links LABELS audio TIMEOUT 30)
 lynx_add_test(NAME audio.ring_zero COMMAND lynx-test-audio ring_zero LABELS audio TIMEOUT 60)
+lynx_add_test(NAME audio.span_refusal COMMAND lynx-test-audio span_refusal LABELS audio TIMEOUT 60)
+lynx_add_test(NAME audio.span_alias COMMAND lynx-test-audio span_alias LABELS audio TIMEOUT 60)

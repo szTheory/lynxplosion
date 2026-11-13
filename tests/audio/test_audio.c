@@ -1428,6 +1428,298 @@ static void case_ring_zero(void)
 
 }
 
+typedef struct av_span_storage {
+    max_align_t alignment;
+    uint8_t pens[LYNX_FRAME_PENS_CAPACITY + 1u];
+    uint8_t palettes[LYNX_FRAME_PALETTE_CAPACITY + 1u];
+    uint64_t line_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY + 1u];
+    _Alignas(max_align_t) uint8_t audio[1024];
+} av_span_storage;
+
+static void av_span_storage_init(av_span_storage *storage, lynx_av_buffers *buffers,
+                                 size_t pcm_capacity, size_t event_capacity)
+{
+    memset(storage, 0xA5, sizeof *storage);
+    memset(buffers, 0, sizeof *buffers);
+    buffers->struct_size = (uint32_t)sizeof *buffers;
+    buffers->frame.struct_size = (uint32_t)sizeof buffers->frame;
+    buffers->frame.pens = storage->pens;
+    buffers->frame.pens_capacity = LYNX_FRAME_PENS_CAPACITY;
+    buffers->frame.palettes = storage->palettes;
+    buffers->frame.palettes_capacity = LYNX_FRAME_PALETTE_CAPACITY;
+    buffers->frame.line_ticks = storage->line_ticks;
+    buffers->frame.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
+    buffers->pcm = (lynx_pcm_frame *)(void *)storage->audio;
+    buffers->pcm_capacity = pcm_capacity;
+    buffers->events = (lynx_audio_event *)(void *)(storage->audio + 256u);
+    buffers->event_capacity = event_capacity;
+}
+
+static void av_result_init(lynx_av_result *result)
+{
+    memset(result, 0x5Au, sizeof *result);
+    result->struct_size = (uint32_t)sizeof *result;
+}
+
+static void check_av_refusal_unchanged(lynx_machine *machine, lynx_av_buffers *buffers,
+                                       lynx_av_result *result, av_span_storage *storage,
+                                       lynx_status expected, const char *label)
+{
+    const size_t machine_size = lynx_machine_size();
+    uint8_t *machine_before = (uint8_t *)malloc(machine_size);
+    av_span_storage *storage_before = (av_span_storage *)malloc(sizeof *storage_before);
+    ASSERT_NAMED("audio.span.snapshot-allocation",
+                 machine_before != NULL && storage_before != NULL);
+    if (machine_before == NULL || storage_before == NULL) {
+        free(machine_before);
+        free(storage_before);
+        return;
+    }
+    lynx_av_buffers buffers_before = *buffers;
+    lynx_av_result result_before = *result;
+    memcpy(machine_before, machine, machine_size);
+    memcpy(storage_before, storage, sizeof *storage_before);
+    ASSERT_EQ(label, lynx_advance_av(machine, 1u, buffers, result), expected);
+    ASSERT_NAMED(label, memcmp(machine_before, machine, machine_size) == 0);
+    ASSERT_NAMED(label, memcmp(&buffers_before, buffers, sizeof buffers_before) == 0);
+    ASSERT_NAMED(label, memcmp(&result_before, result, sizeof result_before) == 0);
+    ASSERT_NAMED(label, memcmp(storage_before, storage, sizeof *storage_before) == 0);
+    free(machine_before);
+    free(storage_before);
+}
+
+static void case_span_refusal(void)
+{
+    static const uint8_t looping_guest[] = {0x4Cu, 0x00u, 0x02u};
+    machine_box box;
+    ASSERT_NAMED("audio.span.machine-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    ASSERT_EQ("audio.span.guest-load", load_guest(box.machine, looping_guest,
+                                                    sizeof looping_guest), LYNX_OK);
+
+    av_span_storage storage;
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.struct_size--;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.descriptor-size");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.reserved = 1u;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.descriptor-reserved");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.struct_size--;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.frame-size");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.reserved = 1u;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.frame-reserved");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    result.struct_size--;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.result-size");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.pcm = NULL;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.null-pcm");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.events = NULL;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.null-events");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.pens = NULL;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.null-pens");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.palettes = NULL;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.null-palettes");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.line_ticks = NULL;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.null-line-ticks");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.pens_capacity--;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_CAPACITY, "audio.span.pens-one-short");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.palettes_capacity--;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_CAPACITY, "audio.span.palettes-one-short");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.line_ticks_capacity--;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_CAPACITY, "audio.span.ticks-one-short");
+    av_span_storage_init(&storage, &buffers, 0u, LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_CAPACITY, "audio.span.pcm-zero-capacity");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY - 1u);
+    av_result_init(&result);
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_CAPACITY, "audio.span.events-one-short");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.pcm = (lynx_pcm_frame *)(void *)(storage.audio + 1u);
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ALIGNMENT, "audio.span.pcm-alignment");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.events = (lynx_audio_event *)(void *)(storage.audio + 257u);
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ALIGNMENT, "audio.span.event-alignment");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.line_ticks = (uint64_t *)(void *)((uint8_t *)storage.line_ticks + 1u);
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ALIGNMENT, "audio.span.tick-alignment");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.pcm = (lynx_pcm_frame *)(uintptr_t)(UINTPTR_MAX - 3u);
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.pcm-pointer-wrap");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.pcm_capacity = SIZE_MAX / sizeof(lynx_pcm_frame) + 1u;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.pcm-size-wrap");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.event_capacity = SIZE_MAX / sizeof(lynx_audio_event) + 1u;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.event-size-wrap");
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.frame.line_ticks_capacity = SIZE_MAX / sizeof(uint64_t) + 1u;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span.tick-size-wrap");
+
+    machine_close(&box);
+}
+
+static void case_span_alias(void)
+{
+    static const uint8_t looping_guest[] = {0x4Cu, 0x00u, 0x02u};
+    machine_box box;
+    ASSERT_NAMED("audio.span_alias.machine-init",
+                 machine_open(&box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box.machine == NULL) return;
+    ASSERT_EQ("audio.span_alias.guest-load", load_guest(box.machine, looping_guest,
+                                                         sizeof looping_guest), LYNX_OK);
+
+    av_span_storage storage;
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_span_storage_init(&storage, &buffers, 2u, LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.pcm_capacity = 8u; /* The write prefix is short; these full declared spans overlap. */
+    buffers.events = (lynx_audio_event *)(void *)(storage.audio + 8u);
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span_alias.pcm-event-full-range");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.events = (lynx_audio_event *)(void *)storage.line_ticks;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span_alias.frame-event");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.pcm = (lynx_pcm_frame *)(void *)buffers.frame.pens;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span_alias.pcm-frame");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.pcm = (lynx_pcm_frame *)(void *)&buffers;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span_alias.descriptor-pcm");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.pcm = (lynx_pcm_frame *)(void *)box.machine;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span_alias.machine-pcm");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.pcm = (lynx_pcm_frame *)(void *)&result;
+    check_av_refusal_unchanged(box.machine, &buffers, &result, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span_alias.result-pcm");
+
+    av_span_storage_init(&storage, &buffers, LYNX_AV_MIN_PCM_CAPACITY,
+                         LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    check_av_refusal_unchanged(box.machine, &buffers,
+                               (lynx_av_result *)(void *)&buffers, &storage,
+                               LYNX_ERR_ARGUMENT, "audio.span_alias.descriptor-result");
+
+    av_span_storage_init(&storage, &buffers, 2u, LYNX_AV_MIN_EVENT_CAPACITY);
+    av_result_init(&result);
+    buffers.events = (lynx_audio_event *)(void *)(storage.audio + 8u);
+    buffers.event_capacity = LYNX_AV_MIN_EVENT_CAPACITY;
+    ASSERT_EQ("audio.span_alias.adjacent-one-past-end",
+              lynx_advance_av(box.machine, 0u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.span_alias.adjacent-zero-budget", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.span_alias.adjacent-no-pcm", result.pcm_count, 0u);
+    ASSERT_EQ("audio.span_alias.adjacent-no-events", result.event_count, 0u);
+    ASSERT_NAMED("audio.span_alias.adjacent-caller-bytes",
+                 storage.pens[0] == 0xA5u && storage.audio[0] == 0xA5u &&
+                 storage.audio[8] == 0xA5u);
+
+    machine_close(&box);
+}
+
 typedef struct test_case {
     const char *name;
     void (*run)(void);
@@ -1444,12 +1736,14 @@ static const test_case cases[] = {
     {"order", case_order},
     {"links", case_links},
     {"ring_zero", case_ring_zero},
+    {"span_refusal", case_span_refusal},
+    {"span_alias", case_span_alias},
 };
 
 int main(int argc, char **argv)
 {
     if (argc != 2) {
-        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|counter|integrator|stereo|mix|order|links|ring_zero>\n");
+        (void)fprintf(stderr, "usage: lynx-test-audio <cadence|registers|lfsr|counter|integrator|stereo|mix|order|links|ring_zero|span_refusal|span_alias>\n");
         return 2;
     }
     for (size_t i = 0u; i < sizeof cases / sizeof cases[0]; i++) {

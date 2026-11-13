@@ -77,6 +77,8 @@ audio.mix	audio
 audio.order	audio
 audio.registers	audio
 audio.ring_zero	audio
+audio.span_alias	audio
+audio.span_refusal	audio
 audio.stereo	audio
 consumer.av_tracer	consumer
 consumer.frame_publication_controls	consumer

@@ -311,6 +311,9 @@ enum {
     LYNX_AUDIO_RATE_DEN = 1,
     LYNX_AUDIO_PCM_CHANNELS = 2,
     LYNX_AUDIO_PCM_BITS = 16,
+    /* The sample lattice produces at most one complete stereo frame at a
+       guest tick; even a zero-budget capture must provide one slot. */
+    LYNX_AV_MIN_PCM_CAPACITY = 1,
     /* Four ordinary channel roots, up to eight bounded ring visits, and one
        CPU register write/strobe may emit events at one guest tick. */
     LYNX_AV_MIN_EVENT_CAPACITY = 13
@@ -369,15 +372,35 @@ typedef struct lynx_av_result {
    precedes the CPU grant; work at the half-open target remains pending.
 
    Both descriptors require exact sizes and zero reserved fields. All frame,
-   PCM and event pointers/capacities are required, checked for alignment,
-   integer wrap and pairwise overlap with the descriptors, result and machine
-   before progress. Frame capacities meet the fixed maxima. Event capacity is
-   at least LYNX_AV_MIN_EVENT_CAPACITY entries, enough for the bounded
-   same-tick audio event envelope. On LYNX_OK, result reports FRAME,
-   BUDGET, OUTPUT, or the same CPU stop as lynx_advance; OUTPUT is a valid
-   partial-progress stop and resumes at the exact pending record. The core
-   retains no caller pointers and never drops enabled observations. Calls on
-   one instance must be caller-serialized. */
+   PCM and event pointers are required: this API has no disabled-capture mode,
+   so NULL never means to drop an observation. The declared capacities are
+   checked for arithmetic wrap, alignment where required, and pairwise overlap
+   across the full spans with the descriptors, result and machine before
+   progress. Frame capacities meet the fixed maxima. PCM capacity is at least
+   LYNX_AV_MIN_PCM_CAPACITY; event capacity is at least
+   LYNX_AV_MIN_EVENT_CAPACITY entries, the bounded device/link/sample event
+   envelope. A device/link/sample tick is reserved before any work at that
+   tick; if it cannot fit, OUTPUT stops at the preceding committed frontier.
+   A later CPU-triggered register write is a separate ordered group and is
+   reserved before the write. OUTPUT is a valid partial-progress stop and
+   resumes at the exact pending record. Validation errors, including a
+   capacity below either minimum, leave the machine, result and every caller
+   byte unchanged. The core retains no caller pointers. Calls on one instance
+   must be caller-serialized.
+
+   On LYNX_OK, result reports FRAME, BUDGET, OUTPUT, or the same CPU stop as
+   lynx_advance. A zero budget consumes no guest time and publishes no record.
+   For a non-FRAME stop, frame arrays are untouched; for every stop, only the
+   PCM/event prefixes named by their result counts are defined and unused
+   tails are untouched. A FRAME stop copies the complete frame once and
+   retains already published PCM/events from the committed prefix. Validation
+   precedes state checks after a live machine/content check; no-content or
+   deinitialized instances return STATE without touching outputs. Reset or
+   load clears guest A/V state through the existing unload path; refused
+   reset/load and deinit/reinit operations do not retain prior span pointers.
+   The guest-time headroom stop and a repeated zero-progress OUTPUT return do
+   not consume or discard the pending sample/event group; retry with fresh
+   spans to continue. */
 lynx_status lynx_advance_av(lynx_machine *m, uint64_t budget,
                             const lynx_av_buffers *buffers,
                             lynx_av_result *result);
