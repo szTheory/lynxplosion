@@ -28,6 +28,12 @@ completed: 2026-11-13
 
 # Timer evidence software preparation
 
+Follow-up on 2026-11-13: the owner's equipment answer was unknown. The physical
+study is now parked under the no-equipment default, with no owner question
+queued. Its later disposition supersedes the next-action recommendation at the
+end of this historical software qualification. See the
+[existing-evidence check](../../debug/evidence/timer-no-equipment-evidence.md).
+
 **Source-built timer cases and private software captures are prepared and locally
 qualified; physical execution remains unapproved.**
 

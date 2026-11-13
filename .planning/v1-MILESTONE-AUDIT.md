@@ -83,6 +83,14 @@ The milestone remains open automatically; no confirmation is needed
 to keep the existing hardware/rights/release stops in place. No new phase,
 archive cleanup, tag or release has been started.
 
+Follow-up on2026-11-13: the software study package is implemented, reviewed and
+qualified. The owner could not identify available equipment and delegated the
+recommendation. Treat equipment as unavailable and park the physical track;
+do not keep asking for a model/loader or approval. The bounded
+[existing-evidence check](debug/evidence/timer-no-equipment-evidence.md) governs
+that route. This removes the stale owner questionnaire, not EVD-02's unmet
+comparison or the milestone boundary. No accuracy waiver was requested or given.
+
 ## Three-source requirement reconciliation
 
 All54 v1 definitions/traceability rows were cross-checked against canonical phase

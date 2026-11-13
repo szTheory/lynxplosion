@@ -5,6 +5,12 @@ The original strict timer comparison remains unresolved; this diagnostic does
 not qualify a Lynx model or close the milestone. Available console and loader
 are unknown.
 
+Current disposition (2026-11-13): the owner could not identify available
+equipment and delegated the recommendation. Plan as if no compatible equipment
+is available. This physical protocol is **parked**, not a pending approval or
+equipment questionnaire. Reopen it only when new equipment information or
+independent evidence makes it feasible. No purchase or test is implied.
+
 ## Build and software checks
 
 Use the project's existing pinned source and cc65 tools, prepared by the normal

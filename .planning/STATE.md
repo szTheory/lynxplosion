@@ -3,7 +3,7 @@ gsd_state_version: "1.0"
 current_phase: 6
 current_plan: 12
 status: completed
-stopped_at: All phases complete; timer study software prepared; hosted CI gates handoff; physical approval and strict gap remain open
+stopped_at: All phases complete; timer software qualified; physical track parked under no-equipment default; strict gap remains open
 last_updated: "2026-11-13T20:10:12.268Z"
 last_activity: 2026-11-13
 last_activity_desc: Timer evidence software prepared; physical execution unapproved
@@ -24,7 +24,7 @@ milestone_status: gaps_found
 See: .planning/PROJECT.md (updated 2026-11-13)
 
 **Core value:** Every compatibility claim is tied to an exact, named Lynx model/configuration and to reproducible evidence from a deterministic, observable machine.
-**Current focus:** Timer study software is prepared, reviewed and locally qualified; final same-HEAD hosted Debug CI gates the owner handoff. Physical execution stays unapproved; equipment and loader compatibility remain unknown. The strict timer gap and milestone remain open.
+**Current focus:** Timer study software is committed and qualified, including hosted Debug CI at its recorded source. Treat compatible equipment as unavailable and park physical testing. No model/loader question or approval is queued. Keep the strict timer gap and milestone open pending independent evidence; see the no-equipment disposition.
 
 ## Current Position
 
@@ -272,9 +272,10 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-Owner decision at the v1 milestone boundary: authorize focused investigation of
-the remaining strict timer comparison, or explicitly accept that unmet
-requirement as a milestone-scope change. See `.planning/v1-MILESTONE-AUDIT.md`.
+No owner question is queued. The focused investigation and software package
+are complete. Physical testing is parked under the no-equipment default; the
+strict comparison still needs independent evidence. No accuracy waiver or new
+phase is implied. See [the evidence disposition](debug/evidence/timer-no-equipment-evidence.md).
 
 ### Blockers/Concerns
 
@@ -322,7 +323,7 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-11-13T16:16:10.207Z
-Stopped at: All phases complete; timer software package locally qualified; hosted exact-head CI gates final approval request; physical execution unapproved
+Stopped at: All phases complete; timer software qualified; no-equipment path selected; no owner question queued; physical study parked
 Resume file: .planning/phases/06-audio-and-playable-checkpoint/06-CONTEXT.md
 
 
@@ -346,8 +347,10 @@ counts remain12/15 against13. See [the investigation](debug/evidence/timer-focus
 The next decisive evidence requires fuller independent bus documentation or a
 hardware observation. The [source-built approval packet](quick/261113-h5w-prepare-a-source-built-timer-hardware-ev/APPROVAL-PACKET.md)
 is locally qualified with private software captures and empty physical slots.
-After exact-head hosted CI passes, the owner acts next to identify available
-equipment and decide on the bounded protocol. Physical execution remains unapproved.
+Hosted Debug CI passed at the recorded software source. The owner could not
+identify equipment and delegated the recommendation: treat it as unavailable,
+park the physical track and seek existing independent evidence. No equipment
+answer or physical approval is pending; execution remains unapproved.
 The milestone stays open; no new phase, cleanup, tag or release has started.
 
 Historical source-scoped phase reports retain their original fingerprints.

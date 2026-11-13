@@ -3,6 +3,15 @@
 Status: software prepared and locally qualified; physical execution unapproved.
 Hardware model and loader availability are unknown. EVD-02 remains unresolved.
 
+**Follow-up disposition, 2026-11-13:** the owner does not know what equipment is
+available and asked us to follow recommendations. Treat compatible equipment
+as unavailable and park the physical study. No model/loader answer or approval
+is currently requested. The bounded
+[existing-evidence check](../../debug/evidence/timer-no-equipment-evidence.md)
+records the no-hardware path. The protocol below remains a future option only;
+it does not block completed software preparation or supply missing accuracy
+evidence.
+
 The private package contains eight source-built BS93 images, per-case labels,
 maps and identity records, complete notices, the input/tool/build receipt,
 eight actual software screenshots with observation records, and twelve empty

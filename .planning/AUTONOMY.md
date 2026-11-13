@@ -13,6 +13,15 @@ how GSD workflows apply it. Update it when the owner changes a default.
 
 ## Owner decisions already given
 
+- 2026-11-13: after the completed timer software package, the owner could not
+  identify a console/loader and asked to follow recommendations and unblock
+  work. Treat equipment as unavailable for planning; do not ask the same
+  availability/approval question again without new evidence. Park physical
+  execution automatically. Search existing primary evidence within a bounded
+  scope, then retain a narrow unresolved comparison if it cannot supply the
+  missing observation. This is not an accuracy waiver, hardware approval,
+  purchasing authority or permission to close the milestone/start a new phase.
+
 - 2026-11-09: the repository may be **public** at `github.com/szTheory/lynxplosion`
   (owner, Phase 1 discuss). Condition: no PII or credentials are committed.
   Commits use the GitHub noreply address; local home paths are written as

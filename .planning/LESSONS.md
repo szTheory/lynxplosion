@@ -2,6 +2,12 @@
 
 ## Timer evidence preparation (2026-11-13)
 
+- Remove stale owner questions when their investigation is already authorized
+  and complete. Unknown equipment means a parked physical track, not another
+  request to identify a model or approve an infeasible run. A bounded search
+  of existing sources can supply evidence or document the narrow remaining
+  gap; it cannot manufacture hardware facts or waive the comparison.
+
 - Reach a complete guest-to-pixel path before expanding the case matrix.
   Independent glyph/palette checks found a wrong palette pen; viewing the full
   captured frame found uncleared pixels hidden by the fresh software palette.
