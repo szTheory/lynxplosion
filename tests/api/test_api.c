@@ -3139,7 +3139,8 @@ static void case_av_lattice(void)
     CHECK_EQ_U64(events_first[0].sequence, 0u);
     CHECK_EQ_U64(events_first[0].channel, 0u);
     CHECK_EQ_U64(events_first[0].cause, LYNX_AUDIO_EVENT_CLOCK);
-    CHECK(events_first[0].before_output == -1);
+    /* Setup writes retain reset OUT until the first channel clock. */
+    CHECK_EQ_U64(events_first[0].before_output, 0u);
     CHECK_EQ_U64(events_first[0].after_output, 1u);
     buffers.events = events_second;
     CHECK_EQ_U64(lynx_advance_av(m, 15u, &buffers, &result), LYNX_OK);
@@ -5152,7 +5153,9 @@ static void case_scheduler_order(void)
         {32u, 0u, {2u, 2u, 0u}, {0x04u, 0x04u, 0u}, 0x03u},
         {48u, 0u, {1u, 1u, 0u}, {0x04u, 0x04u, 0u}, 0x03u},
         {64u, 0u, {0u, 0u, 0u}, {0x04u, 0x04u, 0u}, 0x03u},
-        {80u, 0x07u, {0u, 0u, 0u}, {0x0Du, 0x0Du, 0x0Fu}, 0x07u},
+        /* At tick 81 the ring T1 pulse has expired; even T0/T2 retain
+           their separate legacy status policy. DONE and IRQ stay latched. */
+        {80u, 0x07u, {0u, 0u, 0u}, {0x0Du, 0x0Cu, 0x0Fu}, 0x07u},
     };
     const int failures_before = check_failures;
     scheduler_event_observation coarse[SCHEDULER_EVENT_COUNT];
@@ -5264,7 +5267,8 @@ static void run_scheduler_watch(uint8_t chunk_mode, scheduler_watch_observation 
     CHECK_EQ_U64(observation->counts[1], 0u);
     CHECK_EQ_U64(observation->counts[2], 0u);
     CHECK_EQ_U64(observation->ctlb[0], 0x0Du);
-    CHECK_EQ_U64(observation->ctlb[1], 0x0Du);
+    /* The watch returns at 81, after the T1 borrow at 80 expires. */
+    CHECK_EQ_U64(observation->ctlb[1], 0x0Cu);
     CHECK_EQ_U64(observation->ctlb[2], 0x0Fu);
     CHECK_EQ_U64(observation->last_clock_mask, 0x07u);
     lynx_machine_deinit(m);
@@ -5607,9 +5611,12 @@ static void case_timer_link_tracer(void)
     CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
     CHECK_EQ_U64(m->cpu.a, 0x07u);
     CHECK_EQ_U64(m->timer_bank.timers[3].count, 1u);
-    CHECK_EQ_U64(m->timer_bank.timers[3].control_b, 0x0Du);
+    /* The CPU read at tick 1024 saw the linked pulse (A == 07);
+       at the returned tick 1025 the ring status has expired. */
+    CHECK_EQ_U64(ticks_of(m), 1025u);
+    CHECK_EQ_U64(m->timer_bank.timers[3].control_b, 0x0Cu);
     CHECK_EQ_U64(m->timer_bank.timers[5].count, 0u);
-    CHECK_EQ_U64(m->timer_bank.timers[5].control_b, 0x07u);
+    CHECK_EQ_U64(m->timer_bank.timers[5].control_b, 0u);
     CHECK_EQ_U64(m->timer_bank.pending, 0x28u);
 
     CHECK_EQ_U64(lynx_advance(m, 100u, &consumed, &stop), LYNX_OK);
@@ -5708,6 +5715,9 @@ static void run_timer_link_scenario(const timer_link_setup *setups, size_t setup
         CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
     }
 
+    /* Each advance returned one tick after its source edge. Ring borrow
+       pulses and linked LAST_CLOCK have expired; DONE/IRQ and divider
+       LAST_CLOCK remain observable. The separate even chain is unchanged. */
     uint8_t mapped[LYNX__TIMER_COUNT * 4u];
     CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD00u, mapped, sizeof mapped), LYNX_OK);
     for (size_t i = 0u; i < LYNX__TIMER_COUNT; i++) {
@@ -5748,15 +5758,15 @@ static void case_timer_links(void)
     static const uint8_t expected024_count[8] = {1u, 0u, 1u, 0u, 0u, 0u, 0u, 0u};
     static const uint8_t expected024_ctlb[8] = {0x0Du, 0u, 0x0Fu, 0u, 0x0Fu, 0u, 0u, 0u};
     static const uint8_t expected13_count[8] = {0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u};
-    static const uint8_t expected13_ctlb[8] = {0u, 0x0Du, 0u, 0x06u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected13_ctlb[8] = {0u, 0x0Cu, 0u, 0u, 0u, 0u, 0u, 0u};
     static const uint8_t expected35_count[8] = {0u, 0u, 0u, 1u, 0u, 0u, 0u, 0u};
-    static const uint8_t expected35_ctlb[8] = {0u, 0u, 0u, 0x0Du, 0u, 0x06u, 0u, 0u};
+    static const uint8_t expected35_ctlb[8] = {0u, 0u, 0u, 0x0Cu, 0u, 0u, 0u, 0u};
     static const uint8_t expected57_count[8] = {0u, 0u, 0u, 0u, 0u, 1u, 0u, 0u};
-    static const uint8_t expected57_ctlb[8] = {0u, 0u, 0u, 0u, 0u, 0x0Du, 0u, 0x06u};
+    static const uint8_t expected57_ctlb[8] = {0u, 0u, 0u, 0u, 0u, 0x0Cu, 0u, 0u};
     static const uint8_t expected1357_count[8] = {0u, 1u, 0u, 1u, 0u, 1u, 0u, 0u};
-    static const uint8_t expected1357_ctlb[8] = {0u, 0x0Du, 0u, 0x0Fu, 0u, 0x0Fu, 0u, 0x06u};
+    static const uint8_t expected1357_ctlb[8] = {0u, 0x0Cu, 0u, 0x08u, 0u, 0x08u, 0u, 0u};
     static const uint8_t expected_simultaneous_count[8] = {1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
-    static const uint8_t expected_simultaneous_ctlb[8] = {0x0Du, 0x0Du, 0x06u, 0u, 0u, 0u, 0u, 0u};
+    static const uint8_t expected_simultaneous_ctlb[8] = {0x0Du, 0x0Cu, 0x06u, 0u, 0u, 0u, 0u, 0u};
     static const uint8_t expected255_count[8] = {0xFEu, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
     static const uint8_t expected255_ctlb[8] = {0x04u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
     static const uint8_t expected_reload_count[8] = {0xFEu, 0u, 0u, 0u, 0u, 0u, 0u, 0u};

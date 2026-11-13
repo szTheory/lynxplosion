@@ -1281,7 +1281,9 @@ static void case_timer_paths(char **args)
             CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[1].count, 0u);
             CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[2].count, 0u);
             CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[0].control_b, 0x0Du);
-            CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[1].control_b, 0x0Du);
+            /* Watch returns at 81: the ring T1 borrow pulse at 80 has
+               expired, while DONE/IRQ and divider LAST_CLOCK remain. */
+            CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[1].control_b, 0x0Cu);
             CHECK_EQ_U64(paths[WATCHED].m->timer_bank.timers[2].control_b, 0x0Fu);
         }
         timer_paths_advance_to(paths[WATCHED].m, common_tick, 2u);

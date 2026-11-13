@@ -27,7 +27,7 @@ status: all_fixed
 
 **Files modified:** `core/machine.c`, `tests/audio/test_audio.c`  
 **Commit:** `d40db8dfcd869f5aae1e64d2e82f5496f8d92e2e`  
-**Status:** fixed: pending independent automated re-review
+**Status:** fixed; independent re-review clean
 
 **Applied fix:** After `bus_access` succeeds, the scheduler marks the audio device as applied at that grant tick. Capacity refusal returns before this watermark changes. The CTLB explicit strobe remains part of the successful write operation. The guest-driven ordering test starts A0 disabled, writes CTLA `0x08` at tick 400, asserts there is no natural CLOCK at tick 400, and observes its first root at tick 416. The test also covers capacity refusal/retry, watch stop after the committed write, snapshot/restore continuation, and the explicit forced strobe.
 
@@ -37,7 +37,7 @@ status: all_fixed
 
 **Files modified:** `scripts/check-manifests.sh`, `tests/gates/manifests_controls.sh`  
 **Commit:** `0daef498240dc51068dec7ce07bdc72e981dd59f`  
-**Status:** fixed: pending independent automated re-review
+**Status:** fixed; independent re-review clean
 
 **Applied fix:** The gate rejects symlinks in the fixtures tree before opening manifest validators, including listed, unlisted, file, directory, and dangling links. It also rejects symlinked fixtures roots, manifests directories, and manifest files. Each manifest entry is checked for symlink components before regular-file validation, then its canonical parent is checked against the canonical fixture root. The controls now seed listed outside-file and symlink-directory entries, unlisted and dangling links, and links at the roots/manifest level. The outside sentinel is checked to remain unchanged, and foreign bytes are not emitted by the gate.
 
@@ -66,3 +66,34 @@ The three source changes are separate exact-path commits. This report is intenti
 _Fixed: 2026-11-13T13:44:01Z_  
 _Fixer: the agent (gsd-code-fixer)_  
 _Iteration: 1_
+
+## Final-gate legacy assertion repair
+
+The first final native gate on `551459579e67eae92c9046157b4d226e6fe3a570`
+exited 8 in CTest: seven failures, with two expected SERCTL skips. Durable
+identity, complete gate output, CTest/JUnit and actual exit status are preserved
+in `/private/tmp/lynx-06-canonical-native-d1hvu86w/`.
+
+Six cases retained expectations from before Plan09's documented output-latch
+and ring-status lifetime repair; the seventh was the timer-order mutant
+harness's clean positive baseline. The two-path repair updates only
+`tests/api/test_api.c` and `tests/det/test_det.c`. It distinguishes a same-tick
+guest read of `07` from expired ring status at returned tick1025; preserves
+DONE/IRQ and divider LAST_CLOCK; preserves the separate even timer chain; and
+checks reset OUT remains0 until its first clock. Production, source oracles,
+inventory, timeouts and the explicit timer14 disagreement are unchanged.
+
+Configure/build and the11-case affected native selector exited0 in
+`/private/tmp/lynx-06-legacy-boundaries-t0fteaij/` (CTest4.19s). It includes all
+seven failed cases plus audio.registers/order/links/snapshot. The real timer
+ordering mutant still fails its named assertion with clean positives before
+and after. Independent code-review iteration3 accepted the temporal assertions;
+its exact two-file diff identity is in06-REVIEW.md. Post-repair canonical native,
+GNU and exact-source CI remain required. The failed broad run is retained as
+failed evidence, not counted as qualification.
+
+The missed integration was process debt: shared timer/audio semantics changed
+without running the registered full fast inventory early enough. The existing
+AUTONOMY rule now requires that early inventory after broad mapped-device/API/
+snapshot changes, with focused repairs between broad gates. No extra audit,
+cache, dependency or concurrency layer was added.
