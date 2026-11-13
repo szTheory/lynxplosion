@@ -616,7 +616,7 @@ function(run_timer_video_revisit_controls)
     "oracle_sha256=0000000000000000000000000000000000000000000000000000000000000000"
     "timer video record: oracle identity mismatch")
   video_rewrite_case("build-hash-changed" "timer-video-revisit-lynx1.txt"
-    "build_record_sha256=43f74b8cff5f754938b769504423b1bcc3fc9717a7beba8e60ef261fb560d3b7"
+    "build_record_sha256=0cccecb88b0fb3ea080ece5980c28a4e6fe00c8b045f4d20bb75168a53443033"
     "build_record_sha256=0000000000000000000000000000000000000000000000000000000000000000"
     "timer video record: build identity mismatch")
   video_rewrite_case("layout-hash-changed" "timer-video-revisit-lynx1.txt"
@@ -2478,8 +2478,8 @@ if(MODE STREQUAL "timer_pending_controls" AND FAILURE STREQUAL "")
   timer_descriptor_control("descriptor-timers-main-hash" "\"timers_main_sha256\": \"b89d4207e837fb4a85b1dcf6b62ffb56c8e62317292b02deeafc22ac02bada3a\"" "\"timers_main_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
   timer_descriptor_control("descriptor-oracle-hash" "\"oracle_sha256\": \"08b5a4f48caf0f92e7bc177d9f3a6ac8ff68d757b57b9bc346aad8bd4c698b4f\"" "\"oracle_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
   timer_descriptor_control("descriptor-wrapper-hash" "\"wrapper_sha256\": \"fa0973d355eeba6311d9540f3d2ec7d429f6991e1e5641fb36ed7af6c2749e6c\"" "\"wrapper_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
-  timer_descriptor_control("descriptor-build-recipe-hash" "\"build_recipe_sha256\": \"1399702fdb178bbd1d4ff662c6d704db90c92a58a770628f99784e7dae68c893\"" "\"build_recipe_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
-  timer_descriptor_control("descriptor-oracle-generator-hash" "\"oracle_generator_sha256\": \"894866d4c91c2c422a8f3199b98aee026234d8db36351f7a2ed5701e4883eb78\"" "\"oracle_generator_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
+  timer_descriptor_control("descriptor-build-recipe-hash" "\"build_recipe_sha256\": \"a6f9e8b56e5f632d7d3186076fab5d0712e9b53017e3f4842888091670829c02\"" "\"build_recipe_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
+  timer_descriptor_control("descriptor-oracle-generator-hash" "\"oracle_generator_sha256\": \"5edca26b46bbfeff95e7b348322455df7f32a2a0bce1fec3cc1bca6723d25a32\"" "\"oracle_generator_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"" "pending descriptor value mismatch")
   timer_descriptor_control("descriptor-phase-policy" "\"phase_policy\": \"timer-phase-fixed-zero-1\"" "\"phase_policy\": \"timer-phase-shifted\"" "pending descriptor value mismatch")
   timer_descriptor_control("descriptor-scheduler-policy" "\"scheduler_policy\": \"timer-cpu-poll-order-1\"" "\"scheduler_policy\": \"timer-cpu-reversed\"" "pending descriptor value mismatch")
   timer_descriptor_control("descriptor-cost-model" "\"cost_model\": \"flat5\"" "\"cost_model\": \"flat4\"" "pending descriptor value mismatch")

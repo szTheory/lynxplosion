@@ -113,16 +113,20 @@ function(seed_suite_root name)
     "${dst}/build/pins/cc65/bin"
     "${dst}/build/pins/lynx-tests/cpu"
     "${dst}/build/pins/lynx-tests/timers"
+    "${dst}/build/pins/lynx-tests/audio"
+    "${dst}/build/pins/lynx-tests/audio2"
     "${dst}/build/check/scratch")
   file(COPY_FILE "${ROOT}/scripts/build-suites.sh" "${dst}/scripts/build-suites.sh")
   file(COPY_FILE "${ROOT}/pins.txt" "${dst}/pins.txt")
-  foreach(file cpu-wrapper.s timers-wrapper.s bll.cfg)
+  foreach(file cpu-wrapper.s timers-wrapper.s audio-wrapper.s audio2-wrapper.s bll.cfg)
     file(COPY_FILE "${ROOT}/fixtures/suites/${file}" "${dst}/fixtures/suites/${file}")
   endforeach()
   foreach(file .lynx-pin .lynx-pin-files LICENSE)
     file(COPY_FILE "${ROOT}/build/pins/lynx-tests/${file}" "${dst}/build/pins/lynx-tests/${file}")
   endforeach()
-  foreach(file cpu/tests.s timers/tests.s cpu/main.c timers/main.c)
+  foreach(file
+      cpu/tests.s timers/tests.s audio/tests.s audio2/tests.s
+      cpu/main.c timers/main.c audio/main.c audio2/main.c)
     file(COPY_FILE "${ROOT}/build/pins/lynx-tests/${file}" "${dst}/build/pins/lynx-tests/${file}")
   endforeach()
   foreach(file .lynx-pin .lynx-build .lynx-build-files)
