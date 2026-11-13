@@ -84,6 +84,8 @@ audio.span_alias	audio
 audio.span_refusal	audio
 audio.stereo	audio
 audio.stops	audio
+consumer.av_edges	consumer
+consumer.av_restore	consumer
 consumer.av_tracer	consumer
 consumer.frame_publication_controls	consumer
 consumer.frame_replay	consumer

@@ -45,13 +45,14 @@ enum {
     FRAME_MANIFEST_CAP = 8192,
     FRAME_OUTPUT_LIMIT = 32,
     FRAME_RAW_BYTES_PER_ROW = 120,
-    AV_PCM_CAPACITY = 512,
+    AV_PCM_CAPACITY = 1024,
     AV_EVENT_CAPACITY = 8192,
+    AV_INPUT_APPLIED_CAPACITY = 512 * 1024,
     AV_RAW_HEADER_BYTES = 24,
     AV_WAV_HEADER_BYTES = 44
 };
 
-typedef struct input_event { uint64_t tick; uint32_t mask; } input_event;
+typedef struct input_event { uint64_t tick; uint32_t mask; size_t file_offset; } input_event;
 typedef struct input_timeline { input_event *events; size_t count; } input_timeline;
 typedef struct guest_probe {
     uint32_t joystick;
@@ -59,12 +60,14 @@ typedef struct guest_probe {
     uint32_t progress;
     uint32_t error;
     uint32_t done;
+    uint32_t audio_started;
 } guest_probe;
 typedef struct frame_capture {
     lynx_frame_result result;
     uint32_t input_mask;
     guest_probe sample;
     uint32_t handedness;
+    uint32_t display_marker;
     uint8_t *raw;
     size_t raw_len;
     uint8_t *ppm;
@@ -80,6 +83,34 @@ typedef struct replay_checkpoint {
     uint32_t current_mask;
     checkpoint_phase phase;
 } replay_checkpoint;
+typedef struct av_replay_checkpoint {
+    uint32_t schema;
+    uint32_t profile;
+    uint32_t timing_policy;
+    uint32_t audio_policy;
+    uint32_t audio_rate_num;
+    uint32_t audio_rate_den;
+    uint32_t audio_channels;
+    uint32_t audio_bits;
+    uint8_t content_digest[32];
+    uint8_t script_digest[32];
+    uint8_t build_digest[32];
+    uint64_t guest_tick;
+    uint64_t next_sample_ordinal;
+    uint64_t frame_sequence;
+    size_t script_length;
+    size_t file_offset;
+    size_t cursor;
+    size_t input_applied_length;
+    size_t input_applied_count;
+    size_t pcm_count;
+    size_t event_count;
+    size_t frame_count;
+    size_t progress_count;
+    uint32_t current_mask;
+    checkpoint_phase phase;
+    uint8_t prefix_digest[32];
+} av_replay_checkpoint;
 
 /* Static host-local copy of the project-owned FIPS 180-4 helper. The consumer
    includes only the public emulator header and hashes canonical script bytes. */
@@ -408,6 +439,7 @@ static int parse_input_timeline(const uint8_t *bytes, size_t length, input_timel
             (has_previous && tick <= previous)) goto invalid;
         out->events[out->count].tick = tick;
         out->events[out->count].mask = (uint32_t)mask;
+        out->events[out->count].file_offset = offset;
         out->count++;
         previous = tick;
         has_previous = true;
@@ -2349,7 +2381,7 @@ static int publish_av_outputs(const char *directory, const av_output_file *files
                               size_t file_count)
 {
     char normalized[4096], staging[4096], probe[4096], path[4096];
-    char staged_paths[10][4096] = {{0}};
+    char staged_paths[16][4096] = {{0}};
     int stage_length;
     size_t written = 0u;
     if (file_count == 0u || file_count > sizeof staged_paths / sizeof staged_paths[0] ||
@@ -2391,21 +2423,28 @@ typedef struct av_capture_totals {
 
 static int av_step(lynx_machine *machine, uint64_t budget,
                    uint8_t *pens, uint8_t *palettes, uint64_t *line_ticks,
+                   size_t pcm_span_capacity, size_t event_span_capacity,
                    av_capture_totals *totals, lynx_av_result *result)
 {
     lynx_av_buffers buffers = {0};
     uint64_t before = 0u, after = 0u;
-    if (totals->pcm_count >= AV_PCM_CAPACITY || totals->event_count > AV_EVENT_CAPACITY ||
+    size_t pcm_remaining, event_remaining;
+    if (totals->pcm_count >= AV_PCM_CAPACITY || totals->event_count >= AV_EVENT_CAPACITY ||
         lynx_guest_ticks(machine, &before) != LYNX_OK) return 1;
+    pcm_remaining = AV_PCM_CAPACITY - totals->pcm_count;
+    event_remaining = AV_EVENT_CAPACITY - totals->event_count;
+    if (pcm_span_capacity == 0u || event_span_capacity < LYNX_AV_MIN_EVENT_CAPACITY) return 1;
+    if (pcm_span_capacity > pcm_remaining) pcm_span_capacity = pcm_remaining;
+    if (event_span_capacity > event_remaining) event_span_capacity = event_remaining;
     buffers.struct_size = (uint32_t)sizeof buffers;
     buffers.frame.struct_size = (uint32_t)sizeof buffers.frame;
     buffers.frame.pens = pens; buffers.frame.pens_capacity = LYNX_FRAME_PENS_CAPACITY;
     buffers.frame.palettes = palettes; buffers.frame.palettes_capacity = LYNX_FRAME_PALETTE_CAPACITY;
     buffers.frame.line_ticks = line_ticks; buffers.frame.line_ticks_capacity = LYNX_FRAME_LINE_TICKS_CAPACITY;
     buffers.pcm = totals->pcm + totals->pcm_count;
-    buffers.pcm_capacity = AV_PCM_CAPACITY - totals->pcm_count;
+    buffers.pcm_capacity = pcm_span_capacity;
     buffers.events = totals->events + totals->event_count;
-    buffers.event_capacity = AV_EVENT_CAPACITY - totals->event_count;
+    buffers.event_capacity = event_span_capacity;
     result->struct_size = (uint32_t)sizeof *result;
     if (lynx_advance_av(machine, budget, &buffers, result) != LYNX_OK ||
         result->ticks_consumed > budget || result->pcm_count > buffers.pcm_capacity ||
@@ -2414,7 +2453,9 @@ static int av_step(lynx_machine *machine, uint64_t budget,
         result->next_sample_ordinal < result->first_sample_ordinal ||
         result->next_sample_ordinal - result->first_sample_ordinal != result->pcm_count ||
         lynx_guest_ticks(machine, &after) != LYNX_OK || after < before ||
-        after - before != result->ticks_consumed || result->stop == LYNX_STOP_OUTPUT) return 1;
+        after - before != result->ticks_consumed ||
+        (result->stop == LYNX_STOP_OUTPUT && result->ticks_consumed == 0u &&
+         result->pcm_count == 0u && result->event_count == 0u)) return 1;
     totals->pcm_count += result->pcm_count;
     totals->event_count += result->event_count;
     totals->next_ordinal = result->next_sample_ordinal;
@@ -2439,23 +2480,257 @@ static int av_frame_result(const lynx_av_result *source, lynx_frame_result *out)
 static int av_make_capture(frame_capture *capture, const lynx_av_result *source,
                            const uint8_t *pens, const uint8_t *palettes,
                            const uint64_t *ticks, uint32_t input_mask,
-                           uint32_t progress, const char input_hash[65])
+                           const guest_probe *sample, uint32_t display_marker,
+                           uint32_t handedness)
 {
     uint8_t digest[32];
     if (av_frame_result(source, &capture->result) != 0 ||
         av_build_raw(pens, palettes, ticks, &capture->result,
                      &capture->raw, &capture->raw_len) != 0) return 1;
     capture->input_mask = input_mask;
-    capture->sample.joystick = (input_mask & LYNX_INPUT_A) != 0u ? 1u : 0u;
-    capture->sample.switches = (input_mask & LYNX_INPUT_PAUSE) != 0u ? 1u : 0u;
-    capture->sample.progress = progress;
-    capture->sample.error = 0u;
-    capture->sample.done = 1u;
-    capture->handedness = 1u;
+    capture->sample = *sample;
+    capture->display_marker = display_marker;
+    capture->handedness = handedness;
     host_sha_digest(capture->raw, capture->raw_len, digest);
     host_sha_hex(digest, capture->raw_sha256);
     if (replay_render_ppm(capture, pens, palettes) != 0) return 1;
-    (void)input_hash;
+    return 0;
+}
+
+static int av_read_guest_state(lynx_machine *machine, uint32_t probe_address,
+                               guest_probe *sample, uint32_t *marker)
+{
+    uint8_t bytes[9];
+    uint8_t marker_byte = 0u;
+    if (lynx_read_memory(machine, probe_address, bytes, sizeof bytes) != LYNX_OK ||
+        memcmp(bytes, "LXI5", 4u) != 0 || bytes[4] != 3u || bytes[8] > 1u ||
+        lynx_read_memory(machine, 0x4000u, &marker_byte, 1u) != LYNX_OK ||
+        (marker_byte != 0x11u && marker_byte != 0x22u)) return 1;
+    sample->joystick = bytes[5]; sample->switches = bytes[6];
+    sample->progress = (uint32_t)(bytes[7] & 0x3Fu);
+    sample->done = (uint32_t)((bytes[7] >> 6) & 1u);
+    sample->error = (uint32_t)((bytes[7] >> 7) & 1u);
+    sample->audio_started = bytes[8];
+    *marker = marker_byte;
+    return 0;
+}
+
+static void av_hash_u64(host_sha256 *hash, uint64_t value)
+{
+    uint8_t encoded[8];
+    for (size_t i = 0u; i < sizeof encoded; i++) encoded[i] = (uint8_t)(value >> (8u * i));
+    host_sha_update(hash, encoded, sizeof encoded);
+}
+
+static int av_append_applied_input(char *text, size_t capacity, size_t *length,
+                                   size_t cursor, const input_event *event,
+                                   uint32_t previous_mask)
+{
+    if (text == NULL || length == NULL || *length >= capacity) return 1;
+    const int written = snprintf(text + *length, capacity - *length,
+        "%zu %zu %" PRIu64 " %u %u\n", cursor, event->file_offset,
+        event->tick, previous_mask, event->mask);
+    if (written < 0 || (size_t)written >= capacity - *length) return 1;
+    *length += (size_t)written;
+    return 0;
+}
+
+static int av_progress_line(const frame_capture *frame, char *line, size_t capacity,
+                            size_t *length)
+{
+    const int written = snprintf(line, capacity,
+        "%" PRIu64 " %" PRIu64 " %" PRIu64 " %u %u %u %u %u %u %u %u %u\n",
+        frame->result.sequence, frame->result.frame_start_tick, frame->result.frame_end_tick,
+        frame->input_mask, frame->sample.joystick, frame->sample.switches,
+        frame->sample.progress, frame->sample.done, frame->sample.error,
+        frame->sample.audio_started,
+        frame->display_marker, frame->handedness);
+    if (written < 0 || (size_t)written >= capacity) return 1;
+    *length = (size_t)written;
+    return 0;
+}
+
+static int av_build_progress(const frame_capture frames[FRAME_OUTPUT_LIMIT],
+                             size_t frame_count, char **out, size_t *out_len)
+{
+    static const char header[] = "LYNX-GUEST-PROGRESS 1\n";
+    char *text;
+    size_t capacity = sizeof header - 1u + frame_count * 192u;
+    size_t length = sizeof header - 1u;
+    if (frame_count > FRAME_OUTPUT_LIMIT || capacity < length) return 1;
+    text = malloc(capacity == 0u ? 1u : capacity);
+    if (text == NULL) return 1;
+    memcpy(text, header, length);
+    for (size_t i = 0u; i < frame_count; i++) {
+        size_t line_len = 0u;
+        if (av_progress_line(&frames[i], text + length, capacity - length, &line_len) != 0) {
+            free(text); return 1;
+        }
+        length += line_len;
+    }
+    *out = text; *out_len = length;
+    return 0;
+}
+
+static int av_prefix_digest(const av_capture_totals *totals,
+                            const frame_capture frames[FRAME_OUTPUT_LIMIT],
+                            size_t frame_count, const char *applied_text,
+                            size_t applied_text_len, uint8_t digest[32])
+{
+    static const char event_header[] = "LYNX-AUDIO-EVENTS 1\n";
+    static const char progress_header[] = "LYNX-GUEST-PROGRESS 1\n";
+    host_sha256 hash;
+    char line[192];
+    host_sha_init(&hash);
+    av_hash_u64(&hash, frame_count);
+    for (size_t i = 0u; i < frame_count; i++) {
+        av_hash_u64(&hash, frames[i].raw_len); host_sha_update(&hash, frames[i].raw, frames[i].raw_len);
+        av_hash_u64(&hash, frames[i].ppm_len); host_sha_update(&hash, frames[i].ppm, frames[i].ppm_len);
+    }
+    host_sha_update(&hash, progress_header, sizeof progress_header - 1u);
+    av_hash_u64(&hash, frame_count);
+    for (size_t i = 0u; i < frame_count; i++) {
+        size_t line_len = 0u;
+        if (av_progress_line(&frames[i], line, sizeof line, &line_len) != 0) return 1;
+        host_sha_update(&hash, line, line_len);
+    }
+    av_hash_u64(&hash, totals->pcm_count);
+    for (size_t i = 0u; i < totals->pcm_count; i++) {
+        uint8_t encoded[4];
+        av_store_u16le(encoded, (uint16_t)totals->pcm[i].left);
+        av_store_u16le(encoded + 2u, (uint16_t)totals->pcm[i].right);
+        host_sha_update(&hash, encoded, sizeof encoded);
+    }
+    host_sha_update(&hash, event_header, sizeof event_header - 1u);
+    av_hash_u64(&hash, totals->event_count);
+    for (size_t i = 0u; i < totals->event_count; i++) {
+        const lynx_audio_event *event = &totals->events[i];
+        const char *cause = event->cause == LYNX_AUDIO_EVENT_WRITE ? "write" :
+                            event->cause == LYNX_AUDIO_EVENT_CLOCK ? "clock" : "unknown";
+        const int length = snprintf(line, sizeof line, "%" PRIu64 " %u %u %s %d %d\n",
+            event->tick, event->sequence, event->channel, cause,
+            (int)event->before_output, (int)event->after_output);
+        if (length < 0 || (size_t)length >= sizeof line) return 1;
+        host_sha_update(&hash, line, (size_t)length);
+    }
+    if (applied_text_len != 0u && applied_text == NULL) return 1;
+    av_hash_u64(&hash, applied_text_len);
+    if (applied_text_len != 0u) host_sha_update(&hash, applied_text, applied_text_len);
+    host_sha_final(&hash, digest);
+    return 0;
+}
+
+static size_t av_timeline_file_offset(const input_timeline *timeline,
+                                      size_t timeline_length, size_t cursor)
+{
+    return cursor < timeline->count ? timeline->events[cursor].file_offset : timeline_length;
+}
+
+static int av_checkpoint_capture(av_replay_checkpoint *checkpoint,
+                                 const lynx_identity *identity, uint32_t profile,
+                                 const uint8_t script_digest[32], size_t script_length,
+                                 const input_timeline *timeline, uint64_t guest_tick,
+                                 size_t cursor, uint32_t current_mask,
+                                 checkpoint_phase phase,
+                                 const av_capture_totals *totals,
+                                 const frame_capture frames[FRAME_OUTPUT_LIMIT],
+                                 size_t frame_count, const char *applied_text,
+                                 size_t applied_text_len)
+{
+    memset(checkpoint, 0, sizeof *checkpoint);
+    checkpoint->schema = 1u; checkpoint->profile = profile;
+    checkpoint->timing_policy = identity->timing_policy;
+    checkpoint->audio_policy = identity->audio_policy;
+    checkpoint->audio_rate_num = identity->audio_rate_num;
+    checkpoint->audio_rate_den = identity->audio_rate_den;
+    checkpoint->audio_channels = identity->audio_channels;
+    checkpoint->audio_bits = identity->audio_bits;
+    memcpy(checkpoint->content_digest, identity->content_sha256, 32u);
+    memcpy(checkpoint->script_digest, script_digest, 32u);
+    host_sha_digest(lynx_build_id(), strlen(lynx_build_id()), checkpoint->build_digest);
+    checkpoint->guest_tick = guest_tick; checkpoint->next_sample_ordinal = totals->next_ordinal;
+    checkpoint->frame_sequence = frame_count == 0u ? 0u : frames[frame_count - 1u].result.sequence;
+    checkpoint->script_length = script_length;
+    checkpoint->file_offset = av_timeline_file_offset(timeline, script_length, cursor);
+    checkpoint->cursor = cursor; checkpoint->pcm_count = totals->pcm_count;
+    checkpoint->input_applied_length = applied_text_len;
+    checkpoint->input_applied_count = cursor;
+    checkpoint->event_count = totals->event_count; checkpoint->frame_count = frame_count;
+    checkpoint->progress_count = frame_count;
+    checkpoint->current_mask = current_mask; checkpoint->phase = phase;
+    return av_prefix_digest(totals, frames, frame_count, applied_text,
+                            applied_text_len, checkpoint->prefix_digest);
+}
+
+static int av_checkpoint_restore(lynx_machine *source, lynx_machine *target,
+                                 const av_replay_checkpoint *checkpoint,
+                                 const lynx_identity *identity, uint32_t profile,
+                                 const uint8_t script_digest[32], size_t script_length,
+                                 const input_timeline *timeline,
+                                 const av_capture_totals *totals,
+                                 const frame_capture frames[FRAME_OUTPUT_LIMIT],
+                                 size_t frame_count, const char *applied_text,
+                                 size_t applied_text_len, uint64_t expected_tick,
+                                 size_t expected_cursor, uint32_t expected_mask,
+                                 checkpoint_phase expected_phase)
+{
+    replay_checkpoint guest_checkpoint = {{0}, 0u, 0u, 0u, CHECKPOINT_PRE_EDGE};
+    uint8_t build_digest[32], prefix_digest[32];
+    uint64_t guest_tick = 0u, expected_sequence = 0u;
+    if (frame_count != 0u) expected_sequence = frames[frame_count - 1u].result.sequence;
+    host_sha_digest(lynx_build_id(), strlen(lynx_build_id()), build_digest);
+    if (av_prefix_digest(totals, frames, frame_count, applied_text,
+            applied_text_len, prefix_digest) != 0 ||
+        checkpoint->schema != 1u || checkpoint->profile != profile ||
+        checkpoint->timing_policy != identity->timing_policy ||
+        checkpoint->audio_policy != identity->audio_policy ||
+        checkpoint->audio_rate_num != identity->audio_rate_num ||
+        checkpoint->audio_rate_den != identity->audio_rate_den ||
+        checkpoint->audio_channels != identity->audio_channels ||
+        checkpoint->audio_bits != identity->audio_bits ||
+        memcmp(checkpoint->content_digest, identity->content_sha256, 32u) != 0 ||
+        memcmp(checkpoint->script_digest, script_digest, 32u) != 0 ||
+        memcmp(checkpoint->build_digest, build_digest, 32u) != 0 ||
+        checkpoint->guest_tick != expected_tick || checkpoint->script_length != script_length ||
+        checkpoint->file_offset != av_timeline_file_offset(timeline, script_length, expected_cursor) ||
+        checkpoint->cursor != expected_cursor || checkpoint->cursor > timeline->count ||
+        checkpoint->input_applied_count != expected_cursor ||
+        checkpoint->input_applied_length != applied_text_len ||
+        checkpoint->current_mask != expected_mask || checkpoint->phase != expected_phase ||
+        checkpoint->next_sample_ordinal != totals->next_ordinal ||
+        checkpoint->pcm_count != totals->pcm_count || checkpoint->event_count != totals->event_count ||
+        checkpoint->frame_count != frame_count || checkpoint->progress_count != frame_count ||
+        checkpoint->frame_sequence != expected_sequence ||
+        memcmp(checkpoint->prefix_digest, prefix_digest, sizeof prefix_digest) != 0 ||
+        lynx_guest_ticks(source, &guest_tick) != LYNX_OK || guest_tick != expected_tick) return 1;
+    guest_checkpoint.tick = checkpoint->guest_tick;
+    guest_checkpoint.cursor = checkpoint->cursor;
+    guest_checkpoint.current_mask = checkpoint->current_mask;
+    guest_checkpoint.phase = checkpoint->phase;
+    memcpy(guest_checkpoint.script_digest, checkpoint->script_digest, 32u);
+    if (replay_checkpoint_valid(&guest_checkpoint, timeline, script_digest,
+            expected_tick, expected_cursor, expected_mask, expected_phase) != 0) return 1;
+    return replay_restore_checkpoint(source, target, &guest_checkpoint, timeline, script_digest);
+}
+
+static int av_join_frames(const frame_capture frames[FRAME_OUTPUT_LIMIT], size_t frame_count,
+                          int rendered, uint8_t **out, size_t *out_len)
+{
+    size_t length = 0u, offset = 0u;
+    uint8_t *joined;
+    for (size_t i = 0u; i < frame_count; i++) {
+        const size_t part = rendered != 0 ? frames[i].ppm_len : frames[i].raw_len;
+        if (part > SIZE_MAX - length) return 1;
+        length += part;
+    }
+    joined = malloc(length == 0u ? 1u : length);
+    if (joined == NULL) return 1;
+    for (size_t i = 0u; i < frame_count; i++) {
+        const uint8_t *part = rendered != 0 ? frames[i].ppm : frames[i].raw;
+        const size_t part_len = rendered != 0 ? frames[i].ppm_len : frames[i].raw_len;
+        memcpy(joined + offset, part, part_len); offset += part_len;
+    }
+    *out = joined; *out_len = length;
     return 0;
 }
 
@@ -2463,37 +2738,49 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
                            const char *timeline_path, const char *output_directory,
                            uint32_t profile)
 {
-    uint8_t *bll = NULL, *labels = NULL, *timeline_bytes = NULL;
-    size_t bll_len = 0u, labels_len = 0u, timeline_len = 0u;
+    uint8_t *bll = NULL, *labels = NULL, *timeline_bytes = NULL, script_digest[32];
+    size_t bll_len = 0u, labels_len = 0u, timeline_len = 0u, cursor = 0u, frame_count = 0u;
     input_timeline timeline = {0};
-    machine_storage storage = {0};
-    lynx_identity identity;
-    uint32_t probe_address = 0u;
-    char content_hash[65], input_hash[65];
-    uint8_t sync_pens[LYNX_FRAME_PENS_CAPACITY], sync_palettes[LYNX_FRAME_PALETTE_CAPACITY];
-    uint64_t sync_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
-    uint8_t released_pens[LYNX_FRAME_PENS_CAPACITY], released_palettes[LYNX_FRAME_PALETTE_CAPACITY];
-    uint64_t released_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
-    uint8_t edge_pens[LYNX_FRAME_PENS_CAPACITY], edge_palettes[LYNX_FRAME_PALETTE_CAPACITY];
-    uint64_t edge_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
-    uint8_t pressed_pens[LYNX_FRAME_PENS_CAPACITY], pressed_palettes[LYNX_FRAME_PALETTE_CAPACITY];
-    uint64_t pressed_ticks[LYNX_FRAME_LINE_TICKS_CAPACITY];
-    lynx_av_result sync = {0}, released = {0}, edge = {0}, pressed = {0};
+    machine_storage active = {0}, restore_target = {0};
+    lynx_identity identity, restore_identity;
+    uint32_t probe_address = 0u, current_mask = 0u;
+    uint64_t last_tick = 0u, endpoint = 0u, now = 0u, previous_sequence = UINT64_MAX;
+    uint64_t previous_frame_end = 0u, first_a_tick = UINT64_MAX, pending_edge_tick = UINT64_MAX;
+    uint32_t pending_prior_mask = 0u;
+    char normalized_output[4096];
+    int target_created = 0, short_spans = 0, watch_expected = 0, watch_resume = 0, bad_checkpoint = 0;
+    int uninterrupted_control = 0;
     av_capture_totals totals = {0};
-    frame_capture released_capture = {0}, pressed_capture = {0};
-    char *event_text = NULL;
-    size_t event_text_len = 0u, pcm_bytes_len = 0u, wav_len = 0u;
-    uint8_t *pcm_bytes = NULL, *wav = NULL;
-    char manifest[4096];
+    frame_capture frames[FRAME_OUTPUT_LIMIT] = {{0}};
+    frame_capture *released_capture = NULL, *pressed_capture = NULL;
+    uint8_t *pcm_bytes = NULL, *wav = NULL, *raw_stream = NULL, *ppm_stream = NULL;
+    char *event_text = NULL, *applied_text = NULL, *progress_text = NULL;
+    size_t pcm_bytes_len = 0u, wav_len = 0u, event_text_len = 0u;
+    size_t raw_stream_len = 0u, ppm_stream_len = 0u;
+    size_t applied_text_len = 0u, progress_text_len = 0u;
+    char content_hash[65], input_hash[65], manifest[8192];
     size_t manifest_len = 0u;
-    uint8_t marker_before = 0u, marker_after = 0u, progress_before = 0u, progress_after = 0u;
-    uint64_t now = 0u;
     int result = 1;
-
+#if defined(LYNX_CONSUMER_TESTING)
+    {
+        const char *value = getenv("LYNX_TEST_AV_SHORT_SPANS");
+        short_spans = value != NULL && strcmp(value, "1") == 0;
+        value = getenv("LYNX_TEST_AV_WATCH");
+        watch_expected = value != NULL && strcmp(value, "1") == 0;
+        value = getenv("LYNX_TEST_AV_WATCH_RESUME");
+        watch_resume = value != NULL && strcmp(value, "1") == 0;
+        if (watch_resume != 0) watch_expected = 1;
+        value = getenv("LYNX_TEST_AV_BAD_CHECKPOINT");
+        bad_checkpoint = value != NULL && value[0] != '\0';
+        value = getenv("LYNX_TEST_AV_UNINTERRUPTED");
+        uninterrupted_control = value != NULL && strcmp(value, "1") == 0;
+    }
+#endif
     totals.pcm = calloc(AV_PCM_CAPACITY, sizeof *totals.pcm);
     totals.events = calloc(AV_EVENT_CAPACITY, sizeof *totals.events);
-    if (totals.pcm == NULL || totals.events == NULL) {
-        (void)report_error("cannot allocate bounded caller-owned A/V capture spans"); goto done;
+    applied_text = malloc(AV_INPUT_APPLIED_CAPACITY);
+    if (totals.pcm == NULL || totals.events == NULL || applied_text == NULL) {
+        (void)report_error("cannot allocate bounded A/V capture spans"); goto done;
     }
     if (read_bounded(content_path, BLL_LIMIT, &bll, &bll_len, "BLL content") != 0 || bll_len < 11u ||
         read_bounded(symbols_path, SYMBOL_LIMIT, &labels, &labels_len, "ld65 -Ln symbols") != 0 ||
@@ -2503,122 +2790,357 @@ static int run_av_consumer(const char *content_path, const char *symbols_path,
         probe_address > LYNX_ADDRESS_SPACE - 9u) {
         (void)report_error("A/V fixture, linked probe symbol or canonical input timeline is invalid"); goto done;
     }
-    if (timeline.count != 1u || timeline.events[0].tick != UINT64_C(109321) ||
-        timeline.events[0].mask != LYNX_INPUT_A) {
-        (void)report_error("A/V tracer requires the one recorded A edge at tick 109321"); goto done;
-    }
     {
-        uint8_t timeline_digest[32];
-        host_sha_digest(timeline_bytes, timeline_len, timeline_digest);
-        host_sha_hex(timeline_digest, input_hash);
+        static const char applied_header[] = "LYNX-APPLIED-INPUT 1\n";
+        memcpy(applied_text, applied_header, sizeof applied_header - 1u);
+        applied_text_len = sizeof applied_header - 1u;
     }
+    uint32_t scan_mask = 0u;
+    for (size_t i = 0u; i < timeline.count; i++) {
+        if (timeline.events[i].tick > last_tick) last_tick = timeline.events[i].tick;
+        if (first_a_tick == UINT64_MAX && (scan_mask & LYNX_INPUT_A) == 0u &&
+            (timeline.events[i].mask & LYNX_INPUT_A) != 0u)
+            first_a_tick = timeline.events[i].tick;
+        scan_mask = timeline.events[i].mask;
+    }
+    if (first_a_tick == UINT64_MAX || last_tick > UINT64_MAX - UINT64_C(60000) ||
+        normalize_destination(output_directory, normalized_output, sizeof normalized_output) != 0 ||
+        destination_is_absent(normalized_output) != 0) {
+        (void)report_error("A/V replay needs a bounded timeline containing an A press"); goto done;
+    }
+    endpoint = last_tick + UINT64_C(60000);
+    if (endpoint / UINT64_C(400) > AV_PCM_CAPACITY) {
+        (void)report_error("A/V timeline exceeds the bounded output window or destination path limit"); goto done;
+    }
+    host_sha_digest(timeline_bytes, timeline_len, script_digest);
+    host_sha_hex(script_digest, input_hash);
     if (create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1,
-                       &storage, &identity) != 0) goto done;
+                       &active, &identity) != 0) goto done;
+    if (create_machine(bll, bll_len, profile, LYNX_TIMING_POLICY_VIDEO_POLICY1,
+                       &restore_target, &restore_identity) != 0) {
+        destroy_machine(&restore_target); goto done;
+    }
+    target_created = 1;
     if (identity.audio_policy != LYNX_AUDIO_POLICY_DIGITAL_1 ||
         identity.audio_rate_num != 40000u || identity.audio_rate_den != 1u ||
         identity.audio_channels != 2u || identity.audio_bits != 16u ||
-        timeline.events[0].tick <= 0u) {
+        identity.profile != restore_identity.profile ||
+        identity.timing_policy != restore_identity.timing_policy ||
+        identity.audio_policy != restore_identity.audio_policy ||
+        identity.audio_rate_num != restore_identity.audio_rate_num ||
+        identity.audio_rate_den != restore_identity.audio_rate_den ||
+        identity.audio_channels != restore_identity.audio_channels ||
+        identity.audio_bits != restore_identity.audio_bits ||
+        memcmp(identity.content_sha256, restore_identity.content_sha256, 32u) != 0) {
         (void)report_error("public machine identity does not match the fixed digital stereo PCM contract"); goto done;
     }
     host_sha_hex(identity.content_sha256, content_hash);
-    if (lynx_advance_av(storage.machine, 60000u, NULL, NULL) != LYNX_ERR_ARGUMENT) {
+    if (lynx_advance_av(active.machine, 60000u, NULL, NULL) != LYNX_ERR_ARGUMENT) {
         (void)report_error("invalid A/V descriptors were not rejected before progress"); goto done;
     }
-    if (av_step(storage.machine, UINT64_C(60000), sync_pens, sync_palettes, sync_ticks,
-                &totals, &sync) != 0 || sync.stop != LYNX_STOP_FRAME ||
-        sync.row_count != 0u || sync.frame_sequence != 0u || sync.frame_end_tick == 0u ||
-        av_step(storage.machine, UINT64_C(60000), released_pens, released_palettes, released_ticks,
-                &totals, &released) != 0 || released.stop != LYNX_STOP_FRAME ||
-        released.row_count != LYNX_FRAME_MAX_ROWS || released.frame_sequence != 1u ||
-        released.frame_start_tick != sync.frame_end_tick ||
-        lynx_read_memory(storage.machine, 0x4000u, &marker_before, 1u) != LYNX_OK ||
-        marker_before != 0x11u || lynx_read_memory(storage.machine, probe_address + 5u,
-        &progress_before, 1u) != LYNX_OK ||
-        lynx_guest_ticks(storage.machine, &now) != LYNX_OK ||
-        now > timeline.events[0].tick || timeline.events[0].tick - now != 777u ||
-        av_step(storage.machine, timeline.events[0].tick - now, edge_pens, edge_palettes,
-                edge_ticks, &totals, &edge) != 0 || edge.stop != LYNX_STOP_BUDGET ||
-        edge.ticks_consumed != 777u || lynx_set_input(storage.machine, LYNX_INPUT_A) != LYNX_OK ||
-        av_step(storage.machine, UINT64_C(60000), pressed_pens, pressed_palettes, pressed_ticks,
-                &totals, &pressed) != 0 || pressed.stop != LYNX_STOP_FRAME ||
-        pressed.row_count != LYNX_FRAME_MAX_ROWS || pressed.frame_sequence != 2u ||
-        pressed.frame_start_tick != released.frame_end_tick ||
-        lynx_read_memory(storage.machine, 0x4000u, &marker_after, 1u) != LYNX_OK ||
-        marker_after != 0x22u || lynx_read_memory(storage.machine, probe_address + 7u,
-        &progress_after, 1u) != LYNX_OK || progress_after == progress_before ||
-        lynx_read_memory(storage.machine, probe_address + 5u, &marker_before, 1u) != LYNX_OK ||
-        (marker_before & 1u) == 0u || released_pens[0] != 0x11u || pressed_pens[0] != 0x22u ||
-        memcmp(released_pens, pressed_pens, sizeof released_pens) == 0) {
-        (void)report_error("A/V path failed its released-to-A guest marker and raw-frame assertions"); goto done;
+    if (watch_expected != 0 && lynx_watch_configure(active.machine, 0x4000u, 1u) != LYNX_OK) {
+        (void)report_error("test watch could not be armed for the released guest marker"); goto done;
     }
-    if (av_make_capture(&released_capture, &released, released_pens, released_palettes,
-                        released_ticks, 0u, progress_before, input_hash) != 0 ||
-        av_make_capture(&pressed_capture, &pressed, pressed_pens, pressed_palettes,
-                        pressed_ticks, LYNX_INPUT_A, progress_after, input_hash) != 0 ||
-        av_build_pcm_bytes(totals.pcm, totals.pcm_count, &pcm_bytes, &pcm_bytes_len) != 0 ||
+
+    while (cursor < timeline.count) {
+        const input_event *event = &timeline.events[cursor];
+        if (lynx_guest_ticks(active.machine, &now) != LYNX_OK || event->tick < now) {
+            (void)report_error("input edge precedes current guest time"); goto done;
+        }
+        while (now < event->tick) {
+            uint8_t pens[LYNX_FRAME_PENS_CAPACITY], palettes[LYNX_FRAME_PALETTE_CAPACITY];
+            uint64_t ticks[LYNX_FRAME_LINE_TICKS_CAPACITY], after = 0u;
+            lynx_av_result step = {0};
+            const uint64_t request = event->tick - now < UINT64_C(60000) ?
+                event->tick - now : UINT64_C(60000);
+            const size_t pcm_capacity = short_spans != 0 ? LYNX_AV_MIN_PCM_CAPACITY : AV_PCM_CAPACITY;
+            const size_t event_capacity = short_spans != 0 ? LYNX_AV_MIN_EVENT_CAPACITY : AV_EVENT_CAPACITY;
+            if (av_step(active.machine, request, pens, palettes, ticks, pcm_capacity,
+                        event_capacity, &totals, &step) != 0 ||
+                lynx_guest_ticks(active.machine, &after) != LYNX_OK || after < now || after > event->tick) {
+                (void)report_error("A/V advance violated its bounded input-edge interval"); goto done;
+            }
+            if (step.stop == LYNX_STOP_FRAME) {
+                if ((previous_sequence != UINT64_MAX && step.frame_sequence <= previous_sequence) ||
+                    step.frame_end_tick != after ||
+                    (previous_frame_end != 0u && step.frame_end_tick <= previous_frame_end)) {
+                    (void)report_error("A/V frame sequence or guest tick is not monotone"); goto done;
+                }
+                previous_sequence = step.frame_sequence; previous_frame_end = step.frame_end_tick;
+                if (step.row_count == 0u) {
+                    if (step.frame_sequence != 0u) { (void)report_error("only sequence zero may synchronize without rows"); goto done; }
+                } else {
+                    guest_probe sample = {0}; uint32_t marker = 0u, frame_mask = current_mask;
+                    if (frame_count >= FRAME_OUTPUT_LIMIT || step.row_count != LYNX_FRAME_MAX_ROWS) {
+                        (void)report_error("A/V replay exceeded its frame or row bound"); goto done;
+                    }
+                    if (step.ticks_consumed == 0u && pending_edge_tick == step.frame_end_tick) {
+                        frame_mask = pending_prior_mask; pending_edge_tick = UINT64_MAX;
+                    } else if (pending_edge_tick != UINT64_MAX && step.frame_end_tick > pending_edge_tick) {
+                        pending_edge_tick = UINT64_MAX;
+                    }
+                    if (av_read_guest_state(active.machine, probe_address, &sample, &marker) != 0 ||
+                        sample.progress == 0u || sample.error != 0u ||
+                        (marker == 0x22u && (sample.joystick & 1u) == 0u) ||
+                        (marker == 0x11u && (sample.joystick & 1u) != 0u) ||
+                        av_make_capture(&frames[frame_count], &step, pens, palettes, ticks,
+                                        frame_mask, &sample, marker, 1u) != 0) {
+                        (void)report_error("A/V frame guest marker, progress or raw/rendered capture is invalid"); goto done;
+                    }
+                    if (marker == 0x11u && released_capture == NULL) released_capture = &frames[frame_count];
+                    if (marker == 0x22u && step.frame_end_tick > first_a_tick && pressed_capture == NULL)
+                        pressed_capture = &frames[frame_count];
+                    frame_count++;
+                }
+            } else if (step.stop == LYNX_STOP_BUDGET) {
+                if (step.ticks_consumed == 0u || step.ticks_consumed != request) {
+                    (void)report_error("guest-time limit stopped before the requested input edge"); goto done;
+                }
+            } else if (step.stop == LYNX_STOP_OUTPUT) {
+                if (after == now && step.pcm_count == 0u && step.event_count == 0u) {
+                    (void)report_error("A/V output frontier made no progress with fresh caller spans"); goto done;
+                }
+            } else if (step.stop == LYNX_STOP_WATCH) {
+                lynx_watch_event hit = {0}; uint32_t marker = 0u; guest_probe sample = {0};
+                if (watch_expected == 0 || lynx_watch_get(active.machine, &hit) != LYNX_OK ||
+                    hit.hit != 1u || hit.address != 0x4000u || after >= event->tick ||
+                    av_read_guest_state(active.machine, probe_address, &sample, &marker) != 0 || marker != 0x11u) {
+                    (void)report_error("WATCH stop did not preserve released input before the next edge"); goto done;
+                }
+                if (watch_resume == 0) {
+                    (void)report_error("WATCH stopped before the next input edge; released guest marker is preserved");
+                    goto done;
+                }
+                if (lynx_watch_clear(active.machine) != LYNX_OK) {
+                    (void)report_error("public watch clear failed after a validated A/V watch stop"); goto done;
+                }
+                watch_expected = 0;
+                watch_resume = 0;
+            } else {
+                (void)report_error("undefined, unavailable or unsupported guest stop before input edge"); goto done;
+            }
+            if (step.stop != LYNX_STOP_FRAME && after == now && step.stop != LYNX_STOP_OUTPUT) {
+                (void)report_error("A/V replay made no guest-time progress before an input edge"); goto done;
+            }
+            now = after;
+        }
+        if (lynx_guest_ticks(active.machine, &now) != LYNX_OK || now != event->tick) {
+            (void)report_error("A/V replay did not reach the exact declared input tick"); goto done;
+        }
+        const size_t event_index = cursor;
+        for (int phase_index = 0; phase_index < 2; phase_index++) {
+            const checkpoint_phase phase = phase_index == 0 ? CHECKPOINT_PRE_EDGE : CHECKPOINT_POST_EDGE;
+            const size_t checkpoint_cursor = event_index + (phase_index == 0 ? 0u : 1u);
+            const uint32_t checkpoint_mask = phase_index == 0 ? current_mask : event->mask;
+            av_replay_checkpoint checkpoint;
+            if (av_checkpoint_capture(&checkpoint, &identity, profile, script_digest, timeline_len,
+                    &timeline, now, checkpoint_cursor, checkpoint_mask, phase, &totals,
+                    frames, frame_count, applied_text, applied_text_len) != 0) {
+                (void)report_error("cannot bind A/V host checkpoint to its complete output prefix"); goto done;
+            }
+#if defined(LYNX_CONSUMER_TESTING)
+            if (bad_checkpoint != 0 && phase_index == 0) {
+                const char *kind = getenv("LYNX_TEST_AV_BAD_CHECKPOINT");
+                if (strcmp(kind, "offset") == 0) checkpoint.file_offset++;
+                else if (strcmp(kind, "prefix") == 0) checkpoint.prefix_digest[0] ^= 1u;
+                else checkpoint.script_digest[0] ^= 1u;
+            }
+#endif
+            if (uninterrupted_control == 0) {
+                const size_t pcm_before = totals.pcm_count, events_before = totals.event_count;
+                const size_t frames_before = frame_count;
+                if (av_checkpoint_restore(active.machine, restore_target.machine, &checkpoint,
+                        &identity, profile, script_digest, timeline_len, &timeline, &totals,
+                        frames, frame_count, applied_text, applied_text_len, now,
+                        checkpoint_cursor, checkpoint_mask, phase) != 0) {
+                    uint64_t unchanged_tick = UINT64_MAX;
+                    if (lynx_guest_ticks(active.machine, &unchanged_tick) != LYNX_OK || unchanged_tick != now ||
+                        totals.pcm_count != pcm_before || totals.event_count != events_before ||
+                        frame_count != frames_before) {
+                        (void)report_error("invalid A/V host checkpoint changed guest time or a published output prefix"); goto done;
+                    }
+                    (void)report_error(bad_checkpoint != 0 ?
+                        "A/V host checkpoint refused before restore or output append" :
+                        "A/V host checkpoint identity, extent, cursor or prefix validation failed"); goto done;
+                }
+                { machine_storage swap = active; active = restore_target; restore_target = swap; }
+            }
+            if (phase_index == 0) {
+                if (lynx_set_input(active.machine, event->mask) != LYNX_OK) {
+                    (void)report_error("public input setter refused a validated event at its exact guest tick"); goto done;
+                }
+                if (av_append_applied_input(applied_text, AV_INPUT_APPLIED_CAPACITY,
+                        &applied_text_len, event_index, event, current_mask) != 0) {
+                    (void)report_error("bounded applied-input transcript could not record a successful edge"); goto done;
+                }
+                pending_edge_tick = event->tick; pending_prior_mask = current_mask;
+                current_mask = event->mask; cursor++;
+            }
+        }
+    }
+
+    while (frame_count == 0u || frames[frame_count - 1u].result.frame_end_tick <= last_tick) {
+        uint8_t pens[LYNX_FRAME_PENS_CAPACITY], palettes[LYNX_FRAME_PALETTE_CAPACITY];
+        uint64_t ticks[LYNX_FRAME_LINE_TICKS_CAPACITY], after = 0u;
+        lynx_av_result step = {0};
+        uint64_t remaining;
+        const size_t pcm_capacity = short_spans != 0 ? LYNX_AV_MIN_PCM_CAPACITY : AV_PCM_CAPACITY;
+        const size_t event_capacity = short_spans != 0 ? LYNX_AV_MIN_EVENT_CAPACITY : AV_EVENT_CAPACITY;
+        if (lynx_guest_ticks(active.machine, &now) != LYNX_OK || now >= endpoint) {
+            (void)report_error("no complete guest frame followed the final input edge within its bound"); goto done;
+        }
+        remaining = endpoint - now;
+        if (av_step(active.machine, remaining, pens, palettes, ticks, pcm_capacity,
+                    event_capacity, &totals, &step) != 0 ||
+            lynx_guest_ticks(active.machine, &after) != LYNX_OK || after < now || after > endpoint) {
+            (void)report_error("final A/V frame interval violated its guest-time bound"); goto done;
+        }
+        if (step.stop == LYNX_STOP_FRAME) {
+            if ((previous_sequence != UINT64_MAX && step.frame_sequence <= previous_sequence) ||
+                step.frame_end_tick != after ||
+                (previous_frame_end != 0u && step.frame_end_tick <= previous_frame_end)) {
+                (void)report_error("final A/V frame sequence or tick is not monotone"); goto done;
+            }
+            previous_sequence = step.frame_sequence; previous_frame_end = step.frame_end_tick;
+            if (step.row_count == 0u) {
+                if (step.frame_sequence != 0u) { (void)report_error("only sequence zero may synchronize without rows"); goto done; }
+            } else {
+                guest_probe sample = {0}; uint32_t marker = 0u, frame_mask = current_mask;
+                if (frame_count >= FRAME_OUTPUT_LIMIT || step.row_count != LYNX_FRAME_MAX_ROWS) {
+                    (void)report_error("final A/V frame exceeded its bound"); goto done;
+                }
+                if (step.ticks_consumed == 0u && pending_edge_tick == step.frame_end_tick) {
+                    frame_mask = pending_prior_mask; pending_edge_tick = UINT64_MAX;
+                } else if (pending_edge_tick != UINT64_MAX && step.frame_end_tick > pending_edge_tick) {
+                    pending_edge_tick = UINT64_MAX;
+                }
+                if (av_read_guest_state(active.machine, probe_address, &sample, &marker) != 0 ||
+                    sample.progress == 0u || sample.error != 0u ||
+                    (marker == 0x22u && (sample.joystick & 1u) == 0u) ||
+                    (marker == 0x11u && (sample.joystick & 1u) != 0u) ||
+                    av_make_capture(&frames[frame_count], &step, pens, palettes, ticks,
+                                    frame_mask, &sample, marker, 1u) != 0) {
+                    (void)report_error("final A/V guest marker, progress or raw/rendered capture is invalid"); goto done;
+                }
+                if (marker == 0x11u && released_capture == NULL) released_capture = &frames[frame_count];
+                if (marker == 0x22u && step.frame_end_tick > first_a_tick && pressed_capture == NULL)
+                    pressed_capture = &frames[frame_count];
+                frame_count++;
+            }
+        } else if (step.stop == LYNX_STOP_BUDGET) {
+            if (step.ticks_consumed == 0u || step.ticks_consumed != remaining) {
+                (void)report_error("guest-time limit stopped final A/V observation before the endpoint"); goto done;
+            }
+        } else if (step.stop == LYNX_STOP_OUTPUT) {
+            if (after == now && step.pcm_count == 0u && step.event_count == 0u) {
+                (void)report_error("final A/V output frontier made no progress with fresh spans"); goto done;
+            }
+        } else {
+            (void)report_error("unsupported guest stop while completing the final A/V frame"); goto done;
+        }
+    }
+    if (released_capture == NULL || pressed_capture == NULL) {
+        (void)report_error("A/V timeline did not capture both released and pressed guest frame markers"); goto done;
+    }
+    if (released_capture->raw_len != pressed_capture->raw_len ||
+        memcmp(released_capture->raw, pressed_capture->raw, released_capture->raw_len) == 0) {
+        (void)report_error("A/V timeline did not produce distinct released and pressed raw video evidence"); goto done;
+    }
+    {
+        bool nonzero_after_edge = false;
+        for (size_t i = 0u; i < totals.pcm_count; i++) {
+            const uint64_t ordinal = totals.next_ordinal - totals.pcm_count + i;
+            if ((ordinal + 1u) * UINT64_C(400) >= first_a_tick &&
+                (totals.pcm[i].left != 0 || totals.pcm[i].right != 0)) nonzero_after_edge = true;
+        }
+        if (!nonzero_after_edge || totals.pcm_count == 0u || totals.event_count == 0u) {
+            (void)report_error("recorded A input did not produce non-silent PCM and channel events"); goto done;
+        }
+    }
+    if (av_build_pcm_bytes(totals.pcm, totals.pcm_count, &pcm_bytes, &pcm_bytes_len) != 0 ||
         av_build_wav(pcm_bytes, pcm_bytes_len, &wav, &wav_len) != 0 ||
-        av_build_event_text(totals.events, totals.event_count, &event_text, &event_text_len) != 0) {
-        (void)report_error("could not encode bounded public raw-frame, PCM, WAV or event spans"); goto done;
-    }
-    bool nonzero_after_edge = false;
-    for (size_t i = 0u; i < totals.pcm_count; i++) {
-        if (((totals.next_ordinal - totals.pcm_count + i + 1u) * UINT64_C(400)) >= timeline.events[0].tick &&
-            (totals.pcm[i].left != 0 || totals.pcm[i].right != 0)) nonzero_after_edge = true;
-    }
-    if (!nonzero_after_edge || totals.next_ordinal != totals.pcm_count ||
-        totals.pcm_count == 0u || totals.event_count == 0u) {
-        (void)report_error("the recorded A edge did not produce non-silent PCM and observable audio events"); goto done;
+        av_build_event_text(totals.events, totals.event_count, &event_text, &event_text_len) != 0 ||
+        av_build_progress(frames, frame_count, &progress_text, &progress_text_len) != 0 ||
+        av_join_frames(frames, frame_count, 0, &raw_stream, &raw_stream_len) != 0 ||
+        av_join_frames(frames, frame_count, 1, &ppm_stream, &ppm_stream_len) != 0) {
+        (void)report_error("could not encode bounded complete A/V stream prefixes"); goto done;
     }
     {
         uint8_t digest[32];
         char released_raw_hash[65], released_ppm_hash[65], pressed_raw_hash[65], pressed_ppm_hash[65];
-        char pcm_hash[65], wav_hash[65], event_hash[65];
+        char pcm_hash[65], wav_hash[65], event_hash[65], raw_stream_hash[65], ppm_stream_hash[65];
+        char applied_hash[65], progress_hash[65];
+        char timeline_stream_hash[65];
         int n;
-        host_sha_digest(released_capture.raw, released_capture.raw_len, digest); host_sha_hex(digest, released_raw_hash);
-        host_sha_digest(released_capture.ppm, released_capture.ppm_len, digest); host_sha_hex(digest, released_ppm_hash);
-        host_sha_digest(pressed_capture.raw, pressed_capture.raw_len, digest); host_sha_hex(digest, pressed_raw_hash);
-        host_sha_digest(pressed_capture.ppm, pressed_capture.ppm_len, digest); host_sha_hex(digest, pressed_ppm_hash);
+        host_sha_digest(released_capture->raw, released_capture->raw_len, digest); host_sha_hex(digest, released_raw_hash);
+        host_sha_digest(released_capture->ppm, released_capture->ppm_len, digest); host_sha_hex(digest, released_ppm_hash);
+        host_sha_digest(pressed_capture->raw, pressed_capture->raw_len, digest); host_sha_hex(digest, pressed_raw_hash);
+        host_sha_digest(pressed_capture->ppm, pressed_capture->ppm_len, digest); host_sha_hex(digest, pressed_ppm_hash);
         host_sha_digest(pcm_bytes, pcm_bytes_len, digest); host_sha_hex(digest, pcm_hash);
         host_sha_digest(wav, wav_len, digest); host_sha_hex(digest, wav_hash);
         host_sha_digest(event_text, event_text_len, digest); host_sha_hex(digest, event_hash);
+        host_sha_digest(raw_stream, raw_stream_len, digest); host_sha_hex(digest, raw_stream_hash);
+        host_sha_digest(ppm_stream, ppm_stream_len, digest); host_sha_hex(digest, ppm_stream_hash);
+        host_sha_digest(applied_text, applied_text_len, digest); host_sha_hex(digest, applied_hash);
+        host_sha_digest(progress_text, progress_text_len, digest); host_sha_hex(digest, progress_hash);
+        host_sha_digest(timeline_bytes, timeline_len, digest); host_sha_hex(digest, timeline_stream_hash);
         n = snprintf(manifest, sizeof manifest,
-            "artifact = AV_TRACE\nprofile = %s\nstartup = A\ntiming_policy = video-policy1-unverified\n"
+            "schema_version = 1\nartifact = AV_TRACE\nprofile = %s\nstartup = A\ntiming_policy = video-policy1-unverified\n"
             "audio_policy = digital-1\naudio_rate_num = 40000\naudio_rate_den = 1\naudio_channels = 2\naudio_bits = 16\n"
-            "content_sha256 = %s\ninput_sha256 = %s\ninput_event_count = 1\ninput_event_tick = 109321\ninput_event_mask = 16\n"
-            "released_sequence = 1\nreleased_start_tick = %" PRIu64 "\nreleased_end_tick = %" PRIu64 "\nreleased_rows = %u\nreleased_raw_sha256 = %s\nreleased_ppm_sha256 = %s\n"
-            "pressed_sequence = 2\npressed_start_tick = %" PRIu64 "\npressed_end_tick = %" PRIu64 "\npressed_rows = %u\npressed_raw_sha256 = %s\npressed_ppm_sha256 = %s\n"
-            "first_sample_ordinal = 0\nnext_sample_ordinal = %" PRIu64 "\npcm_frame_count = %zu\npcm_sha256 = %s\nwav_sha256 = %s\nevent_count = %zu\nevents_sha256 = %s\n"
+            "build_id = %s\ncontent_sha256 = %s\ninput_sha256 = %s\ninput_bytes = %zu\ninput_event_count = %zu\n"
+            "input_event_tick = %" PRIu64 "\ninput_event_mask = %u\nlast_input_tick = %" PRIu64 "\n"
+            "input_applied_count = %zu\ninput_applied_bytes = %zu\ninput_applied_sha256 = %s\n"
+            "frame_count = %zu\nframes_raw_bytes = %zu\nframes_raw_sha256 = %s\nframes_ppm_bytes = %zu\nframes_ppm_sha256 = %s\n"
+            "guest_progress_count = %zu\nguest_progress_bytes = %zu\nguest_progress_sha256 = %s\n"
+            "released_sequence = %" PRIu64 "\nreleased_start_tick = %" PRIu64 "\nreleased_end_tick = %" PRIu64 "\nreleased_rows = %u\nreleased_raw_bytes = %zu\nreleased_raw_sha256 = %s\nreleased_ppm_bytes = %zu\nreleased_ppm_sha256 = %s\n"
+            "pressed_sequence = %" PRIu64 "\npressed_start_tick = %" PRIu64 "\npressed_end_tick = %" PRIu64 "\npressed_rows = %u\npressed_raw_bytes = %zu\npressed_raw_sha256 = %s\npressed_ppm_bytes = %zu\npressed_ppm_sha256 = %s\n"
+            "first_sample_ordinal = 0\nnext_sample_ordinal = %" PRIu64 "\npcm_frame_count = %zu\npcm_bytes = %zu\npcm_sha256 = %s\nwav_bytes = %zu\nwav_sha256 = %s\nevent_count = %zu\nevents_bytes = %zu\nevents_sha256 = %s\n"
+            "timeline_sha256 = %s\ntimeline_stream_sha256 = %s\n"
             "source_policy = digital channel-0 divider/LFSR; mix and stereo route are software policy, not physical qualification\n",
-            lynx_profile_name(profile), content_hash, input_hash, released.frame_start_tick,
-            released.frame_end_tick, released.row_count, released_raw_hash, released_ppm_hash,
-            pressed.frame_start_tick, pressed.frame_end_tick, pressed.row_count,
-            pressed_raw_hash, pressed_ppm_hash, totals.next_ordinal, totals.pcm_count,
-            pcm_hash, wav_hash, totals.event_count, event_hash);
+            lynx_profile_name(profile), lynx_build_id(), content_hash, input_hash, timeline_len, timeline.count,
+            timeline.count == 0u ? 0u : timeline.events[0].tick,
+            timeline.count == 0u ? 0u : timeline.events[0].mask, last_tick,
+            timeline.count, applied_text_len, applied_hash, frame_count,
+            raw_stream_len, raw_stream_hash, ppm_stream_len, ppm_stream_hash,
+            frame_count, progress_text_len, progress_hash,
+            released_capture->result.sequence, released_capture->result.frame_start_tick,
+            released_capture->result.frame_end_tick, released_capture->result.row_count,
+            released_capture->raw_len, released_raw_hash, released_capture->ppm_len, released_ppm_hash,
+            pressed_capture->result.sequence,
+            pressed_capture->result.frame_start_tick, pressed_capture->result.frame_end_tick,
+            pressed_capture->result.row_count, pressed_capture->raw_len, pressed_raw_hash,
+            pressed_capture->ppm_len, pressed_ppm_hash, totals.next_ordinal, totals.pcm_count,
+            pcm_bytes_len, pcm_hash, wav_len, wav_hash, totals.event_count, event_text_len,
+            event_hash, timeline_stream_hash, timeline_stream_hash);
         if (n < 0 || (size_t)n >= sizeof manifest) { (void)report_error("A/V manifest exceeds its fixed bound"); goto done; }
         manifest_len = (size_t)n;
     }
     {
         const av_output_file files[] = {
-            {"released.raw", released_capture.raw, released_capture.raw_len},
-            {"released.ppm", released_capture.ppm, released_capture.ppm_len},
-            {"pressed.raw", pressed_capture.raw, pressed_capture.raw_len},
-            {"pressed.ppm", pressed_capture.ppm, pressed_capture.ppm_len},
-            {"audio.pcm", pcm_bytes, pcm_bytes_len},
-            {"audio.wav", wav, wav_len},
-            {"audio.events", event_text, event_text_len},
-            {"av.manifest", manifest, manifest_len}
+            {"released.raw", released_capture->raw, released_capture->raw_len},
+            {"released.ppm", released_capture->ppm, released_capture->ppm_len},
+            {"pressed.raw", pressed_capture->raw, pressed_capture->raw_len},
+            {"pressed.ppm", pressed_capture->ppm, pressed_capture->ppm_len},
+            {"frames.raw", raw_stream, raw_stream_len}, {"frames.ppm", ppm_stream, ppm_stream_len},
+            {"input.timeline", timeline_bytes, timeline_len},
+            {"input.applied", applied_text, applied_text_len},
+            {"guest.progress", progress_text, progress_text_len},
+            {"audio.pcm", pcm_bytes, pcm_bytes_len}, {"audio.wav", wav, wav_len},
+            {"audio.events", event_text, event_text_len}, {"av.manifest", manifest, manifest_len}
         };
         if (publish_av_outputs(output_directory, files, sizeof files / sizeof files[0]) != 0) goto done;
     }
-    printf("lynx-consume: wrote released/A raw-frame, PPM, fixed-rate stereo WAV, PCM span and audio-event observations to %s\n",
-           output_directory);
+    printf("lynx-consume: replayed %zu input edges and published %zu complete frame/progress records with applied input, PCM and event streams to %s\n",
+           timeline.count, frame_count, output_directory);
     result = 0;
 done:
     free(bll); free(labels); free(timeline_bytes); free(timeline.events);
-    free(totals.pcm); free(totals.events); free(event_text); free(pcm_bytes); free(wav);
-    free(released_capture.raw); free(released_capture.ppm);
-    free(pressed_capture.raw); free(pressed_capture.ppm);
-    destroy_machine(&storage);
+    free(totals.pcm); free(totals.events); free(event_text); free(applied_text);
+    free(progress_text); free(pcm_bytes); free(wav);
+    free(raw_stream); free(ppm_stream);
+    for (size_t i = 0u; i < FRAME_OUTPUT_LIMIT; i++) { free(frames[i].raw); free(frames[i].ppm); }
+    destroy_machine(&active);
+    if (target_created != 0) destroy_machine(&restore_target);
     return result;
 }
 
