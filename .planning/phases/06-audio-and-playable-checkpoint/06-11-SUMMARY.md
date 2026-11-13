@@ -95,7 +95,7 @@ status: complete
 
 ## Performance
 
-- **Duration:** 51 minutes elapsed from dispatch; this is wall-clock handoff time, not active model time or API usage.
+- **Duration:** 53 minutes elapsed from dispatch; this is wall-clock handoff time, not active model time or API usage.
 - **Started:** 2026-11-13T11:27:19Z
 - **Completed:** 2026-11-13T12:20:35Z
 - **Tasks:** 2
@@ -103,7 +103,7 @@ status: complete
 
 ## Accomplishments
 
-- Added the opt-in host-only `av-benchmark` mode around the existing source-built A/V guest. The monotonic timer brackets only calls to `lynx_advance_av`; output capture, parsing, assembly, hashing, and publication have separately reported intervals. Normal A/V replay bundles remain unchanged.
+- Added the opt-in host-only `av-benchmark` mode around the existing source-built A/V guest. The monotonic timer brackets only calls to `lynx_advance_av`; host parsing and hashing are excluded from the API interval; frame encoding, stream assembly and publication have separate timing fields. Normal A/V replay bundles remain unchanged.
 - Five fresh native runs at source commit `93959ca26a0017a0130ffa0abd71856ffad8262c` produced equal 1,248,256-tick work and identical 13-stream/output digests. The 1,253,985 tick value is the work-window bound, not the observed completion point. The exact native environment, five raw samples, medians, ranges, workload identities, and limitations are in [performance.md](../../../docs/performance.md).
 - Added `consumer.av_benchmark_controls`. It builds one real five-run baseline, validates each output stream against its report and the independent artifact checker, then rejects 28 static malformed-corpus mutations at their named diagnostics. A real no-run guest is refused before publishing.
 - Native AppleClang and GNU 13.3 builds passed the focused benchmark/control selector: two selected tests, two executed passes, no skips. The GNU run used a real fast-forward to exact commit `38fd41d4d74a499afa5d3f65882257c6c256854d`, then confirmed exact HEAD and a clean tracked tree before configure/build.
@@ -156,3 +156,5 @@ Plan 12 owns final qualification and CI timing capture. It should record queue, 
 ---
 *Phase: 06-audio-and-playable-checkpoint*
 *Completed: 2026-11-13*
+
+Parent closeout preserved three invocation-owned benchmark diagnostic directories outside the build scan after nonce, canonical path, exact guest identity and full byte/type/mode/link inventory checks. These contain metadata/report-validation failures, not a guest source-comparison failure. No evidence was deleted or scanner exemption added.
