@@ -16,6 +16,7 @@ bll_header:
         .byte "BS93"
 
         .export suite_entry, suite_test_entry, suite_test_return
+        .export suite_startup_body, suite_extension_stack_init
         .export suite_after_tests, suite_call_tests, suite_default_irq
         .export suite_result_start, suite_result_end
         .export suite_progress, suite_model, suite_done
@@ -24,6 +25,9 @@ bll_header:
         .export suite_framebuffer_start, suite_framebuffer_end
         .export suite_test6, suite_test6_poll
         .export suite_counter_zp
+        .export suite_done_store
+        .export suite_dispctl_restore
+        .export suite_glyphs
         suite_test_entry = _run_tests
         suite_test_return = _run_tests + 26
         suite_result_start = _g_results
@@ -35,6 +39,9 @@ bll_header:
 
         .segment "STARTUP"
 suite_entry:
+        sei
+        jmp suite_extension_stack_init
+suite_startup_body:
         jmp suite_extension_entry
         .res $45 - (* - suite_entry), $EA
 suite_call_tests:
@@ -44,11 +51,12 @@ suite_after_tests:
         .res $73 - (* - suite_entry), $EA
 
         .segment "EXTENSION"
-suite_extension_entry:
-        sei
+suite_extension_stack_init:
         ldx #$FF
         txs
+        jmp suite_startup_body
 
+suite_extension_entry:
         lda #$00
         ldx #$00
 @clear_zp:
@@ -97,9 +105,13 @@ suite_extension_entry:
         sta TIM0BKUP
         lda #$68
         sta TIM2BKUP
-        lda #$98
+        stz TIM0CNT
+        stz TIM2CNT
+        stz TIM0CTLB
+        stz TIM2CTLB
+        lda #$18
         sta TIM0CTLA
-        lda #$9F
+        lda #$1F
         sta TIM2CTLA
 
         lda #<$6000
@@ -108,24 +120,26 @@ suite_extension_entry:
         sta DISPADRH
         lda #$29
         sta PBKUP
+        lda #$00
+        sta $FDA0
+        sta $FDB0
         lda #$0F
-        sta $FDA1
+        sta $FDAF
         lda #$FF
-        sta $FDB1
+        sta $FDBF
 
         lda #DISPCTL_REQUESTED
         sta suite_requested_dispctl
         lda #$00
-        sta suite_initial_counter
         sta suite_counter_zp
+        lda suite_counter_zp
+        sta suite_initial_counter
         lda #$01
         sta suite_progress
         lda #DISPCTL_REQUESTED
 suite_dispctl_request:
         sta DISPCTL
 suite_dispctl_after:
-        lda #(TIMER0_INTERRUPT | TIMER2_INTERRUPT)
-        sta INTSET
         jmp suite_call_tests
 
 suite_extension_after_tests:
@@ -137,18 +151,30 @@ suite_extension_after_tests:
         jsr suite_draw_results
 
         ; Requested DISPCTL values are recorded separately from core support.
-        ; Software companions restore one-bit DMA for readable capture.
+        ; Restore each family's documented display mode after measurement.
+suite_dispctl_restore:
+.if FAMILY_HARDWARE
+        lda #$0D
+.else
         lda #$01
+.endif
         sta DISPCTL
         lda #$FF
         sta INTRST
-        lda #(TIMER0_INTERRUPT | TIMER2_INTERRUPT)
-        sta INTSET
         ; At this point the captured source results and framebuffer bytes are
         ; complete and the readable display mode is restored. The host checks
         ; a separately captured raw frame before accepting the tracer.
         lda #$A5
         sta suite_completion_signature
+        lda #11
+        sta suite_draw_x
+        lda #6
+        sta suite_draw_y
+        lda suite_completion_signature
+        sta suite_draw_value
+        jsr suite_draw_hex_byte
+        lda #$A5
+suite_done_store:
         sta suite_done
 @idle:
         jmp @idle
@@ -159,6 +185,7 @@ suite_clear_framebuffer:
         lda #$60
         sta suite_frame_ptr+1
         ldx #31
+        lda #$00
 @clear_full_pages:
         ldy #$00
 @clear_page:
@@ -193,7 +220,19 @@ suite_draw_header:
         sta suite_text_ptr
         lda #>suite_line_two
         sta suite_text_ptr+1
-        jmp suite_draw_text
+        jsr suite_draw_text
+        lda #4
+        sta suite_draw_x
+        lda #6
+        sta suite_draw_y
+        lda suite_initial_counter
+        sta suite_draw_value
+        jsr suite_draw_hex_byte
+        lda #17
+        sta suite_draw_x
+        lda suite_model
+        sta suite_draw_value
+        jmp suite_draw_hex_byte
 
 suite_draw_text:
 @next_char:
@@ -445,12 +484,20 @@ suite_hex_digits:
 suite_line_one:
         .byte "TIMER D", $30 + DMA, "P", $30 + PAGE, " "
 .if FAMILY_HARDWARE
+.if DMA
         .byte "H0D", $00
 .else
+        .byte "H0C", $00
+.endif
+.else
+.if DMA
         .byte "S01", $00
+.else
+        .byte "S00", $00
+.endif
 .endif
 suite_line_two:
-        .byte "INIT00 DONEA5", $00
+        .byte "INIT   DONE   CPU  ", $00
 suite_glyphs:
         ; 0
         .byte $0f, $f0, $f0, $0f, $f0, $0f, $f0, $0f, $0f, $f0

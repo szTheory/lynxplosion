@@ -1,0 +1,10 @@
+# Expected complete-image identities from the checked pinned-source build.
+# Identity only: physical execution and accuracy remain unqualified.
+1b9857a5198f7d9ee1ea54e89fc5f0c5a472dbb07b693c7459374a6ac036e49b  hardware-dma0-page0.bll
+a3e7c21f22f95f77380f8fcbd457c262f293eebd944860fff78aa7f1aae62613  hardware-dma0-page1.bll
+e87581f0e2221978456b107e0ab01fc067c05e845822c60076daf83d92ff6a60  hardware-dma1-page0.bll
+c15faff6293728b68ee59dc821fbdc3a77e72ff67dcc622c917301f1eb9eee89  hardware-dma1-page1.bll
+ab9598aa545b69645e578a72cff9066b696a83b76e29673a50a9c6d8fb0593d0  software-dma0-page0.bll
+8084cceb95b5b28706fee64b53995d26be11e5f0465492fcc06d982f8e766a95  software-dma0-page1.bll
+88ea5524099d23ec8a4930e4bb8748edcfa029156e0ebb5d58f1951b482dfd41  software-dma1-page0.bll
+4146dd1e8ff68608fcd29f5af07821b9cbcf3502abe7ad6a75727c1f0049ca61  software-dma1-page1.bll

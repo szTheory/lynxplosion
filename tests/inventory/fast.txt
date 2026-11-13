@@ -241,6 +241,8 @@ timer.fault.irq	timer
 timer.fault.order	timer
 timer.fault.phase	timer
 timer.fault.reset_done	timer
+timer_evidence.controls	timer
+timer_evidence.matrix	timer
 timer_evidence.tracer	timer
 toolchain.probe	toolchain
 toolchain.probe.self_test	toolchain

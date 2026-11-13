@@ -72,21 +72,50 @@ lynx_suite_test(suite.timers.no_run timers_no_run 300)
 # driver and its existing inventory).
 add_executable(lynx-test-timer-evidence
   ${PROJECT_SOURCE_DIR}/tests/timer-evidence/test_timer_evidence.c)
+set(timer_identity_file "${PROJECT_SOURCE_DIR}/fixtures/timer-evidence/images.sha256")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${timer_identity_file}")
+file(SHA256 "${timer_identity_file}" timer_case_set_sha256)
+file(STRINGS "${timer_identity_file}" timer_identity_lines REGEX "^[^#]")
+set(timer_identity_header "#define TIMER_CASE_SET_SHA256 \"${timer_case_set_sha256}\"\nstatic const struct { const char *name; const char *sha256; } timer_approved_images[] = {\n")
+set(timer_identity_names)
+foreach(identity_line IN LISTS timer_identity_lines)
+  if(NOT identity_line MATCHES "^([0-9a-f]+)  ((hardware|software)-dma[01]-page[01])\\.bll$")
+    message(FATAL_ERROR "timer evidence: invalid approved image identity")
+  endif()
+  string(LENGTH "${CMAKE_MATCH_1}" identity_sha_length)
+  if(NOT identity_sha_length EQUAL 64)
+    message(FATAL_ERROR "timer evidence: invalid image digest width")
+  endif()
+  list(APPEND timer_identity_names "${CMAKE_MATCH_2}")
+  string(APPEND timer_identity_header "{\"${CMAKE_MATCH_2}\", \"${CMAKE_MATCH_1}\"},\n")
+endforeach()
+list(REMOVE_DUPLICATES timer_identity_names)
+list(LENGTH timer_identity_names timer_identity_count)
+list(LENGTH timer_identity_lines timer_identity_line_count)
+if(NOT timer_identity_count EQUAL 8 OR NOT timer_identity_line_count EQUAL 8)
+  message(FATAL_ERROR "timer evidence: expected eight unique approved images")
+endif()
+string(APPEND timer_identity_header "};\n")
+file(CONFIGURE OUTPUT "${PROJECT_BINARY_DIR}/generated/timer_evidence_ids.h" CONTENT "${timer_identity_header}" @ONLY)
+target_include_directories(lynx-test-timer-evidence PRIVATE "${PROJECT_BINARY_DIR}/generated")
 target_link_libraries(lynx-test-timer-evidence PRIVATE lynx_core)
 target_compile_definitions(lynx-test-timer-evidence PRIVATE
   _POSIX_C_SOURCE=200809L
+  _XOPEN_SOURCE=700
   LYNX_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
 lynx_warnings(lynx-test-timer-evidence)
 lynx_sanitize(lynx-test-timer-evidence)
 set_target_properties(lynx-test-timer-evidence PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
 
-lynx_add_test(NAME timer_evidence.tracer
+foreach(evidence_mode tracer matrix controls)
+lynx_add_test(NAME timer_evidence.${evidence_mode}
   COMMAND ${CMAKE_COMMAND}
-    -DMODE=tracer
+    -DMODE=${evidence_mode}
     -DROOT=${PROJECT_SOURCE_DIR}
-    -DWORK=${LYNX_SCRATCH_DIR}/timer-evidence/tracer
+    -DWORK=${LYNX_SCRATCH_DIR}/timer-evidence/${evidence_mode}
     -DSCRATCH_ROOT=${LYNX_SCRATCH_DIR}
     -DTEST_BINARY=$<TARGET_FILE:lynx-test-timer-evidence>
     -P ${PROJECT_SOURCE_DIR}/tests/timer-evidence/run.cmake
   LABELS timer TIMEOUT 60)
+endforeach()

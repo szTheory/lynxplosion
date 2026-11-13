@@ -1,14 +1,16 @@
 #!/bin/sh
 set -eu
+umask 077
 
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
 SUITES_DIR="$ROOT/build/pins/lynx-tests"
 CC65_DIR="$ROOT/build/pins/cc65"
 MODE=
 OUT_ARG=
+TRACER_ONLY=0
 
 usage() {
-  printf 'usage: sh scripts/build-timer-evidence.sh --out DIR | --verify DIR\n' >&2
+  printf 'usage: sh scripts/build-timer-evidence.sh --out|--verify DIR [--tracer]\n' >&2
   exit 2
 }
 
@@ -21,10 +23,18 @@ while [ "$#" -gt 0 ]; do
       OUT_ARG=$2
       shift 2
       ;;
+    --tracer)
+      [ "$TRACER_ONLY" -eq 0 ] || usage
+      TRACER_ONLY=1
+      shift
+      ;;
     *) usage ;;
   esac
 done
 [ -n "$MODE" ] && [ -n "$OUT_ARG" ] || usage
+if printf '%s' "$OUT_ARG" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null; then
+  printf 'timer evidence: output path contains control characters\n' >&2; exit 1
+fi
 case "$OUT_ARG" in
   /|..|../*|*/..|*'/../'*) printf 'timer evidence: refusing unsafe output path\n' >&2; exit 1 ;;
   /*) OUT_PATH=$OUT_ARG ;;
@@ -32,6 +42,13 @@ case "$OUT_ARG" in
 esac
 OUT_PARENT=$(dirname -- "$OUT_PATH")
 OUT_BASE=$(basename -- "$OUT_PATH")
+cursor=$OUT_PATH
+while :; do
+  [ ! -L "$cursor" ] || { printf 'timer evidence: refusing symlink output ancestor\n' >&2; exit 1; }
+  ancestor=$(dirname -- "$cursor")
+  [ "$ancestor" != "$cursor" ] || break
+  cursor=$ancestor
+done
 [ -d "$OUT_PARENT" ] || { printf 'timer evidence: output parent must already exist\n' >&2; exit 1; }
 [ ! -L "$OUT_PARENT" ] || { printf 'timer evidence: refusing symlink output parent\n' >&2; exit 1; }
 PARENT_REAL=$(CDPATH='' cd -P -- "$OUT_PARENT" && pwd -P)
@@ -48,7 +65,13 @@ case "$PARENT_REAL" in
   *) printf 'timer evidence: output is outside owned scratch and invocation temporary roots\n' >&2; exit 1 ;;
 esac
 
-sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
 pin_value() {
   awk -v name="$1" '$1 == name { print $4; found++ } END { if (found != 1) exit 1 }' "$ROOT/pins.txt"
 }
@@ -80,8 +103,12 @@ expect_symbol() {
 validate_layout() {
   lbl=$1
   bll=$2
+  layout_request=$3
+  layout_restore=$4
   expect_symbol "$lbl" __BLL_RUN__ 0001F6
   expect_symbol "$lbl" __BLL_SIZE__ 00000A
+  expect_symbol "$lbl" suite_entry 000200
+  expect_symbol "$lbl" suite_startup_body 000204
   expect_symbol "$lbl" __STARTUP_RUN__ 000200
   expect_symbol "$lbl" __STARTUP_SIZE__ 000073
   expect_symbol "$lbl" __CODE_RUN__ 000273
@@ -90,12 +117,51 @@ validate_layout() {
   expect_symbol "$lbl" __FRAMEBUFFER_RUN__ 006000
   expect_symbol "$lbl" __FRAMEBUFFER_SIZE__ 001FE0
   expect_symbol "$lbl" __BSS_RUN__ 008000
+  stack_helper=$(symbol "$lbl" suite_extension_stack_init)
+  stack_helper_dec=$((0x$stack_helper))
+  [ "$stack_helper_dec" -ge $((0x000500)) ] || { printf 'timer evidence: stack helper is outside extension segment\n' >&2; return 1; }
+  # od emits decimal bytes; split its numeric fields for positional checks.
+  # shellcheck disable=SC2046
+  set -- $(dd if="$bll" bs=1 skip=10 count=4 2>/dev/null | od -An -tu1)
+  [ "$#" -eq 4 ] && [ "$1" -eq 120 ] && [ "$2" -eq 76 ] &&
+    [ "$3" -eq $((stack_helper_dec & 255)) ] &&
+    [ "$4" -eq $(((stack_helper_dec >> 8) & 255)) ] || {
+      printf 'timer evidence: BLL entry must begin SEI+JMP to the stack helper\n' >&2; return 1;
+    }
   ext_size=$(symbol "$lbl" __EXTENSION_SIZE__)
   ext_end=$((0x000500 + 0x$ext_size))
   ext_end_hex=$(printf '%06X' "$ext_end")
   suite_end=$(symbol "$lbl" suite_end)
   [ "$ext_end_hex" = "$suite_end" ] || { printf 'timer evidence: loadable image end differs from extension map\n' >&2; return 1; }
   [ "$ext_end" -le $((0x006000)) ] || { printf 'timer evidence: extension overlaps framebuffer\n' >&2; return 1; }
+  display_request=$(symbol "$lbl" suite_dispctl_request)
+  display_after=$(symbol "$lbl" suite_dispctl_after)
+  display_request_dec=$((0x$display_request))
+  [ "$display_request_dec" -ge $((0x000500)) ] &&
+    [ "$((0x$display_after))" -eq "$((display_request_dec + 3))" ] &&
+    [ "$((0x$display_after))" -le "$ext_end" ] || {
+      printf 'timer evidence: display write labels escape the extension\n' >&2; return 1;
+    }
+  # od emits decimal bytes; split its numeric fields for positional checks.
+  # shellcheck disable=SC2046
+  set -- $(dd if="$bll" bs=1 skip="$((display_request_dec - 2 - 512 + 10))" count=5 2>/dev/null | od -An -tu1)
+  [ "$#" -eq 5 ] && [ "$1" -eq 169 ] && [ "$2" -eq "$layout_request" ] &&
+    [ "$3" -eq 141 ] && [ "$4" -eq 146 ] && [ "$5" -eq 253 ] || {
+    printf 'timer evidence: display stop marker is not the requested LDA/STA DISPCTL\n' >&2; return 1;
+  }
+  display_restore=$(symbol "$lbl" suite_dispctl_restore)
+  display_restore_dec=$((0x$display_restore))
+  [ "$display_restore_dec" -ge "$((0x000500))" ] &&
+    [ "$((display_restore_dec + 5))" -le "$ext_end" ] || {
+      printf 'timer evidence: display restore escapes the extension\n' >&2; return 1;
+    }
+  # od emits decimal bytes; split its numeric fields for positional checks.
+  # shellcheck disable=SC2046
+  set -- $(dd if="$bll" bs=1 skip="$((display_restore_dec - 512 + 10))" count=5 2>/dev/null | od -An -tu1)
+  [ "$#" -eq 5 ] && [ "$1" -eq 169 ] && [ "$2" -eq "$layout_restore" ] &&
+    [ "$3" -eq 141 ] && [ "$4" -eq 146 ] && [ "$5" -eq 253 ] || {
+    printf 'timer evidence: display restore does not match its family\n' >&2; return 1;
+  }
   framebuffer_end=$((0x006000 + 0x001FE0))
   [ "$framebuffer_end" -le $((0x008000)) ] || { printf 'timer evidence: framebuffer overlaps BSS\n' >&2; return 1; }
   bss_size=$(symbol "$lbl" __BSS_SIZE__)
@@ -103,6 +169,8 @@ validate_layout() {
   [ "$bss_end" -le $((0x00FC00)) ] || { printf 'timer evidence: BSS overlaps mapped hardware window\n' >&2; return 1; }
   zp_size=$(symbol "$lbl" __ZEROPAGE_SIZE__)
   [ $((0x$zp_size)) -le $((0x100)) ] || { printf 'timer evidence: zero page range invalid\n' >&2; return 1; }
+  # od emits decimal bytes; split its numeric fields for positional checks.
+  # shellcheck disable=SC2046
   set -- $(od -An -tu1 -N10 "$bll")
   [ "$#" -eq 10 ] && [ "$1" -eq 128 ] && [ "$2" -eq 8 ] &&
     [ "$3" -eq 2 ] && [ "$4" -eq 0 ] && [ "$7" -eq 66 ] &&
@@ -129,6 +197,32 @@ expect_manifest() {
   [ "$actual" = "$2" ] || { printf 'timer evidence: stale manifest field %s\n' "$1" >&2; return 1; }
 }
 
+if [ "$TRACER_ONLY" -eq 1 ]; then
+  CASE_NAMES='hardware-dma1-page1 software-dma1-page1'
+  PACKAGE_SCOPE=tracer
+else
+  CASE_NAMES='hardware-dma0-page0 hardware-dma0-page1 hardware-dma1-page0 hardware-dma1-page1 software-dma0-page0 software-dma0-page1 software-dma1-page0 software-dma1-page1'
+  PACKAGE_SCOPE=matrix
+fi
+
+validate_inventory() {
+  expected=$BASE/expected-files.txt
+  actual=$BASE/actual-files.txt
+  {
+    printf '.lynx-timer-owner\nNOTICE\nbuild-record.txt\ncases.txt\nphysical-results.tsv\ntimer-evidence.manifest\n'
+    for inventory_case in $CASE_NAMES; do
+      printf '%s.bll\n%s.case.txt\n%s.lbl\n%s.map\n' \
+        "$inventory_case" "$inventory_case" "$inventory_case" "$inventory_case"
+    done
+  } | LC_ALL=C sort > "$expected"
+  (CDPATH='' cd "$OUT" && find . -type f -print | sed 's#^\./##' | LC_ALL=C sort) > "$actual"
+  if [ "$(find "$OUT" -mindepth 1 -type d -print | wc -l | tr -d ' ')" != 0 ] || ! cmp -s "$expected" "$actual"; then
+    printf 'timer evidence: exact package file inventory mismatch\n' >&2
+    diff -u "$expected" "$actual" >&2 || true
+    return 1
+  fi
+}
+
 LYNX_PIN=$(pin_value lynx-tests)
 CC65_PIN=$(pin_value cc65)
 LYNX_URL=$(pin_url lynx-tests)
@@ -151,16 +245,30 @@ LAYOUT_SHA=$(sha256 "$ROOT/fixtures/timer-evidence/bll.cfg")
 BUILDER_SHA=$(sha256 "$ROOT/scripts/build-timer-evidence.sh")
 NOTICE_SHA=$(sha256 "$ROOT/fixtures/timer-evidence/NOTICE")
 MANIFEST_SHA=$(sha256 "$ROOT/fixtures/manifests/timer-evidence.manifest")
+CASE_SET_SHA=$(sha256 "$ROOT/fixtures/timer-evidence/images.sha256")
 expect_manifest sha256 "$WRAPPER_SHA"
 expect_manifest wrapper_sha256 "$WRAPPER_SHA"
 
 if [ "$MODE" = --out ]; then
   [ ! -e "$OUT" ] || { printf 'timer evidence: refusing existing or colliding output\n' >&2; exit 1; }
-  mkdir -- "$OUT"
+  mkdir -m 700 -- "$OUT"
   NONCE=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
   printf 'lynx-timer-output-v1\n%s\n%s\n' "$OUT" "$NONCE" > "$OUT/.lynx-timer-owner"
 else
   [ -d "$OUT" ] || { printf 'timer evidence: verification output directory is missing\n' >&2; exit 1; }
+  [ -n "$(find "$OUT" -prune -user "$(id -u)" -perm 0700 -print)" ] || {
+    printf 'timer evidence: package must be owner-only mode 0700 and owned by this user\n' >&2; exit 1;
+  }
+  for entry in "$OUT"/* "$OUT"/.[!.]* "$OUT"/..?*; do
+    if [ -e "$entry" ] || [ -L "$entry" ]; then
+      [ -f "$entry" ] && [ ! -L "$entry" ] || {
+        printf 'timer evidence: refusing non-regular package entry before reading records\n' >&2; exit 1;
+      }
+    fi
+  done
+  if [ -n "$(find "$OUT" -type l -print)" ]; then
+    printf 'timer evidence: refusing symlink package entry before reading records\n' >&2; exit 1
+  fi
   [ -f "$OUT/.lynx-timer-owner" ] && [ ! -L "$OUT/.lynx-timer-owner" ] || { printf 'timer evidence: output owner marker missing or invalid\n' >&2; exit 1; }
   awk -v dir="$OUT" 'NR == 1 && $0 == "lynx-timer-output-v1" { a=1 } NR == 2 && $0 == dir { b=1 } NR == 3 && length($0) == 48 && $0 ~ /^[0-9a-f]+$/ { c=1 } END { if (NR != 3 || !a || !b || !c) exit 1 }' "$OUT/.lynx-timer-owner" || { printf 'timer evidence: output owner marker mismatch\n' >&2; exit 1; }
   [ -f "$OUT/build-record.txt" ] || { printf 'timer evidence: build record missing\n' >&2; exit 1; }
@@ -185,13 +293,15 @@ printf 'lynx-timer-baseline-v1\n%s\n%s\n' "$BASE" "$BASE_NONCE" > "$BASE/.lynx-t
 cleanup_baseline() {
   status=$?
   trap - EXIT HUP INT TERM
-  if [ "$status" -eq 0 ] && [ -f "$BASE/.lynx-timer-owner" ] &&
+  if [ "$status" -eq 0 ] && [ ! -L "$BASE" ] &&
+     [ -f "$BASE/.lynx-timer-owner" ] && [ ! -L "$BASE/.lynx-timer-owner" ] &&
      awk -v dir="$BASE" -v nonce="$BASE_NONCE" 'NR==1&&$0=="lynx-timer-baseline-v1"{a=1} NR==2&&$0==dir{b=1} NR==3&&$0==nonce{c=1} END{if(NR!=3||!a||!b||!c)exit 1}' "$BASE/.lynx-timer-owner"; then
     rm -rf -- "$BASE"
   fi
   exit "$status"
 }
-trap cleanup_baseline 0 HUP INT TERM
+trap cleanup_baseline 0
+trap 'exit 1' HUP INT TERM
 mkdir -p "$BASE/tmp"
 TMPDIR="$TMP_REAL" sh "$ROOT/scripts/build-suites.sh" --out "$BASE" >/dev/null
 expect_symbol "$BASE/timers.lbl" __CODE_RUN__ 000273
@@ -215,6 +325,7 @@ build_case() {
   page=$4
   requested_dispctl=$5
   requested_mapctl=$6
+  restored_dispctl=$([ "$family" = 1 ] && printf 13 || printf 1)
   if [ "$MODE" = --out ]; then
     env -i PATH=/usr/bin:/bin LC_ALL=C "CC65_HOME=$CC65_DIR" \
       "$CC65_DIR/bin/ca65" --cpu 65C02 \
@@ -239,18 +350,22 @@ build_case() {
     expect_symbol "$OUT/$case_name.lbl" suite_call_tests 000245
     expect_symbol "$OUT/$case_name.lbl" suite_test_return 000459
     expect_symbol "$OUT/$case_name.lbl" suite_pinned_code_start 000273
-    expect_symbol "$OUT/$case_name.lbl" suite_dispctl_request 000593
-    expect_symbol "$OUT/$case_name.lbl" suite_dispctl_after 000596
-    validate_layout "$OUT/$case_name.lbl" "$OUT/$case_name.bll"
+    done_store=$(symbol "$OUT/$case_name.lbl" suite_done_store)
+    [ "$((0x$done_store))" -ge $((0x000500)) ] || { printf 'timer evidence: post-render completion store is outside the extension segment\n' >&2; return 1; }
+    validate_layout "$OUT/$case_name.lbl" "$OUT/$case_name.bll" "$requested_dispctl" "$restored_dispctl"
     object_sha=$(sha256 "$OUT/$case_name.bll")
     labels_sha=$(sha256 "$OUT/$case_name.lbl")
     map_sha=$(sha256 "$OUT/$case_name.map")
+    expected_object=$(awk -v name="$case_name.bll" '$2==name {print $1; found++} END{if(found!=1)exit 1}' "$ROOT/fixtures/timer-evidence/images.sha256")
+    [ "$object_sha" = "$expected_object" ] || { printf 'timer evidence: complete image differs from approved source build\n' >&2; return 1; }
     {
       printf 'case=%s\n' "$case_name"
       printf 'family=%s\n' "$([ "$family" = 1 ] && printf hardware0D || printf software01)"
       printf 'dma=%s\npage=%s\nrequested_dispctl=%02X\nrequested_mapctl=%02X\n' "$dma" "$page" "$requested_dispctl" "$requested_mapctl"
       printf 'measurement_display=requested\n'
-      printf 'restored_display=%s\n' "$([ "$family" = 1 ] && printf unsupported || printf 01)"
+      printf 'restored_display=%s\n' "$([ "$family" = 1 ] && printf not-reached-core-refusal || printf 01-after-render)"
+      printf 'physical_readback=unknown\n'
+      printf 'case_set_sha256=%s\nrequested_restore_dispctl=%02X\n' "$CASE_SET_SHA" "$restored_dispctl"
       printf 'object_sha256=%s\nlabels_sha256=%s\nmap_sha256=%s\n' "$object_sha" "$labels_sha" "$map_sha"
       printf 'pinned_code_sha256=%s\n' "$case_code_sha"
     } > "$OUT/$case_name.case.txt"
@@ -279,9 +394,28 @@ build_case() {
     expect_symbol "$OUT/$case_name.lbl" suite_after_tests 000248
     expect_symbol "$OUT/$case_name.lbl" suite_call_tests 000245
     expect_symbol "$OUT/$case_name.lbl" suite_test_return 000459
-    expect_symbol "$OUT/$case_name.lbl" suite_dispctl_request 000593
-    expect_symbol "$OUT/$case_name.lbl" suite_dispctl_after 000596
-    validate_layout "$OUT/$case_name.lbl" "$OUT/$case_name.bll"
+    done_store=$(symbol "$OUT/$case_name.lbl" suite_done_store)
+    [ "$((0x$done_store))" -ge $((0x000500)) ] || { printf 'timer evidence: post-render completion store is outside the extension segment\n' >&2; return 1; }
+    validate_layout "$OUT/$case_name.lbl" "$OUT/$case_name.bll" "$requested_dispctl" "$restored_dispctl"
+    expected_object=$(awk -v name="$case_name.bll" '$2==name {print $1; found++} END{if(found!=1)exit 1}' "$ROOT/fixtures/timer-evidence/images.sha256")
+    [ "$object_sha" = "$expected_object" ] || { printf 'timer evidence: complete image differs from approved source build\n' >&2; return 1; }
+    expected_family=$([ "$family" = 1 ] && printf hardware0D || printf software01)
+    expected_restore=$([ "$family" = 1 ] && printf not-reached-core-refusal || printf 01-after-render)
+    expect_record "$OUT/$case_name.case.txt" case "$case_name"
+    expect_record "$OUT/$case_name.case.txt" family "$expected_family"
+    expect_record "$OUT/$case_name.case.txt" dma "$dma"
+    expect_record "$OUT/$case_name.case.txt" page "$page"
+    expect_record "$OUT/$case_name.case.txt" requested_dispctl "$(printf '%02X' "$requested_dispctl")"
+    expect_record "$OUT/$case_name.case.txt" requested_mapctl "$(printf '%02X' "$requested_mapctl")"
+    expect_record "$OUT/$case_name.case.txt" measurement_display requested
+    expect_record "$OUT/$case_name.case.txt" restored_display "$expected_restore"
+    expect_record "$OUT/$case_name.case.txt" physical_readback unknown
+    expect_record "$OUT/$case_name.case.txt" case_set_sha256 "$CASE_SET_SHA"
+    expect_record "$OUT/$case_name.case.txt" requested_restore_dispctl "$(printf '%02X' "$restored_dispctl")"
+    expect_record "$OUT/$case_name.case.txt" object_sha256 "$object_sha"
+    expect_record "$OUT/$case_name.case.txt" labels_sha256 "$labels_sha"
+    expect_record "$OUT/$case_name.case.txt" map_sha256 "$map_sha"
+    expect_record "$OUT/$case_name.case.txt" pinned_code_sha256 "$case_code_sha"
   fi
 }
 
@@ -290,6 +424,7 @@ if [ "$MODE" = --out ]; then
   cp "$ROOT/fixtures/manifests/timer-evidence.manifest" "$OUT/timer-evidence.manifest"
   : > "$OUT/build-record.txt"
   {
+    printf 'package_scope=%s\n' "$PACKAGE_SCOPE"
     printf 'lynx_tests_revision=%s\nlynx_tests_pin=%s\n' "$LYNX_REVISION" "$LYNX_PIN"
     printf 'cc65_pin=%s\ncc65_build_record_sha256=%s\ncc65_build_files_sha256=%s\n' "$CC65_PIN" "$CC65_BUILD_SHA" "$CC65_FILES_SHA"
     printf 'ca65_tool_sha256=%s\nld65_tool_sha256=%s\n' "$CA65_SHA" "$LD65_SHA"
@@ -297,25 +432,66 @@ if [ "$MODE" = --out ]; then
     printf 'wrapper_sha256=%s\nlinker_layout_sha256=%s\nbuild_script_sha256=%s\n' "$WRAPPER_SHA" "$LAYOUT_SHA" "$BUILDER_SHA"
     printf 'notice_sha256=%s\nmanifest_sha256=%s\n' "$NOTICE_SHA" "$MANIFEST_SHA"
     printf 'baseline_code_sha256=%s\ncode_address=0273\ncode_size=01E7\ntest6_address=03DC\ntest6_poll=0400\ncounter_zp=01\n' "$BASE_CODE_SHA"
-    printf 'display_registers=DISPADRL:6000,PBKUP:29,TIM0BKUP:9E,TIM0CTLA:98,TIM2BKUP:68,TIM2CTLA:9F,GREEN1:0F,BLUERED1:FF\n'
+    printf 'requested_display_registers=ADDR:6000,PBKUP:29,TIM0:9E/00/18/00,TIM2:68/00/1F/00,GREEN0:00,BLUERED0:00,GREEN15:0F,BLUERED15:FF\n'
+    printf 'case_set_sha256=%s\ninitial_counter_record=ram-read-after-zero\n' "$CASE_SET_SHA"
     printf 'physical_evidence=missing\nsource13_role=reference-only\n'
   } >> "$OUT/build-record.txt"
-  build_case hardware-dma1-page1 1 1 1 13 12
-  build_case software-dma1-page1 0 1 1 1 12
-  printf 'cases=hardware-dma1-page1 software-dma1-page1\n' > "$OUT/cases.txt"
+  if [ "$TRACER_ONLY" -eq 1 ]; then
+    build_case hardware-dma1-page1 1 1 1 13 12
+    build_case software-dma1-page1 0 1 1 1 12
+  else
+    build_case hardware-dma0-page0 1 0 0 12 140
+    build_case hardware-dma0-page1 1 0 1 12 12
+    build_case hardware-dma1-page0 1 1 0 13 140
+    build_case hardware-dma1-page1 1 1 1 13 12
+    build_case software-dma0-page0 0 0 0 0 140
+    build_case software-dma0-page1 0 0 1 0 12
+    build_case software-dma1-page0 0 1 0 1 140
+    build_case software-dma1-page1 0 1 1 1 12
+  fi
+  printf 'cases=%s\n' "$CASE_NAMES" > "$OUT/cases.txt"
+  {
+    printf 'case\trun\tcase_set_sha256\tobject_sha256\tsetup\trequested_dispctl\trequested_mapctl\tobserved_dispctl\tobserved_mapctl\tmodel\tloader\tinitial_counter\traw_results\tcompletion\tphoto_reference\tevidence_kind\n'
+    if [ "$TRACER_ONLY" -eq 0 ]; then
+      for sheet_case in hardware-dma0-page0 hardware-dma0-page1 hardware-dma1-page0 hardware-dma1-page1; do
+        sheet_object=$(record_value "$OUT/$sheet_case.case.txt" object_sha256)
+        sheet_disp=$(record_value "$OUT/$sheet_case.case.txt" requested_dispctl)
+        sheet_map=$(record_value "$OUT/$sheet_case.case.txt" requested_mapctl)
+        for sheet_run in 1 2 3; do
+          printf '%s\t%s\t%s\t%s\trecorded-startup-v1\t%s\t%s\tunknown\tunknown\t\t\t\t\t\t\t\n' \
+            "$sheet_case" "$sheet_run" "$CASE_SET_SHA" "$sheet_object" "$sheet_disp" "$sheet_map"
+        done
+      done
+    fi
+  } > "$OUT/physical-results.tsv"
+  validate_inventory
 else
   expect_record "$OUT/build-record.txt" lynx_tests_revision "$LYNX_REVISION"
   expect_record "$OUT/build-record.txt" lynx_tests_pin "$LYNX_PIN"
   expect_record "$OUT/build-record.txt" cc65_pin "$CC65_PIN"
+  expect_record "$OUT/build-record.txt" package_scope "$PACKAGE_SCOPE"
   expect_record "$OUT/build-record.txt" timer_source_sha256 "$TIMERS_SOURCE_SHA"
   expect_record "$OUT/build-record.txt" timer_main_sha256 "$TIMERS_MAIN_SHA"
   expect_record "$OUT/build-record.txt" wrapper_sha256 "$WRAPPER_SHA"
   expect_record "$OUT/build-record.txt" linker_layout_sha256 "$LAYOUT_SHA"
   expect_record "$OUT/build-record.txt" build_script_sha256 "$BUILDER_SHA"
+  expect_record "$OUT/build-record.txt" case_set_sha256 "$CASE_SET_SHA"
   expect_record "$OUT/build-record.txt" baseline_code_sha256 "$(code_hash "$BASE/timers.bll" "$BASE/base-code.bin")"
-  [ "$(cat "$OUT/cases.txt")" = 'cases=hardware-dma1-page1 software-dma1-page1' ] || { printf 'timer evidence: case inventory mismatch\n' >&2; exit 1; }
-  build_case hardware-dma1-page1 1 1 1 13 12
-  build_case software-dma1-page1 0 1 1 1 12
+  [ "$(cat "$OUT/cases.txt")" = "cases=$CASE_NAMES" ] || { printf 'timer evidence: case inventory mismatch\n' >&2; exit 1; }
+  if [ "$TRACER_ONLY" -eq 1 ]; then
+    build_case hardware-dma1-page1 1 1 1 13 12
+    build_case software-dma1-page1 0 1 1 1 12
+  else
+    build_case hardware-dma0-page0 1 0 0 12 140
+    build_case hardware-dma0-page1 1 0 1 12 12
+    build_case hardware-dma1-page0 1 1 0 13 140
+    build_case hardware-dma1-page1 1 1 1 13 12
+    build_case software-dma0-page0 0 0 0 0 140
+    build_case software-dma0-page1 0 0 1 0 12
+    build_case software-dma1-page0 0 1 0 1 140
+    build_case software-dma1-page1 0 1 1 1 12
+  fi
+  validate_inventory
   printf 'timer evidence: verified timer package, source/tool identity and pinned CODE bytes\n'
 fi
 
