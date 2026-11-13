@@ -1,0 +1,12 @@
+source = build/pins/lynx-tests/timers/tests.s (upstream MIT input; not committed)
+revision = b583dc43d532d3c41563a6fa35420614fbcead89 (archive SHA-256 a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e)
+recipe = sh scripts/build-timer-evidence.sh --out DIR; pinned cc65 ca65 and ld65 with fixtures/timer-evidence/timer-evidence.s and bll.cfg; ordinary suite CODE comparison; no BIOS, CRT, TGI or cartridge bootstrap
+sha256 = 2d6bc0a7e5b743037327194e4d394dc472ff0c9ff9ba478cc7a3d239e37440e6
+wrapper_sha256 = 2d6bc0a7e5b743037327194e4d394dc472ff0c9ff9ba478cc7a3d239e37440e6
+licence = MIT upstream timer source; Lynxplosion wrapper and layout are all rights reserved while O5 remains open
+notices = fixtures/timer-evidence/NOTICE preserves the complete upstream MIT notice and project preparation limits
+allowed_use = local software test assembly and private evidence preparation only; physical execution and distribution are not authorized
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/timer-evidence/timer-evidence.s fixtures/timer-evidence/bll.cfg fixtures/timer-evidence/NOTICE

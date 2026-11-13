@@ -241,6 +241,7 @@ timer.fault.irq	timer
 timer.fault.order	timer
 timer.fault.phase	timer
 timer.fault.reset_done	timer
+timer_evidence.tracer	timer
 toolchain.probe	toolchain
 toolchain.probe.self_test	toolchain
 video.fault.dma_cost_zero	api

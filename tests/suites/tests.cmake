@@ -67,3 +67,26 @@ lynx_suite_test(suite.timers.result_controls timer_result_controls 300)
 lynx_suite_test(suite.timers.video_revisit timer_video_revisit 300)
 lynx_suite_test(suite.timers.video_revisit_controls timer_video_revisit_controls 300)
 lynx_suite_test(suite.timers.no_run timers_no_run 300)
+
+# Privately built source timer package evidence (separate from the public suite
+# driver and its existing inventory).
+add_executable(lynx-test-timer-evidence
+  ${PROJECT_SOURCE_DIR}/tests/timer-evidence/test_timer_evidence.c)
+target_link_libraries(lynx-test-timer-evidence PRIVATE lynx_core)
+target_compile_definitions(lynx-test-timer-evidence PRIVATE
+  _POSIX_C_SOURCE=200809L
+  LYNX_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
+lynx_warnings(lynx-test-timer-evidence)
+lynx_sanitize(lynx-test-timer-evidence)
+set_target_properties(lynx-test-timer-evidence PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
+
+lynx_add_test(NAME timer_evidence.tracer
+  COMMAND ${CMAKE_COMMAND}
+    -DMODE=tracer
+    -DROOT=${PROJECT_SOURCE_DIR}
+    -DWORK=${LYNX_SCRATCH_DIR}/timer-evidence/tracer
+    -DSCRATCH_ROOT=${LYNX_SCRATCH_DIR}
+    -DTEST_BINARY=$<TARGET_FILE:lynx-test-timer-evidence>
+    -P ${PROJECT_SOURCE_DIR}/tests/timer-evidence/run.cmake
+  LABELS timer TIMEOUT 60)
