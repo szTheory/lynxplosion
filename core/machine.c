@@ -815,6 +815,10 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
            is complete. Mark only after a successful bus action so refused
            requests preserve the whole instance byte-for-byte. */
         lynx__timer_mark_tick(&m->timer_bank, grant);
+        /* CPU-side device writes (including explicit CTLB strobes handled by
+           bus_access) precede any natural root newly enabled at this tick. */
+        m->audio.same_tick_device_cursor = (uint8_t)(
+            m->audio.same_tick_device_cursor | LYNX__AUDIO_DEVICE_APPLIED);
         const uint8_t lines = m->timer_bank.pending != 0u ? (uint8_t)LYNX__LINE_IRQ : 0u;
         lynx__cpu_complete(&m->cpu, table, data, lines);
         m->cpu_ready_at = grant + price.ticks;

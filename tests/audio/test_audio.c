@@ -844,6 +844,273 @@ static void case_cadence(void)
     machine_close(&irregular); machine_close(&headroom);
 }
 
+static const uint8_t cpu_enable_guest[] = {
+    0xA9u, 0x08u,             /* LDA #enable, source 0 */
+    0x8Du, 0x25u, 0xFDu,      /* STA A0 CTLA */
+    0x4Cu, 0x00u, 0x02u       /* JMP $0200 */
+};
+
+static const uint8_t cpu_strobe_guest[] = {
+    0xA9u, 0x02u,             /* LDA #borrow-in strobe */
+    0x8Du, 0x27u, 0xFDu,      /* STA A0 CTLB */
+    0x4Cu, 0x00u, 0x02u       /* JMP $0200 */
+};
+
+static int prepare_cpu_audio_write(machine_box *box, const uint8_t *guest,
+                                   size_t guest_size, uint16_t address,
+                                   uint8_t expected_value, const char *label)
+{
+    ASSERT_NAMED(label, machine_open(box, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (box->machine == NULL) return 0;
+    lynx_machine *m = box->machine;
+    if (!load_until_write_request(m, guest, guest_size, address, label)) {
+        machine_close(box);
+        return 0;
+    }
+    ASSERT_EQ(label, m->cpu.req_data, expected_value);
+    m->guest_ticks = 399u;
+    m->cpu_ready_at = 400u;
+    m->bus_hold = 0u;
+    lynx__timer_init(&m->timer_bank);
+    lynx__video_init(&m->video, LYNX_TIMING_POLICY_VIDEO_POLICY1);
+    m->video.refresh_next_tick =
+        ((uint64_t)399u / LYNX__VIDEO_REFRESH_PERIOD + 1u) *
+        LYNX__VIDEO_REFRESH_PERIOD;
+    lynx__audio_init(&m->audio);
+    m->audio.channels[0].volume = 5u;
+    m->audio.channels[0].feedback = 1u;
+    m->audio.channels[0].output = 0;
+    return 1;
+}
+
+static uint64_t first_a0_clock_tick(const lynx_audio_event *events, uint32_t count)
+{
+    for (uint32_t i = 0u; i < count; i++) {
+        if (events[i].channel == 0u && events[i].cause == LYNX_AUDIO_EVENT_CLOCK) {
+            return events[i].tick;
+        }
+    }
+    return UINT64_MAX;
+}
+
+static int audio_events_match(const lynx_audio_event *left,
+                              const lynx_audio_event *right, uint32_t count)
+{
+    for (uint32_t i = 0u; i < count; i++) {
+        if (left[i].tick != right[i].tick || left[i].sequence != right[i].sequence ||
+            left[i].channel != right[i].channel || left[i].cause != right[i].cause ||
+            left[i].before_output != right[i].before_output ||
+            left[i].after_output != right[i].after_output) return 0;
+    }
+    return 1;
+}
+
+static void check_cpu_enable_edge(void)
+{
+    machine_box source;
+    ASSERT_NAMED("audio.order.cpu-enable.machine-init",
+                 prepare_cpu_audio_write(&source, cpu_enable_guest,
+                     sizeof cpu_enable_guest, 0xFD25u, 0x08u,
+                     "audio.order.cpu-enable.prepare"));
+    if (source.machine == NULL) return;
+    lynx_pcm_frame boundary_pcm[2];
+    lynx_audio_event boundary_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_buffers_init(&buffers, boundary_pcm, 2u, boundary_events,
+                    sizeof boundary_events / sizeof boundary_events[0]);
+    ASSERT_EQ("audio.order.cpu-enable.exclusive-boundary",
+              av_advance(source.machine, 1u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.order.cpu-enable.boundary-tick", source.machine->guest_ticks, 400u);
+    ASSERT_EQ("audio.order.cpu-enable.boundary-no-work", result.event_count, 0u);
+    ASSERT_EQ("audio.order.cpu-enable.boundary-no-sample", result.pcm_count, 0u);
+
+    size_t snapshot_size = 0u;
+    ASSERT_EQ("audio.order.cpu-enable.snapshot-size",
+              lynx_snapshot_size(source.machine, &snapshot_size), LYNX_OK);
+    uint8_t *snapshot = (uint8_t *)malloc(snapshot_size);
+    ASSERT_NAMED("audio.order.cpu-enable.snapshot-allocation", snapshot != NULL);
+    if (snapshot == NULL) {
+        machine_close(&source);
+        return;
+    }
+    size_t written = 0u;
+    ASSERT_EQ("audio.order.cpu-enable.snapshot-save",
+              lynx_snapshot_save(source.machine, snapshot, snapshot_size, &written), LYNX_OK);
+    ASSERT_EQ("audio.order.cpu-enable.snapshot-written", written, snapshot_size);
+
+    machine_box restored;
+    ASSERT_NAMED("audio.order.cpu-enable.restore-init",
+                 machine_open(&restored, LYNX_TIMING_POLICY_VIDEO_POLICY1));
+    if (restored.machine == NULL) {
+        free(snapshot);
+        machine_close(&source);
+        return;
+    }
+    ASSERT_EQ("audio.order.cpu-enable.restore-load",
+              load_guest(restored.machine, cpu_enable_guest,
+                         sizeof cpu_enable_guest), LYNX_OK);
+    ASSERT_EQ("audio.order.cpu-enable.restore",
+              lynx_snapshot_restore(restored.machine, snapshot, snapshot_size), LYNX_OK);
+    free(snapshot);
+
+    lynx_pcm_frame source_pcm[2], restored_pcm[2];
+    lynx_audio_event source_events[LYNX_AV_MIN_EVENT_CAPACITY * 2u];
+    lynx_audio_event restored_events[LYNX_AV_MIN_EVENT_CAPACITY * 2u];
+    lynx_av_result source_result, restored_result;
+    av_buffers_init(&buffers, source_pcm, 2u, source_events,
+                    sizeof source_events / sizeof source_events[0]);
+    ASSERT_EQ("audio.order.cpu-enable.advance",
+              av_advance(source.machine, 17u, &buffers, &source_result), LYNX_OK);
+    ASSERT_EQ("audio.order.cpu-enable.stop", source_result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.order.cpu-enable.tick", source.machine->guest_ticks, 417u);
+    ASSERT_EQ("audio.order.cpu-enable.ctla", source.machine->audio.channels[0].control_a, 0x08u);
+    ASSERT_EQ("audio.order.cpu-enable.first-clock-416",
+              first_a0_clock_tick(source_events, source_result.event_count), 416u);
+    ASSERT_EQ("audio.order.cpu-enable.event-count", source_result.event_count, 2u);
+    ASSERT_EQ("audio.order.cpu-enable.first-event-tick", source_events[0].tick, 400u);
+    ASSERT_EQ("audio.order.cpu-enable.first-event-cause",
+              source_events[0].cause, LYNX_AUDIO_EVENT_WRITE);
+
+    av_buffers_init(&buffers, restored_pcm, 2u, restored_events,
+                    sizeof restored_events / sizeof restored_events[0]);
+    ASSERT_EQ("audio.order.cpu-enable.restore-advance",
+              av_advance(restored.machine, 17u, &buffers, &restored_result), LYNX_OK);
+    ASSERT_EQ("audio.order.cpu-enable.restore-event-count",
+              restored_result.event_count, source_result.event_count);
+    ASSERT_NAMED("audio.order.cpu-enable.restore-events-match",
+                 audio_events_match(source_events, restored_events,
+                                    source_result.event_count));
+    ASSERT_EQ("audio.order.cpu-enable.restore-pcm-count",
+              restored_result.pcm_count, source_result.pcm_count);
+    ASSERT_NAMED("audio.order.cpu-enable.restore-pcm-match",
+                 restored_result.pcm_count == source_result.pcm_count &&
+                 memcmp(source_pcm, restored_pcm,
+                        (size_t)source_result.pcm_count * sizeof source_pcm[0]) == 0);
+    uint8_t source_digest[32], restored_digest[32];
+    ASSERT_EQ("audio.order.cpu-enable.source-digest",
+              lynx_state_digest(source.machine, source_digest), LYNX_OK);
+    ASSERT_EQ("audio.order.cpu-enable.restored-digest",
+              lynx_state_digest(restored.machine, restored_digest), LYNX_OK);
+    ASSERT_NAMED("audio.order.cpu-enable.restore-state-match",
+                 memcmp(source_digest, restored_digest, sizeof source_digest) == 0);
+    machine_close(&restored);
+    machine_close(&source);
+}
+
+static void check_cpu_enable_capacity_retry(void)
+{
+    machine_box box;
+    ASSERT_NAMED("audio.order.capacity.machine-init",
+                 prepare_cpu_audio_write(&box, cpu_enable_guest,
+                     sizeof cpu_enable_guest, 0xFD25u, 0x08u,
+                     "audio.order.capacity.prepare"));
+    if (box.machine == NULL) return;
+    lynx_machine *m = box.machine;
+    lynx_pcm_frame pcm[2];
+    lynx_audio_event ample_events[LYNX_AV_MIN_EVENT_CAPACITY * 2u];
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_buffers_init(&buffers, pcm, 2u, ample_events,
+                    sizeof ample_events / sizeof ample_events[0]);
+    m->audio.channels[1].volume = 3u;
+    m->audio.channels[1].feedback = 1u;
+    m->audio.channels[1].control_a = 0x08u;
+    lynx_audio_event refusal_events[LYNX_AV_MIN_EVENT_CAPACITY];
+    av_buffers_init(&buffers, pcm, 2u, refusal_events,
+                    sizeof refusal_events / sizeof refusal_events[0]);
+    ASSERT_EQ("audio.order.capacity.refusal",
+              av_advance(m, 2u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.order.capacity.refusal-stop", result.stop, LYNX_STOP_OUTPUT);
+    ASSERT_EQ("audio.order.capacity.refusal-tick", m->guest_ticks, 400u);
+    ASSERT_EQ("audio.order.capacity.refusal-prefix-events", result.event_count, 1u);
+    ASSERT_EQ("audio.order.capacity.refusal-prefix-channel", refusal_events[0].channel, 1u);
+    ASSERT_EQ("audio.order.capacity.refusal-prefix-cause",
+              refusal_events[0].cause, LYNX_AUDIO_EVENT_CLOCK);
+    ASSERT_EQ("audio.order.capacity.refusal-cpu-pending", m->cpu.req_addr, 0xFD25u);
+    ASSERT_EQ("audio.order.capacity.refusal-no-a0-enable",
+              m->audio.channels[0].control_a, 0u);
+
+    av_buffers_init(&buffers, pcm, 2u, ample_events,
+                    sizeof ample_events / sizeof ample_events[0]);
+    ASSERT_EQ("audio.order.capacity.retry",
+              av_advance(m, 17u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.order.capacity.retry-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.order.capacity.retry-tick", m->guest_ticks, 417u);
+    ASSERT_EQ("audio.order.capacity.retry-first-clock-416",
+              first_a0_clock_tick(ample_events, result.event_count), 416u);
+    ASSERT_EQ("audio.order.capacity.retry-ctla", m->audio.channels[0].control_a, 0x08u);
+    machine_close(&box);
+}
+
+static void check_cpu_enable_watch_stop(void)
+{
+    machine_box box;
+    ASSERT_NAMED("audio.order.watch-enable.machine-init",
+                 prepare_cpu_audio_write(&box, cpu_enable_guest,
+                     sizeof cpu_enable_guest, 0xFD25u, 0x08u,
+                     "audio.order.watch-enable.prepare"));
+    if (box.machine == NULL) return;
+    lynx_machine *m = box.machine;
+    ASSERT_EQ("audio.order.watch-enable.configure",
+              lynx_watch_configure(m, 0xFD25u, 1u), LYNX_OK);
+    lynx_pcm_frame pcm[2];
+    lynx_audio_event events[LYNX_AV_MIN_EVENT_CAPACITY * 2u];
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_buffers_init(&buffers, pcm, 2u, events,
+                    sizeof events / sizeof events[0]);
+    ASSERT_EQ("audio.order.watch-enable.advance",
+              av_advance(m, 17u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.order.watch-enable.stop", result.stop, LYNX_STOP_WATCH);
+    ASSERT_EQ("audio.order.watch-enable.return-tick", m->guest_ticks, 401u);
+    ASSERT_EQ("audio.order.watch-enable.ctla-committed",
+              m->audio.channels[0].control_a, 0x08u);
+    ASSERT_EQ("audio.order.watch-enable.write-event-count", result.event_count, 1u);
+    ASSERT_EQ("audio.order.watch-enable.write-event-tick", events[0].tick, 400u);
+    ASSERT_EQ("audio.order.watch-enable.write-event-cause",
+              events[0].cause, LYNX_AUDIO_EVENT_WRITE);
+    lynx_watch_event watch;
+    ASSERT_EQ("audio.order.watch-enable.get", lynx_watch_get(m, &watch), LYNX_OK);
+    ASSERT_EQ("audio.order.watch-enable.hit", watch.hit, 1u);
+    ASSERT_EQ("audio.order.watch-enable.hit-tick", watch.hit_tick, 400u);
+    ASSERT_EQ("audio.order.watch-enable.return", watch.return_tick, 401u);
+
+    av_buffers_init(&buffers, pcm, 2u, events,
+                    sizeof events / sizeof events[0]);
+    ASSERT_EQ("audio.order.watch-enable.resume",
+              av_advance(m, 16u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.order.watch-enable.resume-stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.order.watch-enable.first-clock-416",
+              first_a0_clock_tick(events, result.event_count), 416u);
+    machine_close(&box);
+}
+
+static void check_cpu_ctlb_strobe(void)
+{
+    machine_box box;
+    ASSERT_NAMED("audio.order.strobe.machine-init",
+                 prepare_cpu_audio_write(&box, cpu_strobe_guest,
+                     sizeof cpu_strobe_guest, 0xFD27u, 0x02u,
+                     "audio.order.strobe.prepare"));
+    if (box.machine == NULL) return;
+    lynx_pcm_frame pcm[2];
+    lynx_audio_event events[LYNX_AV_MIN_EVENT_CAPACITY * 2u];
+    lynx_av_buffers buffers;
+    lynx_av_result result;
+    av_buffers_init(&buffers, pcm, 2u, events,
+                    sizeof events / sizeof events[0]);
+    ASSERT_EQ("audio.order.strobe.advance",
+              av_advance(box.machine, 17u, &buffers, &result), LYNX_OK);
+    ASSERT_EQ("audio.order.strobe.stop", result.stop, LYNX_STOP_BUDGET);
+    ASSERT_EQ("audio.order.strobe.count", result.event_count, 1u);
+    ASSERT_EQ("audio.order.strobe.tick", events[0].tick, 400u);
+    ASSERT_EQ("audio.order.strobe.cause", events[0].cause, LYNX_AUDIO_EVENT_CLOCK);
+    ASSERT_EQ("audio.order.strobe.channel", events[0].channel, 0u);
+    ASSERT_EQ("audio.order.strobe.value", events[0].after_output, 5);
+    machine_close(&box);
+}
+
 static void case_order(void)
 {
     static const uint8_t volume_guest[] = {
@@ -1031,6 +1298,11 @@ static void case_order(void)
               LYNX_OK);
     ASSERT_EQ("audio.order.return-no-duplicate", result.pcm_count, 0u);
     machine_close(&box);
+
+    check_cpu_enable_edge();
+    check_cpu_enable_capacity_retry();
+    check_cpu_enable_watch_stop();
+    check_cpu_ctlb_strobe();
 }
 
 static int public_sample(const int8_t outputs[4], uint8_t muted, int16_t expected_left,
