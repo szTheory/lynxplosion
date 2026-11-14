@@ -247,6 +247,7 @@ suite.timers.strict_comparison_controls	suite
 suite.timers.video_revisit	suite
 suite.timers.video_revisit_controls	suite
 suzy.arithmetic	suzy
+suzy.coarse_deadline	suzy
 suzy.fault.completion	suzy
 suzy.fault.decoder	suzy
 suzy.fault.result	suzy

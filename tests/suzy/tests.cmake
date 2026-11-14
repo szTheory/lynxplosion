@@ -11,6 +11,7 @@ lynx_add_test(NAME suzy.arithmetic COMMAND lynx-test-suzy arithmetic LABELS suzy
 lynx_add_test(NAME suzy.flags COMMAND lynx-test-suzy flags LABELS suzy TIMEOUT 60)
 lynx_add_test(NAME suzy.registers COMMAND lynx-test-suzy registers LABELS suzy TIMEOUT 60)
 lynx_add_test(NAME suzy.lifecycle COMMAND lynx-test-suzy lifecycle LABELS suzy TIMEOUT 60)
+lynx_add_test(NAME suzy.coarse_deadline COMMAND lynx-test-suzy coarse_deadline LABELS suzy TIMEOUT 60)
 lynx_add_test(NAME suzy.snapshot_refusal COMMAND lynx-test-suzy snapshot_refusal LABELS suzy TIMEOUT 60)
 
 foreach(fault_id IN ITEMS decoder result completion snapshot)

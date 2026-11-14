@@ -695,6 +695,20 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
                 has_event = true;
             }
         }
+        /* Every pending ordered event, Suzy included, must be known before the
+           sample-only prefix below is bounded by next.tick; otherwise that
+           arithmetic advance can step past a pending math deadline. */
+        uint64_t suzy_tick = 0u;
+        if (lynx__suzy_next(&m->suzy, m->guest_ticks, &suzy_tick) &&
+            suzy_tick < target) {
+            const lynx__machine_event suzy_event = {
+                suzy_tick, (uint8_t)LYNX__MACHINE_EVENT_SUZY_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
+            if (!has_event || lynx__machine_event_before(suzy_event, next)) {
+                next = suzy_event;
+                has_event = true;
+            }
+        }
         const bool cpu_available = m->bus_hold == 0u;
         uint64_t cpu_tick = m->cpu_ready_at > m->guest_ticks ?
                                 m->cpu_ready_at : m->guest_ticks;
@@ -730,17 +744,6 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
                 (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
             if (!has_event || lynx__machine_event_before(sample_event, next)) {
                 next = sample_event;
-                has_event = true;
-            }
-        }
-        uint64_t suzy_tick = 0u;
-        if (lynx__suzy_next(&m->suzy, m->guest_ticks, &suzy_tick) &&
-            suzy_tick < target) {
-            const lynx__machine_event suzy_event = {
-                suzy_tick, (uint8_t)LYNX__MACHINE_EVENT_SUZY_PRIORITY,
-                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
-            if (!has_event || lynx__machine_event_before(suzy_event, next)) {
-                next = suzy_event;
                 has_event = true;
             }
         }

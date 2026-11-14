@@ -212,6 +212,8 @@ static void expect_u32_bytes(const lynx_machine *machine, uint16_t addr, uint32_
     }
 }
 
+static uint32_t test_timing_policy = LYNX_TIMING_POLICY_LEGACY_FLAT5;
+
 static lynx_machine *make_machine(uint32_t profile, void **allocation)
 {
     const size_t alignment = lynx_machine_align();
@@ -230,6 +232,7 @@ static lynx_machine *make_machine(uint32_t profile, void **allocation)
     lynx_config config;
     lynx_config_default(&config);
     config.profile = profile;
+    config.timing_policy = test_timing_policy;
     lynx_machine *machine = NULL;
     CHECK_EQ_U64(lynx_machine_init(*allocation, size, &config, &machine), LYNX_OK);
     return machine;
@@ -1398,6 +1401,72 @@ static int case_headroom_refusal(void)
     return check_failures == 0 ? 0 : 1;
 }
 
+static int case_coarse_deadline(void)
+{
+    /* A running CPU whose granted cycle straddles a pending Suzy deadline, with
+       an audio sample tick between the deadline and the next CPU tick, must not
+       let a coarse advance step past the deadline. The NOP count sweeps the
+       alignment between deadline, CPU cycles and sample ticks. */
+    enum { LOAD_ADDRESS = 0x0200u };
+    static const suzy_write divide_by_one[] = {
+        {0xFC56u, 0x01u}, {0xFC57u, 0x00u}, {0xFC60u, 0x00u},
+        {0xFC61u, 0x00u}, {0xFC62u, 0x01u}, {0xFC63u, 0x00u}
+    };
+    for (uint32_t policy = 0u; policy <= 1u; policy++) {
+        for (uint32_t nops = 0u; nops <= 400u; nops++) {
+            uint8_t program[1024];
+            size_t length = 0u;
+            append(program, &length, 0x78u); /* SEI */
+            for (uint32_t i = 0u; i < nops; i++) append(program, &length, 0xEAu);
+            for (size_t i = 0u; i < sizeof divide_by_one / sizeof divide_by_one[0]; i++) {
+                (void)emit_write(program, &length, divide_by_one[i].addr, divide_by_one[i].value);
+            }
+            const uint16_t loop_addr = (uint16_t)(LOAD_ADDRESS + (uint16_t)length);
+            append(program, &length, 0x4Cu);
+            append(program, &length, (uint8_t)loop_addr);
+            append(program, &length, (uint8_t)(loop_addr >> 8));
+
+            test_timing_policy = policy;
+            suzy_live_machine live = load_guest_program(LYNX_PROFILE_LYNX1, program, length);
+            test_timing_policy = LYNX_TIMING_POLICY_LEGACY_FLAT5;
+            if (live.machine == NULL) {
+                destroy_live_machine(&live);
+                return check_failures == 0 ? 0 : 1;
+            }
+            CHECK_EQ_U64(lynx_watch_configure(live.machine, 0xFC63u, 1u), LYNX_OK);
+            uint64_t consumed = 0u;
+            lynx_stop_reason stop = LYNX_STOP_BUDGET;
+            for (uint32_t chunk = 0u; chunk < 64u && stop != LYNX_STOP_WATCH; chunk++) {
+                CHECK_EQ_U64(lynx_advance(live.machine, 200u, &consumed, &stop), LYNX_OK);
+            }
+            CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+            if (stop != LYNX_STOP_WATCH) {
+                destroy_live_machine(&live);
+                return 1;
+            }
+            const uint64_t deadline = live.machine->suzy.deadline_tick;
+            CHECK_EQ_U64(lynx_advance(live.machine, 5000u, &consumed, &stop), LYNX_OK);
+            const bool completed = live.machine->suzy.operation == 0u &&
+                                   (read_sprsys(live.machine) & 0x80u) == 0u;
+            if (!completed) {
+                fprintf(stderr, "suzy semantic failure: policy %u nops %u deadline %llu left busy\n",
+                        (unsigned)policy, (unsigned)nops, (unsigned long long)deadline);
+            }
+            CHECK_NAMED(completed, "suzy.coarse_deadline.operation-completes");
+            size_t size = 0u;
+            uint8_t *blob = save_snapshot_blob(live.machine, &size);
+            if (blob != NULL) {
+                CHECK_NAMED(lynx_snapshot_restore(live.machine, blob, size) == LYNX_OK,
+                            "suzy.coarse_deadline.own-snapshot-restores");
+                free(blob);
+            }
+            destroy_live_machine(&live);
+            if (check_failures != 0) return 1; /* first failing alignment is enough */
+        }
+    }
+    return check_failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2 || argv[1] == NULL || argv[1][0] == '\0') {
@@ -1410,7 +1479,7 @@ int main(int argc, char **argv)
         strcmp(argv[1], "snapshot_refusal") != 0 &&
         strcmp(argv[1], "fault_decoder") != 0 && strcmp(argv[1], "fault_result") != 0 &&
         strcmp(argv[1], "fault_completion") != 0 && strcmp(argv[1], "fault_snapshot") != 0 &&
-        strcmp(argv[1], "reset_load") != 0) {
+        strcmp(argv[1], "reset_load") != 0 && strcmp(argv[1], "coarse_deadline") != 0) {
         fprintf(stderr, "lynx-test-suzy: unknown case '%s'\n", argv[1]);
         return 2;
     }
@@ -1427,6 +1496,7 @@ int main(int argc, char **argv)
     else if (strcmp(argv[1], "fault_completion") == 0) result = case_fault_completion();
     else if (strcmp(argv[1], "fault_snapshot") == 0) result = case_fault_snapshot();
     else if (strcmp(argv[1], "reset_load") == 0) result = case_reset_load();
+    else if (strcmp(argv[1], "coarse_deadline") == 0) result = case_coarse_deadline();
     else result = case_tracer();
     printf("%s 1 - suzy.%s\n", result == 0 ? "ok" : "not ok", argv[1]);
     return result;
