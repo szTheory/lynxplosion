@@ -94,11 +94,11 @@ Native Debug focused owning group: 11/11 pass; final saved log reports 56.43s wa
 
 ## Task Commits
 
-1. **Task 1 source observation RED:** `3c5a5d8`.
-2. **Task 1 palette register and hostile snapshot REDs:** `be6f3d0`, `db76a21`.
-3. **Task 1 source-built observations and necessary device repair:** `5e1625e`.
-4. **Task 1 exact-selection follow-up:** `45339b2`, `5f39deb`.
-5. **Task 2 source/observation/strict/fault controls:** `c7a66a0`.
+1. **Task 1: Source observation RED** — `3c5a5d8`.
+2. **Task 1: Palette register and hostile snapshot REDs** — `be6f3d0`, `db76a21`.
+3. **Task 1: Source-built observations and necessary device repair** — `5e1625e`.
+4. **Task 1: Exact-selection follow-up** — `45339b2`, `5f39deb`.
+5. **Task 2: Source/observation/strict/fault controls** — `c7a66a0`.
 
 ## Deviations and issues resolved
 
