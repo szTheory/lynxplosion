@@ -35,9 +35,10 @@ core's fixed-zero divider phase defines the first edge after guest timer setup.
 That initial setup phase is an unverified software policy and is independent
 of the steady reload-period checks; it is not a calibrated display edge. At
 each Timer 0 row-start event, the current 32 palette register bytes are
-snapshotted after timer work and before a same-tick CPU store. This
-line-snapshot ordering is project policy; hardware palette latch behavior
-remains unverified.
+snapshotted after timer work and before a same-tick CPU store. Green registers
+at `$FDA0..$FDAF` retain only their low nibble; Blue/Red registers at
+`$FDB0..$FDBF` retain the full byte. This line-snapshot ordering is project
+policy; hardware palette latch behavior remains unverified.
 Budgets are half-open: a boundary exactly at the target is deferred, while
 already-due current-tick work can return FRAME with zero ticks consumed. Zero
 budget makes no progress. Only FRAME copies output arrays; other guest stops

@@ -1,0 +1,12 @@
+source = build/pins/lynx-tests/memio/tests.s (upstream MIT test source; not committed)
+revision = lynx-tests b583dc43d532d3c41563a6fa35420614fbcead89 (archive SHA-256 a70edf382afa2e16fae7f46fb115fb8a9edec6a3850a00f51e9f075602fbab3e)
+recipe = sh scripts/build-suites.sh --out DIR; pinned cc65 eebf54af545f4ae52f8489a2f6d4d5f93e7942d2 (archive SHA-256 d3e4bfa57c5a40dd386d1a38b27fffad3bbc296950303f3c9017211465f5c8a1) ca65 --cpu 65C02, then ld65 -C fixtures/suites/bll.cfg -Ln; native tools must match host-local .lynx-build-files; no TGI/CRT
+sha256 = b9af272e7de58f3ab66e158bf7ac6b7da477a08be30ea8f563ec23c04a1a2ff8
+wrapper_sha256 = 82415109497a0f906e8da56a2af6804fac406cfb8d7ad78fda5d9b2b9a16818b
+licence = MIT, Copyright (c) 2025 Ignacio Sanchez Gines (upstream input; generated output remains temporary)
+notices = fixtures/suites/NOTICE includes the complete pinned lynx-tests LICENSE text
+allowed_use = local source-built diagnostic test assembly input only; no suite observation or hardware accuracy claim
+startup_tier = A
+profile = none
+evidence_tier = R
+files = fixtures/suites/memio-wrapper.s fixtures/suites/bll.cfg fixtures/suites/NOTICE

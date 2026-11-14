@@ -138,6 +138,8 @@ CPU_WRAPPER_SHA=$(sha256 "$ROOT/fixtures/suites/cpu-wrapper.s")
 TIMERS_WRAPPER_SHA=$(sha256 "$ROOT/fixtures/suites/timers-wrapper.s")
 AUDIO_WRAPPER_SHA=$(sha256 "$ROOT/fixtures/suites/audio-wrapper.s")
 AUDIO2_WRAPPER_SHA=$(sha256 "$ROOT/fixtures/suites/audio2-wrapper.s")
+MATH_WRAPPER_SHA=$(sha256 "$ROOT/fixtures/suites/math-wrapper.s")
+MEMIO_WRAPPER_SHA=$(sha256 "$ROOT/fixtures/suites/memio-wrapper.s")
 LAYOUT_SHA=$(sha256 "$ROOT/fixtures/suites/bll.cfg")
 BUILDER_SHA=$(sha256 "$ROOT/scripts/build-suites.sh")
 CC65_BUILD_SHA=$(sha256 "$CC65_DIR/.lynx-build")
@@ -151,6 +153,10 @@ CPU_MAIN_BEFORE=$(verify_pinned_file cpu/main.c)
 TIMERS_MAIN_BEFORE=$(verify_pinned_file timers/main.c)
 AUDIO_MAIN_BEFORE=$(verify_pinned_file audio/main.c)
 AUDIO2_MAIN_BEFORE=$(verify_pinned_file audio2/main.c)
+MATH_BEFORE=$(verify_pinned_file math/tests.s)
+MATH_MAIN_BEFORE=$(verify_pinned_file math/main.c)
+MEMIO_BEFORE=$(verify_pinned_file memio/tests.s)
+MEMIO_MAIN_BEFORE=$(verify_pinned_file memio/main.c)
 LICENSE_SHA=$(verify_pinned_file LICENSE)
 
 record_value() {
@@ -194,6 +200,8 @@ if [ "$MODE" = verify ]; then
   expect_record timers_wrapper_sha256 "$TIMERS_WRAPPER_SHA"
   expect_record audio_wrapper_sha256 "$AUDIO_WRAPPER_SHA"
   expect_record audio2_wrapper_sha256 "$AUDIO2_WRAPPER_SHA"
+  expect_record math_wrapper_sha256 "$MATH_WRAPPER_SHA"
+  expect_record memio_wrapper_sha256 "$MEMIO_WRAPPER_SHA"
   expect_record cpu_source_sha256 "$CPU_BEFORE"
   expect_record timers_source_sha256 "$TIMERS_BEFORE"
   expect_record audio_source_sha256 "$_AUDIO_BEFORE"
@@ -202,8 +210,12 @@ if [ "$MODE" = verify ]; then
   expect_record timers_main_sha256 "$TIMERS_MAIN_BEFORE"
   expect_record audio_main_sha256 "$AUDIO_MAIN_BEFORE"
   expect_record audio2_main_sha256 "$AUDIO2_MAIN_BEFORE"
+  expect_record math_main_sha256 "$MATH_MAIN_BEFORE"
+  expect_record math_source_sha256 "$MATH_BEFORE"
+  expect_record memio_main_sha256 "$MEMIO_MAIN_BEFORE"
+  expect_record memio_source_sha256 "$MEMIO_BEFORE"
   expect_record license_sha256 "$LICENSE_SHA"
-  for suite in cpu timers audio audio2; do
+  for suite in cpu timers audio audio2 math memio; do
     [ -f "$OUT/$suite.bll" ] || { printf 'build-suites: stale object missing: %s.bll\n' "$suite" >&2; exit 1; }
     [ -f "$OUT/$suite.lbl" ] || { printf 'build-suites: stale labels missing: %s.lbl\n' "$suite" >&2; exit 1; }
     expect_record "${suite}_object_sha256" "$(sha256 "$OUT/$suite.bll")" || {
@@ -223,6 +235,8 @@ rm -f "$OUT/cpu.bll" "$OUT/cpu.lbl" "$OUT/cpu.o" \
   "$OUT/timers.bll" "$OUT/timers.lbl" "$OUT/timers.o" \
   "$OUT/audio.bll" "$OUT/audio.lbl" "$OUT/audio.o" \
   "$OUT/audio2.bll" "$OUT/audio2.lbl" "$OUT/audio2.o" \
+  "$OUT/math.bll" "$OUT/math.lbl" "$OUT/math.o" \
+  "$OUT/memio.bll" "$OUT/memio.lbl" "$OUT/memio.o" \
   "$OUT/NOTICE" "$OUT/build-record.txt"
 cp "$SUITES_DIR/LICENSE" "$OUT/NOTICE"
 cmp "$SUITES_DIR/LICENSE" "$OUT/NOTICE" || {
@@ -252,6 +266,8 @@ build_suite cpu
 build_suite timers
 build_suite audio
 build_suite audio2
+build_suite math
+build_suite memio
 CPU_AFTER=$(verify_pinned_file cpu/tests.s)
 TIMERS_AFTER=$(verify_pinned_file timers/tests.s)
 _AUDIO_AFTER=$(verify_pinned_file audio/tests.s)
@@ -260,12 +276,18 @@ CPU_MAIN_AFTER=$(verify_pinned_file cpu/main.c)
 TIMERS_MAIN_AFTER=$(verify_pinned_file timers/main.c)
 AUDIO_MAIN_AFTER=$(verify_pinned_file audio/main.c)
 AUDIO2_MAIN_AFTER=$(verify_pinned_file audio2/main.c)
+MATH_AFTER=$(verify_pinned_file math/tests.s)
+MATH_MAIN_AFTER=$(verify_pinned_file math/main.c)
+MEMIO_AFTER=$(verify_pinned_file memio/tests.s)
+MEMIO_MAIN_AFTER=$(verify_pinned_file memio/main.c)
 if [ "$CPU_BEFORE" != "$CPU_AFTER" ] || [ "$TIMERS_BEFORE" != "$TIMERS_AFTER" ] ||
   [ "$_AUDIO_BEFORE" != "$_AUDIO_AFTER" ] || [ "$_AUDIO2_BEFORE" != "$_AUDIO2_AFTER" ] ||
   [ "$CPU_MAIN_BEFORE" != "$CPU_MAIN_AFTER" ] ||
   [ "$TIMERS_MAIN_BEFORE" != "$TIMERS_MAIN_AFTER" ] ||
   [ "$AUDIO_MAIN_BEFORE" != "$AUDIO_MAIN_AFTER" ] ||
-  [ "$AUDIO2_MAIN_BEFORE" != "$AUDIO2_MAIN_AFTER" ]; then
+  [ "$AUDIO2_MAIN_BEFORE" != "$AUDIO2_MAIN_AFTER" ] ||
+  [ "$MATH_BEFORE" != "$MATH_AFTER" ] || [ "$MATH_MAIN_BEFORE" != "$MATH_MAIN_AFTER" ] ||
+  [ "$MEMIO_BEFORE" != "$MEMIO_AFTER" ] || [ "$MEMIO_MAIN_BEFORE" != "$MEMIO_MAIN_AFTER" ]; then
   printf 'build-suites: pinned upstream assembly changed during build\n' >&2
   exit 1
 fi
@@ -284,14 +306,20 @@ fi
   printf 'timers_main_sha256=%s\n' "$TIMERS_MAIN_AFTER"
   printf 'audio_main_sha256=%s\n' "$AUDIO_MAIN_AFTER"
   printf 'audio2_main_sha256=%s\n' "$AUDIO2_MAIN_AFTER"
+  printf 'math_main_sha256=%s\n' "$MATH_MAIN_AFTER"
+  printf 'memio_main_sha256=%s\n' "$MEMIO_MAIN_AFTER"
   printf 'cpu_wrapper_sha256=%s\n' "$CPU_WRAPPER_SHA"
   printf 'timers_wrapper_sha256=%s\n' "$TIMERS_WRAPPER_SHA"
   printf 'audio_wrapper_sha256=%s\n' "$AUDIO_WRAPPER_SHA"
   printf 'audio2_wrapper_sha256=%s\n' "$AUDIO2_WRAPPER_SHA"
+  printf 'math_wrapper_sha256=%s\n' "$MATH_WRAPPER_SHA"
+  printf 'memio_wrapper_sha256=%s\n' "$MEMIO_WRAPPER_SHA"
   printf 'cpu_source_sha256=%s\n' "$CPU_AFTER"
   printf 'timers_source_sha256=%s\n' "$TIMERS_AFTER"
   printf 'audio_source_sha256=%s\n' "$_AUDIO_AFTER"
   printf 'audio2_source_sha256=%s\n' "$_AUDIO2_AFTER"
+  printf 'math_source_sha256=%s\n' "$MATH_AFTER"
+  printf 'memio_source_sha256=%s\n' "$MEMIO_AFTER"
   printf 'license_sha256=%s\n' "$LICENSE_SHA"
   printf 'cpu_object_sha256=%s\n' "$(sha256 "$OUT/cpu.bll")"
   printf 'cpu_labels_sha256=%s\n' "$(sha256 "$OUT/cpu.lbl")"
@@ -301,5 +329,9 @@ fi
   printf 'audio_labels_sha256=%s\n' "$(sha256 "$OUT/audio.lbl")"
   printf 'audio2_object_sha256=%s\n' "$(sha256 "$OUT/audio2.bll")"
   printf 'audio2_labels_sha256=%s\n' "$(sha256 "$OUT/audio2.lbl")"
+  printf 'math_object_sha256=%s\n' "$(sha256 "$OUT/math.bll")"
+  printf 'math_labels_sha256=%s\n' "$(sha256 "$OUT/math.lbl")"
+  printf 'memio_object_sha256=%s\n' "$(sha256 "$OUT/memio.bll")"
+  printf 'memio_labels_sha256=%s\n' "$(sha256 "$OUT/memio.lbl")"
 } > "$OUT/build-record.txt"
 cat "$OUT/build-record.txt"

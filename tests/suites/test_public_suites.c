@@ -34,6 +34,12 @@ enum {
     AUDIO_SUITE_COUNT = 2,
     AUDIO_CASES_MAX = 7,
     AUDIO_CASE_LABEL_MAX = 32,
+    SOURCE_SUITE_COUNT = 2,
+    SOURCE_GROUPS_MAX = 8,
+    SOURCE_GROUP_LABEL_MAX = 32,
+    SOURCE_ORACLE_MAX = 16384,
+    SOURCE_TICK_MIN = 256,
+    SOURCE_TICK_MAX = 1000000,
     PAGE_MODE_RESULT_COUNT = 6,
     PAGE_MODE_MIN_TICKS = 40000,
     PAGE_MODE_MAX_TICKS = 50000000,
@@ -80,6 +86,24 @@ typedef struct suite_audio_oracle {
     char case_label[AUDIO_SUITE_COUNT][AUDIO_CASES_MAX][AUDIO_CASE_LABEL_MAX];
     uint8_t case_count[AUDIO_SUITE_COUNT];
 } suite_audio_oracle;
+
+typedef struct suite_source_oracle {
+    char archive[65];
+    char revision[41];
+    char license[65];
+    char main_sha256[SOURCE_SUITE_COUNT][65];
+    char asm_sha256[SOURCE_SUITE_COUNT][65];
+    uint8_t values[SOURCE_SUITE_COUNT][RESULT_EXTENT][EXPECT_VALUES_MAX];
+    uint8_t counts[SOURCE_SUITE_COUNT][RESULT_EXTENT];
+    uint8_t meaningful[SOURCE_SUITE_COUNT];
+    uint8_t reserved_start[SOURCE_SUITE_COUNT];
+    uint8_t reserved_count[SOURCE_SUITE_COUNT];
+    uint8_t group_count[SOURCE_SUITE_COUNT];
+    uint8_t group_start[SOURCE_SUITE_COUNT][SOURCE_GROUPS_MAX];
+    uint8_t group_length[SOURCE_SUITE_COUNT][SOURCE_GROUPS_MAX];
+    char group_kind[SOURCE_SUITE_COUNT][SOURCE_GROUPS_MAX][16];
+    char group_label[SOURCE_SUITE_COUNT][SOURCE_GROUPS_MAX][SOURCE_GROUP_LABEL_MAX];
+} suite_source_oracle;
 
 typedef struct page_mode_oracle {
     char revision[41];
@@ -666,6 +690,162 @@ static int parse_oracle(const char *path, suite_oracle *out)
         return fail("oracle: timer accepted alternatives were lost");
     }
     free(bytes);
+    return 0;
+}
+
+static int parse_math_memio_oracle(const char *path, suite_source_oracle *out)
+{
+    static const char *const metadata_names[7] = {
+        "archive", "revision", "license", "math_main", "math_asm", "memio_main", "memio_asm"
+    };
+    static const size_t metadata_lengths[7] = {64u, 40u, 64u, 64u, 64u, 64u, 64u};
+    static const char *const expected_names[SOURCE_SUITE_COUNT][SOURCE_GROUPS_MAX] = {
+        {"SIMPLE MUL", "ACCUM MUL", "SIGNED MUL", "MUL $8000 BUG", "SIMPLE DIV", "NO REM DIV", "DIV BY ZERO", "TIMING"},
+        {"MIKEY COLORS", "SUZY SPR REGS", "SUZY MIRRORS"}
+    };
+    uint8_t covered[SOURCE_SUITE_COUNT][RESULT_EXTENT] = {{0u}};
+    uint8_t metadata_seen[7] = {0u};
+    char *text = NULL;
+    size_t length = 0u;
+    size_t offset = 0u;
+    char line[ORACLE_LINE_MAX + 1u];
+    char *fields[12];
+    size_t count;
+    unsigned meta;
+    unsigned suite;
+    memset(out, 0, sizeof *out);
+    if (read_text(path, &text, &length, SOURCE_ORACLE_MAX) != 0) return fail("math/memio oracle unreadable");
+    if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+        (count = split_fields(line, fields, 12u)) != 2u ||
+        strcmp(fields[0], "LYNX-SUITE-MATH-MEMIO-ORACLE") != 0 || strcmp(fields[1], "1") != 0) {
+        free(text);
+        return fail("math/memio oracle: invalid version header");
+    }
+    for (meta = 0u; meta < 7u; meta++) {
+        char *destination = NULL;
+        size_t capacity = 0u;
+        if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+            (count = split_fields(line, fields, 12u)) != 2u || strcmp(fields[0], metadata_names[meta]) != 0 ||
+            strlen(fields[1]) != metadata_lengths[meta]) {
+            free(text);
+            return fail("math/memio oracle: malformed source identity record");
+        }
+        if (meta == 0u) { destination = out->archive; capacity = sizeof out->archive; }
+        else if (meta == 1u) { destination = out->revision; capacity = sizeof out->revision; }
+        else if (meta == 2u) { destination = out->license; capacity = sizeof out->license; }
+        else if (meta == 3u) { destination = out->main_sha256[0]; capacity = sizeof out->main_sha256[0]; }
+        else if (meta == 4u) { destination = out->asm_sha256[0]; capacity = sizeof out->asm_sha256[0]; }
+        else if (meta == 5u) { destination = out->main_sha256[1]; capacity = sizeof out->main_sha256[1]; }
+        else { destination = out->asm_sha256[1]; capacity = sizeof out->asm_sha256[1]; }
+        if (copy_field(destination, capacity, fields[1]) != 0 ||
+            !valid_hex(destination, metadata_lengths[meta])) {
+            free(text);
+            return fail("math/memio oracle: malformed source identity");
+        }
+        metadata_seen[meta] = 1u;
+    }
+    for (suite = 0u; suite < SOURCE_SUITE_COUNT; suite++) {
+        const char *suite_name = suite == 0u ? "math" : "memio";
+        uint32_t meaningful = suite == 0u ? 16u : 13u;
+        uint32_t group_count = suite == 0u ? 8u : 3u;
+        uint32_t result_count;
+        uint32_t extent;
+        uint32_t declared_meaningful;
+        uint32_t reserved_start;
+        uint32_t reserved_count;
+        uint32_t i;
+        if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+            (count = split_fields(line, fields, 12u)) != 2u || strcmp(fields[0], "suite") != 0 ||
+            strcmp(fields[1], suite_name) != 0) {
+            free(text);
+            return fail("math/memio oracle: missing or reordered suite section");
+        }
+        if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+            (count = split_fields(line, fields, 12u)) != 2u || strcmp(fields[0], "result_count") != 0 ||
+            parse_decimal(fields[1], &result_count) != 0 || result_count != RESULT_EXTENT ||
+            next_line(text, length, &offset, line, sizeof line) != 0 ||
+            (count = split_fields(line, fields, 12u)) != 2u || strcmp(fields[0], "extent") != 0 ||
+            parse_decimal(fields[1], &extent) != 0 || extent != RESULT_EXTENT ||
+            next_line(text, length, &offset, line, sizeof line) != 0 ||
+            (count = split_fields(line, fields, 12u)) != 2u || strcmp(fields[0], "meaningful") != 0 ||
+            parse_decimal(fields[1], &declared_meaningful) != 0 || declared_meaningful != meaningful ||
+            next_line(text, length, &offset, line, sizeof line) != 0 ||
+            (count = split_fields(line, fields, 12u)) != 3u || strcmp(fields[0], "reserved") != 0 ||
+            parse_decimal(fields[1], &reserved_start) != 0 || reserved_start != meaningful ||
+            parse_decimal(fields[2], &reserved_count) != 0 || reserved_count != RESULT_EXTENT - meaningful) {
+            free(text);
+            return fail("math/memio oracle: result extent or reserved range mismatch");
+        }
+        out->meaningful[suite] = (uint8_t)meaningful;
+        out->reserved_start[suite] = (uint8_t)reserved_start;
+        out->reserved_count[suite] = (uint8_t)reserved_count;
+        for (i = 0u; i < meaningful; i++) {
+            uint32_t index;
+            uint32_t accepted;
+            size_t j;
+            if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+                (count = split_fields(line, fields, 12u)) < 4u || strcmp(fields[0], "result") != 0 ||
+                parse_decimal(fields[1], &index) != 0 || index != i ||
+                parse_decimal(fields[2], &accepted) != 0 || accepted == 0u || accepted > EXPECT_VALUES_MAX ||
+                count != 3u + accepted) {
+                free(text);
+                return fail("math/memio oracle: malformed result row");
+            }
+            out->counts[suite][i] = (uint8_t)accepted;
+            for (j = 0u; j < accepted; j++) {
+                size_t k;
+                if (parse_byte(fields[3u + j], &out->values[suite][i][j]) != 0) {
+                    free(text);
+                    return fail("math/memio oracle: malformed result byte");
+                }
+                for (k = 0u; k < j; k++) {
+                    if (out->values[suite][i][k] == out->values[suite][i][j]) {
+                        free(text);
+                        return fail("math/memio oracle: duplicate expected alternative");
+                    }
+                }
+            }
+        }
+        for (i = 0u; i < group_count; i++) {
+            uint32_t index;
+            uint32_t start;
+            uint32_t span;
+            const char *kind = suite == 0u ? (i == 7u ? "timing" : "arithmetic") : "register";
+            if (next_line(text, length, &offset, line, sizeof line) != 0 ||
+                (count = split_fields(line, fields, 12u)) != 6u || strcmp(fields[0], "group") != 0 ||
+                parse_decimal(fields[1], &index) != 0 || index != i ||
+                parse_decimal(fields[2], &start) != 0 || parse_decimal(fields[3], &span) != 0 ||
+                span == 0u || start + span > meaningful || strcmp(fields[4], kind) != 0 ||
+                strcmp(fields[5], expected_names[suite][i]) != 0 ||
+                copy_field(out->group_kind[suite][i], sizeof out->group_kind[suite][i], fields[4]) != 0 ||
+                copy_field(out->group_label[suite][i], sizeof out->group_label[suite][i], fields[5]) != 0) {
+                free(text);
+                return fail("math/memio oracle: malformed group row");
+            }
+            out->group_start[suite][i] = (uint8_t)start;
+            out->group_length[suite][i] = (uint8_t)span;
+            out->group_count[suite] = (uint8_t)(i + 1u);
+            while (span-- > 0u) {
+                if (covered[suite][start] != 0u) {
+                    free(text);
+                    return fail("math/memio oracle: overlapping group range");
+                }
+                covered[suite][start++] = 1u;
+            }
+        }
+        for (i = 0u; i < meaningful; i++) {
+            if (covered[suite][i] != 1u || out->counts[suite][i] == 0u) {
+                free(text);
+                return fail("math/memio oracle: missing meaningful group result");
+            }
+        }
+    }
+    if (offset != length || metadata_seen[0] == 0u || metadata_seen[1] == 0u || metadata_seen[2] == 0u ||
+        !valid_hex(out->archive, 64u) || !valid_hex(out->revision, 40u) || !valid_hex(out->license, 64u)) {
+        free(text);
+        return fail("math/memio oracle: trailing data or incomplete identity");
+    }
+    free(text);
     return 0;
 }
 
@@ -1444,7 +1624,8 @@ static int verify_suite_build_artifacts(const char *directory, const char *suite
     char expected[128];
     char actual[65];
     if ((strcmp(suite, "cpu") != 0 && strcmp(suite, "timers") != 0 &&
-         strcmp(suite, "audio") != 0 && strcmp(suite, "audio2") != 0) ||
+         strcmp(suite, "audio") != 0 && strcmp(suite, "audio2") != 0 &&
+         strcmp(suite, "math") != 0 && strcmp(suite, "memio") != 0) ||
         checked_join(record_path, sizeof record_path, directory, "build-record.txt") != 0 ||
         snprintf(object_path, sizeof object_path, "%s/%s.bll", directory, suite) >= (int)sizeof object_path ||
         snprintf(labels_path, sizeof labels_path, "%s/%s.lbl", directory, suite) >= (int)sizeof labels_path ||
@@ -1666,6 +1847,81 @@ static int pinned_cc65_tool_hash(const char *relative_path, char hash[65])
     }
     free(manifest);
     return found == 1u ? 0 : fail("page-mode build: pinned tool identity missing");
+}
+
+static int verify_math_memio_build_identity(const char *directory,
+                                           const suite_source_oracle *oracle)
+{
+    static const char *const suites[SOURCE_SUITE_COUNT] = {"math", "memio"};
+    static const char *const main_keys[SOURCE_SUITE_COUNT] = {"math_main_sha256", "memio_main_sha256"};
+    static const char *const asm_keys[SOURCE_SUITE_COUNT] = {"math_source_sha256", "memio_source_sha256"};
+    suite_oracle pinned = {0};
+    char record_path[4096];
+    char path[4096];
+    char expected[128];
+    char actual[65];
+    char ca65_expected[65];
+    char ld65_expected[65];
+    char ca65_path[4096];
+    char ld65_path[4096];
+    char wrapper_path[4096];
+    unsigned suite;
+    if (checked_join(record_path, sizeof record_path, directory, "build-record.txt") != 0) {
+        return fail("math/memio build record path too long");
+    }
+    (void)snprintf(pinned.archive, sizeof pinned.archive, "%s", oracle->archive);
+    (void)snprintf(pinned.revision, sizeof pinned.revision, "%s", oracle->revision);
+    (void)snprintf(pinned.license, sizeof pinned.license, "%s", oracle->license);
+    if (record_value(record_path, "lynx_tests_pin", expected, sizeof expected) != 0 ||
+        strcmp(expected, oracle->archive) != 0 ||
+        record_value(record_path, "lynx_tests_revision", expected, sizeof expected) != 0 ||
+        strcmp(expected, oracle->revision) != 0 ||
+        record_value(record_path, "license_sha256", expected, sizeof expected) != 0 ||
+        strcmp(expected, oracle->license) != 0 ||
+        verify_pinned_revision(&pinned) != 0 || verify_pinned_source("LICENSE", oracle->license) != 0) {
+        return fail("math/memio build record pin/license identity mismatch");
+    }
+    for (suite = 0u; suite < SOURCE_SUITE_COUNT; suite++) {
+        const char *main_path = suite == 0u ? "math/main.c" : "memio/main.c";
+        const char *asm_path = suite == 0u ? "math/tests.s" : "memio/tests.s";
+        if (record_value(record_path, main_keys[suite], expected, sizeof expected) != 0 ||
+            strcmp(expected, oracle->main_sha256[suite]) != 0 ||
+            record_value(record_path, asm_keys[suite], expected, sizeof expected) != 0 ||
+            strcmp(expected, oracle->asm_sha256[suite]) != 0 ||
+            verify_pinned_source(main_path, oracle->main_sha256[suite]) != 0 ||
+            verify_pinned_source(asm_path, oracle->asm_sha256[suite]) != 0 ||
+            verify_suite_build_artifacts(directory, suites[suite]) != 0) {
+            return fail("math/memio oracle: source/build identity mismatch");
+        }
+        if (snprintf(wrapper_path, sizeof wrapper_path, "%s/fixtures/suites/%s-wrapper.s",
+                     LYNX_PROJECT_ROOT, suites[suite]) >= (int)sizeof wrapper_path ||
+            file_sha256(wrapper_path, actual) != 0 ||
+            record_value(record_path, suite == 0u ? "math_wrapper_sha256" : "memio_wrapper_sha256",
+                         expected, sizeof expected) != 0 || strcmp(actual, expected) != 0) {
+            return fail("math/memio build record wrapper identity mismatch");
+        }
+    }
+    if (snprintf(path, sizeof path, "%s/scripts/build-suites.sh", LYNX_PROJECT_ROOT) >= (int)sizeof path ||
+        file_sha256(path, actual) != 0 ||
+        record_value(record_path, "build_script_sha256", expected, sizeof expected) != 0 ||
+        strcmp(actual, expected) != 0 ||
+        snprintf(path, sizeof path, "%s/fixtures/suites/bll.cfg", LYNX_PROJECT_ROOT) >= (int)sizeof path ||
+        file_sha256(path, actual) != 0 ||
+        record_value(record_path, "linker_layout_sha256", expected, sizeof expected) != 0 ||
+        strcmp(actual, expected) != 0) {
+        return fail("math/memio build script or linker layout identity mismatch");
+    }
+    if (pinned_cc65_tool_hash("bin/ca65", ca65_expected) != 0 ||
+        pinned_cc65_tool_hash("bin/ld65", ld65_expected) != 0 ||
+        snprintf(ca65_path, sizeof ca65_path, "%s/build/pins/cc65/bin/ca65", LYNX_PROJECT_ROOT) >= (int)sizeof ca65_path ||
+        snprintf(ld65_path, sizeof ld65_path, "%s/build/pins/cc65/bin/ld65", LYNX_PROJECT_ROOT) >= (int)sizeof ld65_path ||
+        file_sha256(ca65_path, actual) != 0 || strcmp(actual, ca65_expected) != 0 ||
+        record_value(record_path, "ca65_tool_sha256", expected, sizeof expected) != 0 || strcmp(actual, expected) != 0 ||
+        file_sha256(ld65_path, actual) != 0 || strcmp(actual, ld65_expected) != 0 ||
+        record_value(record_path, "ld65_tool_sha256", expected, sizeof expected) != 0 || strcmp(actual, expected) != 0) {
+        return fail("math/memio build record tool identity mismatch");
+    }
+    return 0;
 }
 
 static int verify_page_mode_build(const char *run_directory, const char *build_directory,
@@ -3743,6 +3999,585 @@ done:
     return result;
 }
 
+static int source_suite_index(const char *suite_name, unsigned *index)
+{
+    if (strcmp(suite_name, "math") == 0) { *index = 0u; return 0; }
+    if (strcmp(suite_name, "memio") == 0) { *index = 1u; return 0; }
+    return 1;
+}
+
+static int source_symbol_layout(const char *labels, size_t labels_length,
+                                const uint8_t *bll, size_t bll_length,
+                                suite_symbols *symbols)
+{
+    uint32_t return_offset;
+    uint32_t after_offset;
+    if (parse_symbols(labels, labels_length, symbols) != 0 ||
+        ranges_valid(symbols, RESULT_EXTENT) != 0 || symbols->found[12] == 0u ||
+        symbols->found[13] == 0u || symbols->value[1] != symbols->value[8] ||
+        symbols->value[12] < 0x01F7u || symbols->value[13] < 0x01F9u ||
+        symbols->value[12] - 0x01F6u >= bll_length ||
+        symbols->value[13] - 0x01F6u < 3u || symbols->value[13] - 0x01F6u >= bll_length ||
+        symbols->value[7] < BLL_HEADER_SIZE || symbols->value[7] - 0x01F6u != bll_length) {
+        return fail("math/memio symbol extent or wrapper boundary invalid");
+    }
+    return_offset = symbols->value[12] - 0x01F6u;
+    after_offset = symbols->value[13] - 0x01F6u;
+    if (bll[return_offset] != 0x60u || bll[after_offset - 3u] != 0x20u ||
+        bll[after_offset - 2u] != (uint8_t)symbols->value[8] ||
+        bll[after_offset - 1u] != (uint8_t)(symbols->value[8] >> 8)) {
+        return fail("math/memio source return gate does not match the linked wrapper");
+    }
+    return 0;
+}
+
+static int write_source_raw(const char *path, const char *suite, const char *profile,
+                            const uint8_t results[RESULT_EXTENT])
+{
+    atomic_output output = {0};
+    FILE *file;
+    unsigned i;
+    if (atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
+    (void)fprintf(file,
+        "schema\tlynx-source-suite-raw-v1\nsuite\t%s\nmachine_profile\t%s\nprofile_input\t%s\n"
+        "startup_tier\tA\nresult_count\t18\n", suite, profile, profile);
+    for (i = 0u; i < RESULT_EXTENT; i++) {
+        (void)fprintf(file, "result\t%u\t%02x\n", i, results[i]);
+    }
+    if (atomic_output_commit(&output) != 0) return fail("cannot close math/memio raw record");
+    return 0;
+}
+
+static int write_source_comparison(const char *path, const suite_source_oracle *oracle,
+                                   unsigned suite_index, const uint8_t results[RESULT_EXTENT],
+                                   uint32_t *scoped_agreements, uint32_t *strict_mismatches)
+{
+    atomic_output output = {0};
+    FILE *file;
+    uint32_t scoped_count = 0u;
+    uint32_t mismatch_count = 0u;
+    unsigned i;
+    unsigned scoped_limit = suite_index == 0u ? 14u : 13u;
+    if (suite_index >= SOURCE_SUITE_COUNT || atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
+    (void)fprintf(file, "schema\tlynx-source-suite-comparison-v1\nsuite\t%s\n", suite_index == 0u ? "math" : "memio");
+    for (i = 0u; i < oracle->meaningful[suite_index]; i++) {
+        unsigned group;
+        int accepted = 0;
+        for (group = 0u; group < oracle->group_count[suite_index]; group++) {
+            const unsigned start = oracle->group_start[suite_index][group];
+            const unsigned end = start + oracle->group_length[suite_index][group];
+            if (i >= start && i < end) break;
+        }
+        for (unsigned j = 0u; j < oracle->counts[suite_index][i]; j++) {
+            if (oracle->values[suite_index][i][j] == results[i]) accepted = 1;
+        }
+        (void)fprintf(file, "result\t%u\t%02x\t%u\t%s\tEXPECT(", i, results[i], group,
+                      oracle->group_kind[suite_index][group]);
+        for (unsigned j = 0u; j < oracle->counts[suite_index][i]; j++) {
+            if (j != 0u) (void)fputc(',', file);
+            (void)fprintf(file, "%02x", oracle->values[suite_index][i][j]);
+        }
+        (void)fprintf(file, ")\t%s\n", accepted != 0 ? "source-accepted" : "source-mismatch");
+        if (accepted == 0) {
+            mismatch_count++;
+            if (i < scoped_limit) {
+                (void)fprintf(file, "strict-mismatch\t%u\t%02x\tEXPECT(", i, results[i]);
+                for (unsigned j = 0u; j < oracle->counts[suite_index][i]; j++) {
+                    if (j != 0u) (void)fputc(',', file);
+                    (void)fprintf(file, "%02x", oracle->values[suite_index][i][j]);
+                }
+                (void)fprintf(file, ")\n");
+            } else {
+                (void)fprintf(file, "strict-mismatch\t%u\t%02x\tEXPECT(", i, results[i]);
+                for (unsigned j = 0u; j < oracle->counts[suite_index][i]; j++) {
+                    if (j != 0u) (void)fputc(',', file);
+                    (void)fprintf(file, "%02x", oracle->values[suite_index][i][j]);
+                }
+                (void)fprintf(file, ")\n");
+            }
+        } else if (i < scoped_limit) scoped_count++;
+    }
+    for (i = oracle->reserved_start[suite_index]; i < RESULT_EXTENT; i++) {
+        (void)fprintf(file, "reserved\t%u\t%02x\n", i, results[i]);
+    }
+    (void)fprintf(file, "scope\t%s\t%s\n", suite_index == 0u ? "arithmetic-register" : "register",
+                  scoped_count == scoped_limit ? "match" : "mismatch");
+    (void)fprintf(file, "strict\t%s\n", mismatch_count == 0u ? "match" : "mismatch");
+    (void)fprintf(file, "strict_mismatch_count\t%u\ncomparison\t%s\n", mismatch_count,
+                  mismatch_count == 0u ? "strict-match" : "strict-mismatch");
+    if (atomic_output_commit(&output) != 0) return fail("cannot close math/memio comparison record");
+    *scoped_agreements = scoped_count;
+    *strict_mismatches = mismatch_count;
+    return 0;
+}
+
+static int write_source_run_record(const char *path, const char *build_directory,
+                                   const char *suite, const char *profile,
+                                   const suite_source_oracle *oracle, unsigned suite_index,
+                                   const lynx_identity *identity, const char *bll_sha,
+                                   const char *labels_sha, const char *oracle_sha,
+                                   const char *raw_path, const char *comparison_path,
+                                   uint64_t ticks, uint8_t probe, uint8_t marker,
+                                   uint8_t progress, int detected_model,
+                                   uint32_t scoped_agreements, uint32_t strict_mismatches)
+{
+    atomic_output output = {0};
+    FILE *file;
+    char record_path[4096];
+    char build_sha[65], raw_sha[65], comparison_sha[65], wrapper_sha[65], builder_sha[65];
+    char layout_sha[65], ca65_sha[65], ld65_sha[65], object_sha[65], labels_identity[65];
+    const char *wrapper_name = suite_index == 0u ? "fixtures/suites/math-wrapper.s" : "fixtures/suites/memio-wrapper.s";
+    const char *wrapper_key = suite_index == 0u ? "math_wrapper_sha256" : "memio_wrapper_sha256";
+    const char *object_key = suite_index == 0u ? "math_object_sha256" : "memio_object_sha256";
+    const char *labels_key = suite_index == 0u ? "math_labels_sha256" : "memio_labels_sha256";
+    const char *main_key = suite_index == 0u ? "math_main_sha256" : "memio_main_sha256";
+    const char *asm_key = suite_index == 0u ? "math_source_sha256" : "memio_source_sha256";
+    char path_buffer[4096];
+    char value[128];
+    unsigned meaningful = oracle->meaningful[suite_index];
+    unsigned scoped_count = suite_index == 0u ? 14u : 13u;
+    if (checked_join(record_path, sizeof record_path, build_directory, "build-record.txt") != 0 ||
+        file_sha256(record_path, build_sha) != 0 || file_sha256(raw_path, raw_sha) != 0 ||
+        file_sha256(comparison_path, comparison_sha) != 0 ||
+        snprintf(path_buffer, sizeof path_buffer, "%s/%s", LYNX_PROJECT_ROOT, wrapper_name) >= (int)sizeof path_buffer ||
+        file_sha256(path_buffer, wrapper_sha) != 0 ||
+        snprintf(path_buffer, sizeof path_buffer, "%s/scripts/build-suites.sh", LYNX_PROJECT_ROOT) >= (int)sizeof path_buffer ||
+        file_sha256(path_buffer, builder_sha) != 0 ||
+        snprintf(path_buffer, sizeof path_buffer, "%s/fixtures/suites/bll.cfg", LYNX_PROJECT_ROOT) >= (int)sizeof path_buffer ||
+        file_sha256(path_buffer, layout_sha) != 0 ||
+        snprintf(path_buffer, sizeof path_buffer, "%s/build/pins/cc65/bin/ca65", LYNX_PROJECT_ROOT) >= (int)sizeof path_buffer ||
+        file_sha256(path_buffer, ca65_sha) != 0 ||
+        snprintf(path_buffer, sizeof path_buffer, "%s/build/pins/cc65/bin/ld65", LYNX_PROJECT_ROOT) >= (int)sizeof path_buffer ||
+        file_sha256(path_buffer, ld65_sha) != 0) {
+        return fail("math/memio run record identity input is incomplete");
+    }
+    if (record_value(record_path, object_key, object_sha, sizeof object_sha) != 0 ||
+        record_value(record_path, labels_key, labels_identity, sizeof labels_identity) != 0 ||
+        record_value(record_path, wrapper_key, value, sizeof value) != 0 || strcmp(value, wrapper_sha) != 0 ||
+        record_value(record_path, "build_script_sha256", value, sizeof value) != 0 || strcmp(value, builder_sha) != 0 ||
+        record_value(record_path, "linker_layout_sha256", value, sizeof value) != 0 || strcmp(value, layout_sha) != 0 ||
+        record_value(record_path, "ca65_tool_sha256", value, sizeof value) != 0 || strcmp(value, ca65_sha) != 0 ||
+        record_value(record_path, "ld65_tool_sha256", value, sizeof value) != 0 || strcmp(value, ld65_sha) != 0 ||
+        record_value(record_path, main_key, value, sizeof value) != 0 || strcmp(value, oracle->main_sha256[suite_index]) != 0 ||
+        record_value(record_path, asm_key, value, sizeof value) != 0 || strcmp(value, oracle->asm_sha256[suite_index]) != 0) {
+        return fail("math/memio build record does not bind the observed source");
+    }
+    if (atomic_output_begin(path, &output) != 0) return 1;
+    file = output.stream;
+    (void)fprintf(file,
+        "schema=lynx-source-suite-run-v1\nsuite=%s\nmachine_profile=%s\nprofile_input=%s\n"
+        "detected_model=%s\nmodel_probe_bytes=%02x,%02x\n"
+        "source_main_sha256=%s\nsource_assembly_sha256=%s\nwrapper_sha256=%s\n"
+        "builder_sha256=%s\nlayout_sha256=%s\nca65_tool_sha256=%s\nld65_tool_sha256=%s\n"
+        "object_sha256=%s\nlabels_sha256=%s\nbll_sha256=%s\nlabels_file_sha256=%s\n"
+        "build_record_sha256=%s\noracle_sha256=%s\nraw_results_sha256=%s\ncomparison_sha256=%s\n"
+        "result_extent=18\nmeaningful_count=%u\nreserved_start=%u\nreserved_count=%u\n"
+        "scoped_count=%u\nscoped_agreements=%u\nstrict_mismatch_count=%u\n"
+        "tick_min=%u\ntick_max=%u\nticks_observed=%" PRIu64 "\n"
+        "guest_window_ticks=%u\ncompletion_sentinel=a5\nguest_progress=%u\n"
+        "guest_return=source-call-returned\nsource_group_count=%u\n"
+        "timing_policy=%s\nhardware_accuracy=unverified\nprofile_qualification=unresolved\n",
+        suite, profile, profile, detected_model < 0 ? "unknown" : profile_label((unsigned)detected_model),
+        probe, marker, oracle->main_sha256[suite_index], oracle->asm_sha256[suite_index], wrapper_sha,
+        builder_sha, layout_sha, ca65_sha, ld65_sha, object_sha, labels_identity, bll_sha, labels_sha,
+        build_sha, oracle_sha, raw_sha, comparison_sha, meaningful,
+        oracle->reserved_start[suite_index], oracle->reserved_count[suite_index], scoped_count,
+        scoped_agreements, strict_mismatches, SOURCE_TICK_MIN, SOURCE_TICK_MAX, ticks,
+        SOURCE_TICK_MAX, (unsigned)progress, oracle->group_count[suite_index],
+        identity->timing_policy == LYNX_TIMING_POLICY_LEGACY_FLAT5 ? "legacy-flat5" : "unknown");
+    if (atomic_output_commit(&output) != 0) return fail("cannot close math/memio run record");
+    return 0;
+}
+
+static int run_math_memio(const char *suite_name, const char *profile,
+                          const char *directory, const char *oracle_path)
+{
+    uint8_t *bll = NULL;
+    size_t bll_length = 0u;
+    char *labels = NULL;
+    size_t labels_length = 0u;
+    char bll_path[4096], labels_path[4096], raw_path[4096], comparison_path[4096], record_path[4096];
+    char filename[128], oracle_sha[65], bll_sha[65], labels_sha[65];
+    char output_key[96];
+    suite_source_oracle oracle;
+    suite_symbols symbols;
+    machine_instance instance = {0};
+    lynx_identity identity;
+    lynx__cpu initial_cpu;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    lynx_watch_event event;
+    uint8_t results[RESULT_EXTENT];
+    uint8_t progress = 0u, done = 0u, model = 0u, probe = 0u;
+    unsigned suite_index, profile_number;
+    uint32_t machine_profile;
+    uint64_t total_consumed = 0u, ticks = 0u;
+    uint32_t scoped_agreements = 0u, strict_mismatches = 0u;
+    int clear_seen = 0, started_seen = 0, complete = 0, detected_model = -1, result = 1;
+    if (source_suite_index(suite_name, &suite_index) != 0 || profile_index(profile, &profile_number) != 0 ||
+        validate_owned_output_directory(directory) != 0 || parse_math_memio_oracle(oracle_path, &oracle) != 0 ||
+        verify_math_memio_build_identity(directory, &oracle) != 0) {
+        return fail("math/memio source/build identity or profile is invalid");
+    }
+    machine_profile = profile_number == 0u ? LYNX_PROFILE_LYNX1 : LYNX_PROFILE_LYNX2;
+    if (snprintf(filename, sizeof filename, "%s.bll", suite_name) >= (int)sizeof filename ||
+        checked_join(bll_path, sizeof bll_path, directory, filename) != 0 ||
+        snprintf(filename, sizeof filename, "%s.lbl", suite_name) >= (int)sizeof filename ||
+        checked_join(labels_path, sizeof labels_path, directory, filename) != 0 ||
+        snprintf(output_key, sizeof output_key, "%s-%s", suite_name, profile) >= (int)sizeof output_key ||
+        snprintf(filename, sizeof filename, "raw-results-%s.tsv", output_key) >= (int)sizeof filename ||
+        checked_join(raw_path, sizeof raw_path, directory, filename) != 0 ||
+        snprintf(filename, sizeof filename, "comparison-%s.tsv", output_key) >= (int)sizeof filename ||
+        checked_join(comparison_path, sizeof comparison_path, directory, filename) != 0 ||
+        snprintf(filename, sizeof filename, "run-record-%s.txt", output_key) >= (int)sizeof filename ||
+        checked_join(record_path, sizeof record_path, directory, filename) != 0 ||
+        read_file(bll_path, &bll, &bll_length, 65536u) != 0 ||
+        read_text(labels_path, &labels, &labels_length, 16384u) != 0 ||
+        source_symbol_layout(labels, labels_length, bll, bll_length, &symbols) != 0 ||
+        file_sha256(bll_path, bll_sha) != 0 || file_sha256(labels_path, labels_sha) != 0 ||
+        file_sha256(oracle_path, oracle_sha) != 0 || clear_old_outputs(directory, output_key) != 0) {
+        (void)fail("math/memio linked object or output identity is invalid");
+        goto done;
+    }
+    if (machine_create(&instance, bll, bll_length, machine_profile) != 0 ||
+        lynx_get_identity(instance.machine, &identity) != LYNX_OK ||
+        identity.has_content != 1u || identity.content_format != LYNX_CONTENT_BS93 ||
+        identity.startup_tier != LYNX_STARTUP_A || identity.entry_addr != symbols.value[0] ||
+        identity.object_len != bll_length || identity.timing_policy != LYNX_TIMING_POLICY_LEGACY_FLAT5 ||
+        instance.machine->cfg.profile != machine_profile || instance.machine->guest_ticks != 0u ||
+        verify_suite_build_artifacts(directory, suite_name) != 0) {
+        (void)fail("math/memio public BS93 identity, fresh state or timing configuration mismatch");
+        goto done;
+    }
+    {
+        lynx__sha256 sha;
+        uint8_t digest[32];
+        lynx__sha256_init(&sha);
+        lynx__sha256_update(&sha, bll, bll_length);
+        lynx__sha256_final(&sha, digest);
+        if (memcmp(identity.content_sha256, digest, sizeof digest) != 0) {
+            (void)fail("math/memio public BLL content identity mismatch");
+            goto done;
+        }
+    }
+    for (uint32_t i = 0u; i < 0x100u; i++) {
+        if (instance.machine->ram[i] != 0u) {
+            (void)fail("math/memio fresh machine zero-page was not clear before guest entry");
+            goto done;
+        }
+    }
+    for (uint32_t i = 0u; i < RESULT_EXTENT; i++) {
+        if (instance.machine->ram[symbols.value[2] + i] != 0u) {
+            (void)fail("math/memio fresh machine result extent was not clear before guest entry");
+            goto done;
+        }
+    }
+    if (lynx_watch_configure(instance.machine, symbols.value[6], 1u) != LYNX_OK) {
+        (void)fail("math/memio runner could not arm post-return sentinel watch");
+        goto done;
+    }
+    initial_cpu = instance.machine->cpu;
+    while (total_consumed < SOURCE_TICK_MAX) {
+        uint64_t budget = SOURCE_TICK_MAX - total_consumed;
+        uint64_t used = 0u, before = 0u, after = 0u;
+        if (budget > 10000u) budget = 10000u;
+        if (lynx_guest_ticks(instance.machine, &before) != LYNX_OK ||
+            lynx_advance(instance.machine, budget, &used, &stop) != LYNX_OK || used > budget ||
+            lynx_guest_ticks(instance.machine, &after) != LYNX_OK || after < before || after - before != used ||
+            after > SOURCE_TICK_MAX) {
+            (void)fail("math/memio bounded guest advance or tick accounting failed");
+            goto done;
+        }
+        total_consumed += used;
+        ticks = after;
+        if (lynx_read_memory(instance.machine, symbols.value[4], &progress, 1u) != LYNX_OK ||
+            lynx_read_memory(instance.machine, symbols.value[5], &model, 1u) != LYNX_OK ||
+            lynx_read_memory(instance.machine, symbols.value[6], &done, 1u) != LYNX_OK ||
+            lynx_read_memory(instance.machine, symbols.value[11], &probe, 1u) != LYNX_OK) {
+            (void)fail("math/memio guest progress/model observation read failed");
+            goto done;
+        }
+        if (progress == 1u && done == 0u) started_seen = 1;
+        else if (progress == 8u && done == 0xA5u) {
+            if (started_seen == 0) {
+                (void)fail("math/memio guest completion omitted observed source progress");
+                goto done;
+            }
+        } else if (progress != 0u && progress != 1u && progress != 8u) {
+            (void)fail("math/memio wrapper progress left its declared sequence");
+            goto done;
+        }
+        if (stop == LYNX_STOP_WATCH) {
+            if (lynx_watch_get(instance.machine, &event) != LYNX_OK || event.hit != 1u ||
+                event.address != symbols.value[6] || event.return_tick != after ||
+                event.return_tick != event.hit_tick + 1u) {
+                (void)fail("math/memio completion watch did not match a guest sentinel write");
+                goto done;
+            }
+            if (event.value == 0u && clear_seen == 0) {
+                if (progress != 0u || model != 0u || lynx_watch_configure(instance.machine, symbols.value[6], 1u) != LYNX_OK) {
+                    (void)fail("math/memio initial completion clear was not an empty-state prefix");
+                    goto done;
+                }
+                clear_seen = 1;
+                continue;
+            }
+            if (event.value == 0xA5u && clear_seen != 0 && progress == 8u && started_seen != 0) {
+                complete = 1;
+                break;
+            }
+            (void)fail("math/memio completion sentinel value or write order mismatch");
+            goto done;
+        }
+        if (stop != LYNX_STOP_BUDGET || used == 0u || after <= before) {
+            (void)fail("math/memio guest stopped or made no progress before completion");
+            goto done;
+        }
+    }
+    if (validate_guest_completion(&instance, &symbols, suite_name,
+                                  memcmp(&initial_cpu, &instance.machine->cpu, sizeof initial_cpu) != 0,
+                                  complete, clear_seen, ticks, total_consumed, SOURCE_TICK_MIN,
+                                  SOURCE_TICK_MAX, &done, &progress, &model, &probe) != 0 ||
+        lynx_read_memory(instance.machine, symbols.value[2], results, RESULT_EXTENT) != LYNX_OK) {
+        (void)fail("math/memio fresh bounded completion or full result capture failed");
+        goto done;
+    }
+    detected_model = probe_model(probe, model);
+    if (detected_model < 0 || detected_model != (int)profile_number) {
+        (void)fail("math/memio guest model probe does not match selected profile");
+        goto done;
+    }
+    if (write_source_raw(raw_path, suite_name, profile, results) != 0 ||
+        write_source_comparison(comparison_path, &oracle, suite_index, results,
+                                &scoped_agreements, &strict_mismatches) != 0 ||
+        write_source_run_record(record_path, directory, suite_name, profile, &oracle, suite_index,
+                                &identity, bll_sha, labels_sha, oracle_sha, raw_path,
+                                comparison_path, ticks, probe, model, progress, detected_model,
+                                scoped_agreements, strict_mismatches) != 0) goto done;
+    printf("math/memio observation complete: suite=%s profile=%s ticks=%" PRIu64
+           " progress=%u raw=18 scoped=%u/%u strict_mismatches=%u\n",
+           suite_name, profile, ticks, (unsigned)progress, scoped_agreements,
+           suite_index == 0u ? 14u : 13u, strict_mismatches);
+    puts("hardware_accuracy=unverified profile_qualification=unresolved");
+    if (scoped_agreements != (suite_index == 0u ? 14u : 13u)) {
+        result = fail("math/memio arithmetic/register source oracle comparison mismatch");
+        goto done;
+    }
+    result = 0;
+done:
+    machine_destroy(&instance);
+    free(labels);
+    free(bll);
+    return result;
+}
+
+static int validate_math_memio_record_mode(const char *suite_name, const char *profile,
+                                           const char *directory, const char *oracle_path)
+{
+    suite_source_oracle oracle;
+    uint8_t results[RESULT_EXTENT];
+    char raw_path[4096], comparison_path[4096], record_path[4096], file_path[4096];
+    char name[128], *text = NULL, line[512], *fields[12];
+    size_t length = 0u, offset = 0u, count;
+    char value[256], expected_text[160], actual[65];
+    uint8_t row_value;
+    uint32_t declared_count, row_index, mismatches = 0u, scoped = 0u, tick_value;
+    unsigned suite_index, profile_index_value, meaningful, scoped_limit, i;
+    if (source_suite_index(suite_name, &suite_index) != 0 || profile_index(profile, &profile_index_value) != 0 ||
+        validate_owned_output_directory(directory) != 0 || parse_math_memio_oracle(oracle_path, &oracle) != 0 ||
+        verify_math_memio_build_identity(directory, &oracle) != 0) {
+        return fail("math/memio record: source/build identity invalid");
+    }
+    meaningful = oracle.meaningful[suite_index];
+    scoped_limit = suite_index == 0u ? 14u : 13u;
+    if (snprintf(name, sizeof name, "raw-results-%s-%s.tsv", suite_name, profile) >= (int)sizeof name ||
+        checked_join(raw_path, sizeof raw_path, directory, name) != 0 ||
+        snprintf(name, sizeof name, "comparison-%s-%s.tsv", suite_name, profile) >= (int)sizeof name ||
+        checked_join(comparison_path, sizeof comparison_path, directory, name) != 0 ||
+        snprintf(name, sizeof name, "run-record-%s-%s.txt", suite_name, profile) >= (int)sizeof name ||
+        checked_join(record_path, sizeof record_path, directory, name) != 0) {
+        return fail("math/memio record: path too long");
+    }
+    if (read_text(raw_path, &text, &length, 8192u) != 0) return fail("math/memio raw record unreadable");
+#define SOURCE_RAW_ROW(expected_key, expected_fields) \
+    do { \
+        if (next_line(text, length, &offset, line, sizeof line) != 0 || \
+            (count = split_fields(line, fields, 12u)) != (expected_fields) || \
+            strcmp(fields[0], (expected_key)) != 0) { \
+            free(text); return fail("math/memio raw record shape mismatch"); \
+        } \
+    } while (0)
+    SOURCE_RAW_ROW("schema", 2u);
+    if (strcmp(fields[1], "lynx-source-suite-raw-v1") != 0) { free(text); return fail("math/memio raw record schema mismatch"); }
+    SOURCE_RAW_ROW("suite", 2u);
+    if (strcmp(fields[1], suite_name) != 0) { free(text); return fail("math/memio raw suite identity mismatch"); }
+    SOURCE_RAW_ROW("machine_profile", 2u);
+    if (strcmp(fields[1], profile) != 0) { free(text); return fail("math/memio raw profile identity mismatch"); }
+    SOURCE_RAW_ROW("profile_input", 2u);
+    if (strcmp(fields[1], profile) != 0) { free(text); return fail("math/memio raw profile input mismatch"); }
+    SOURCE_RAW_ROW("startup_tier", 2u);
+    if (strcmp(fields[1], "A") != 0) { free(text); return fail("math/memio raw startup tier mismatch"); }
+    SOURCE_RAW_ROW("result_count", 2u);
+    if (parse_decimal(fields[1], &declared_count) != 0 || declared_count != RESULT_EXTENT) {
+        free(text); return fail("math/memio raw result count mismatch");
+    }
+    for (i = 0u; i < RESULT_EXTENT; i++) {
+        SOURCE_RAW_ROW("result", 3u);
+        if (parse_decimal(fields[1], &row_index) != 0 || row_index != i ||
+            parse_byte(fields[2], &results[i]) != 0) {
+            free(text); return fail("math/memio raw result row mismatch");
+        }
+    }
+    if (offset != length) { free(text); return fail("math/memio raw record has extra rows"); }
+    free(text);
+    text = NULL;
+    offset = 0u;
+#undef SOURCE_RAW_ROW
+    if (read_text(comparison_path, &text, &length, 16384u) != 0) return fail("math/memio comparison record unreadable");
+#define SOURCE_COMPARE_ROW(expected_key, expected_fields) \
+    do { \
+        if (next_line(text, length, &offset, line, sizeof line) != 0 || \
+            (count = split_fields(line, fields, 12u)) != (expected_fields) || \
+            strcmp(fields[0], (expected_key)) != 0) { \
+            free(text); return fail("math/memio comparison record shape mismatch"); \
+        } \
+    } while (0)
+    SOURCE_COMPARE_ROW("schema", 2u);
+    if (strcmp(fields[1], "lynx-source-suite-comparison-v1") != 0) { free(text); return fail("math/memio comparison schema mismatch"); }
+    SOURCE_COMPARE_ROW("suite", 2u);
+    if (strcmp(fields[1], suite_name) != 0) { free(text); return fail("math/memio comparison suite identity mismatch"); }
+    for (i = 0u; i < meaningful; i++) {
+        uint32_t group;
+        int accepted = 0;
+        unsigned j;
+        for (group = 0u; group < oracle.group_count[suite_index]; group++) {
+            if (i >= oracle.group_start[suite_index][group] &&
+                i < (uint32_t)oracle.group_start[suite_index][group] + oracle.group_length[suite_index][group]) break;
+        }
+        for (j = 0u; j < oracle.counts[suite_index][i]; j++) {
+            if (results[i] == oracle.values[suite_index][i][j]) accepted = 1;
+        }
+        SOURCE_COMPARE_ROW("result", 7u);
+        if (parse_decimal(fields[1], &row_index) != 0 || row_index != i ||
+            parse_byte(fields[2], &row_value) != 0 || row_value != results[i] ||
+            parse_decimal(fields[3], &row_index) != 0 || row_index != group ||
+            strcmp(fields[4], oracle.group_kind[suite_index][group]) != 0) {
+            free(text); return fail("math/memio comparison row does not match raw/oracle group");
+        }
+        (void)snprintf(expected_text, sizeof expected_text, "EXPECT(");
+        for (j = 0u; j < oracle.counts[suite_index][i]; j++) {
+            size_t pos = strlen(expected_text);
+            (void)snprintf(expected_text + pos, sizeof expected_text - pos, "%s%02x",
+                           j == 0u ? "" : ",", oracle.values[suite_index][i][j]);
+        }
+        {
+            const size_t expected_length = strlen(expected_text);
+            if (expected_length + 2u > sizeof expected_text) {
+                free(text);
+                return fail("math/memio comparison expectation too long");
+            }
+            expected_text[expected_length] = ')';
+            expected_text[expected_length + 1u] = '\0';
+        }
+        if (strcmp(fields[5], expected_text) != 0 ||
+            strcmp(fields[6], accepted != 0 ? "source-accepted" : "source-mismatch") != 0) {
+            free(text); return fail("math/memio comparison expectation or verdict mismatch");
+        }
+        if (accepted != 0 && i < scoped_limit) scoped++;
+        if (accepted == 0) {
+            SOURCE_COMPARE_ROW("strict-mismatch", 4u);
+            if (parse_decimal(fields[1], &row_index) != 0 || row_index != i ||
+                parse_byte(fields[2], &row_value) != 0 || row_value != results[i] ||
+                strcmp(fields[3], expected_text) != 0) {
+                free(text); return fail("math/memio strict mismatch row was omitted or altered");
+            }
+            mismatches++;
+        }
+    }
+    for (i = oracle.reserved_start[suite_index]; i < RESULT_EXTENT; i++) {
+        SOURCE_COMPARE_ROW("reserved", 3u);
+        if (parse_decimal(fields[1], &row_index) != 0 || row_index != i ||
+            parse_byte(fields[2], &row_value) != 0 || row_value != results[i]) {
+            free(text); return fail("math/memio reserved result row mismatch");
+        }
+    }
+    SOURCE_COMPARE_ROW("scope", 3u);
+    if (strcmp(fields[1], suite_index == 0u ? "arithmetic-register" : "register") != 0 ||
+        strcmp(fields[2], scoped == scoped_limit ? "match" : "mismatch") != 0) {
+        free(text); return fail("math/memio scoped comparison verdict mismatch");
+    }
+    SOURCE_COMPARE_ROW("strict", 2u);
+    if (strcmp(fields[1], mismatches == 0u ? "match" : "mismatch") != 0) {
+        free(text); return fail("math/memio strict comparison verdict mismatch");
+    }
+    SOURCE_COMPARE_ROW("strict_mismatch_count", 2u);
+    if (parse_decimal(fields[1], &declared_count) != 0 || declared_count != mismatches) {
+        free(text); return fail("math/memio strict mismatch count is stale");
+    }
+    SOURCE_COMPARE_ROW("comparison", 2u);
+    if (strcmp(fields[1], mismatches == 0u ? "strict-match" : "strict-mismatch") != 0 || offset != length) {
+        free(text); return fail("math/memio strict comparison summary mismatch");
+    }
+    free(text);
+    text = NULL;
+#undef SOURCE_COMPARE_ROW
+    if (checked_join(file_path, sizeof file_path, directory, "build-record.txt") != 0 ||
+        file_sha256(file_path, actual) != 0 || timer_record_is(record_path, "schema", "lynx-source-suite-run-v1", "math/memio run record schema mismatch") != 0 ||
+        timer_record_is(record_path, "suite", suite_name, "math/memio run record suite mismatch") != 0 ||
+        timer_record_is(record_path, "machine_profile", profile, "math/memio run record profile mismatch") != 0 ||
+        timer_record_is(record_path, "profile_input", profile, "math/memio run record profile input mismatch") != 0 ||
+        timer_record_is(record_path, "guest_return", "source-call-returned", "math/memio source return evidence missing") != 0 ||
+        timer_record_is(record_path, "completion_sentinel", "a5", "math/memio completion sentinel mismatch") != 0 ||
+        timer_record_is(record_path, "hardware_accuracy", "unverified", "math/memio hardware claim mismatch") != 0 ||
+        timer_record_is(record_path, "profile_qualification", "unresolved", "math/memio qualification claim mismatch") != 0) {
+        return fail("math/memio execution-envelope record identity invalid");
+    }
+#define SOURCE_RECORD_IS(key, expected_value, diagnostic) \
+    do { if (timer_record_is(record_path, (key), (expected_value), (diagnostic)) != 0) return 1; } while (0)
+    SOURCE_RECORD_IS("source_main_sha256", oracle.main_sha256[suite_index], "math/memio run source main identity mismatch");
+    SOURCE_RECORD_IS("source_assembly_sha256", oracle.asm_sha256[suite_index], "math/memio run source assembly identity mismatch");
+    SOURCE_RECORD_IS("build_record_sha256", actual, "math/memio build record hash mismatch");
+    if (file_sha256(oracle_path, actual) != 0) return 1;
+    SOURCE_RECORD_IS("oracle_sha256", actual, "math/memio oracle hash mismatch");
+    if (file_sha256(raw_path, actual) != 0) return 1;
+    SOURCE_RECORD_IS("raw_results_sha256", actual, "math/memio raw hash mismatch");
+    if (file_sha256(comparison_path, actual) != 0) return 1;
+    SOURCE_RECORD_IS("comparison_sha256", actual, "math/memio comparison hash mismatch");
+    if (snprintf(file_path, sizeof file_path, "%s/%s.bll", directory, suite_name) >= (int)sizeof file_path ||
+        file_sha256(file_path, actual) != 0) return fail("math/memio BLL hash unavailable");
+    SOURCE_RECORD_IS("bll_sha256", actual, "math/memio BLL hash mismatch");
+    if (snprintf(file_path, sizeof file_path, "%s/%s.lbl", directory, suite_name) >= (int)sizeof file_path ||
+        file_sha256(file_path, actual) != 0) return fail("math/memio labels hash unavailable");
+    SOURCE_RECORD_IS("labels_file_sha256", actual, "math/memio labels hash mismatch");
+    if (snprintf(expected_text, sizeof expected_text, "%u", meaningful) >= (int)sizeof expected_text) return 1;
+    SOURCE_RECORD_IS("meaningful_count", expected_text, "math/memio meaningful count mismatch");
+    if (snprintf(expected_text, sizeof expected_text, "%u", oracle.reserved_start[suite_index]) >= (int)sizeof expected_text) return 1;
+    SOURCE_RECORD_IS("reserved_start", expected_text, "math/memio reserved start mismatch");
+    if (snprintf(expected_text, sizeof expected_text, "%u", oracle.reserved_count[suite_index]) >= (int)sizeof expected_text) return 1;
+    SOURCE_RECORD_IS("reserved_count", expected_text, "math/memio reserved count mismatch");
+    if (snprintf(expected_text, sizeof expected_text, "%u", scoped_limit) >= (int)sizeof expected_text) return 1;
+    SOURCE_RECORD_IS("scoped_count", expected_text, "math/memio scoped count mismatch");
+    if (snprintf(expected_text, sizeof expected_text, "%u", scoped) >= (int)sizeof expected_text) return 1;
+    SOURCE_RECORD_IS("scoped_agreements", expected_text, "math/memio scoped agreement count mismatch");
+    if (snprintf(expected_text, sizeof expected_text, "%u", mismatches) >= (int)sizeof expected_text) return 1;
+    SOURCE_RECORD_IS("strict_mismatch_count", expected_text, "math/memio run strict count mismatch");
+    SOURCE_RECORD_IS("detected_model", profile, "math/memio guest model mismatch");
+    SOURCE_RECORD_IS("model_probe_bytes", profile_index_value == 0u ? "01,a1" : "00,a2", "math/memio model probe malformed");
+    if (timer_record_field(record_path, "ticks_observed", value, sizeof value) != 0 ||
+        parse_decimal(value, &tick_value) != 0 || tick_value < SOURCE_TICK_MIN || tick_value > SOURCE_TICK_MAX) {
+        return fail("math/memio observed guest ticks outside the named bound");
+    }
+    SOURCE_RECORD_IS("tick_min", "256", "math/memio tick minimum mismatch");
+    SOURCE_RECORD_IS("tick_max", "1000000", "math/memio tick maximum mismatch");
+    SOURCE_RECORD_IS("guest_window_ticks", "1000000", "math/memio guest window mismatch");
+#undef SOURCE_RECORD_IS
+    if (scoped != scoped_limit) return fail("math/memio arithmetic/register scoped comparison failed");
+    printf("math/memio record: suite=%s profile=%s raw=18 scoped=%u/%u strict_mismatches=%u guest_ticks=%u\n",
+           suite_name, profile, scoped, scoped_limit, mismatches, tick_value);
+    return 0;
+}
+
 static int audio_record_field(const char *path, const char *key,
                               char *value, size_t capacity)
 {
@@ -5717,6 +6552,18 @@ static int validate_cpu_record_mode(const char *selected_profile,
 
 int main(int argc, char **argv)
 {
+    if (argc == 3 && strcmp(argv[1], "validate-math-memio-oracle") == 0) {
+        suite_source_oracle oracle;
+        if (parse_math_memio_oracle(argv[2], &oracle) != 0) return 1;
+        puts("math/memio oracle: exact source groups, meaningful rows and reserved extents valid");
+        return 0;
+    }
+    if (argc == 7 && strcmp(argv[1], "observe") == 0 && strcmp(argv[2], "math-memio") == 0) {
+        return run_math_memio(argv[3], argv[4], argv[5], argv[6]);
+    }
+    if (argc == 6 && strcmp(argv[1], "validate-math-memio-record") == 0) {
+        return validate_math_memio_record_mode(argv[2], argv[3], argv[4], argv[5]);
+    }
     if (argc == 5 && strcmp(argv[1], "validate-audio-oracle") == 0) {
         suite_oracle legacy;
         suite_audio_oracle audio;

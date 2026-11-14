@@ -527,6 +527,9 @@ static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uin
         (video->dma_busy_until != 0u && video->dma_busy_until < DMA_GRANT_TICKS) ||
         (video->refresh_busy_until != 0u &&
          video->refresh_busy_until < DMA_GRANT_TICKS)) return 0;
+    for (size_t entry = 0u; entry < 16u; entry++) {
+        if ((video->palette[entry] & 0xF0u) != 0u) return 0;
+    }
     if (policy == LYNX_TIMING_POLICY_LEGACY_FLAT5) {
         return video->frame_synced == 0u && video->line_ordinal == 0u &&
                video->row_active == 0u && video->capture_rows == 0u &&
@@ -591,6 +594,11 @@ static int video_state_valid(const lynx__video_state *video, uint64_t ticks, uin
     if (used_rows > LYNX_FRAME_MAX_ROWS ||
         used_rows > rows_reachable_at_ordinal ||
         (used_rows != 0u && video->frame_synced == 0u)) return 0;
+    for (size_t row = 0u; row < used_rows; row++) {
+        for (size_t entry = 0u; entry < 16u; entry++) {
+            if ((video->palettes[row * 32u + entry] & 0xF0u) != 0u) return 0;
+        }
+    }
     if (!bytes_zero(video->pens + used_rows * LYNX_FRAME_ROW_BYTES,
                     sizeof video->pens - used_rows * LYNX_FRAME_ROW_BYTES) ||
         !bytes_zero(video->palettes + used_rows * 32u,

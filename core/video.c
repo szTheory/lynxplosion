@@ -112,7 +112,9 @@ bool lynx__video_write(lynx__video_state *video, uint16_t addr, uint8_t value)
         return true;
     }
     if (addr >= 0xFDA0u && addr <= 0xFDAFu) {
-        video->palette[addr - 0xFDA0u] = value;
+        /* Green carries only four color bits; keep the canonical device
+           backing and every later row snapshot within that representation. */
+        video->palette[addr - 0xFDA0u] = (uint8_t)(value & 0x0Fu);
         return true;
     }
     if (addr >= 0xFDB0u && addr <= 0xFDBFu) {

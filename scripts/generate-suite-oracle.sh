@@ -6,9 +6,10 @@ SOURCE_ARG=
 OUT_ARG=
 SHAPE_ONLY=0
 INCLUDE_AUDIO=0
+INCLUDE_MATH_MEMIO=0
 
 usage() {
-  printf 'usage: sh scripts/generate-suite-oracle.sh --source DIR [--include-audio] --out FILE\n' >&2
+  printf 'usage: sh scripts/generate-suite-oracle.sh --source DIR [--include-audio|--include-math-memio] --out FILE\n' >&2
   exit 2
 }
 while [ "$#" -gt 0 ]; do
@@ -16,6 +17,7 @@ while [ "$#" -gt 0 ]; do
     --source) if [ "$#" -lt 2 ] || [ -n "$SOURCE_ARG" ]; then usage; fi; SOURCE_ARG=$2; shift 2 ;;
     --out) if [ "$#" -lt 2 ] || [ -n "$OUT_ARG" ]; then usage; fi; OUT_ARG=$2; shift 2 ;;
     --include-audio) [ "$INCLUDE_AUDIO" -eq 0 ] || usage; INCLUDE_AUDIO=1; shift ;;
+    --include-math-memio) [ "$INCLUDE_MATH_MEMIO" -eq 0 ] || usage; INCLUDE_MATH_MEMIO=1; shift ;;
     --test-source-shape-only) [ "$SHAPE_ONLY" -eq 0 ] || usage; SHAPE_ONLY=1; shift ;;
     *) usage ;;
   esac
@@ -211,8 +213,14 @@ parse_source() {
         meaningful = 18
         if (expect_count != 18 || test_count != 7) reject("audio2 must have 18 expectations and seven cases")
         if (expect_sizes[9] != 2 || expected[9, 1] != 48 || expected[9, 2] != 52) reject("audio2 index 9 source alternative 30|34 lost")
+      } else if (suite == "math") {
+        meaningful = 16
+        if (result_count != 18 || expect_count != 18 || test_count != 8) reject("math must have an 18-byte extent, eight groups and 18 expectations")
+      } else if (suite == "memio") {
+        meaningful = 13
+        if (result_count != 18 || expect_count != 16 || test_count != 3) reject("memio must have an 18-byte extent, three groups and its 16 source initializers")
       } else reject("unknown suite")
-      if (suite == "audio" || suite == "audio2") {
+      if (suite == "audio" || suite == "audio2" || suite == "math" || suite == "memio") {
         if (found_names != 1 || names_open != 0 || name_count != test_count) reject("missing or malformed test labels")
         if (suite == "audio") {
           expected_name[1] = "CTLB RD/WR"
@@ -221,7 +229,7 @@ parse_source() {
           expected_name[4] = "MAX LENGTH"
           expected_name[5] = "CLIPPING"
           expected_name[6] = "LONG TEST"
-        } else {
+        } else if (suite == "audio2") {
           expected_name[1] = "LNK CH3 > T1"
           expected_name[2] = "LNK T7 > CH0"
           expected_name[3] = "LINK CHAIN"
@@ -229,6 +237,19 @@ parse_source() {
           expected_name[5] = "FEEDB CHANGE"
           expected_name[6] = "LFSR CHANGE"
           expected_name[7] = "VOLUME $00"
+        } else if (suite == "math") {
+          expected_name[1] = "SIMPLE MUL"
+          expected_name[2] = "ACCUM MUL"
+          expected_name[3] = "SIGNED MUL"
+          expected_name[4] = "MUL $8000 BUG"
+          expected_name[5] = "SIMPLE DIV"
+          expected_name[6] = "NO REM DIV"
+          expected_name[7] = "DIV BY ZERO"
+          expected_name[8] = "TIMING"
+        } else {
+          expected_name[1] = "MIKEY COLORS"
+          expected_name[2] = "SUZY SPR REGS"
+          expected_name[3] = "SUZY MIRRORS"
         }
         for (i = 1; i <= test_count; i++) {
           if (test_names[i] != expected_name[i]) reject("test label mismatch")
@@ -253,6 +274,9 @@ parse_source() {
       printf("result_count\t%d\n", result_count)
       printf("extent\t%d\n", assembly_extent)
       printf("meaningful\t%d\n", meaningful)
+      if (suite == "math" || suite == "memio") {
+        printf("reserved\t%d\t%d\n", meaningful, result_count - meaningful)
+      }
       if (suite == "cpu") {
         tuple = ""
         for (i = 1; i <= 4; i++) tuple = tuple (i == 1 ? "" : ",") bytehex(model_i[i])
@@ -261,14 +285,16 @@ parse_source() {
         for (i = 1; i <= 4; i++) tuple = tuple (i == 1 ? "" : ",") bytehex(model_ii[i])
         printf("tuple\tlynx2\t%s\n", tuple)
       }
-      for (i = 0; i < expect_count; i++) {
+      for (i = 0; i < meaningful; i++) {
         printf("result\t%d\t%d", i, expect_sizes[i])
         for (j = 1; j <= expect_sizes[i]; j++) printf("\t%s", bytehex(expected[i, j]))
         printf("\n")
       }
-      if (suite == "audio" || suite == "audio2") {
+      if (suite == "audio" || suite == "audio2" || suite == "math" || suite == "memio") {
         for (i = 1; i <= test_count; i++) {
-          printf("case\t%d\t%d\t%d\t%s\n", i - 1, offsets[i], test_lengths[i], test_names[i])
+          if (suite == "math") printf("group\t%d\t%d\t%d\t%s\t%s\n", i - 1, offsets[i], test_lengths[i], i == 8 ? "timing" : "arithmetic", test_names[i])
+          else if (suite == "memio") printf("group\t%d\t%d\t%d\tregister\t%s\n", i - 1, offsets[i], test_lengths[i], test_names[i])
+          else printf("case\t%d\t%d\t%d\t%s\n", i - 1, offsets[i], test_lengths[i], test_names[i])
         }
       }
     }
@@ -290,6 +316,10 @@ if [ "$SHAPE_ONLY" -eq 1 ]; then
     parse_source audio "$AUDIO_MAIN" "$AUDIO_ASM" >/dev/null
     parse_source audio2 "$AUDIO2_MAIN" "$AUDIO2_ASM" >/dev/null
   fi
+  if [ "$INCLUDE_MATH_MEMIO" -eq 1 ]; then
+    parse_source math "$SOURCE/math/main.c" "$SOURCE/math/tests.s" >/dev/null
+    parse_source memio "$SOURCE/memio/main.c" "$SOURCE/memio/tests.s" >/dev/null
+  fi
   exit 0
 fi
 
@@ -308,6 +338,14 @@ for relative in cpu/main.c cpu/tests.s timers/main.c timers/tests.s LICENSE; do
 done
 if [ "$INCLUDE_AUDIO" -eq 1 ]; then
   for relative in audio/main.c audio/tests.s audio2/main.c audio2/tests.s; do
+    [ -f "$SOURCE/$relative" ] || { printf 'suite oracle: pinned source missing: %s\n' "$relative" >&2; exit 1; }
+    actual=$(sha256 "$SOURCE/$relative")
+    expected=$(awk -v path="$relative" '$2 == path { print $1; found++ } END { if (found != 1) exit 1 }' "$SOURCE/.lynx-pin-files")
+    [ "$actual" = "$expected" ] || { printf 'suite oracle: pinned source hash mismatch: %s\n' "$relative" >&2; exit 1; }
+  done
+fi
+if [ "$INCLUDE_MATH_MEMIO" -eq 1 ]; then
+  for relative in math/main.c math/tests.s memio/main.c memio/tests.s; do
     [ -f "$SOURCE/$relative" ] || { printf 'suite oracle: pinned source missing: %s\n' "$relative" >&2; exit 1; }
     actual=$(sha256 "$SOURCE/$relative")
     expected=$(awk -v path="$relative" '$2 == path { print $1; found++ } END { if (found != 1) exit 1 }' "$SOURCE/.lynx-pin-files")
@@ -338,6 +376,17 @@ trap 'cleanup_temp' EXIT HUP INT TERM
 if [ ! -f "$TEMP" ] || [ -L "$TEMP" ]; then printf 'suite oracle: temporary output is not a regular file\n' >&2; exit 1; fi
 chmod 600 "$TEMP"
 
+if [ "$INCLUDE_MATH_MEMIO" -eq 1 ]; then
+{
+  printf 'LYNX-SUITE-MATH-MEMIO-ORACLE\t1\n'
+  printf 'archive\t%s\nrevision\t%s\n' "$PIN" "$REVISION"
+  printf 'license\t%s\n' "$(sha256 "$SOURCE/LICENSE")"
+  printf 'math_main\t%s\nmath_asm\t%s\n' "$(sha256 "$SOURCE/math/main.c")" "$(sha256 "$SOURCE/math/tests.s")"
+  printf 'memio_main\t%s\nmemio_asm\t%s\n' "$(sha256 "$SOURCE/memio/main.c")" "$(sha256 "$SOURCE/memio/tests.s")"
+  parse_source math "$SOURCE/math/main.c" "$SOURCE/math/tests.s"
+  parse_source memio "$SOURCE/memio/main.c" "$SOURCE/memio/tests.s"
+} > "$TEMP"
+else
 {
   printf 'LYNX-SUITE-ORACLE\t1\n'
   printf 'archive\t%s\nrevision\t%s\n' "$PIN" "$REVISION"
@@ -353,6 +402,7 @@ chmod 600 "$TEMP"
     parse_source audio2 "$AUDIO2_MAIN" "$AUDIO2_ASM"
   fi
 } > "$TEMP"
+fi
 mv -f -- "$TEMP" "$OUT"
 TEMP=
 trap - EXIT HUP INT TERM

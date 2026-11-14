@@ -6980,9 +6980,10 @@ static void check_mapped_opcode_fetches(void)
             const uint16_t address = device_addresses[route];
             const uint32_t mask = address == 0xFCB0u ? nop_mask : 0u;
             const uint32_t undefined_mask = address == 0xFCB0u ? bit_opcode_mask : 0u;
+            const uint8_t mapped_opcode = address == 0xFDA0u ? 0x0Au : 0xEAu;
             const char *route_name = address == 0xFCB0u ? "suzy" :
                                      address == 0xFDA0u ? "mikey-video" : "mikey-timer";
-            check_mapped_opcode_fetch(profiles[i], address, mask, 0xEAu, 0x07u, 0,
+            check_mapped_opcode_fetch(profiles[i], address, mask, mapped_opcode, 0x07u, 0,
                                       route_name);
             check_mapped_opcode_fetch(profiles[i], address, undefined_mask, 0x07u, 0xEAu,
                                       profiles[i] == LYNX_PROFILE_NONE, route_name);
@@ -7796,7 +7797,7 @@ enum { VIDEO_TEST_GUARD = 16 };
 
 static uint8_t video_test_green(uint8_t salt, unsigned entry)
 {
-    return (uint8_t)(0xA0u | ((entry * 3u + salt) & 0x0Fu));
+    return (uint8_t)((entry * 3u + salt) & 0x0Fu);
 }
 
 static uint8_t video_test_blue_red(uint8_t salt, unsigned entry)
@@ -9646,7 +9647,7 @@ static void case_video_reset_load(void)
                     other->video.input_mask == LYNX_INPUT_B,
                 "video_reset_load.instance-input-masks-independent");
     CHECK_NAMED(m->video.pens[0] != other->video.pens[0] &&
-                    m->video.palettes[0] == 0x31u && other->video.palettes[0] == 0xA7u,
+                    m->video.palettes[0] == 0x01u && other->video.palettes[0] == 0x07u,
                 "video_reset_load.instance-capture-and-palette-independent");
     CHECK_NAMED(m->video.dma_busy_until != 0u && other->video.dma_busy_until != 0u &&
                     ticks_of(m) == ticks_of(other),

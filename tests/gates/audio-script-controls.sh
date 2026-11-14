@@ -68,6 +68,7 @@ cp "$ROOT/scripts/build-suites.sh" "$FIXTURE/scripts/"
 cp "$ROOT/scripts/generate-suite-oracle.sh" "$FIXTURE/scripts/"
 cp "$ROOT/fixtures/suites/cpu-wrapper.s" "$ROOT/fixtures/suites/timers-wrapper.s" \
   "$ROOT/fixtures/suites/audio-wrapper.s" "$ROOT/fixtures/suites/audio2-wrapper.s" \
+  "$ROOT/fixtures/suites/math-wrapper.s" "$ROOT/fixtures/suites/memio-wrapper.s" \
   "$ROOT/fixtures/suites/bll.cfg" "$ROOT/fixtures/suites/NOTICE" "$FIXTURE/fixtures/suites/"
 cp "$ROOT/build/pins/lynx-tests/audio/main.c" "$WORK/audio-main.clean"
 cp "$ROOT/build/pins/lynx-tests/audio2/main.c" "$WORK/audio2-main.clean"

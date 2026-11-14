@@ -28,6 +28,35 @@ reader must request and validate the extended form explicitly. These objects
 and oracle rows are source-construction evidence; this plan makes no audio
 guest observation or hardware qualification claim.
 
+## Math and memio source observations
+
+`--include-math-memio` extends the source oracle with the unchanged pinned math
+and memio diagnostics. Math has eight groups: groups 1–7 cover arithmetic at
+indices 0–13 and group 8 records the Test 8 timing status/diagnostic at 14–15;
+16–17 are reserved. Memio has three groups at offsets 0, 4 and 8 with sizes
+4/4/5; indices 13–17 are reserved. Each observation retains all 18 bytes,
+compares the arithmetic/register subset separately from the strict full
+meaningful rows, and records the strict mismatch count before its verdict.
+
+Both source programs returned through the wrapper within the one-million guest
+tick bound on fresh Lynx I and Lynx II machines. Math matched all 14 scoped
+arithmetic bytes and all 16 meaningful source rows on each profile. Memio
+matched all 13 scoped register bytes and all 13 meaningful source rows after
+Green-register reads were masked to their low nibble in the device model.
+Every reserved byte was zero. The observed timing bytes are timing-test
+diagnostics, not a complete hardware latency trace.
+
+| Suite / profile | Guest ticks | Raw result bytes, indices 0–17 | Scoped result | Strict mismatches |
+| --- | ---: | --- | ---: | ---: |
+| math / lynx1 | 268,846 | `ff 00 ff 00 ff 00 ff 00 ff 00 ff 00 ff 00 ff 00 00 00` | 14/14 | 0 |
+| math / lynx2 | 268,831 | `ff 00 ff 00 ff 00 ff 00 ff 00 ff 00 ff 00 ff 00 00 00` | 14/14 | 0 |
+| memio / lynx1 | 77,151 | `00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00` | 13/13 | 0 |
+| memio / lynx2 | 77,171 | `00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00` | 13/13 | 0 |
+
+These are pinned-source observations of this deterministic software build.
+They do not establish physical Lynx accuracy or complete SUZ-02 agreement; the
+separate D-10 timer-source disagreement and EVD-02 evidence stop remain intact.
+
 ## CPU observations
 
 The two explicit profile runs complete with guest progress `8`, a guest-written

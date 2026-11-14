@@ -40,6 +40,11 @@ entries. The complete video record is 12,344 bytes.
 | 8,264 | 3,264 | captured per-row palettes |
 | 11,528 | 816 | 102 line-start ticks |
 
+The first 16 current palette bytes and each captured row's first 16 palette
+bytes represent Green values and must have a zero high nibble. Snapshot restore
+rejects records that violate this canonical device state; the remaining 16
+Blue/Red values preserve their full register byte.
+
 The audio envelope begins at payload offset `77948` and is 160 bytes. Its
 fieldwise little-endian layout is:
 

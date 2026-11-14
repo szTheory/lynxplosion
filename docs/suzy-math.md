@@ -22,6 +22,14 @@ pinned Memio diagnostic has three cases whose meaningful result ranges end at
 offsets 3, 7 and 12; later result bytes are reserved. These source files are
 unchanged, and their comments are not treated as hardware measurements.
 
+The source-built math observation completes all eight groups on both selected
+profiles with 14/14 scoped arithmetic bytes accepted. Its timing status and
+diagnostic bytes remain separately visible and are not a complete latency
+trace. The memio source observation exposed and now checks the Green palette
+register's four-bit readback; Blue/Red registers preserve their full byte.
+These source results agree with the current deterministic software behavior,
+not with a physical unit or the complete SUZ-02 contract.
+
 The selected timing constants below are deterministic guest-time policy. No
 row-based parameter fitting was performed. No emulator implementation source,
 BIOS, firmware, commercial ROM or diagnostic payload is included in this
