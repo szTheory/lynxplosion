@@ -45,6 +45,8 @@ matched all 13 scoped register bytes and all 13 meaningful source rows after
 Green-register reads were masked to their low nibble in the device model.
 Every reserved byte was zero. The observed timing bytes are timing-test
 diagnostics, not a complete hardware latency trace.
+The required profile selection covers 14 observations across CPU, timers,
+page mode, audio, audio2, math and memio on Lynx I and Lynx II.
 
 | Suite / profile | Guest ticks | Raw result bytes, indices 0–17 | Scoped result | Strict mismatches |
 | --- | ---: | --- | ---: | ---: |

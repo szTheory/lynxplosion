@@ -6296,7 +6296,9 @@ static int validate_selection_mode(const char *required, const char *controls)
         "suite.timers.observation.lynx1", "suite.timers.observation.lynx2",
         "suite.page_mode.observation.lynx1", "suite.page_mode.observation.lynx2",
         "suite.audio.observation.lynx1", "suite.audio.observation.lynx2",
-        "suite.audio2.observation.lynx1", "suite.audio2.observation.lynx2"
+        "suite.audio2.observation.lynx1", "suite.audio2.observation.lynx2",
+        "suite.math.observation.lynx1", "suite.math.observation.lynx2",
+        "suite.memio.observation.lynx1", "suite.memio.observation.lynx2"
     };
     static const char *const control_ids[] = {
         "suite.cpu.no_run", "suite.timers.no_run",
@@ -6308,7 +6310,7 @@ static int validate_selection_mode(const char *required, const char *controls)
                                 sizeof required_ids / sizeof required_ids[0]) != 0 ||
         validate_selection_list(controls, "control", control_ids,
                                 sizeof control_ids / sizeof control_ids[0]) != 0) return 1;
-    puts("suite selection: required=10 controls=8 inventory complete");
+    puts("suite selection: required=14 controls=8 inventory complete");
     return 0;
 }
 
