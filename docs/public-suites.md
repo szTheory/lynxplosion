@@ -45,13 +45,21 @@ matched all 13 scoped register bytes and all 13 meaningful source rows after
 Green-register reads were masked to their low nibble in the device model.
 Every reserved byte was zero. The observed timing bytes are timing-test
 diagnostics, not a complete hardware latency trace.
+At the completion sentinel, the observer reads CPU PC and S through the
+register inspection API. It requires PC at the linked `suite_idle` loop after
+the linked `suite_after_tests` continuation and `suite_test_return` RTS, with
+the wrapper stack restored to `$FF`. The run record stores those linked
+addresses alongside the observed PC and S; the independent record reader
+checks the values against the linked object and labels instead of accepting a
+fixed return claim.
 The required profile selection covers 14 observations across CPU, timers,
 page mode, audio, audio2, math and memio on Lynx I and Lynx II. The control
 selection now contains 12 named cases. Math controls reject no-run/missing
 captures, replace stale prior outputs through a new guest run, and corrupt one
 arithmetic result in each of groups 1–7. Memio controls corrupt one result in
 each of its three register groups and reject wrong model, object and label
-identities. The source controls exercise 14 unique copied-source, builder,
+identities. Math controls also reject a wrong observed return PC and missing
+restored-stack evidence. The source controls exercise 14 unique copied-source, builder,
 tool, object, label, notice and reserved-range faults. Strict comparison
 controls independently alter timing offsets 14 and 15: each complete record
 still passes the 14/14 arithmetic gate, while the strict validator fails and

@@ -59,8 +59,8 @@ enum {
 };
 
 typedef struct suite_symbols {
-    uint32_t value[14];
-    uint8_t found[14];
+    uint32_t value[15];
+    uint8_t found[15];
 } suite_symbols;
 
 typedef struct suite_oracle {
@@ -172,11 +172,11 @@ typedef struct atomic_output {
     char final_path[4096];
 } atomic_output;
 
-static const char *const symbol_names[14] = {
+static const char *const symbol_names[15] = {
     "suite_entry", "suite_test_entry", "_g_results", "suite_result_end",
     "suite_progress", "suite_model", "suite_done", "suite_end",
     "_run_tests", "suite_first_test", "suite_first_mapped", "suite_probe_result",
-    "suite_test_return", "suite_after_tests"
+    "suite_test_return", "suite_after_tests", "suite_idle"
 };
 
 static int fail(const char *reason)
@@ -1107,7 +1107,7 @@ static int symbol_target(const char *name)
 {
     size_t i;
     if (name[0] == '.') name++;
-    for (i = 0u; i < 14u; i++) if (strcmp(name, symbol_names[i]) == 0) return (int)i;
+    for (i = 0u; i < 15u; i++) if (strcmp(name, symbol_names[i]) == 0) return (int)i;
     return -1;
 }
 
@@ -4013,20 +4013,36 @@ static int source_symbol_layout(const char *labels, size_t labels_length,
 {
     uint32_t return_offset;
     uint32_t after_offset;
+    uint32_t idle_offset;
     if (parse_symbols(labels, labels_length, symbols) != 0 ||
         ranges_valid(symbols, RESULT_EXTENT) != 0 || symbols->found[12] == 0u ||
-        symbols->found[13] == 0u || symbols->value[1] != symbols->value[8] ||
+        symbols->found[13] == 0u || symbols->found[14] == 0u || symbols->value[1] != symbols->value[8] ||
         symbols->value[12] < 0x01F7u || symbols->value[13] < 0x01F9u ||
         symbols->value[12] - 0x01F6u >= bll_length ||
         symbols->value[13] - 0x01F6u < 3u || symbols->value[13] - 0x01F6u >= bll_length ||
+        symbols->value[13] > LYNX_ADDRESS_SPACE - 10u ||
+        symbols->value[14] != symbols->value[13] + 10u ||
+        symbols->value[14] - 0x01F6u >= bll_length ||
         symbols->value[7] < BLL_HEADER_SIZE || symbols->value[7] - 0x01F6u != bll_length) {
         return fail("math/memio symbol extent or wrapper boundary invalid");
     }
     return_offset = symbols->value[12] - 0x01F6u;
     after_offset = symbols->value[13] - 0x01F6u;
-    if (bll[return_offset] != 0x60u || bll[after_offset - 3u] != 0x20u ||
+    idle_offset = symbols->value[14] - 0x01F6u;
+    if (idle_offset + 2u >= bll_length || bll[return_offset] != 0x60u ||
+        bll[after_offset - 3u] != 0x20u ||
         bll[after_offset - 2u] != (uint8_t)symbols->value[8] ||
-        bll[after_offset - 1u] != (uint8_t)(symbols->value[8] >> 8)) {
+        bll[after_offset - 1u] != (uint8_t)(symbols->value[8] >> 8) ||
+        bll[after_offset] != 0xA9u || bll[after_offset + 1u] != 0x08u ||
+        bll[after_offset + 2u] != 0x8Du ||
+        bll[after_offset + 3u] != (uint8_t)symbols->value[4] ||
+        bll[after_offset + 4u] != (uint8_t)(symbols->value[4] >> 8) ||
+        bll[after_offset + 5u] != 0xA9u || bll[after_offset + 6u] != 0xA5u ||
+        bll[after_offset + 7u] != 0x8Du ||
+        bll[after_offset + 8u] != (uint8_t)symbols->value[6] ||
+        bll[after_offset + 9u] != (uint8_t)(symbols->value[6] >> 8) ||
+        bll[idle_offset] != 0x4Cu || bll[idle_offset + 1u] != (uint8_t)symbols->value[14] ||
+        bll[idle_offset + 2u] != (uint8_t)(symbols->value[14] >> 8)) {
         return fail("math/memio source return gate does not match the linked wrapper");
     }
     return 0;
@@ -4122,7 +4138,9 @@ static int write_source_run_record(const char *path, const char *build_directory
                                    const char *raw_path, const char *comparison_path,
                                    uint64_t ticks, uint8_t probe, uint8_t marker,
                                    uint8_t progress, int detected_model,
-                                   uint32_t scoped_agreements, uint32_t strict_mismatches)
+                                   uint32_t scoped_agreements, uint32_t strict_mismatches,
+                                   const suite_symbols *symbols, uint32_t runtime_pc,
+                                   uint32_t runtime_stack)
 {
     atomic_output output = {0};
     FILE *file;
@@ -4178,7 +4196,9 @@ static int write_source_run_record(const char *path, const char *build_directory
         "scoped_count=%u\nscoped_agreements=%u\nstrict_mismatch_count=%u\n"
         "tick_min=%u\ntick_max=%u\nticks_observed=%" PRIu64 "\n"
         "guest_window_ticks=%u\ncompletion_sentinel=a5\nguest_progress=%u\n"
-        "guest_return=source-call-returned\nsource_group_count=%u\n"
+        "source_call_return_label=suite_after_tests@%04x\nsource_runner_rts_label=suite_test_return@%04x\n"
+        "post_return_idle_label=suite_idle@%04x\nguest_pc_observed=%04x\nguest_s_observed=%02x\n"
+        "source_group_count=%u\n"
         "timing_policy=%s\nhardware_accuracy=unverified\nprofile_qualification=unresolved\n",
         suite, profile, profile, detected_model < 0 ? "unknown" : profile_label((unsigned)detected_model),
         probe, marker, oracle->main_sha256[suite_index], oracle->asm_sha256[suite_index], wrapper_sha,
@@ -4186,7 +4206,9 @@ static int write_source_run_record(const char *path, const char *build_directory
         build_sha, oracle_sha, raw_sha, comparison_sha, meaningful,
         oracle->reserved_start[suite_index], oracle->reserved_count[suite_index], scoped_count,
         scoped_agreements, strict_mismatches, SOURCE_TICK_MIN, SOURCE_TICK_MAX, ticks,
-        SOURCE_TICK_MAX, (unsigned)progress, oracle->group_count[suite_index],
+        SOURCE_TICK_MAX, (unsigned)progress, (unsigned)symbols->value[13],
+        (unsigned)symbols->value[12], (unsigned)symbols->value[14], (unsigned)runtime_pc,
+        (unsigned)runtime_stack, oracle->group_count[suite_index],
         identity->timing_policy == LYNX_TIMING_POLICY_LEGACY_FLAT5 ? "legacy-flat5" : "unknown");
     if (atomic_output_commit(&output) != 0) return fail("cannot close math/memio run record");
     return 0;
@@ -4211,11 +4233,13 @@ static int run_math_memio(const char *suite_name, const char *profile,
     lynx_watch_event event;
     uint8_t results[RESULT_EXTENT];
     uint8_t progress = 0u, done = 0u, model = 0u, probe = 0u;
+    uint32_t runtime_pc = 0u, runtime_stack = 0u;
     unsigned suite_index, profile_number;
     uint32_t machine_profile;
     uint64_t total_consumed = 0u, ticks = 0u;
     uint32_t scoped_agreements = 0u, strict_mismatches = 0u;
-    int clear_seen = 0, started_seen = 0, complete = 0, detected_model = -1, result = 1;
+    int clear_seen = 0, started_seen = 0, complete = 0, return_observed = 0;
+    int detected_model = -1, result = 1;
     if (source_suite_index(suite_name, &suite_index) != 0 || profile_index(profile, &profile_number) != 0 ||
         validate_owned_output_directory(directory) != 0 || parse_math_memio_oracle(oracle_path, &oracle) != 0 ||
         verify_math_memio_build_identity(directory, &oracle) != 0) {
@@ -4325,6 +4349,13 @@ static int run_math_memio(const char *suite_name, const char *profile,
                 continue;
             }
             if (event.value == 0xA5u && clear_seen != 0 && progress == 8u && started_seen != 0) {
+                if (lynx_read_register(instance.machine, LYNX_REG_PC, &runtime_pc) != LYNX_OK ||
+                    lynx_read_register(instance.machine, LYNX_REG_S, &runtime_stack) != LYNX_OK ||
+                    runtime_pc != symbols.value[14] || runtime_stack != 0xFFu) {
+                    (void)fail("math/memio runtime source-return PC or restored stack does not match linked boundary");
+                    goto done;
+                }
+                return_observed = 1;
                 complete = 1;
                 break;
             }
@@ -4336,7 +4367,7 @@ static int run_math_memio(const char *suite_name, const char *profile,
             goto done;
         }
     }
-    if (validate_guest_completion(&instance, &symbols, suite_name,
+    if (return_observed == 0 || validate_guest_completion(&instance, &symbols, suite_name,
                                   memcmp(&initial_cpu, &instance.machine->cpu, sizeof initial_cpu) != 0,
                                   complete, clear_seen, ticks, total_consumed, SOURCE_TICK_MIN,
                                   SOURCE_TICK_MAX, &done, &progress, &model, &probe) != 0 ||
@@ -4355,7 +4386,8 @@ static int run_math_memio(const char *suite_name, const char *profile,
         write_source_run_record(record_path, directory, suite_name, profile, &oracle, suite_index,
                                 &identity, bll_sha, labels_sha, oracle_sha, raw_path,
                                 comparison_path, ticks, probe, model, progress, detected_model,
-                                scoped_agreements, strict_mismatches) != 0) goto done;
+                                scoped_agreements, strict_mismatches, &symbols,
+                                runtime_pc, runtime_stack) != 0) goto done;
     printf("math/memio observation complete: suite=%s profile=%s ticks=%" PRIu64
            " progress=%u raw=18 scoped=%u/%u strict_mismatches=%u\n",
            suite_name, profile, ticks, (unsigned)progress, scoped_agreements,
@@ -4368,6 +4400,53 @@ static int run_math_memio(const char *suite_name, const char *profile,
     result = 0;
 done:
     machine_destroy(&instance);
+    free(labels);
+    free(bll);
+    return result;
+}
+
+static int validate_math_memio_return_evidence(const char *record_path,
+                                               const char *directory,
+                                               const char *suite_name)
+{
+    uint8_t *bll = NULL;
+    size_t bll_length = 0u;
+    char *labels = NULL;
+    size_t labels_length = 0u;
+    char bll_path[4096], labels_path[4096], value[128], expected[96];
+    uint32_t runtime_pc;
+    uint8_t runtime_stack;
+    suite_symbols symbols;
+    int result = 1;
+    if (snprintf(bll_path, sizeof bll_path, "%s/%s.bll", directory, suite_name) >= (int)sizeof bll_path ||
+        snprintf(labels_path, sizeof labels_path, "%s/%s.lbl", directory, suite_name) >= (int)sizeof labels_path ||
+        read_file(bll_path, &bll, &bll_length, 65536u) != 0 ||
+        read_text(labels_path, &labels, &labels_length, 16384u) != 0 ||
+        source_symbol_layout(labels, labels_length, bll, bll_length, &symbols) != 0) {
+        (void)fail("math/memio linked return boundary could not be verified");
+        goto done;
+    }
+    if (snprintf(expected, sizeof expected, "suite_after_tests@%04x", (unsigned)symbols.value[13]) >= (int)sizeof expected ||
+        timer_record_field(record_path, "source_call_return_label", value, sizeof value) != 0 ||
+        strcmp(value, expected) != 0 ||
+        snprintf(expected, sizeof expected, "suite_test_return@%04x", (unsigned)symbols.value[12]) >= (int)sizeof expected ||
+        timer_record_field(record_path, "source_runner_rts_label", value, sizeof value) != 0 ||
+        strcmp(value, expected) != 0 ||
+        snprintf(expected, sizeof expected, "suite_idle@%04x", (unsigned)symbols.value[14]) >= (int)sizeof expected ||
+        timer_record_field(record_path, "post_return_idle_label", value, sizeof value) != 0 ||
+        strcmp(value, expected) != 0) {
+        (void)fail("math/memio source return boundary evidence missing or mismatched");
+        goto done;
+    }
+    if (timer_record_field(record_path, "guest_pc_observed", value, sizeof value) != 0 ||
+        parse_symbol_address(value, &runtime_pc) != 0 || runtime_pc != symbols.value[14] ||
+        timer_record_field(record_path, "guest_s_observed", value, sizeof value) != 0 ||
+        parse_byte(value, &runtime_stack) != 0 || runtime_stack != 0xFFu) {
+        (void)fail("math/memio runtime PC or restored stack does not match linked return boundary");
+        goto done;
+    }
+    result = 0;
+done:
     free(labels);
     free(bll);
     return result;
@@ -4536,12 +4615,12 @@ static int validate_math_memio_record_mode(const char *suite_name, const char *p
         timer_record_is(record_path, "suite", suite_name, "math/memio run record suite mismatch") != 0 ||
         timer_record_is(record_path, "machine_profile", profile, "math/memio run record profile mismatch") != 0 ||
         timer_record_is(record_path, "profile_input", profile, "math/memio run record profile input mismatch") != 0 ||
-        timer_record_is(record_path, "guest_return", "source-call-returned", "math/memio source return evidence missing") != 0 ||
         timer_record_is(record_path, "completion_sentinel", "a5", "math/memio completion sentinel mismatch") != 0 ||
         timer_record_is(record_path, "hardware_accuracy", "unverified", "math/memio hardware claim mismatch") != 0 ||
         timer_record_is(record_path, "profile_qualification", "unresolved", "math/memio qualification claim mismatch") != 0) {
         return fail("math/memio execution-envelope record identity invalid");
     }
+    if (validate_math_memio_return_evidence(record_path, directory, suite_name) != 0) return 1;
 #define SOURCE_RECORD_IS(key, expected_value, diagnostic) \
     do { if (timer_record_is(record_path, (key), (expected_value), (diagnostic)) != 0) return 1; } while (0)
     SOURCE_RECORD_IS("result_extent", "18", "math/memio run result extent mismatch");

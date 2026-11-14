@@ -2499,13 +2499,18 @@ elseif(FAILURE STREQUAL "" AND MODE MATCHES "^(math_controls|memio_controls)$")
     file(WRITE "${control_record}" "${changed_record}")
     expect_failure("math/memio progress evidence mismatch"
       "${TEST_BINARY}" validate-math-memio-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
-    string(REPLACE "guest_return=source-call-returned\n" "guest_return=source-call-incomplete\n" changed_record "${record_baseline}")
+    string(REGEX REPLACE "guest_pc_observed=[0-9a-f]+\n" "guest_pc_observed=0000\n"
+      changed_record "${record_baseline}")
     file(WRITE "${control_record}" "${changed_record}")
-    expect_failure("math/memio source return evidence missing"
+    expect_failure("math/memio runtime PC or restored stack does not match linked return boundary"
+      "${TEST_BINARY}" validate-math-memio-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
+    string(REPLACE "guest_s_observed=ff\n" "" changed_record "${record_baseline}")
+    file(WRITE "${control_record}" "${changed_record}")
+    expect_failure("math/memio runtime PC or restored stack does not match linked return boundary"
       "${TEST_BINARY}" validate-math-memio-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
     file(WRITE "${control_record}" "${record_baseline}")
 
-    set(actual_cases "math.lynx1.no_run;math.lynx1.prior_outputs_replaced;math.lynx1.missing_raw;math.lynx1.wrong_profile;math.lynx1.lowered_bound;math.lynx1.missing_progress;math.lynx1.missing_return")
+    set(actual_cases "math.lynx1.no_run;math.lynx1.prior_outputs_replaced;math.lynx1.missing_raw;math.lynx1.wrong_profile;math.lynx1.lowered_bound;math.lynx1.missing_progress;math.lynx1.wrong_runtime_pc;math.lynx1.missing_runtime_stack")
     foreach(group 0 1 2 3 4 5 6)
       math(EXPR result_index "${group} * 2")
       set(line_prefix "result${control_tab}${result_index}${control_tab}")
@@ -2539,7 +2544,7 @@ elseif(FAILURE STREQUAL "" AND MODE MATCHES "^(math_controls|memio_controls)$")
       message(STATUS "${mutant_out}")
       list(APPEND actual_cases "math.lynx1.core_fault_${fault}")
     endforeach()
-    set(expected_cases "math.lynx1.no_run;math.lynx1.prior_outputs_replaced;math.lynx1.missing_raw;math.lynx1.wrong_profile;math.lynx1.lowered_bound;math.lynx1.missing_progress;math.lynx1.missing_return;math.lynx1.arithmetic_group_0;math.lynx1.arithmetic_group_1;math.lynx1.arithmetic_group_2;math.lynx1.arithmetic_group_3;math.lynx1.arithmetic_group_4;math.lynx1.arithmetic_group_5;math.lynx1.arithmetic_group_6;math.lynx1.core_fault_result;math.lynx1.core_fault_alias;math.lynx1.core_fault_completion")
+    set(expected_cases "math.lynx1.no_run;math.lynx1.prior_outputs_replaced;math.lynx1.missing_raw;math.lynx1.wrong_profile;math.lynx1.lowered_bound;math.lynx1.missing_progress;math.lynx1.wrong_runtime_pc;math.lynx1.missing_runtime_stack;math.lynx1.arithmetic_group_0;math.lynx1.arithmetic_group_1;math.lynx1.arithmetic_group_2;math.lynx1.arithmetic_group_3;math.lynx1.arithmetic_group_4;math.lynx1.arithmetic_group_5;math.lynx1.arithmetic_group_6;math.lynx1.core_fault_result;math.lynx1.core_fault_alias;math.lynx1.core_fault_completion")
   else()
     string(REPLACE "detected_model=lynx2\n" "detected_model=lynx1\n" changed_record "${record_baseline}")
     file(WRITE "${control_record}" "${changed_record}")

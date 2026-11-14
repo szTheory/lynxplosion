@@ -15,7 +15,7 @@ bll_header:
         .export suite_entry, suite_test_entry, suite_result_end
         .export suite_progress, suite_model, suite_done
         .export suite_first_test, suite_first_mapped, suite_probe_result
-        .export suite_test_return, suite_after_tests
+        .export suite_test_return, suite_after_tests, suite_idle
         suite_test_entry = _run_tests
         ; The pinned runner is SEI, three test JSRs, CLI, RTS.
         suite_test_return = _run_tests + 11
