@@ -335,11 +335,11 @@ is not implied by scoped arithmetic/register checks.
   4. Source-built math/memio observations on both CPU profiles have completed
      bounded progress, exact inventories and negative controls. Timing rows
      and strict mismatches remain visible without a whole-suite accuracy claim.
-**Plans:** 1/4 plans executed
+**Plans:** 2/4 plans executed
 
 Plans:
 - [x] 07-01-PLAN.md — Complete mapped unsigned tracer and coherent state integration
-- [ ] 07-02-PLAN.md — Arithmetic, aliases, lifecycle and independent faults (after 07-01)
+- [x] 07-02-PLAN.md — Arithmetic, aliases, lifecycle and independent faults (after 07-01)
 - [ ] 07-03-PLAN.md — Source-built math/memio evidence and strict timing visibility (after 07-02)
 - [ ] 07-04-PLAN.md — Independent review and exact-source qualification (after 07-03)
 
@@ -371,4 +371,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Timers, Interrupts and First Public Suites | 12/12 | Complete    | 2026-11-11 |
 | 5. Display, Raw Video and Input | 12/12 | Complete    | 2026-11-12 |
 | 6. Audio and Playable Checkpoint | 12/12 | Complete    | 2026-11-13 |
-| 7. Suzy Math and Register Mirrors | 1/4 | Planning | — |
+| 7. Suzy Math and Register Mirrors | 2/4 | Planning | — |
