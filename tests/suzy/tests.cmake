@@ -7,3 +7,4 @@ set_target_properties(lynx-test-suzy PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJE
 
 lynx_add_test(NAME suzy.tracer COMMAND lynx-test-suzy tracer LABELS suzy TIMEOUT 60)
 lynx_add_test(NAME suzy.snapshot_tracer COMMAND lynx-test-suzy snapshot_tracer LABELS suzy TIMEOUT 60)
+lynx_add_test(NAME suzy.arithmetic COMMAND lynx-test-suzy arithmetic LABELS suzy TIMEOUT 60)

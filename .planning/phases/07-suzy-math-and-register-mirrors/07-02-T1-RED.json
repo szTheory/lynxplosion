@@ -1,0 +1,10 @@
+{
+  "command": "build/check/tests/lynx-test-suzy arithmetic",
+  "exitCode": 1,
+  "output": "TAP version 13\n1..1\nnot ok 1 - suzy.arithmetic\n",
+  "targetTest": "suzy.arithmetic",
+  "targetFile": "tests/suzy/test_suzy.c",
+  "expected": "the explicit signed multiply completes with LYNX_STOP_BUDGET and exposes FFFFFFF1",
+  "actual": "guest write to FC55 returned LYNX_STOP_UNAVAILABLE at tick 155; product remains 00000000",
+  "semanticAssessment": "The target TAP test executed on Lynx1 and Lynx2. Both failures are mapped guest behavior: current core refused the signed operation at its FC55 trigger before completion; it was not a compile, load, fixture, or discovery failure."
+}

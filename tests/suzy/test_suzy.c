@@ -65,6 +65,53 @@ static size_t make_object(uint8_t object[138])
     return object_len;
 }
 
+static size_t emit_write(uint8_t *program, size_t *length, uint16_t addr, uint8_t value)
+{
+    append(program, length, 0xA9u); /* LDA #value */
+    append(program, length, value);
+    append(program, length, 0x8Du); /* STA address */
+    append(program, length, (uint8_t)addr);
+    append(program, length, (uint8_t)(addr >> 8));
+    return *length;
+}
+
+static size_t make_arithmetic_guest(uint8_t *program, uint16_t load_addr)
+{
+    size_t length = 0u;
+    append(program, &length, 0x78u); /* SEI */
+    (void)emit_write(program, &length, 0xFC92u, 0x80u); /* signed mode */
+    (void)emit_write(program, &length, 0xFC52u, 0xFDu); /* CD low */
+    (void)emit_write(program, &length, 0xFC53u, 0xFFu); /* explicit CD high/sign */
+    (void)emit_write(program, &length, 0xFC54u, 0x05u); /* AB low */
+    (void)emit_write(program, &length, 0xFC55u, 0x00u); /* explicit AB high/start */
+    const uint16_t loop_addr = (uint16_t)(load_addr + (uint16_t)length);
+    append(program, &length, 0x4Cu); /* JMP loop */
+    append(program, &length, (uint8_t)loop_addr);
+    append(program, &length, (uint8_t)(loop_addr >> 8));
+    return length;
+}
+
+static size_t make_program_object(uint8_t *object, size_t capacity,
+                                 const uint8_t *program, size_t program_len,
+                                 uint16_t load_addr)
+{
+    const size_t header_len = 10u;
+    const size_t object_len = header_len + program_len;
+    if (object_len > capacity || object_len > UINT16_MAX) return 0u;
+    object[0] = 0x80u;
+    object[1] = 0x08u;
+    object[2] = (uint8_t)(load_addr >> 8);
+    object[3] = (uint8_t)load_addr;
+    object[4] = (uint8_t)(object_len >> 8);
+    object[5] = (uint8_t)object_len;
+    object[6] = 'B';
+    object[7] = 'S';
+    object[8] = '9';
+    object[9] = '3';
+    memcpy(object + header_len, program, program_len);
+    return object_len;
+}
+
 static lynx_machine *make_machine(uint32_t profile, void **allocation)
 {
     const size_t alignment = lynx_machine_align();
@@ -288,19 +335,64 @@ static int case_snapshot_tracer(void)
     return check_failures == 0 ? 0 : 1;
 }
 
+static void run_signed_arithmetic_profile(uint32_t profile)
+{
+    enum { LOAD_ADDRESS = 0x0200u };
+    uint8_t program[64];
+    uint8_t object[128];
+    const size_t program_len = make_arithmetic_guest(program, LOAD_ADDRESS);
+    const size_t object_len = make_program_object(object, sizeof object, program,
+                                                   program_len, LOAD_ADDRESS);
+    CHECK(object_len != 0u);
+    void *allocation = NULL;
+    lynx_machine *machine = make_machine(profile, &allocation);
+    if (machine == NULL) {
+        free(allocation);
+        return;
+    }
+    CHECK_EQ_U64(lynx_load_bll(machine, object, object_len), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    CHECK_EQ_U64(lynx_advance(machine, 12000u, &consumed, &stop), LYNX_OK);
+    if (stop != LYNX_STOP_BUDGET) {
+        fprintf(stderr, "suzy.arithmetic: signed mapped multiply must complete; stop=%u tick=%llu\n",
+                (unsigned)stop, (unsigned long long)consumed);
+    }
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 12000u);
+    uint8_t product[4] = {0u};
+    CHECK_EQ_U64(lynx_read_cpu_memory(machine, 0xFC60u, product, sizeof product), LYNX_OK);
+    CHECK_EQ_HEX(product[0], 0xF1u);
+    CHECK_EQ_HEX(product[1], 0xFFu);
+    CHECK_EQ_HEX(product[2], 0xFFu);
+    CHECK_EQ_HEX(product[3], 0xFFu);
+    lynx_machine_deinit(machine);
+    free(allocation);
+}
+
+static int case_arithmetic(void)
+{
+    run_signed_arithmetic_profile(LYNX_PROFILE_LYNX1);
+    run_signed_arithmetic_profile(LYNX_PROFILE_LYNX2);
+    return check_failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2 || argv[1] == NULL || argv[1][0] == '\0') {
         fprintf(stderr, "usage: lynx-test-suzy <case>\n");
         return 2;
     }
-    if (strcmp(argv[1], "tracer") != 0 && strcmp(argv[1], "snapshot_tracer") != 0) {
+    if (strcmp(argv[1], "tracer") != 0 && strcmp(argv[1], "snapshot_tracer") != 0 &&
+        strcmp(argv[1], "arithmetic") != 0) {
         fprintf(stderr, "lynx-test-suzy: unknown case '%s'\n", argv[1]);
         return 2;
     }
     printf("TAP version 13\n1..1\n");
-    const bool snapshot = strcmp(argv[1], "snapshot_tracer") == 0;
-    const int result = snapshot ? case_snapshot_tracer() : case_tracer();
+    int result = 0;
+    if (strcmp(argv[1], "snapshot_tracer") == 0) result = case_snapshot_tracer();
+    else if (strcmp(argv[1], "arithmetic") == 0) result = case_arithmetic();
+    else result = case_tracer();
     printf("%s 1 - suzy.%s\n", result == 0 ? "ok" : "not ok", argv[1]);
     return result;
 }
