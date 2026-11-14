@@ -53,7 +53,7 @@ findings:
   info: 0
   total: 3
   necessity: 0
-status: issues_found
+status: resolved
 ---
 
 # Phase 07: Code Review Report
@@ -106,3 +106,12 @@ if (span == 0u || start >= meaningful || span > meaningful - start) {
 _Reviewed: 2026-11-14T04:32:54Z_  
 _Reviewer: the agent (gsd-code-reviewer)_  
 _Depth: standard_
+
+## Resolution
+
+- CR-01: fixed in `0fe0734` (overflow-safe range check; regression control).
+- WR-01: fixed in `7848e48` (runtime return boundary verified).
+- WR-02: fixed in `612c1e4` (eight hostile strict-record controls).
+- Independent security audit finding T-07-03 (coarse advance past a pending
+  Suzy deadline): fixed in `b287750` with `suzy.coarse_deadline`; claim rebound
+  in `3b50de6`. See 07-SECURITY.md and 07-QUALIFICATION.md.

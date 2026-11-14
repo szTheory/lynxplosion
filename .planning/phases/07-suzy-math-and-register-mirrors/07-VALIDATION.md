@@ -1,9 +1,9 @@
 ---
 phase: 07
 slug: suzy-math-and-register-mirrors
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-11-13
 ---
 

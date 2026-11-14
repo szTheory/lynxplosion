@@ -120,16 +120,16 @@ Owner-selected 2026-11-13 after the inline progress recommendation. These
 requirements add a software-only Phase 7 to the open milestone. They do not
 complete EVD-02 or promote the broader deferred SUZ-02 whole-suite obligation.
 
-- [ ] **SMR-01**: CPU and public inspection use the same Suzy register/mirror
+- [x] **SMR-01**: CPU and public inspection use the same Suzy register/mirror
   decoding and byte-write side effects; existing mapped input and unsupported
   mixed-span refusal guarantees remain covered.
-- [ ] **SMR-02**: Multiply/divide, signed arithmetic, accumulation and status
+- [x] **SMR-02**: Multiply/divide, signed arithmetic, accumulation and status
   flags agree with independent vectors and the scoped pinned arithmetic and
   register comparisons, including divide-by-zero and documented edge cases.
-- [ ] **SMR-03**: Math busy/completion is driven by deterministic guest time;
+- [x] **SMR-03**: Math busy/completion is driven by deterministic guest time;
   reset and snapshot continuation/refusal are verified at operation boundaries
   and during work, including coarse/sliced advance and independent instances.
-- [ ] **SMR-04**: Source-built pinned math/memio observations have exact result
+- [x] **SMR-04**: Source-built pinned math/memio observations have exact result
   inventories and real completion/bounds/negative controls on both CPU
   profiles. Arithmetic/register correctness is gated independently; all timing
   comparisons remain visible and strict mismatches cannot become suite-pass or
