@@ -7001,6 +7001,21 @@ static void case_video_bus(void)
     lynx_stop_reason stop = LYNX_STOP_HALT;
     if (m == NULL) goto done;
 
+    /* Green palette entries are four-bit values; blue/red entries retain
+       their full byte. Keep the write/read and canonical backing state in
+       sync so snapshots and captured rows cannot preserve an impossible
+       Green high nibble. */
+    CHECK(lynx__video_write(&m->video, 0xFDA5u, 0xFFu));
+    CHECK_NAMED(lynx__video_peek(&m->video, 0xFDA5u) == 0x0Fu &&
+                    m->video.palette[5] == 0x0Fu,
+                "video.bus.green-register-masks-high-nibble");
+    CHECK(lynx__video_write(&m->video, 0xFDB5u, 0xFFu));
+    CHECK_NAMED(lynx__video_peek(&m->video, 0xFDB5u) == 0xFFu &&
+                    m->video.palette[21] == 0xFFu,
+                "video.bus.blue-red-register-retains-byte");
+    CHECK(lynx__video_write(&m->video, 0xFDA5u, 0u));
+    CHECK(lynx__video_write(&m->video, 0xFDB5u, 0u));
+
     CHECK_EQ_U64(load_bll_at(m, watch_count_program, sizeof watch_count_program, 0x0200u), LYNX_OK);
     bool found_store = false;
     for (uint32_t i = 0u; i < 200u; i++) {
