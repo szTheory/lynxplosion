@@ -5,7 +5,17 @@
 #include <string.h>
 
 #include "check.h"
+#include "internal.h"
 #include "lynxplosion.h"
+#include "sha256.h"
+
+#define CHECK_NAMED(cond, name)                                                                    \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            fprintf(stderr, "ASSERT %s failed\n", (name));                                      \
+            check_failures++;                                                                      \
+        }                                                                                          \
+    } while (0)
 
 static void append(uint8_t *program, size_t *length, uint8_t byte)
 {
@@ -109,13 +119,15 @@ typedef struct suzy_live_machine {
 static lynx_machine *make_machine(uint32_t profile, void **allocation);
 
 static size_t make_guest_writes(uint8_t *program, uint16_t load_addr,
-                                const suzy_write *writes, size_t write_count)
+                                const suzy_write *writes, size_t write_count,
+                                bool wait_after_command)
 {
     size_t length = 0u;
     append(program, &length, 0x78u); /* SEI */
     for (size_t i = 0u; i < write_count; i++) {
         (void)emit_write(program, &length, writes[i].addr, writes[i].value);
-        if (writes[i].addr == 0xFC55u || writes[i].addr == 0xFC63u) {
+        if (wait_after_command &&
+            (writes[i].addr == 0xFC55u || writes[i].addr == 0xFC63u)) {
             append(program, &length, 0xA2u); append(program, &length, 0x00u); /* LDX #0 */
             append(program, &length, 0xE8u); /* wait: INX */
             append(program, &length, 0xD0u); append(program, &length, 0xFDu); /* BNE wait */
@@ -128,13 +140,11 @@ static size_t make_guest_writes(uint8_t *program, uint16_t load_addr,
     return length;
 }
 
-static suzy_live_machine run_guest_writes(uint32_t profile, const suzy_write *writes,
-                                          size_t write_count)
+static suzy_live_machine load_guest_program(uint32_t profile, const uint8_t *program,
+                                            size_t program_len)
 {
     enum { LOAD_ADDRESS = 0x0200u };
-    uint8_t program[4096];
     uint8_t object[4106];
-    const size_t program_len = make_guest_writes(program, LOAD_ADDRESS, writes, write_count);
     const size_t object_len = make_program_object(object, sizeof object, program,
                                                    program_len, LOAD_ADDRESS);
     CHECK(object_len != 0u);
@@ -142,11 +152,34 @@ static suzy_live_machine run_guest_writes(uint32_t profile, const suzy_write *wr
     live.machine = make_machine(profile, &live.allocation);
     if (live.machine == NULL) return live;
     CHECK_EQ_U64(lynx_load_bll(live.machine, object, object_len), LYNX_OK);
+    return live;
+}
+
+static suzy_live_machine load_guest_writes(uint32_t profile, const suzy_write *writes,
+                                           size_t write_count)
+{
+    enum { LOAD_ADDRESS = 0x0200u };
+    uint8_t program[4096];
+    const size_t program_len = make_guest_writes(program, LOAD_ADDRESS, writes,
+                                                  write_count, true);
+    return load_guest_program(profile, program, program_len);
+}
+
+static void run_to_budget(suzy_live_machine *live, uint64_t budget)
+{
+    if (live->machine == NULL) return;
     uint64_t consumed = 0u;
     lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
-    CHECK_EQ_U64(lynx_advance(live.machine, 12000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(lynx_advance(live->machine, budget, &consumed, &stop), LYNX_OK);
     CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
-    CHECK_EQ_U64(consumed, 12000u);
+    CHECK_EQ_U64(consumed, budget);
+}
+
+static suzy_live_machine run_guest_writes(uint32_t profile, const suzy_write *writes,
+                                          size_t write_count)
+{
+    suzy_live_machine live = load_guest_writes(profile, writes, write_count);
+    run_to_budget(&live, 12000u);
     return live;
 }
 
@@ -597,7 +630,7 @@ static void run_register_refusal(uint32_t profile, uint16_t address)
     const suzy_write write = {address, 0xA5u};
     uint8_t program[64];
     uint8_t object[128];
-    const size_t program_len = make_guest_writes(program, LOAD_ADDRESS, &write, 1u);
+    const size_t program_len = make_guest_writes(program, LOAD_ADDRESS, &write, 1u, true);
     const size_t object_len = make_program_object(object, sizeof object, program,
                                                    program_len, LOAD_ADDRESS);
     void *allocation = NULL;
@@ -668,6 +701,703 @@ static int case_registers(void)
     return check_failures == 0 ? 0 : 1;
 }
 
+static size_t make_status_poll_program(uint8_t *program, uint16_t load_addr,
+                                       const suzy_write *writes, size_t write_count)
+{
+    size_t length = 0u;
+    append(program, &length, 0x78u); /* SEI */
+    for (size_t i = 0u; i < write_count; i++) {
+        (void)emit_write(program, &length, writes[i].addr, writes[i].value);
+    }
+    const uint16_t poll_addr = (uint16_t)(load_addr + (uint16_t)length);
+    append(program, &length, 0xADu); append(program, &length, 0x92u); append(program, &length, 0xFCu);
+    append(program, &length, 0x30u); append(program, &length, 0xFBu); /* BMI poll */
+    append(program, &length, 0x8Du); append(program, &length, 0x00u); append(program, &length, 0x04u);
+    const uint16_t done_addr = (uint16_t)(load_addr + (uint16_t)length);
+    append(program, &length, 0x4Cu); append(program, &length, (uint8_t)done_addr);
+    append(program, &length, (uint8_t)(done_addr >> 8));
+    (void)poll_addr;
+    return length;
+}
+
+static bool start_watched_operation(lynx_machine *machine, uint16_t command,
+                                    uint64_t *start_tick)
+{
+    CHECK_EQ_U64(lynx_watch_configure(machine, command, 1u), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(machine, 2000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+    lynx_watch_event event;
+    memset(&event, 0, sizeof event);
+    CHECK_EQ_U64(lynx_watch_get(machine, &event), LYNX_OK);
+    CHECK_EQ_HEX(event.address, command);
+    CHECK_EQ_U64(event.hit, 1u);
+    *start_tick = event.hit_tick;
+    return stop == LYNX_STOP_WATCH && event.hit == 1u && event.address == command;
+}
+
+static void check_deadline_case(uint32_t profile, const suzy_write *writes,
+                                size_t write_count, uint16_t command,
+                                uint64_t duration, uint16_t result_address,
+                                uint32_t result)
+{
+    suzy_live_machine live = load_guest_writes(profile, writes, write_count);
+    if (live.machine == NULL) {
+        destroy_live_machine(&live);
+        return;
+    }
+    uint64_t start = 0u;
+    (void)start_watched_operation(live.machine, command, &start);
+    uint64_t now = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+    const uint64_t deadline = start + duration;
+    CHECK(deadline > now);
+    if (deadline <= now) {
+        destroy_live_machine(&live);
+        return;
+    }
+
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    CHECK_EQ_U64(lynx_advance(live.machine, 0u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK((read_sprsys(live.machine) & 0x80u) != 0u);
+
+    const uint64_t to_before_deadline = deadline - 1u - now;
+    CHECK_EQ_U64(lynx_advance(live.machine, to_before_deadline, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, to_before_deadline);
+    CHECK((read_sprsys(live.machine) & 0x80u) != 0u);
+    CHECK_EQ_U64(lynx_advance(live.machine, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+    CHECK_EQ_U64(now, deadline);
+    CHECK((read_sprsys(live.machine) & 0x80u) != 0u);
+    CHECK_EQ_U64(lynx_advance(live.machine, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+    CHECK_EQ_U64(now, deadline + 1u);
+    CHECK((read_sprsys(live.machine) & 0x80u) == 0u);
+    CHECK((read_sprsys(live.machine) & 0x04u) != 0u);
+    expect_u32_bytes(live.machine, result_address, result,
+                     "suzy.lifecycle event publishes exact result");
+    destroy_live_machine(&live);
+}
+
+static int case_completion_read_tie(void)
+{
+    enum { LOAD_ADDRESS = 0x0200u };
+    const suzy_write writes[] = {
+        {0xFC52u, 0x03u}, {0xFC53u, 0x00u},
+        {0xFC54u, 0x02u}, {0xFC55u, 0x00u}
+    };
+    uint8_t program[256];
+    const size_t program_len = make_status_poll_program(program, LOAD_ADDRESS, writes,
+                                                         sizeof writes / sizeof writes[0]);
+    suzy_live_machine live = load_guest_program(LYNX_PROFILE_LYNX1, program, program_len);
+    if (live.machine == NULL) {
+        destroy_live_machine(&live);
+        return check_failures == 0 ? 0 : 1;
+    }
+    uint64_t start = 0u;
+    (void)start_watched_operation(live.machine, 0xFC55u, &start);
+    const uint64_t deadline = start + 44u;
+    uint64_t now = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+    bool held_status_read = false;
+    for (uint32_t i = 0u; i < 80u && now < deadline; i++) {
+        if (live.machine->cpu.req_addr == 0xFC92u &&
+            live.machine->cpu.req_kind == LYNX__CK_READ &&
+            live.machine->cpu_ready_at <= deadline) {
+            held_status_read = true;
+            break;
+        }
+        uint64_t consumed = 0u;
+        lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+        CHECK_EQ_U64(lynx_advance(live.machine, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 1u);
+        CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+    }
+    CHECK_NAMED(held_status_read, "suzy.lifecycle.status-read-pending-at-deadline");
+    if (held_status_read) {
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(live.machine, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+        const uint64_t to_deadline = deadline - now;
+        uint64_t consumed = 0u;
+        lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+        CHECK_EQ_U64(lynx_advance(live.machine, to_deadline, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, to_deadline);
+        CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+        CHECK_EQ_U64(now, deadline);
+        CHECK((read_sprsys(live.machine) & 0x80u) != 0u);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(live.machine, 0u), LYNX_OK);
+        CHECK_EQ_U64(lynx_advance(live.machine, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, 1u);
+        uint32_t accumulator = 0u;
+        CHECK_EQ_U64(lynx_read_register(live.machine, LYNX_REG_A, &accumulator), LYNX_OK);
+        CHECK_NAMED((read_sprsys(live.machine) & 0x80u) == 0u &&
+                    (accumulator & 0x80u) == 0u && (accumulator & 0x04u) != 0u,
+                    "suzy.lifecycle.completion-before-status-read");
+    }
+    destroy_live_machine(&live);
+    return check_failures == 0 ? 0 : 1;
+}
+
+static int case_reset_load(void);
+static int case_busy_backing_refusal(void);
+static int case_headroom_refusal(void);
+
+static int case_lifecycle(void)
+{
+    static const uint16_t divisors[] = {0x8000u, 0x4000u, 0x0001u, 0x0000u};
+    for (uint32_t profile = LYNX_PROFILE_LYNX1; profile <= LYNX_PROFILE_LYNX2; profile++) {
+        const suzy_write plain[] = {
+            {0xFC52u, 0x03u}, {0xFC53u, 0x00u},
+            {0xFC54u, 0x02u}, {0xFC55u, 0x00u}
+        };
+        check_deadline_case(profile, plain, sizeof plain / sizeof plain[0],
+                            0xFC55u, 44u, 0xFC60u, 6u);
+        const suzy_write signed_mul[] = {
+            {0xFC92u, 0x80u}, {0xFC52u, 0xFDu}, {0xFC53u, 0xFFu},
+            {0xFC54u, 0x05u}, {0xFC55u, 0x00u}
+        };
+        check_deadline_case(profile, signed_mul, sizeof signed_mul / sizeof signed_mul[0],
+                            0xFC55u, 54u, 0xFC60u, UINT32_C(0xFFFFFFF1));
+        const suzy_write accum_mul[] = {
+            {0xFC92u, 0x40u}, {0xFC52u, 0x10u}, {0xFC53u, 0x00u},
+            {0xFC54u, 0x10u}, {0xFC55u, 0x00u}
+        };
+        check_deadline_case(profile, accum_mul, sizeof accum_mul / sizeof accum_mul[0],
+                            0xFC55u, 54u, 0xFC6Cu, 0x100u);
+        for (size_t i = 0u; i < sizeof divisors / sizeof divisors[0]; i++) {
+            const uint16_t divisor = divisors[i];
+            const uint64_t duration = 176u + 14u * (uint64_t)(i == 0u ? 0u :
+                i == 1u ? 1u : i == 2u ? 15u : 16u);
+            const uint32_t quotient = divisor == 0u ? UINT32_MAX :
+                UINT32_C(0x00010000) / divisor;
+            const suzy_write divide[] = {
+                {0xFC56u, (uint8_t)divisor}, {0xFC57u, (uint8_t)(divisor >> 8)},
+                {0xFC60u, 0x00u}, {0xFC61u, 0x00u},
+                {0xFC62u, 0x01u}, {0xFC63u, 0x00u}
+            };
+            check_deadline_case(profile, divide, sizeof divide / sizeof divide[0],
+                                0xFC63u, duration, 0xFC52u, quotient);
+        }
+    }
+    (void)case_completion_read_tie();
+    (void)case_reset_load();
+    (void)case_busy_backing_refusal();
+    (void)case_headroom_refusal();
+    return check_failures == 0 ? 0 : 1;
+}
+
+enum { SNAP_PAYLOAD_HASH_OFFSET = 220u, SNAP_SUZY_RECORD_OFFSET = 78108u };
+
+static void rehash_snapshot_payload(uint8_t *snapshot)
+{
+    uint8_t digest[32];
+    lynx__sha256 sha;
+    lynx__sha256_init(&sha);
+    lynx__sha256_update(&sha, snapshot + LYNX__SNAPSHOT_HEADER_LEN,
+                        LYNX__SNAPSHOT_PAYLOAD_LEN);
+    lynx__sha256_final(&sha, digest);
+    memcpy(snapshot + SNAP_PAYLOAD_HASH_OFFSET, digest, sizeof digest);
+}
+
+static uint8_t *save_snapshot_blob(const lynx_machine *machine, size_t *size)
+{
+    CHECK_EQ_U64(lynx_snapshot_size(machine, size), LYNX_OK);
+    uint8_t *snapshot = malloc(*size);
+    CHECK(snapshot != NULL);
+    if (snapshot != NULL) {
+        size_t written = 0u;
+        CHECK_EQ_U64(lynx_snapshot_save(machine, snapshot, *size, &written), LYNX_OK);
+        CHECK_EQ_U64(written, *size);
+    }
+    return snapshot;
+}
+
+static void advance_through_math_deadline(lynx_machine *machine, uint64_t deadline)
+{
+    uint64_t now = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(machine, &now), LYNX_OK);
+    CHECK(deadline >= now);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    CHECK_EQ_U64(lynx_advance(machine, deadline - now, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, deadline - now);
+    CHECK((read_sprsys(machine) & 0x80u) != 0u);
+    CHECK_EQ_U64(lynx_advance(machine, 1u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 1u);
+    CHECK((read_sprsys(machine) & 0x80u) == 0u);
+}
+
+static void advance_to_math_deadline(lynx_machine *machine, uint64_t deadline)
+{
+    uint64_t now = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(machine, &now), LYNX_OK);
+    CHECK(deadline >= now);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    CHECK_EQ_U64(lynx_advance(machine, deadline - now, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, deadline - now);
+    CHECK((read_sprsys(machine) & 0x80u) != 0u);
+}
+
+static int case_snapshot_refusal(void)
+{
+    const suzy_write signed_mul[] = {
+        {0xFC92u, 0x80u}, {0xFC52u, 0xFDu}, {0xFC53u, 0xFFu},
+        {0xFC54u, 0x05u}, {0xFC55u, 0x00u}
+    };
+    suzy_live_machine source = load_guest_writes(LYNX_PROFILE_LYNX1, signed_mul,
+                                                  sizeof signed_mul / sizeof signed_mul[0]);
+    suzy_live_machine victim = load_guest_writes(LYNX_PROFILE_LYNX1, signed_mul,
+                                                  sizeof signed_mul / sizeof signed_mul[0]);
+    if (source.machine == NULL || victim.machine == NULL) {
+        destroy_live_machine(&source);
+        destroy_live_machine(&victim);
+        return check_failures == 0 ? 0 : 1;
+    }
+    uint64_t start = 0u;
+    (void)start_watched_operation(source.machine, 0xFC55u, &start);
+    size_t snapshot_size = 0u;
+    uint8_t *active = save_snapshot_blob(source.machine, &snapshot_size);
+    if (active == NULL) {
+        destroy_live_machine(&source);
+        destroy_live_machine(&victim);
+        return check_failures == 0 ? 0 : 1;
+    }
+    uint8_t *forged = malloc(snapshot_size);
+    uint8_t *before = malloc(sizeof *victim.machine);
+    CHECK(forged != NULL && before != NULL);
+    if (forged != NULL && before != NULL) {
+        const size_t record = LYNX__SNAPSHOT_HEADER_LEN + SNAP_SUZY_RECORD_OFFSET;
+        static const char *const forged_names[] = {
+            "suzy.snapshot_refusal.forged-kind-is-atomic",
+            "suzy.snapshot_refusal.forged-sign-is-atomic",
+            "suzy.snapshot_refusal.forged-mode-is-atomic",
+            "suzy.snapshot_refusal.forged-idle-is-atomic",
+            "suzy.snapshot_refusal.forged-deadline-is-atomic",
+            "suzy.snapshot_refusal.forged-start-is-atomic",
+            "suzy.snapshot_refusal.forged-backing-is-atomic"
+        };
+        CHECK_EQ_U64(lynx_watch_configure(victim.machine, 0x1234u, 1u), LYNX_OK);
+        for (size_t i = 0u; i < sizeof forged_names / sizeof forged_names[0]; i++) {
+            memcpy(forged, active, snapshot_size);
+            switch (i) {
+            case 0u:
+                forged[record + 54u] = 3u;
+                break;
+            case 1u:
+                forged[record + 70u] ^= 1u;
+                break;
+            case 2u:
+                forged[record + 55u] = 0x10u;
+                break;
+            case 3u:
+                forged[record + 54u] = 0u;
+                break;
+            case 4u:
+                forged[record + 80u]++;
+                break;
+            case 5u:
+                forged[record + 72u]++;
+                break;
+            case 6u:
+                forged[record + 0x14u] ^= 1u;
+                break;
+            default:
+                CHECK(0 && "complete forged snapshot table");
+                continue;
+            }
+            rehash_snapshot_payload(forged);
+            memcpy(before, victim.machine, sizeof *victim.machine);
+            const lynx_status status = lynx_snapshot_restore(victim.machine, forged, snapshot_size);
+            CHECK_NAMED(status == LYNX_ERR_SNAPSHOT_INVALID &&
+                        memcmp(before, victim.machine, sizeof *victim.machine) == 0,
+                        forged_names[i]);
+        }
+    }
+    free(forged);
+    free(before);
+
+    uint64_t now = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(source.machine, &now), LYNX_OK);
+    const uint64_t deadline = source.machine->suzy.deadline_tick;
+    advance_to_math_deadline(source.machine, deadline);
+    free(active);
+    active = save_snapshot_blob(source.machine, &snapshot_size);
+    CHECK(active != NULL);
+    if (active != NULL) {
+        CHECK_EQ_U64(lynx_snapshot_restore(victim.machine, active, snapshot_size), LYNX_OK);
+        CHECK_EQ_U64(lynx_guest_ticks(victim.machine, &now), LYNX_OK);
+        CHECK_EQ_U64(now, deadline);
+        uint64_t consumed = 0u;
+        lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+        CHECK_EQ_U64(lynx_advance(source.machine, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, 1u);
+        CHECK((read_sprsys(source.machine) & 0x80u) == 0u);
+        CHECK_EQ_U64(lynx_advance(victim.machine, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, 1u);
+        CHECK((read_sprsys(victim.machine) & 0x80u) == 0u);
+        expect_u32_bytes(victim.machine, 0xFC60u, UINT32_C(0xFFFFFFF1),
+                         "suzy.snapshot_refusal.equal-deadline-is-reachable");
+    }
+    free(active);
+    destroy_live_machine(&source);
+    destroy_live_machine(&victim);
+
+    const suzy_write changed_control[] = {
+        {0xFC92u, 0x80u}, {0xFC52u, 0xFDu}, {0xFC53u, 0xFFu},
+        {0xFC54u, 0x05u}, {0xFC55u, 0x00u}, {0xFC92u, 0x4Cu}
+    };
+    uint8_t program[256];
+    const size_t program_len = make_guest_writes(program, 0x0200u, changed_control,
+                                                  sizeof changed_control / sizeof changed_control[0],
+                                                  false);
+    source = load_guest_program(LYNX_PROFILE_LYNX1, program, program_len);
+    victim = load_guest_program(LYNX_PROFILE_LYNX1, program, program_len);
+    if (source.machine != NULL && victim.machine != NULL) {
+        CHECK_EQ_U64(lynx_watch_configure(source.machine, 0xFC55u, 1u), LYNX_OK);
+        uint64_t consumed = 0u;
+        lynx_stop_reason stop = LYNX_STOP_BUDGET;
+        CHECK_EQ_U64(lynx_advance(source.machine, 2000u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+        CHECK_EQ_U64(lynx_watch_configure(source.machine, 0xFC92u, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_advance(source.machine, 2000u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+        CHECK_EQ_HEX(source.machine->suzy.mode, 0x40u);
+        CHECK_EQ_HEX(source.machine->suzy.latched_modes, 0x80u);
+        CHECK_EQ_HEX(source.machine->video.lefthand, 1u);
+        const uint64_t saved_deadline = source.machine->suzy.deadline_tick;
+        size_t changed_size = 0u;
+        uint8_t *changed = save_snapshot_blob(source.machine, &changed_size);
+        CHECK(changed != NULL);
+        if (changed != NULL) {
+            CHECK_EQ_U64(lynx_snapshot_restore(victim.machine, changed, changed_size), LYNX_OK);
+            advance_through_math_deadline(source.machine, saved_deadline);
+            advance_through_math_deadline(victim.machine, saved_deadline);
+            uint8_t *source_final = save_snapshot_blob(source.machine, &changed_size);
+            size_t victim_size = 0u;
+            uint8_t *victim_final = save_snapshot_blob(victim.machine, &victim_size);
+            CHECK(source_final != NULL && victim_final != NULL);
+            if (source_final != NULL && victim_final != NULL) {
+                CHECK_EQ_U64(changed_size, victim_size);
+                CHECK(memcmp(source_final, victim_final, source_final != NULL ? changed_size : 0u) == 0);
+            }
+            free(source_final);
+            free(victim_final);
+        }
+        free(changed);
+    }
+    destroy_live_machine(&source);
+    destroy_live_machine(&victim);
+    return check_failures == 0 ? 0 : 1;
+}
+
+static int case_fault_snapshot(void)
+{
+    const suzy_write signed_mul[] = {
+        {0xFC92u, 0x80u}, {0xFC52u, 0xFDu}, {0xFC53u, 0xFFu},
+        {0xFC54u, 0x05u}, {0xFC55u, 0x00u}
+    };
+    suzy_live_machine source = load_guest_writes(LYNX_PROFILE_LYNX1, signed_mul,
+                                                  sizeof signed_mul / sizeof signed_mul[0]);
+    suzy_live_machine restored = load_guest_writes(LYNX_PROFILE_LYNX1, signed_mul,
+                                                    sizeof signed_mul / sizeof signed_mul[0]);
+    if (source.machine == NULL || restored.machine == NULL) {
+        destroy_live_machine(&source);
+        destroy_live_machine(&restored);
+        return check_failures == 0 ? 0 : 1;
+    }
+    uint64_t start = 0u;
+    (void)start_watched_operation(source.machine, 0xFC55u, &start);
+    size_t snapshot_size = 0u;
+    uint8_t *snapshot = save_snapshot_blob(source.machine, &snapshot_size);
+    if (snapshot != NULL) {
+        CHECK_EQ_U64(lynx_snapshot_restore(restored.machine, snapshot, snapshot_size), LYNX_OK);
+        const uint64_t deadline = source.machine->suzy.deadline_tick;
+        advance_through_math_deadline(source.machine, deadline);
+        advance_through_math_deadline(restored.machine, deadline);
+        uint8_t source_product[4] = {0u};
+        uint8_t restored_product[4] = {0u};
+        peek_bytes(source.machine, 0xFC60u, source_product, sizeof source_product);
+        peek_bytes(restored.machine, 0xFC60u, restored_product, sizeof restored_product);
+        CHECK_EQ_HEX(source_product[0], 0xF1u);
+        CHECK_NAMED(memcmp(source_product, restored_product, sizeof source_product) == 0,
+                    "suzy.snapshot.continuation-suffix");
+    }
+    free(snapshot);
+    destroy_live_machine(&source);
+    destroy_live_machine(&restored);
+    return check_failures == 0 ? 0 : 1;
+}
+
+static uint32_t peek_result_word(const lynx_machine *machine, uint16_t addr)
+{
+    uint8_t bytes[4] = {0u};
+    peek_bytes(machine, addr, bytes, sizeof bytes);
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+}
+
+static int case_fault_decoder(void)
+{
+    const suzy_write writes[] = {
+        {0xFC52u, 0xFFu}, {0xFC53u, 0x00u},
+        {0xFC54u, 0x02u}, {0xFC55u, 0x00u}
+    };
+    suzy_live_machine live = run_guest_writes(LYNX_PROFILE_LYNX1, writes,
+                                               sizeof writes / sizeof writes[0]);
+    if (live.machine != NULL) {
+        CHECK_NAMED(peek_result_word(live.machine, 0xFC60u) == UINT32_C(0x000001FE),
+                    "suzy.fault.decoder-mapped-command-result");
+    }
+    destroy_live_machine(&live);
+    return check_failures == 0 ? 0 : 1;
+}
+
+static int case_fault_result(void)
+{
+    const suzy_write writes[] = {
+        {0xFC52u, 0xFFu}, {0xFC53u, 0x00u},
+        {0xFC54u, 0x02u}, {0xFC55u, 0x00u}
+    };
+    suzy_live_machine live = run_guest_writes(LYNX_PROFILE_LYNX1, writes,
+                                               sizeof writes / sizeof writes[0]);
+    if (live.machine != NULL) {
+        CHECK_NAMED(peek_result_word(live.machine, 0xFC60u) == UINT32_C(0x000001FE),
+                    "suzy.fault.result-independent-product");
+    }
+    destroy_live_machine(&live);
+    return check_failures == 0 ? 0 : 1;
+}
+
+static int case_fault_completion(void)
+{
+    enum { LOAD_ADDRESS = 0x0200u };
+    const suzy_write writes[] = {
+        {0xFC52u, 0x03u}, {0xFC53u, 0x00u},
+        {0xFC54u, 0x02u}, {0xFC55u, 0x00u}
+    };
+    uint8_t program[256];
+    const size_t program_len = make_status_poll_program(program, LOAD_ADDRESS, writes,
+                                                         sizeof writes / sizeof writes[0]);
+    suzy_live_machine live = load_guest_program(LYNX_PROFILE_LYNX1, program, program_len);
+    if (live.machine == NULL) {
+        destroy_live_machine(&live);
+        return check_failures == 0 ? 0 : 1;
+    }
+    uint64_t start = 0u;
+    (void)start_watched_operation(live.machine, 0xFC55u, &start);
+    const uint64_t deadline = start + 44u;
+    uint64_t now = 0u;
+    CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+    bool held_status_read = false;
+    for (uint32_t i = 0u; i < 80u && now < deadline; i++) {
+        if (live.machine->cpu.req_addr == 0xFC92u &&
+            live.machine->cpu.req_kind == LYNX__CK_READ &&
+            live.machine->cpu_ready_at <= deadline) {
+            held_status_read = true;
+            break;
+        }
+        uint64_t consumed = 0u;
+        lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+        CHECK_EQ_U64(lynx_advance(live.machine, 1u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, 1u);
+        CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+    }
+    CHECK_NAMED(held_status_read, "suzy.lifecycle.status-read-pending-at-deadline");
+    if (held_status_read) {
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(live.machine, 1u), LYNX_OK);
+        CHECK_EQ_U64(lynx_guest_ticks(live.machine, &now), LYNX_OK);
+        const uint64_t to_deadline = deadline - now;
+        uint64_t consumed = 0u;
+        lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+        CHECK_EQ_U64(lynx_advance(live.machine, to_deadline, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(consumed, to_deadline);
+        CHECK_EQ_U64(lynx__machine_set_bus_hold(live.machine, 0u), LYNX_OK);
+        CHECK_EQ_U64(lynx_advance(live.machine, 1u, &consumed, &stop), LYNX_OK);
+        uint32_t accumulator = 0u;
+        CHECK_EQ_U64(lynx_read_register(live.machine, LYNX_REG_A, &accumulator), LYNX_OK);
+        CHECK_NAMED((accumulator & 0x80u) == 0u && (accumulator & 0x04u) != 0u,
+                    "suzy.lifecycle.completion-before-status-read");
+    }
+    destroy_live_machine(&live);
+    return check_failures == 0 ? 0 : 1;
+}
+
+static int case_reset_load(void)
+{
+    const suzy_write signed_mul[] = {
+        {0xFC92u, 0x80u}, {0xFC52u, 0xFDu}, {0xFC53u, 0xFFu},
+        {0xFC54u, 0x05u}, {0xFC55u, 0x00u}
+    };
+    suzy_live_machine busy = load_guest_writes(LYNX_PROFILE_LYNX1, signed_mul,
+                                                sizeof signed_mul / sizeof signed_mul[0]);
+    suzy_live_machine reset_reference = load_guest_writes(LYNX_PROFILE_LYNX1, signed_mul,
+                                                           sizeof signed_mul / sizeof signed_mul[0]);
+    if (busy.machine == NULL || reset_reference.machine == NULL) {
+        destroy_live_machine(&busy);
+        destroy_live_machine(&reset_reference);
+        return check_failures == 0 ? 0 : 1;
+    }
+    uint64_t start = 0u;
+    (void)start_watched_operation(busy.machine, 0xFC55u, &start);
+    uint8_t *before = malloc(sizeof *busy.machine);
+    CHECK(before != NULL);
+    if (before != NULL) {
+        memcpy(before, busy.machine, sizeof *busy.machine);
+        uint8_t malformed[10] = {0u};
+        CHECK_NAMED(lynx_load_bll(busy.machine, malformed, sizeof malformed) != LYNX_OK &&
+                    memcmp(before, busy.machine, sizeof *busy.machine) == 0,
+                    "suzy.lifecycle.refused-load-preserves-busy-instance");
+    }
+    free(before);
+    CHECK_EQ_U64(lynx_reset(busy.machine), LYNX_OK);
+    CHECK_EQ_U64(lynx_reset(reset_reference.machine), LYNX_OK);
+    CHECK_NAMED(busy.machine->suzy.operation == 0u && busy.machine->suzy.deadline_tick == 0u &&
+                memcmp(busy.machine, reset_reference.machine, sizeof *busy.machine) == 0,
+                "suzy.lifecycle.reset-cancels-and-matches-fresh-reset");
+    destroy_live_machine(&busy);
+    destroy_live_machine(&reset_reference);
+
+    const uint8_t replacement_program[] = {0x4Cu, 0x00u, 0x02u};
+    uint8_t object[32];
+    const size_t object_length = make_program_object(object, sizeof object,
+                                                     replacement_program,
+                                                     sizeof replacement_program, 0x0200u);
+    CHECK(object_length != 0u);
+    busy = load_guest_writes(LYNX_PROFILE_LYNX1, signed_mul,
+                             sizeof signed_mul / sizeof signed_mul[0]);
+    suzy_live_machine load_reference = load_guest_writes(LYNX_PROFILE_LYNX1, signed_mul,
+                                                          sizeof signed_mul / sizeof signed_mul[0]);
+    if (busy.machine != NULL && load_reference.machine != NULL) {
+        (void)start_watched_operation(busy.machine, 0xFC55u, &start);
+        CHECK_EQ_U64(lynx_load_bll(busy.machine, object, object_length), LYNX_OK);
+        CHECK_EQ_U64(lynx_load_bll(load_reference.machine, object, object_length), LYNX_OK);
+        CHECK_NAMED(busy.machine->suzy.operation == 0u && busy.machine->suzy.deadline_tick == 0u &&
+                    memcmp(busy.machine, load_reference.machine, sizeof *busy.machine) == 0,
+                    "suzy.lifecycle.accepted-load-cancels-and-matches-fresh-load");
+    }
+    destroy_live_machine(&busy);
+    destroy_live_machine(&load_reference);
+    return check_failures == 0 ? 0 : 1;
+}
+
+static int case_busy_backing_refusal(void)
+{
+    const suzy_write signed_mul[] = {
+        {0xFC92u, 0x80u}, {0xFC52u, 0xFDu}, {0xFC53u, 0xFFu},
+        {0xFC54u, 0x05u}, {0xFC55u, 0x00u}
+    };
+    suzy_live_machine live = load_guest_writes(LYNX_PROFILE_LYNX1, signed_mul,
+                                                sizeof signed_mul / sizeof signed_mul[0]);
+    if (live.machine == NULL) {
+        destroy_live_machine(&live);
+        return check_failures == 0 ? 0 : 1;
+    }
+    uint64_t start = 0u;
+    (void)start_watched_operation(live.machine, 0xFC55u, &start);
+    uint8_t *before = malloc(sizeof *live.machine);
+    CHECK(before != NULL);
+    if (before != NULL) {
+        memcpy(before, live.machine, sizeof *live.machine);
+        static const uint8_t protected_indices[] = {
+            0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u,
+            0x20u, 0x21u, 0x22u, 0x23u,
+            0x2Cu, 0x2Du, 0x2Eu, 0x2Fu
+        };
+        for (size_t i = 0u; i < sizeof protected_indices; i++) {
+            const uint16_t base = (uint16_t)(0xFC00u + protected_indices[i]);
+            const uint16_t addresses[] = {base, (uint16_t)(base + 0x40u)};
+            for (size_t view = 0u; view < sizeof addresses / sizeof addresses[0]; view++) {
+                CHECK_NAMED(!lynx__suzy_write(&live.machine->suzy, addresses[view], 0xA5u,
+                                              live.machine->guest_ticks) &&
+                            memcmp(before, live.machine, sizeof *live.machine) == 0,
+                            "suzy.lifecycle.busy-backing-refusal-both-views");
+            }
+        }
+    }
+    free(before);
+    CHECK(live.machine->suzy.operation == 1u);
+    CHECK(live.machine->guest_ticks < live.machine->suzy.deadline_tick);
+    CHECK(lynx__suzy_valid(&live.machine->suzy, live.machine->guest_ticks));
+    destroy_live_machine(&live);
+
+    static const uint16_t cpu_targets[] = {0xFC12u, 0xFC52u};
+    for (size_t i = 0u; i < sizeof cpu_targets / sizeof cpu_targets[0]; i++) {
+        const suzy_write with_busy_write[] = {
+            {0xFC52u, 0x02u}, {0xFC53u, 0x00u},
+            {0xFC54u, 0x03u}, {0xFC55u, 0x00u},
+            {cpu_targets[i], 0xA5u}
+        };
+        uint8_t program[128];
+        const size_t program_length = make_guest_writes(program, 0x0200u, with_busy_write,
+                                                         sizeof with_busy_write /
+                                                             sizeof with_busy_write[0],
+                                                         false);
+        live = load_guest_program(LYNX_PROFILE_LYNX1, program, program_length);
+        if (live.machine == NULL) {
+            destroy_live_machine(&live);
+            continue;
+        }
+        live.machine->ram[cpu_targets[i]] = 0x5Au;
+        start = 0u;
+        (void)start_watched_operation(live.machine, 0xFC55u, &start);
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_BUDGET;
+        CHECK_EQ_U64(lynx_advance(live.machine, 40u, &consumed, &stop), LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+        CHECK(consumed < 40u);
+        CHECK(live.machine->guest_ticks < live.machine->suzy.deadline_tick);
+        CHECK(live.machine->suzy.operation == 1u);
+        CHECK_EQ_HEX(live.machine->ram[cpu_targets[i]], 0x5Au);
+        CHECK_EQ_HEX(live.machine->suzy.registers[0x12u], 0x02u);
+        CHECK((read_sprsys(live.machine) & 0x80u) != 0u);
+        destroy_live_machine(&live);
+    }
+    return check_failures == 0 ? 0 : 1;
+}
+
+static void write_plain_operands(lynx__suzy_state *suzy, uint64_t tick)
+{
+    CHECK(lynx__suzy_write(suzy, 0xFC52u, 0x02u, tick));
+    CHECK(lynx__suzy_write(suzy, 0xFC53u, 0x00u, tick));
+    CHECK(lynx__suzy_write(suzy, 0xFC54u, 0x03u, tick));
+}
+
+static int case_headroom_refusal(void)
+{
+    const uint64_t latest_start = UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM - 44u;
+    lynx__suzy_state allowed;
+    lynx__suzy_init(&allowed);
+    write_plain_operands(&allowed, latest_start);
+    CHECK(lynx__suzy_write(&allowed, 0xFC55u, 0x00u, latest_start));
+    CHECK_EQ_U64(allowed.start_tick, latest_start);
+    CHECK_EQ_U64(allowed.deadline_tick, UINT64_MAX - (uint64_t)LYNX__TICK_HEADROOM);
+    CHECK(lynx__suzy_valid(&allowed, allowed.deadline_tick));
+
+    lynx__suzy_state refused;
+    lynx__suzy_init(&refused);
+    write_plain_operands(&refused, latest_start + 1u);
+    const lynx__suzy_state before = refused;
+    CHECK_NAMED(!lynx__suzy_write(&refused, 0xFC55u, 0x00u, latest_start + 1u) &&
+                memcmp(&before, &refused, sizeof refused) == 0,
+                "suzy.lifecycle.headroom-rejects-overflowing-deadline-atomically");
+    CHECK(lynx__suzy_valid(&refused, latest_start + 1u));
+    return check_failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2 || argv[1] == NULL || argv[1][0] == '\0') {
@@ -676,7 +1406,11 @@ int main(int argc, char **argv)
     }
     if (strcmp(argv[1], "tracer") != 0 && strcmp(argv[1], "snapshot_tracer") != 0 &&
         strcmp(argv[1], "arithmetic") != 0 && strcmp(argv[1], "flags") != 0 &&
-        strcmp(argv[1], "registers") != 0) {
+        strcmp(argv[1], "registers") != 0 && strcmp(argv[1], "lifecycle") != 0 &&
+        strcmp(argv[1], "snapshot_refusal") != 0 &&
+        strcmp(argv[1], "fault_decoder") != 0 && strcmp(argv[1], "fault_result") != 0 &&
+        strcmp(argv[1], "fault_completion") != 0 && strcmp(argv[1], "fault_snapshot") != 0 &&
+        strcmp(argv[1], "reset_load") != 0) {
         fprintf(stderr, "lynx-test-suzy: unknown case '%s'\n", argv[1]);
         return 2;
     }
@@ -686,6 +1420,13 @@ int main(int argc, char **argv)
     else if (strcmp(argv[1], "arithmetic") == 0) result = case_arithmetic();
     else if (strcmp(argv[1], "flags") == 0) result = case_flags();
     else if (strcmp(argv[1], "registers") == 0) result = case_registers();
+    else if (strcmp(argv[1], "lifecycle") == 0) result = case_lifecycle();
+    else if (strcmp(argv[1], "snapshot_refusal") == 0) result = case_snapshot_refusal();
+    else if (strcmp(argv[1], "fault_decoder") == 0) result = case_fault_decoder();
+    else if (strcmp(argv[1], "fault_result") == 0) result = case_fault_result();
+    else if (strcmp(argv[1], "fault_completion") == 0) result = case_fault_completion();
+    else if (strcmp(argv[1], "fault_snapshot") == 0) result = case_fault_snapshot();
+    else if (strcmp(argv[1], "reset_load") == 0) result = case_reset_load();
     else result = case_tracer();
     printf("%s 1 - suzy.%s\n", result == 0 ? "ok" : "not ok", argv[1]);
     return result;

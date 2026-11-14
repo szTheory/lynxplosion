@@ -1063,7 +1063,24 @@ static void flip_suzy_mode(lynx__suzy_state *suzy) { suzy->mode = 0x80u; }
 static void flip_suzy_warning(lynx__suzy_state *suzy) { suzy->warning ^= 1u; }
 static void flip_suzy_carry(lynx__suzy_state *suzy) { suzy->carry ^= 1u; }
 static void flip_suzy_unsafe(lynx__suzy_state *suzy) { suzy->unsafe ^= 1u; }
+static void flip_suzy_latched_modes(lynx__suzy_state *suzy) { suzy->latched_modes ^= 0x80u; }
 static void flip_suzy_latched_ab(lynx__suzy_state *suzy) { suzy->latched_ab ^= 1u; }
+static void flip_suzy_latched_cd(lynx__suzy_state *suzy) { suzy->latched_cd ^= 1u; }
+static void flip_suzy_latched_np(lynx__suzy_state *suzy) { suzy->latched_np ^= 1u; }
+static void flip_suzy_latched_dividend(lynx__suzy_state *suzy) { suzy->latched_dividend ^= 1u; }
+static void flip_suzy_latched_accumulator(lynx__suzy_state *suzy)
+{
+    suzy->latched_accumulator ^= 1u;
+}
+static void flip_suzy_latched_sign_ab(lynx__suzy_state *suzy)
+{
+    suzy->latched_sign_ab ^= 1u;
+}
+static void flip_suzy_latched_sign_cd(lynx__suzy_state *suzy)
+{
+    suzy->latched_sign_cd ^= 1u;
+}
+static void flip_suzy_operation(lynx__suzy_state *suzy) { suzy->operation = 2u; }
 static void flip_suzy_start_tick(lynx__suzy_state *suzy) { suzy->start_tick ^= 1u; }
 static void flip_suzy_deadline_tick(lynx__suzy_state *suzy) { suzy->deadline_tick ^= 1u; }
 
@@ -1137,7 +1154,15 @@ static void case_suzy_sensitivity(char **args)
             const char *name;
             void (*flip)(lynx__suzy_state *);
         } progress_flips[] = {
+            {"latched modes", flip_suzy_latched_modes},
             {"latched AB", flip_suzy_latched_ab},
+            {"latched CD", flip_suzy_latched_cd},
+            {"latched NP", flip_suzy_latched_np},
+            {"latched dividend", flip_suzy_latched_dividend},
+            {"latched accumulator", flip_suzy_latched_accumulator},
+            {"latched sign AB", flip_suzy_latched_sign_ab},
+            {"latched sign CD", flip_suzy_latched_sign_cd},
+            {"operation kind", flip_suzy_operation},
             {"start tick", flip_suzy_start_tick},
             {"deadline tick", flip_suzy_deadline_tick}
         };
@@ -1165,6 +1190,228 @@ static void case_suzy_sensitivity(char **args)
     printf("suzy_sensitivity: all 48 backing bytes, signs, mode, status, active progress, and host-watch exclusion passed (%s)\n",
            base_digest);
     free(base.mem);
+}
+
+static void suzy_program_byte(uint8_t *program, size_t *length, uint8_t value)
+{
+    program[(*length)++] = value;
+}
+
+static void suzy_program_write(uint8_t *program, size_t *length,
+                               uint16_t address, uint8_t value)
+{
+    suzy_program_byte(program, length, 0xA9u); /* LDA #value */
+    suzy_program_byte(program, length, value);
+    suzy_program_byte(program, length, 0x8Du); /* STA address */
+    suzy_program_byte(program, length, (uint8_t)address);
+    suzy_program_byte(program, length, (uint8_t)(address >> 8));
+}
+
+static size_t make_suzy_path_program(uint8_t *program, size_t capacity,
+                                     unsigned operation, uint16_t *command_address,
+                                     uint64_t *deadline_delta,
+                                     uint8_t *latched_modes, uint32_t *expected_result)
+{
+    (void)capacity;
+    size_t length = 0u;
+    const uint8_t signed_mode = operation == 1u ? 0x80u :
+                                operation == 2u ? 0x40u : 0x00u;
+    if (operation <= 2u) {
+        const uint8_t ab_low = operation == 1u ? 0x05u :
+                               operation == 2u ? 0x10u : 0x03u;
+        const uint8_t ab_high = 0x00u;
+        const uint8_t cd_low = operation == 1u ? 0xFDu :
+                               operation == 2u ? 0x10u : 0x02u;
+        const uint8_t cd_high = operation == 1u ? 0xFFu : 0x00u;
+        *command_address = 0xFC55u;
+        *deadline_delta = operation == 0u ? 44u : 54u;
+        *latched_modes = signed_mode;
+        *expected_result = operation == 1u ? UINT32_C(0xFFFFFFF1) :
+                           operation == 2u ? UINT32_C(0x00000100) : 6u;
+        if (signed_mode != 0u) suzy_program_write(program, &length, 0xFC92u, signed_mode);
+        suzy_program_write(program, &length, 0xFC52u, cd_low);
+        suzy_program_write(program, &length, 0xFC53u, cd_high);
+        suzy_program_write(program, &length, 0xFC54u, ab_low);
+        suzy_program_write(program, &length, 0xFC55u, ab_high);
+    } else {
+        const uint16_t divisor = 10u;
+        *command_address = 0xFC63u;
+        *deadline_delta = 176u + 14u * 12u;
+        *latched_modes = 0u;
+        *expected_result = UINT32_C(0x00001999);
+        suzy_program_write(program, &length, 0xFC56u, (uint8_t)divisor);
+        suzy_program_write(program, &length, 0xFC57u, (uint8_t)(divisor >> 8));
+        suzy_program_write(program, &length, 0xFC60u, 0x00u);
+        suzy_program_write(program, &length, 0xFC61u, 0x00u);
+        suzy_program_write(program, &length, 0xFC62u, 0x01u);
+        suzy_program_write(program, &length, 0xFC63u, 0x00u);
+    }
+    suzy_program_write(program, &length, 0xFC92u, 0x4Cu);
+    const uint16_t loop = (uint16_t)(LOAD_ADDR + (uint16_t)length);
+    suzy_program_byte(program, &length, 0x4Cu);
+    suzy_program_byte(program, &length, (uint8_t)loop);
+    suzy_program_byte(program, &length, (uint8_t)(loop >> 8));
+    if (length > capacity) return 0u;
+    return length;
+}
+
+static void suzy_advance_path(lynx_machine *machine, uint64_t target,
+                              const uint64_t *slices, size_t slice_count)
+{
+    size_t index = 0u;
+    while (machine->guest_ticks < target) {
+        const uint64_t remaining = target - machine->guest_ticks;
+        uint64_t budget = slices == NULL ? remaining : slices[index++ % slice_count];
+        if (budget > remaining) budget = remaining;
+        uint64_t consumed = UINT64_MAX;
+        lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+        const lynx_status status = lynx_advance(machine, budget, &consumed, &stop);
+        CHECK_EQ_U64(status, LYNX_OK);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, budget);
+        if (status != LYNX_OK || consumed != budget || budget == 0u) return;
+    }
+}
+
+static int suzy_fields_equal(const lynx__suzy_state *a, const lynx__suzy_state *b)
+{
+    return memcmp(a->registers, b->registers, sizeof a->registers) == 0 &&
+           a->sign_ab == b->sign_ab && a->sign_cd == b->sign_cd && a->mode == b->mode &&
+           a->warning == b->warning && a->carry == b->carry && a->unsafe == b->unsafe &&
+           a->operation == b->operation && a->latched_modes == b->latched_modes &&
+           a->latched_ab == b->latched_ab && a->latched_cd == b->latched_cd &&
+           a->latched_np == b->latched_np && a->latched_dividend == b->latched_dividend &&
+           a->latched_accumulator == b->latched_accumulator &&
+           a->latched_sign_ab == b->latched_sign_ab &&
+           a->latched_sign_cd == b->latched_sign_cd &&
+           a->start_tick == b->start_tick && a->deadline_tick == b->deadline_tick;
+}
+
+static void case_suzy_paths(char **args)
+{
+    static const uint32_t profiles[] = {LYNX_PROFILE_LYNX1, LYNX_PROFILE_LYNX2};
+    static const uint64_t irregular[] = {1u, 7u, 29u, 113u, 3u};
+    static const uint64_t interleave_a[] = {31u, 1u, 127u, 13u};
+    static const uint64_t interleave_b[] = {2u, 89u, 5u, 53u};
+    enum { FINAL_TICK = 1024u };
+    (void)args;
+    for (unsigned operation = 0u; operation < 4u; operation++) {
+        for (size_t p = 0u; p < sizeof profiles / sizeof profiles[0]; p++) {
+            uint8_t program[128];
+            uint16_t command_address = 0u;
+            uint64_t deadline_delta = 0u;
+            uint8_t expected_modes = 0u;
+            uint32_t expected_result = 0u;
+            const size_t program_length = make_suzy_path_program(
+                program, sizeof program, operation, &command_address, &deadline_delta,
+                &expected_modes, &expected_result);
+            instance path[7] = {{0}};
+            for (size_t i = 0u; i < 7u; i++) {
+                CHECK_EQ_U64(instance_make_p(&path[i], profiles[p], program, program_length), 0u);
+                if (path[i].m == NULL) goto operation_cleanup;
+            }
+
+            suzy_advance_path(path[0].m, FINAL_TICK, NULL, 0u);
+            suzy_advance_path(path[1].m, FINAL_TICK, (const uint64_t[]){1u}, 1u);
+            suzy_advance_path(path[2].m, FINAL_TICK, irregular,
+                              sizeof irregular / sizeof irregular[0]);
+
+            uint64_t tick_a = 0u;
+            uint64_t tick_b = 0u;
+            size_t slice_a = 0u;
+            size_t slice_b = 0u;
+            while (tick_a < FINAL_TICK || tick_b < FINAL_TICK) {
+                const uint64_t budget_a = interleave_a[slice_a++ %
+                    (sizeof interleave_a / sizeof interleave_a[0])];
+                const uint64_t a = budget_a > FINAL_TICK - tick_a ?
+                                   FINAL_TICK - tick_a : budget_a;
+                uint64_t consumed = UINT64_MAX;
+                lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+                CHECK_EQ_U64(lynx_advance(path[5].m, a, &consumed, &stop), LYNX_OK);
+                CHECK_EQ_U64(consumed, a);
+                CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+                tick_a += consumed;
+                if (tick_b < FINAL_TICK) {
+                    const uint64_t budget_b = interleave_b[slice_b++ %
+                        (sizeof interleave_b / sizeof interleave_b[0])];
+                    const uint64_t b = budget_b > FINAL_TICK - tick_b ?
+                                       FINAL_TICK - tick_b : budget_b;
+                    consumed = UINT64_MAX;
+                    stop = LYNX_STOP_UNAVAILABLE;
+                    CHECK_EQ_U64(lynx_advance(path[6].m, b, &consumed, &stop), LYNX_OK);
+                    CHECK_EQ_U64(consumed, b);
+                    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+                    tick_b += consumed;
+                }
+            }
+
+            CHECK_EQ_U64(lynx_watch_configure(path[3].m, command_address, 1u), LYNX_OK);
+            {
+                uint64_t consumed = 0u;
+                lynx_stop_reason stop = LYNX_STOP_BUDGET;
+                CHECK_EQ_U64(lynx_advance(path[3].m, 400u, &consumed, &stop), LYNX_OK);
+                CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+                CHECK_EQ_U64(lynx_watch_configure(path[3].m, 0xFC92u, 1u), LYNX_OK);
+                CHECK_EQ_U64(lynx_advance(path[3].m, 200u, &consumed, &stop), LYNX_OK);
+                CHECK_EQ_U64(stop, LYNX_STOP_WATCH);
+                CHECK_EQ_U64(path[3].m->suzy.mode, 0x40u);
+                CHECK_EQ_U64(path[3].m->suzy.latched_modes, expected_modes);
+                CHECK_EQ_U64(path[3].m->video.lefthand, 1u);
+                CHECK_EQ_U64(path[3].m->suzy.operation,
+                             operation == 3u ? 2u : 1u);
+            }
+            size_t snapshot_size = 0u;
+            size_t written = 0u;
+            uint8_t *snapshot = NULL;
+            CHECK_EQ_U64(lynx_snapshot_size(path[3].m, &snapshot_size), LYNX_OK);
+            snapshot = malloc(snapshot_size);
+            CHECK(snapshot != NULL);
+            if (snapshot != NULL) {
+                CHECK_EQ_U64(lynx_snapshot_save(path[3].m, snapshot, snapshot_size, &written),
+                             LYNX_OK);
+                CHECK_EQ_U64(written, snapshot_size);
+                CHECK_EQ_U64(lynx_snapshot_restore(path[4].m, snapshot, snapshot_size), LYNX_OK);
+                free(snapshot);
+            }
+            suzy_advance_path(path[3].m, FINAL_TICK, irregular,
+                              sizeof irregular / sizeof irregular[0]);
+            suzy_advance_path(path[4].m, FINAL_TICK, NULL, 0u);
+
+            for (size_t candidate = 1u; candidate < 7u; candidate++) {
+                char label[96];
+                const int written_label = snprintf(label, sizeof label,
+                    "suzy_paths operation=%u profile=%s path=%zu",
+                    operation, lynx_profile_name(profiles[p]), candidate);
+                CHECK(written_label > 0 && (size_t)written_label < sizeof label);
+                require_same_public_guest(label, path[0].m, path[candidate].m);
+                CHECK_NAMED(suzy_fields_equal(&path[0].m->suzy, &path[candidate].m->suzy),
+                            "det.suzy_paths.fieldwise-suffix");
+            }
+            CHECK_EQ_U64(path[0].m->guest_ticks, FINAL_TICK);
+            CHECK_EQ_U64(path[0].m->suzy.mode, 0x40u);
+            CHECK_EQ_U64(path[0].m->video.lefthand, 1u);
+            if (operation == 0u || operation == 1u || operation == 2u) {
+                const uint32_t product = (uint32_t)path[0].m->suzy.registers[0x20u] |
+                    ((uint32_t)path[0].m->suzy.registers[0x21u] << 8) |
+                    ((uint32_t)path[0].m->suzy.registers[0x22u] << 16) |
+                    ((uint32_t)path[0].m->suzy.registers[0x23u] << 24);
+                CHECK_EQ_U64(product, expected_result);
+            } else {
+                const uint32_t quotient = (uint32_t)path[0].m->suzy.registers[0x12u] |
+                    ((uint32_t)path[0].m->suzy.registers[0x13u] << 8) |
+                    ((uint32_t)path[0].m->suzy.registers[0x14u] << 16) |
+                    ((uint32_t)path[0].m->suzy.registers[0x15u] << 24);
+                CHECK_EQ_U64(quotient, expected_result);
+            }
+            printf("det.suzy_paths: operation=%u profile=%s delta=%llu matched coarse/sliced/interleaved/restore\n",
+                   operation, lynx_profile_name(profiles[p]),
+                   (unsigned long long)deadline_delta);
+
+operation_cleanup:
+            for (size_t i = 0u; i < 7u; i++) instance_destroy(&path[i]);
+            if (check_failures != 0) return;
+        }
+    }
 }
 
 /* ---- det.profile_agreement ---- */
@@ -3078,6 +3325,7 @@ static const struct {
     void (*run)(char **args);
 } cases[] = {
     {"profile_agreement", 2, case_profile_agreement},
+    {"suzy_paths", 0, case_suzy_paths},
     {"suzy_sensitivity", 0, case_suzy_sensitivity},
     {"state_sensitivity", 1, case_state_sensitivity},
     {"timer_paths", 0, case_timer_paths},

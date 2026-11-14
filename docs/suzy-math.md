@@ -119,7 +119,21 @@ outputs. Candidate validation completes before any machine state is applied.
 The canonical guest-state digest remains domain
 `lynxplosion.guest-state.v4`; the existing skeleton golden is unchanged. Its
 workload does not issue math writes, and Suzy sensitivity continues to cover
-all canonical fields without treating host observations as guest state.
+every serialized operation latch as well as all 48 backing bytes, without
+treating host observations as guest state. `det.suzy_paths` compares coarse,
+one-tick, irregular, interleaved-instance and restored continuations for plain,
+signed, accumulated and division operations under both Lynx profiles.
+
+`suzy.lifecycle` checks each selected multiply timing class and division
+`clz16` boundaries 0, 1, 15 and 16 at the half-open deadline. It also aligns a
+pending CPU status read with completion, and verifies reset/load cancellation
+plus whole-instance preservation after a refused load. `suzy.snapshot_refusal`
+rehashes malformed operation, sign, mode, idle, deadline, start and backing
+register candidates before restore; each refusal preserves every instance
+byte, including host watch state. A reachable snapshot exactly at its deadline
+remains busy and completes on the next positive advance. A control change made
+while busy survives save/restore without changing the operation's captured
+mode.
 
 ## Evidence boundary
 
@@ -128,7 +142,11 @@ all canonical fields without treating host observations as guest state.
 Lynx2. Arithmetic checks compare edge and deterministic seeded unsigned
 vectors with a test-owned `uint64_t` model, plus hand-derived signed,
 accumulation and divide cases. The phase’s later lifecycle and copied-source
-fault controls add boundary, forged-snapshot and mutation evidence.
+fault controls add boundary, forged-snapshot and mutation evidence. The four
+fault controls independently disable the mapped command action, flip one
+product bit, delay completion by one tick and flip the saved active sign while
+keeping the candidate reachable; each mutant fails only its named semantic
+assertion between clean baseline runs.
 
 These checks establish only the stated deterministic software contract. They
 do not establish full Suzy behavior, sprite behavior, general remainder
