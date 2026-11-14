@@ -99,3 +99,30 @@ refusal and invalid snapshot candidates.
 These checks establish deterministic behavior for the selected software
 contract. They do not establish the full register set, signed arithmetic,
 accumulation, division, sprite behavior, hardware timing or hardware accuracy.
+
+## Early integration record
+
+The updated skeleton observation digest is
+`7cd1222c5491855a8e7f50b5bc44dbd42871acd04bfc54ceaf69e2fe48221898` on both
+native Clang and the exact GNU checkout. Before accepting that value,
+`det.suzy_sensitivity` passed and the pre-update golden produced the same
+different digest in both environments. The previous golden matched the old
+state format. The required two-run, two-instance, golden, golden self-test,
+claim-template and claim-template self-test checks pass after the refresh.
+
+The early native full inventory initially found two API self-test expectation
+drifts after Suzy became mapped: the map-route mutant now first fails the RAM
+route sentinel, and the raw-read mutant now first fails the raw backing-RAM
+value. Both controls now name those semantic failures. The native API and
+memory groups passed 72/72 after repair. The full native inventory was not
+repeated here; final native full qualification remains with the later phase
+qualification plan.
+
+The final early GNU checkout built and passed all 252 registered CTests with
+the two existing declared page-mode observation skips and no failures. The
+optimized configuration was `RelWithDebInfo` with
+`-O2 -g -UNDEBUG`, ASan+UBSan, and non-recovering sanitizers; the effective
+compile and link commands retained assertions and did not define `NDEBUG`.
+Its API and memory groups also passed 72/72 after the self-test repair. The
+installed ShellCheck identities were native 0.11.0 and GNU 0.9.0; this was an
+identity check only, not a lint run.
