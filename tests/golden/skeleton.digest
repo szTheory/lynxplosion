@@ -26,4 +26,4 @@
 # This changes the oracle while leaving the workload, CPU, RAM, and time
 # observations unchanged. det.video_sensitivity proves the state stream and
 # the newly widened ring debt are both nonvacuous.
-4118959d3b07f1b1786e84dfb8f5f584e8e8e493bb8d955cdd019a3df2250342
+7cd1222c5491855a8e7f50b5bc44dbd42871acd04bfc54ceaf69e2fe48221898
