@@ -9734,6 +9734,11 @@ static void video_snapshot_value_refused(lynx_machine *target, const unsigned ch
     memcpy(blob_c, blob_bad, SNAP_TOTAL);
     const lynx_status st = lynx_snapshot_restore(target, blob_bad, SNAP_TOTAL);
     CHECK_NAMED(st == LYNX_ERR_SNAPSHOT_INVALID, assertion);
+    if (st == LYNX_OK) {
+        /* Keep one missed refusal from contaminating the next independent
+           hostile field's unchanged-state check. */
+        memcpy(target, snap_a, MSIZE);
+    }
     CHECK_UNCHANGED(target, snap_a);
     CHECK_NAMED(target->host_observation.watch_armed == 1u,
                 "video_snapshot_refusal.watch-preserved");
@@ -10001,6 +10006,9 @@ static void case_video_snapshot_refusal(void)
                                  "video_snapshot_refusal.input-mask-width");
     video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_LEFTHAND,
                                  2u, 1u, "video_snapshot_refusal.input-orientation");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_PALETTE,
+                                 0xFFu, 1u,
+                                 "video_snapshot_refusal.green-register-canonical-nibble");
     video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_DMA_NEXT,
                                  5u, 8u, "video_snapshot_refusal.inactive-dma-deadline");
     video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_REFRESH_NEXT,
@@ -10083,6 +10091,9 @@ static void case_video_snapshot_refusal(void)
                                  2u * LYNX_FRAME_ROW_BYTES,
                                  0xA5u, 1u,
                                  "video_snapshot_refusal.unused-pen-tail-zero");
+    video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_ROW_PALETTES,
+                                 0xFFu, 1u,
+                                 "video_snapshot_refusal.captured-green-canonical-nibble");
     video_snapshot_value_refused(target, blob_v, PAY_VIDEO + VIDEO_ROW_PALETTES + 64u,
                                  0xA5u, 1u,
                                  "video_snapshot_refusal.unused-row-palette-zero");
