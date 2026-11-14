@@ -2516,9 +2516,9 @@ endif()
 if(FAILURE STREQUAL "")
   if(MODE STREQUAL "completion_controls")
     set(all_run_out "")
-    set(required_selection "suite.cpu.lynx1,suite.cpu.lynx2,suite.timers.observation.lynx1,suite.timers.observation.lynx2,suite.page_mode.observation.lynx1,suite.page_mode.observation.lynx2,suite.audio.observation.lynx1,suite.audio.observation.lynx2,suite.audio2.observation.lynx1,suite.audio2.observation.lynx2")
+    set(required_selection "suite.cpu.lynx1,suite.cpu.lynx2,suite.timers.observation.lynx1,suite.timers.observation.lynx2,suite.page_mode.observation.lynx1,suite.page_mode.observation.lynx2,suite.audio.observation.lynx1,suite.audio.observation.lynx2,suite.audio2.observation.lynx1,suite.audio2.observation.lynx2,suite.math.observation.lynx1,suite.math.observation.lynx2,suite.memio.observation.lynx1,suite.memio.observation.lynx2")
     set(control_selection "suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls")
-    expect_success("suite selection: required=10 controls=8 inventory complete"
+    expect_success("suite selection: required=14 controls=8 inventory complete"
       "${TEST_BINARY}" validate-selection "${required_selection}" "${control_selection}")
     build_fault_wrapper(cpu)
     build_fault_wrapper(timers)
@@ -2546,18 +2546,22 @@ if(FAILURE STREQUAL "")
     string(APPEND all_run_out "completion controls: exact eight-case manifest covers omitted-sentinel and bounded guest-time refusal for both suites and profiles; every fault starts with hash-verified prior positive files, proves fresh guest/watch refusal clears them, and is bracketed by fresh valid positives\n")
   elseif(MODE STREQUAL "selection_controls")
     set(all_run_out "")
-    set(required_selection "suite.cpu.lynx1,suite.cpu.lynx2,suite.timers.observation.lynx1,suite.timers.observation.lynx2,suite.page_mode.observation.lynx1,suite.page_mode.observation.lynx2,suite.audio.observation.lynx1,suite.audio.observation.lynx2,suite.audio2.observation.lynx1,suite.audio2.observation.lynx2")
+    set(required_selection "suite.cpu.lynx1,suite.cpu.lynx2,suite.timers.observation.lynx1,suite.timers.observation.lynx2,suite.page_mode.observation.lynx1,suite.page_mode.observation.lynx2,suite.audio.observation.lynx1,suite.audio.observation.lynx2,suite.audio2.observation.lynx1,suite.audio2.observation.lynx2,suite.math.observation.lynx1,suite.math.observation.lynx2,suite.memio.observation.lynx1,suite.memio.observation.lynx2")
     set(control_selection "suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls")
-    expect_success("suite selection: required=10 controls=8 inventory complete"
+    expect_success("suite selection: required=14 controls=8 inventory complete"
       "${TEST_BINARY}" validate-selection "${required_selection}" "${control_selection}")
+    string(REPLACE "suite.memio.observation.lynx2" "suite.memio.observation.lynx9"
+      unknown_required_selection "${required_selection}")
+    string(REPLACE ",suite.memio.observation.lynx2" ""
+      incomplete_required_selection "${required_selection}")
     expect_empty_selection(required-suite "" "${control_selection}")
     expect_empty_selection(control "${required_selection}" "")
     expect_failure("suite: selection: unknown required-suite case ID"
-      "${TEST_BINARY}" validate-selection "suite.cpu.lynx1,suite.cpu.lynx2,suite.timers.observation.lynx1,suite.timers.observation.lynx2,suite.page_mode.observation.lynx1,suite.page_mode.observation.lynx2,suite.audio.observation.lynx1,suite.audio.observation.lynx2,suite.audio2.observation.lynx1,suite.audio2.observation.lynx9" "${control_selection}")
+      "${TEST_BINARY}" validate-selection "${unknown_required_selection}" "${control_selection}")
     expect_failure("suite: selection: duplicate required-suite case ID"
-      "${TEST_BINARY}" validate-selection "suite.cpu.lynx1,suite.cpu.lynx1,suite.cpu.lynx2,suite.timers.observation.lynx1,suite.timers.observation.lynx2,suite.page_mode.observation.lynx1,suite.page_mode.observation.lynx2,suite.audio.observation.lynx1,suite.audio.observation.lynx2,suite.audio2.observation.lynx1,suite.audio2.observation.lynx2" "${control_selection}")
+      "${TEST_BINARY}" validate-selection "${required_selection},suite.cpu.lynx1" "${control_selection}")
     expect_failure("suite: selection: incomplete required-suite inventory"
-      "${TEST_BINARY}" validate-selection "suite.cpu.lynx1,suite.cpu.lynx2,suite.timers.observation.lynx1,suite.timers.observation.lynx2,suite.page_mode.observation.lynx1,suite.page_mode.observation.lynx2,suite.audio.observation.lynx1,suite.audio.observation.lynx2,suite.audio2.observation.lynx1" "${control_selection}")
+      "${TEST_BINARY}" validate-selection "${incomplete_required_selection}" "${control_selection}")
     expect_failure("suite: selection: duplicate control case ID"
       "${TEST_BINARY}" validate-selection "${required_selection}" "suite.cpu.no_run,suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls")
     expect_failure("suite: selection: incomplete control inventory"
@@ -2576,7 +2580,9 @@ if(FAILURE STREQUAL "")
                     suite.timers.no_run suite.page_mode.observation.lynx1 suite.page_mode.observation.lynx2
                     suite.page_mode.controls suite.audio.observation.lynx1 suite.audio.observation.lynx2
                     suite.audio.controls suite.audio.source_controls suite.audio2.observation.lynx1
-                    suite.audio2.observation.lynx2 suite.audio2.controls)
+                    suite.audio2.observation.lynx2 suite.audio2.controls
+                    suite.math.observation.lynx1 suite.math.observation.lynx2
+                    suite.memio.observation.lynx1 suite.memio.observation.lynx2)
       string(FIND "${registration_text}" "lynx_suite_test(${case_id} " registration_found)
       if(registration_found EQUAL -1)
         message(FATAL_ERROR "suite_driver: required suite/control CTest ID is not registered: ${case_id}")
