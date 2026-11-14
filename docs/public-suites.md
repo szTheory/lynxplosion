@@ -63,8 +63,12 @@ restored-stack evidence. The source controls exercise 14 unique copied-source, b
 tool, object, label, notice and reserved-range faults. Strict comparison
 controls independently alter timing offsets 14 and 15: each complete record
 still passes the 14/14 arithmetic gate, while the strict validator fails and
-prints the exact mismatch row. These injected records test the verdict path;
-they are not observations from the pinned guest or timing exceptions.
+prints the exact mismatch row. Six separately rehashed hostile records also
+prove the strict reader rejects omitted or reclassified timing rows, a missing
+strict verdict, a stale mismatch count, a dropped mismatch row, and a whole-pass
+claim that contradicts a timing mismatch. These injected records test the
+verdict path; they are not observations from the pinned guest or timing
+exceptions.
 
 | Suite / profile | Guest ticks | Raw result bytes, indices 0–17 | Scoped result | Strict mismatches |
 | --- | ---: | --- | ---: | ---: |
