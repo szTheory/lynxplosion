@@ -2542,6 +2542,18 @@ static int remove_frame_directory(const char *directory)
     return rmdir(directory) == 0 ? 0 : 1;
 }
 
+static int release_frame_publishers(int fd, const char *release, size_t count)
+{
+    size_t written_total = 0u;
+    while (written_total < count) {
+        ssize_t written = write(fd, release + written_total, count - written_total);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) return 1;
+        written_total += (size_t)written;
+    }
+    return 0;
+}
+
 static int frame_publication_control(const char *consumer, const char *content,
                                      const char *symbols, const char *timeline,
                                      const char *output, const char *expected_input_sha)
@@ -2584,7 +2596,7 @@ static int frame_publication_control(const char *consumer, const char *content,
     }
     (void)close(gate[0]);
     gate[0] = -1;
-    if (started != 2u || write(gate[1], release, sizeof release) != (ssize_t)sizeof release) {
+    if (started != 2u || release_frame_publishers(gate[1], release, sizeof release) != 0) {
         fputs("artifact-check: could not release both frame publishers\n", stderr);
         goto done;
     }
@@ -2616,8 +2628,10 @@ static int frame_publication_control(const char *consumer, const char *content,
     puts("artifact-check: concurrent frame publishers yielded one complete bundle and one refusal");
     result = 0;
 done:
-    if (started < 2u && gate[1] >= 0) {
-        (void)write(gate[1], release, started);
+    if (started < 2u && gate[1] >= 0 && started > 0u &&
+        release_frame_publishers(gate[1], release, started) != 0) {
+        fputs("artifact-check: could not release a started frame publisher during cleanup\n", stderr);
+        result = 1;
     }
     for (unsigned index = 0u; index < 2u; index++) {
         if (children[index] > 0) {
