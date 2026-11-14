@@ -221,6 +221,7 @@ suite.cpu.lynx1	suite
 suite.cpu.lynx2	suite
 suite.cpu.model_controls	suite
 suite.cpu.no_run	suite
+suite.math.observation.lynx1	suite
 suite.oracle_controls	suite
 suite.oracle_tracer	suite
 suite.page_mode.controls	suite
