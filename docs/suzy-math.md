@@ -1,128 +1,136 @@
-# Suzy math register slice
+# Suzy math register policy
 
-This note describes the first software slice of the private Suzy math device.
-It supports the mapped unsigned multiply path and its snapshot continuation.
-It does not claim full Suzy behavior or physical accuracy.
+This note records the project’s deterministic software policy for the mapped
+Suzy math registers. It separates source observations from selected behavior
+and leaves hardware accuracy unqualified.
 
 ## Source observations and limits
 
-The [original Epyx math chapter](https://www.monlynx.de/lynx/lynx9.html) and
-[address appendix](https://www.monlynx.de/lynx/hardware.html) describe the
-16-by-16-bit product, paired low/high registers, explicit command ports, math
-status and a 44-tick unsigned multiply. The chapter also describes unsafe
-access reporting and non-reentrant operations, but calls the unsafe indication
-unreliable. These are document observations, not measurements from Lynx
-hardware.
+The [Epyx math chapter](https://www.monlynx.de/lynx/lynx9.html) and
+[address appendix](https://www.monlynx.de/lynx/hardware.html) describe paired
+operand, product, quotient and remainder registers; signed and accumulated
+multiplication; divide; and the SPRSYS math flags. They describe 44 ticks for
+plain multiplication, 54 ticks for signed or accumulated multiplication, and
+176 plus 14 ticks per leading zero in the 16-bit divisor for division. These
+are document observations, not measurements on Lynx hardware.
 
-The project policy interprets the plain multiply latency as 44 guest master
-ticks. The operation inputs are latched when the guest writes the command port;
-the product and unsafe status publish at the scheduled completion tick. This is
-an explicit software interpretation. It has not been calibrated against a
-physical Lynx. The pinned source timing rows are not used to tune this latency.
+The pinned Math diagnostic has eight cases. Cases 1–7 check meaningful result
+bytes at offsets 0–13. Case 5 contains the expected remainder comparison but
+comments out its branch, so it cannot establish general remainder behavior.
+Case 8 observes timer deltas at offsets 14–15 and leaves 16–17 reserved. The
+pinned Memio diagnostic has three cases whose meaningful result ranges end at
+offsets 3, 7 and 12; later result bytes are reserved. These source files are
+unchanged, and their comments are not treated as hardware measurements.
 
-No emulator implementation source, BIOS, firmware, commercial ROM or
-diagnostic payload is included or used by this slice. Full SUZ-02 agreement,
-the existing EVD-02 timing gap, and hardware qualification remain open.
+The selected timing constants below are deterministic guest-time policy. No
+row-based parameter fitting was performed. No emulator implementation source,
+BIOS, firmware, commercial ROM or diagnostic payload is included in this
+project’s implementation. Full SUZ-02 agreement, the existing EVD-02 timing
+gap and physical hardware qualification remain open.
 
-## Implemented register behavior
+## Mapped register and alias behavior
 
 The backing window has 48 bytes. CPU accesses at `FC00..FC2F` and `FC40..FC6F`
-use `address & 0x3F`, so the latter range mirrors the former. `FC30..FC3F`,
-`FC70..FC7F` and other unsupported Suzy addresses remain unavailable. The
-existing `FC92` SPRSYS, `FCB0` JOYSTICK and `FCB1` SWITCHES input path remains
-owned by `core/input.c`; mapped reads still sample input only on the actual CPU
-bus grant.
+use `address & 0x3F`; the latter range mirrors the former. `FC30..FC3F`,
+`FC70..FC7F` and other unsupported Suzy addresses remain unavailable. Reads
+and writes do not fall through to hidden RAM. The existing `FC92` SPRSYS,
+`FCB0` JOYSTICK and `FCB1` SWITCHES path remains owned by `core/input.c`; input
+sampling still occurs at the granted CPU read edge.
 
-| Address | Behavior in this slice |
+| Mirror address | Software meaning |
 | --- | --- |
-| `FC52..FC53` | CD operand, low byte then high byte |
-| `FC54..FC55` | AB operand; an explicit write to `FC55` starts multiplication |
-| `FC60..FC63` | Product bytes E, F, G, H from least to most significant |
-| `FC6C` | Writing this warning port clears the warning latch |
+| `FC52..FC53` | CD low/high bytes; an explicit high write at `FC53` updates the CD sign latch in signed mode |
+| `FC54..FC55` | AB low/high bytes; an explicit high write at `FC55` updates the AB sign latch and starts multiply |
+| `FC56..FC57` | NP divisor low/high |
+| `FC60..FC63` | EFGH input/output bytes, little-endian by ascending address; explicit write at `FC63` starts divide |
+| `FC6C..FC6F` | JKLM accumulator/remainder bytes, little-endian by ascending address; explicit write at `FC6C` clears warning |
 | `FC92` | Composed SPRSYS status and supported math/input controls |
 
-An even low-byte write clears its paired high byte. That storage effect does
-not trigger a command or update a sign latch. Only an explicit write to the
-named A command port `FC55` starts this operation; an ordinary write to its
-base mirror does not. For `CD=00FF` and `AB=0002`, the independently expected
-product is `000001FE`, read as `FE 01 00 00` at `FC60..FC63`.
+An even low-byte write clears the paired high byte in either view. That
+storage effect does not start an operation or update a sign latch. Command,
+sign-conversion and warning-clear actions belong only to the named mirror
+ports in `FC40..FC6F`; corresponding base-window writes are ordinary storage
+writes. In particular, a write to base `FC15` or `FC23` does not start
+multiplication or division.
 
-SPRSYS reads expose busy (`80`), warning (`40`), carry (`20`), existing
-lefthand input orientation (`08`) and math unsafe (`04`). The sprite status
-bits are zero in this slice. Writes accept signed (`80`), accumulate (`40`),
-lefthand (`08`), clear-unsafe (`04`) and ignored (`01`) controls; the unsupported
-sprite-control mask `32` is rejected before either input or math state changes.
-Signed and accumulate mode bits are stored while idle, but this plan does not
-implement those arithmetic modes, so a multiply command in either mode is
-refused. Divide at `FC63` is also refused until its separately scoped
-implementation.
+In signed mode, an explicit high-byte write converts a value greater than
+`8000` to its unsigned magnitude and latches a negative sign. `8000` remains
+positive under the selected software interpretation. Explicit high writes of
+zero retain a negative-zero sign latch; a zero product is not negated and does
+not set carry. Low-byte auto-clearing and mode-only SPRSYS writes preserve
+existing sign latches. For `FFFD * 0005`, the selected result is
+`FFFFFFF1`; a later low-only CD write can therefore use the stale negative CD
+sign. These quirks are software policy based on the pinned diagnostic’s
+observed cases, not a complete electrical model.
 
-While an operation is busy, writes to math backing registers and aliases are
-refused before mutation. Pure mapped reads and validated SPRSYS clear/orientation
-writes remain available. The first operation publishes its product and sets
-unsafe at completion. Unsafe remains set until SPRSYS bit `04` clears it. The
-warning and carry latches remain zero in this unsigned-multiply slice.
+SPRSYS reads expose busy (`80`), warning (`40`), carry (`20`), the existing
+lefthand input orientation (`08`) and math unsafe (`04`). Writes accept signed
+(`80`), accumulate (`40`), lefthand (`08`), clear unsafe (`04`) and ignored
+bit zero (`01`). Unsupported sprite-control bits are rejected atomically.
+During an operation, valid SPRSYS mode, clear-unsafe and orientation changes
+remain accepted; the pending arithmetic uses its captured mode. Input
+orientation still passes through the existing input writer.
 
-## Scheduling and state format
+While busy, writes to math backing indices `12..17`, `20..23` and `2C..2F`
+(hex) are refused before mutation through either view, including repeat
+commands. Ordinary SCB backing outside those ranges remains writable. Reads
+and valid SPRSYS writes remain available. Completion sets unsafe; SPRSYS bit
+`04` clears it. Warning is sticky until the explicit `FC6C` write or reset.
 
-Multiplication is instance-owned and uses one non-owner guest event. It does
-not claim the CPU or video bus, alter `cpu_ready_at`, clear the CPU page latch or
-change input sampling. A completion event runs immediately before CPU work at
-the same tick. `lynx_advance` has a half-open target: if the deadline equals the
-target, the operation remains busy; the next positive advance applies it.
-Zero-budget calls and mapped peeks do not apply pending work.
+## Arithmetic and status software policy
 
-Snapshot format 8 appends one 88-byte canonical record at payload offset
-`78108`, producing a `78196`-byte payload. The record stores, in order: the 48
-register bytes; AB and CD sign latches; mode; warning, carry and unsafe; the
-operation kind and latched mode; AB, CD and NP; dividend and accumulator; two
-latched signs; start tick and deadline tick. Every multi-byte field is
-little-endian and no C padding is serialized. Idle pending-operation fields
-are canonical zeroes. Restore validates the complete candidate before applying
-any machine state; formats 1 through 7 are refused.
+Unsigned multiplication uses 16-by-16-bit unsigned operands and publishes the
+32-bit result at `FC60..FC63`. A signed operation multiplies the magnitudes
+captured by explicit high writes and applies two’s-complement negation only
+when exactly one latched sign is negative and the product is nonzero. With
+accumulation enabled, the signed or unsigned product is added to the captured
+32-bit JKLM value modulo 2³². Carry then reports overflow of that unsigned
+addition; without accumulation, carry reports a nonzero signed negation.
+Overflow sets warning, while a non-overflowing operation does not clear an
+existing warning. A write to `FC6C` clears warning and preserves carry.
 
-The canonical guest-state digest domain is
-`lynxplosion.guest-state.v4`. It appends the same fieldwise Suzy record after
-video and audio state. `det.suzy_sensitivity` checks all 48 backing bytes,
-signs, mode, status, active progress and exclusion of host write-watch state.
+Division is unsigned regardless of the signed or accumulate controls. The
+software result is quotient `EFGH / NP` at `ABCD` and the mathematical
+unsigned remainder at `JKLM`. A nonzero remainder sets carry. Division by
+zero produces quotient `FFFFFFFF`, remainder zero, warning and carry. The
+general remainder rule is an explicit deterministic software choice; the
+pinned diagnostic’s disabled remainder branch cannot establish hardware
+correctness.
+
+The selected guest-time schedule is 44 ticks for plain multiplication and 54
+ticks when signed or accumulation mode is active. Division takes 176 plus 14
+times `clz16(NP)` ticks, with `clz16(0) = 16`. No CPU, video or refresh bus
+ownership is taken. At an advance target equal to the deadline, the operation
+remains busy; the next positive advance applies the pending event before CPU
+work at that tick.
+
+## Snapshot and digest continuity
+
+Snapshot format 8 keeps its 88-byte canonical Suzy record at payload offset
+`78108`, within the existing `78196`-byte payload. The record still contains
+the 48 register bytes, sign and mode flags, operation kind, latched operands,
+controls, dividend, accumulator, signs, start and deadline ticks. No schema or
+digest input field changed in this plan. Active multiply and divide restore
+requires a reachable operation kind, canonical mode/operand latches, exact
+checked deadline and a current tick between start and deadline. Pending
+results are recomputed from captured inputs rather than trusted from serialized
+outputs. Candidate validation completes before any machine state is applied.
+
+The canonical guest-state digest remains domain
+`lynxplosion.guest-state.v4`; the existing skeleton golden is unchanged. Its
+workload does not issue math writes, and Suzy sensitivity continues to cover
+all canonical fields without treating host observations as guest state.
 
 ## Evidence boundary
 
-The public guest tracer runs on both Lynx CPU profiles and checks mapped
-operand writes, busy status, completion and product readback. Its snapshot
-companion snapshots a pending operation, restores it into a fresh equal-identity
-instance, checks the exact half-open deadline and compares the complete RAM,
-snapshot and digest suffixes. API controls cover mirror mapping, pure mapped
-inspection, hidden-RAM isolation, atomic unavailable spans, active-write
-refusal and invalid snapshot candidates.
+`suzy.tracer`, `suzy.snapshot_tracer`, `suzy.registers`, `suzy.arithmetic` and
+`suzy.flags` exercise mapped guest writes and public mapped reads on Lynx1 and
+Lynx2. Arithmetic checks compare edge and deterministic seeded unsigned
+vectors with a test-owned `uint64_t` model, plus hand-derived signed,
+accumulation and divide cases. The phase’s later lifecycle and copied-source
+fault controls add boundary, forged-snapshot and mutation evidence.
 
-These checks establish deterministic behavior for the selected software
-contract. They do not establish the full register set, signed arithmetic,
-accumulation, division, sprite behavior, hardware timing or hardware accuracy.
-
-## Early integration record
-
-The updated skeleton observation digest is
-`7cd1222c5491855a8e7f50b5bc44dbd42871acd04bfc54ceaf69e2fe48221898` on both
-native Clang and the exact GNU checkout. Before accepting that value,
-`det.suzy_sensitivity` passed and the pre-update golden produced the same
-different digest in both environments. The previous golden matched the old
-state format. The required two-run, two-instance, golden, golden self-test,
-claim-template and claim-template self-test checks pass after the refresh.
-
-The early native full inventory initially found two API self-test expectation
-drifts after Suzy became mapped: the map-route mutant now first fails the RAM
-route sentinel, and the raw-read mutant now first fails the raw backing-RAM
-value. Both controls now name those semantic failures. The native API and
-memory groups passed 72/72 after repair. The full native inventory was not
-repeated here; final native full qualification remains with the later phase
-qualification plan.
-
-The final early GNU checkout built and passed all 252 registered CTests with
-the two existing declared page-mode observation skips and no failures. The
-optimized configuration was `RelWithDebInfo` with
-`-O2 -g -UNDEBUG`, ASan+UBSan, and non-recovering sanitizers; the effective
-compile and link commands retained assertions and did not define `NDEBUG`.
-Its API and memory groups also passed 72/72 after the self-test repair. The
-installed ShellCheck identities were native 0.11.0 and GNU 0.9.0; this was an
-identity check only, not a lint run.
+These checks establish only the stated deterministic software contract. They
+do not establish full Suzy behavior, sprite behavior, general remainder
+hardware behavior, Lynx timing accuracy or hardware accuracy. Rights, physical
+testing, release and EVD-02 stops remain unchanged.

@@ -75,22 +75,6 @@ static size_t emit_write(uint8_t *program, size_t *length, uint16_t addr, uint8_
     return *length;
 }
 
-static size_t make_arithmetic_guest(uint8_t *program, uint16_t load_addr)
-{
-    size_t length = 0u;
-    append(program, &length, 0x78u); /* SEI */
-    (void)emit_write(program, &length, 0xFC92u, 0x80u); /* signed mode */
-    (void)emit_write(program, &length, 0xFC52u, 0xFDu); /* CD low */
-    (void)emit_write(program, &length, 0xFC53u, 0xFFu); /* explicit CD high/sign */
-    (void)emit_write(program, &length, 0xFC54u, 0x05u); /* AB low */
-    (void)emit_write(program, &length, 0xFC55u, 0x00u); /* explicit AB high/start */
-    const uint16_t loop_addr = (uint16_t)(load_addr + (uint16_t)length);
-    append(program, &length, 0x4Cu); /* JMP loop */
-    append(program, &length, (uint8_t)loop_addr);
-    append(program, &length, (uint8_t)(loop_addr >> 8));
-    return length;
-}
-
 static size_t make_program_object(uint8_t *object, size_t capacity,
                                  const uint8_t *program, size_t program_len,
                                  uint16_t load_addr)
@@ -110,6 +94,89 @@ static size_t make_program_object(uint8_t *object, size_t capacity,
     object[9] = '3';
     memcpy(object + header_len, program, program_len);
     return object_len;
+}
+
+typedef struct suzy_write {
+    uint16_t addr;
+    uint8_t value;
+} suzy_write;
+
+typedef struct suzy_live_machine {
+    lynx_machine *machine;
+    void *allocation;
+} suzy_live_machine;
+
+static lynx_machine *make_machine(uint32_t profile, void **allocation);
+
+static size_t make_guest_writes(uint8_t *program, uint16_t load_addr,
+                                const suzy_write *writes, size_t write_count)
+{
+    size_t length = 0u;
+    append(program, &length, 0x78u); /* SEI */
+    for (size_t i = 0u; i < write_count; i++) {
+        (void)emit_write(program, &length, writes[i].addr, writes[i].value);
+        if (writes[i].addr == 0xFC55u || writes[i].addr == 0xFC63u) {
+            append(program, &length, 0xA2u); append(program, &length, 0x00u); /* LDX #0 */
+            append(program, &length, 0xE8u); /* wait: INX */
+            append(program, &length, 0xD0u); append(program, &length, 0xFDu); /* BNE wait */
+        }
+    }
+    const uint16_t loop_addr = (uint16_t)(load_addr + (uint16_t)length);
+    append(program, &length, 0x4Cu); /* JMP loop */
+    append(program, &length, (uint8_t)loop_addr);
+    append(program, &length, (uint8_t)(loop_addr >> 8));
+    return length;
+}
+
+static suzy_live_machine run_guest_writes(uint32_t profile, const suzy_write *writes,
+                                          size_t write_count)
+{
+    enum { LOAD_ADDRESS = 0x0200u };
+    uint8_t program[4096];
+    uint8_t object[4106];
+    const size_t program_len = make_guest_writes(program, LOAD_ADDRESS, writes, write_count);
+    const size_t object_len = make_program_object(object, sizeof object, program,
+                                                   program_len, LOAD_ADDRESS);
+    CHECK(object_len != 0u);
+    suzy_live_machine live = {NULL, NULL};
+    live.machine = make_machine(profile, &live.allocation);
+    if (live.machine == NULL) return live;
+    CHECK_EQ_U64(lynx_load_bll(live.machine, object, object_len), LYNX_OK);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    CHECK_EQ_U64(lynx_advance(live.machine, 12000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 12000u);
+    return live;
+}
+
+static void destroy_live_machine(suzy_live_machine *live)
+{
+    if (live->machine != NULL) lynx_machine_deinit(live->machine);
+    free(live->allocation);
+    live->machine = NULL;
+    live->allocation = NULL;
+}
+
+static void peek_bytes(const lynx_machine *machine, uint16_t addr,
+                       uint8_t *out, size_t length)
+{
+    CHECK_EQ_U64(lynx_read_cpu_memory(machine, addr, out, length), LYNX_OK);
+}
+
+static void expect_u32_bytes(const lynx_machine *machine, uint16_t addr, uint32_t value,
+                             const char *invariant)
+{
+    uint8_t actual[4] = {0u};
+    peek_bytes(machine, addr, actual, sizeof actual);
+    for (uint32_t i = 0u; i < 4u; i++) {
+        if (actual[i] != (uint8_t)(value >> (8u * i))) {
+            fprintf(stderr, "suzy semantic failure: %s byte %u: got %02X expected %02X\n",
+                    invariant, (unsigned)i, (unsigned)actual[i],
+                    (unsigned)(uint8_t)(value >> (8u * i)));
+        }
+        CHECK_EQ_HEX(actual[i], (uint8_t)(value >> (8u * i)));
+    }
 }
 
 static lynx_machine *make_machine(uint32_t profile, void **allocation)
@@ -335,15 +402,204 @@ static int case_snapshot_tracer(void)
     return check_failures == 0 ? 0 : 1;
 }
 
-static void run_signed_arithmetic_profile(uint32_t profile)
+static void run_unsigned_vector(uint32_t profile, uint16_t cd, uint16_t ab)
+{
+    const suzy_write writes[] = {
+        {0xFC92u, 0x00u}, {0xFC52u, (uint8_t)cd},
+        {0xFC53u, (uint8_t)(cd >> 8)}, {0xFC54u, (uint8_t)ab},
+        {0xFC55u, (uint8_t)(ab >> 8)}
+    };
+    suzy_live_machine live = run_guest_writes(profile, writes,
+                                               sizeof writes / sizeof writes[0]);
+    if (live.machine != NULL) {
+        const uint32_t expected = (uint32_t)((uint64_t)cd * (uint64_t)ab);
+        expect_u32_bytes(live.machine, 0xFC60u, expected,
+                         "suzy.arithmetic unsigned product matches uint64 model");
+    }
+    destroy_live_machine(&live);
+}
+
+static void run_signed_vectors(uint32_t profile)
+{
+    const suzy_write negative[] = {
+        {0xFC92u, 0x80u}, {0xFC52u, 0xFDu}, {0xFC53u, 0xFFu},
+        {0xFC54u, 0x05u}, {0xFC55u, 0x00u}
+    };
+    suzy_live_machine live = run_guest_writes(profile, negative,
+                                               sizeof negative / sizeof negative[0]);
+    if (live.machine != NULL) {
+        expect_u32_bytes(live.machine, 0xFC60u, UINT32_C(0xFFFFFFF1),
+                         "suzy.arithmetic signed FFFD times 5 is FFFFFFF1");
+        CHECK((read_sprsys(live.machine) & 0x24u) == 0x24u);
+    }
+    destroy_live_machine(&live);
+
+    const suzy_write stale_sign[] = {
+        {0xFC92u, 0x80u}, {0xFC52u, 0xFDu}, {0xFC53u, 0xFFu},
+        {0xFC54u, 0x05u}, {0xFC55u, 0x00u},
+        {0xFC52u, 0x05u}, {0xFC54u, 0x03u}, {0xFC55u, 0x00u}
+    };
+    live = run_guest_writes(profile, stale_sign,
+                            sizeof stale_sign / sizeof stale_sign[0]);
+    if (live.machine != NULL) {
+        expect_u32_bytes(live.machine, 0xFC60u, UINT32_C(0xFFFFFFF1),
+                         "suzy.arithmetic low write preserves stale CD sign latch");
+    }
+    destroy_live_machine(&live);
+
+    const suzy_write signed_8000[] = {
+        {0xFC92u, 0x80u}, {0xFC52u, 0x00u}, {0xFC53u, 0x80u},
+        {0xFC54u, 0x02u}, {0xFC55u, 0x00u}
+    };
+    live = run_guest_writes(profile, signed_8000,
+                            sizeof signed_8000 / sizeof signed_8000[0]);
+    if (live.machine != NULL) {
+        expect_u32_bytes(live.machine, 0xFC60u, UINT32_C(0x00010000),
+                         "suzy.arithmetic signed 8000 remains positive");
+        CHECK((read_sprsys(live.machine) & 0x24u) == 0x04u);
+    }
+    destroy_live_machine(&live);
+}
+
+static int case_arithmetic(void)
+{
+    static const uint16_t edges[] = {0u, 1u, 0xFFFFu, 0x8000u};
+    for (uint32_t profile = LYNX_PROFILE_LYNX1; profile <= LYNX_PROFILE_LYNX2; profile++) {
+        for (size_t i = 0u; i < sizeof edges / sizeof edges[0]; i++) {
+            run_unsigned_vector(profile, edges[i], edges[(i + 1u) % 4u]);
+        }
+        uint32_t seed = UINT32_C(0x6D2B79F5);
+        for (uint32_t i = 0u; i < 12u; i++) {
+            seed = seed * UINT32_C(1664525) + UINT32_C(1013904223);
+            const uint16_t cd = (uint16_t)(seed >> 16);
+            seed = seed * UINT32_C(1664525) + UINT32_C(1013904223);
+            const uint16_t ab = (uint16_t)(seed >> 16);
+            run_unsigned_vector(profile, cd, ab);
+        }
+        run_signed_vectors(profile);
+    }
+    return check_failures == 0 ? 0 : 1;
+}
+
+static int case_flags(void)
+{
+    for (uint32_t profile = LYNX_PROFILE_LYNX1; profile <= LYNX_PROFILE_LYNX2; profile++) {
+        const suzy_write accumulate[] = {
+            {0xFC6Cu, 0xF0u}, {0xFC6Du, 0xFFu},
+            {0xFC6Eu, 0xFFu}, {0xFC6Fu, 0xFFu},
+            {0xFC92u, 0x40u}, {0xFC52u, 0x10u}, {0xFC53u, 0x00u},
+            {0xFC54u, 0x10u}, {0xFC55u, 0x00u}
+        };
+        suzy_live_machine live = run_guest_writes(profile, accumulate,
+                                                   sizeof accumulate / sizeof accumulate[0]);
+        if (live.machine != NULL) {
+            expect_u32_bytes(live.machine, 0xFC60u, UINT32_C(0x00000100),
+                             "suzy.flags accumulator multiply product");
+            expect_u32_bytes(live.machine, 0xFC6Cu, UINT32_C(0x000000F0),
+                             "suzy.flags accumulator wraps low32");
+            CHECK((read_sprsys(live.machine) & 0x64u) == 0x64u);
+        }
+        destroy_live_machine(&live);
+
+        const suzy_write clear_warning[] = {
+            {0xFC6Cu, 0xF0u}, {0xFC6Du, 0xFFu},
+            {0xFC6Eu, 0xFFu}, {0xFC6Fu, 0xFFu},
+            {0xFC92u, 0x40u}, {0xFC52u, 0x10u}, {0xFC53u, 0x00u},
+            {0xFC54u, 0x10u}, {0xFC55u, 0x00u}, {0xFC6Cu, 0x00u}
+        };
+        live = run_guest_writes(profile, clear_warning,
+                                sizeof clear_warning / sizeof clear_warning[0]);
+        if (live.machine != NULL) CHECK((read_sprsys(live.machine) & 0x64u) == 0x24u);
+        destroy_live_machine(&live);
+
+        const suzy_write negative_zero[] = {
+            {0xFC92u, 0x80u}, {0xFC52u, 0x00u}, {0xFC53u, 0x00u},
+            {0xFC54u, 0x05u}, {0xFC55u, 0x00u}
+        };
+        live = run_guest_writes(profile, negative_zero,
+                                sizeof negative_zero / sizeof negative_zero[0]);
+        if (live.machine != NULL) {
+            expect_u32_bytes(live.machine, 0xFC60u, 0u,
+                             "suzy.flags negative zero does not set negation carry");
+            CHECK((read_sprsys(live.machine) & 0x24u) == 0x04u);
+        }
+        destroy_live_machine(&live);
+
+        const suzy_write signed_accumulate[] = {
+            {0xFC92u, 0xC0u}, {0xFC52u, 0xFDu}, {0xFC53u, 0xFFu},
+            {0xFC54u, 0x05u}, {0xFC55u, 0x00u}
+        };
+        live = run_guest_writes(profile, signed_accumulate,
+                                sizeof signed_accumulate / sizeof signed_accumulate[0]);
+        if (live.machine != NULL) {
+            expect_u32_bytes(live.machine, 0xFC60u, UINT32_C(0xFFFFFFF1),
+                             "suzy.flags signed product remains two-complement");
+            expect_u32_bytes(live.machine, 0xFC6Cu, UINT32_C(0xFFFFFFF1),
+                             "suzy.flags signed accumulation uses low32 sum");
+            CHECK((read_sprsys(live.machine) & 0x64u) == 0x04u);
+        }
+        destroy_live_machine(&live);
+
+        const suzy_write divide_remainder[] = {
+            {0xFC92u, 0xC0u}, {0xFC56u, 0x0Au}, {0xFC57u, 0x00u},
+            {0xFC60u, 0x00u}, {0xFC61u, 0x00u}, {0xFC62u, 0x01u},
+            {0xFC63u, 0x00u}
+        };
+        live = run_guest_writes(profile, divide_remainder,
+                                sizeof divide_remainder / sizeof divide_remainder[0]);
+        if (live.machine != NULL) {
+            expect_u32_bytes(live.machine, 0xFC52u, UINT32_C(0x00001999),
+                             "suzy.arithmetic division quotient");
+            expect_u32_bytes(live.machine, 0xFC6Cu, 6u,
+                             "suzy.arithmetic selected remainder policy");
+            CHECK((read_sprsys(live.machine) & 0x64u) == 0x24u);
+        }
+        destroy_live_machine(&live);
+
+        const suzy_write divide_exact[] = {
+            {0xFC92u, 0x00u}, {0xFC56u, 0xFFu}, {0xFC57u, 0x00u},
+            {0xFC60u, 0xFFu}, {0xFC61u, 0xFFu}, {0xFC62u, 0x00u},
+            {0xFC63u, 0x00u}
+        };
+        live = run_guest_writes(profile, divide_exact,
+                                sizeof divide_exact / sizeof divide_exact[0]);
+        if (live.machine != NULL) {
+            expect_u32_bytes(live.machine, 0xFC52u, UINT32_C(0x00000101),
+                             "suzy.arithmetic exact division quotient");
+            expect_u32_bytes(live.machine, 0xFC6Cu, 0u,
+                             "suzy.arithmetic exact division remainder");
+            CHECK((read_sprsys(live.machine) & 0x64u) == 0x04u);
+        }
+        destroy_live_machine(&live);
+
+        const suzy_write divide_zero[] = {
+            {0xFC56u, 0x00u}, {0xFC57u, 0x00u},
+            {0xFC60u, 0x34u}, {0xFC61u, 0x12u}, {0xFC62u, 0x00u},
+            {0xFC63u, 0x00u}
+        };
+        live = run_guest_writes(profile, divide_zero,
+                                sizeof divide_zero / sizeof divide_zero[0]);
+        if (live.machine != NULL) {
+            expect_u32_bytes(live.machine, 0xFC52u, UINT32_MAX,
+                             "suzy.arithmetic divide by zero quotient");
+            expect_u32_bytes(live.machine, 0xFC6Cu, 0u,
+                             "suzy.arithmetic divide by zero remainder policy");
+            CHECK((read_sprsys(live.machine) & 0x64u) == 0x64u);
+        }
+        destroy_live_machine(&live);
+    }
+    return check_failures == 0 ? 0 : 1;
+}
+
+static void run_register_refusal(uint32_t profile, uint16_t address)
 {
     enum { LOAD_ADDRESS = 0x0200u };
+    const suzy_write write = {address, 0xA5u};
     uint8_t program[64];
     uint8_t object[128];
-    const size_t program_len = make_arithmetic_guest(program, LOAD_ADDRESS);
+    const size_t program_len = make_guest_writes(program, LOAD_ADDRESS, &write, 1u);
     const size_t object_len = make_program_object(object, sizeof object, program,
                                                    program_len, LOAD_ADDRESS);
-    CHECK(object_len != 0u);
     void *allocation = NULL;
     lynx_machine *machine = make_machine(profile, &allocation);
     if (machine == NULL) {
@@ -352,28 +608,63 @@ static void run_signed_arithmetic_profile(uint32_t profile)
     }
     CHECK_EQ_U64(lynx_load_bll(machine, object, object_len), LYNX_OK);
     uint64_t consumed = 0u;
-    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
-    CHECK_EQ_U64(lynx_advance(machine, 12000u, &consumed, &stop), LYNX_OK);
-    if (stop != LYNX_STOP_BUDGET) {
-        fprintf(stderr, "suzy.arithmetic: signed mapped multiply must complete; stop=%u tick=%llu\n",
-                (unsigned)stop, (unsigned long long)consumed);
-    }
-    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
-    CHECK_EQ_U64(consumed, 12000u);
-    uint8_t product[4] = {0u};
-    CHECK_EQ_U64(lynx_read_cpu_memory(machine, 0xFC60u, product, sizeof product), LYNX_OK);
-    CHECK_EQ_HEX(product[0], 0xF1u);
-    CHECK_EQ_HEX(product[1], 0xFFu);
-    CHECK_EQ_HEX(product[2], 0xFFu);
-    CHECK_EQ_HEX(product[3], 0xFFu);
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(machine, 2000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    uint8_t actual = 0u;
+    CHECK_EQ_U64(lynx_read_memory(machine, address, &actual, 1u), LYNX_OK);
+    CHECK_EQ_HEX(actual, 0u);
+    CHECK_EQ_U64(lynx_read_cpu_memory(machine, address, &actual, 1u), LYNX_ERR_UNAVAILABLE);
     lynx_machine_deinit(machine);
     free(allocation);
 }
 
-static int case_arithmetic(void)
+static int case_registers(void)
 {
-    run_signed_arithmetic_profile(LYNX_PROFILE_LYNX1);
-    run_signed_arithmetic_profile(LYNX_PROFILE_LYNX2);
+    for (uint32_t profile = LYNX_PROFILE_LYNX1; profile <= LYNX_PROFILE_LYNX2; profile++) {
+        suzy_write writes[48];
+        uint8_t expected[48];
+        for (uint8_t i = 0u; i < 48u; i++) {
+            expected[i] = (uint8_t)(i * 13u + 0x37u);
+            writes[i].addr = (uint16_t)(0xFC00u + i);
+            writes[i].value = expected[i];
+        }
+        suzy_live_machine live = run_guest_writes(profile, writes, 48u);
+        if (live.machine != NULL) {
+            uint8_t actual[48];
+            peek_bytes(live.machine, 0xFC40u, actual, sizeof actual);
+            CHECK(memcmp(actual, expected, sizeof actual) == 0);
+        }
+        destroy_live_machine(&live);
+
+        const suzy_write mirror_writes[] = {
+            {0xFC40u, 0xA1u}, {0xFC42u, 0xB2u}, {0xFC50u, 0xC3u},
+            {0xFC58u, 0xD4u}, {0xFC64u, 0xE5u}, {0xFC68u, 0xF6u},
+            {0xFC13u, 0xFFu}, {0xFC15u, 0x55u}, {0xFC23u, 0xAAu}
+        };
+        live = run_guest_writes(profile, mirror_writes,
+                                sizeof mirror_writes / sizeof mirror_writes[0]);
+        if (live.machine != NULL) {
+            const uint16_t base_addrs[] = {0xFC00u, 0xFC02u, 0xFC10u};
+            const uint8_t expected_values[] = {0xA1u, 0xB2u, 0xC3u};
+            for (size_t i = 0u; i < sizeof base_addrs / sizeof base_addrs[0]; i++) {
+                uint8_t actual = 0u;
+                peek_bytes(live.machine, base_addrs[i], &actual, 1u);
+                CHECK_EQ_HEX(actual, expected_values[i]);
+            }
+            const uint16_t math_addrs[] = {0xFC53u, 0xFC55u, 0xFC63u};
+            const uint8_t math_values[] = {0xFFu, 0x55u, 0xAAu};
+            for (size_t i = 0u; i < sizeof math_addrs / sizeof math_addrs[0]; i++) {
+                uint8_t actual = 0u;
+                peek_bytes(live.machine, math_addrs[i], &actual, 1u);
+                CHECK_EQ_HEX(actual, math_values[i]);
+            }
+            CHECK((read_sprsys(live.machine) & 0x80u) == 0u);
+        }
+        destroy_live_machine(&live);
+        run_register_refusal(profile, 0xFC30u);
+        run_register_refusal(profile, 0xFC70u);
+    }
     return check_failures == 0 ? 0 : 1;
 }
 
@@ -384,7 +675,8 @@ int main(int argc, char **argv)
         return 2;
     }
     if (strcmp(argv[1], "tracer") != 0 && strcmp(argv[1], "snapshot_tracer") != 0 &&
-        strcmp(argv[1], "arithmetic") != 0) {
+        strcmp(argv[1], "arithmetic") != 0 && strcmp(argv[1], "flags") != 0 &&
+        strcmp(argv[1], "registers") != 0) {
         fprintf(stderr, "lynx-test-suzy: unknown case '%s'\n", argv[1]);
         return 2;
     }
@@ -392,6 +684,8 @@ int main(int argc, char **argv)
     int result = 0;
     if (strcmp(argv[1], "snapshot_tracer") == 0) result = case_snapshot_tracer();
     else if (strcmp(argv[1], "arithmetic") == 0) result = case_arithmetic();
+    else if (strcmp(argv[1], "flags") == 0) result = case_flags();
+    else if (strcmp(argv[1], "registers") == 0) result = case_registers();
     else result = case_tracer();
     printf("%s 1 - suzy.%s\n", result == 0 ? "ok" : "not ok", argv[1]);
     return result;

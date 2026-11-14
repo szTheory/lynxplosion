@@ -392,8 +392,7 @@ static uint8_t suzy_system_peek(const struct lynx_machine *m)
 static bool suzy_system_write(struct lynx_machine *m, uint8_t value)
 {
     const uint8_t supported = 0xCDu; /* signed, accumulate, handedness, clear, ignored bit 0 */
-    if ((value & (uint8_t)~supported) != 0u ||
-        (m->suzy.operation != 0u && (value & 0xC0u) != m->suzy.mode)) {
+    if ((value & (uint8_t)~supported) != 0u) {
         return false;
     }
     if (!lynx__input_write(&m->video, SUZY_SPRSYS, (uint8_t)(value & 0x08u))) {

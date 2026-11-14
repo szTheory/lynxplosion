@@ -238,6 +238,8 @@ suite.timers.strict_comparison_controls	suite
 suite.timers.video_revisit	suite
 suite.timers.video_revisit_controls	suite
 suzy.arithmetic	suzy
+suzy.flags	suzy
+suzy.registers	suzy
 suzy.snapshot_tracer	suzy
 suzy.tracer	suzy
 timer.fault.done	timer

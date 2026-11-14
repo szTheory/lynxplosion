@@ -6006,24 +6006,44 @@ static void expect_busy_suzy_write_refusal(void)
     CHECK_EQ_HEX(raw, 0xE7u);
     CHECK_UNCHANGED(m, snap_a);
     lynx_machine_deinit(m);
+}
 
+static void expect_signed_suzy_supported(void)
+{
     static const uint8_t signed_trigger[] = {
-        0xA9u, 0x80u, 0x8Du, 0x92u, 0xFCu, /* reserve signed mode */
-        0xA9u, 0x00u, 0x8Du, 0x55u, 0xFCu  /* unsupported until plan 02 */
+        0xA9u, 0x80u, 0x8Du, 0x92u, 0xFCu, /* signed mode */
+        0xA9u, 0xFDu, 0x8Du, 0x52u, 0xFCu, /* CD low */
+        0xA9u, 0xFFu, 0x8Du, 0x53u, 0xFCu, /* CD high/sign */
+        0xA9u, 0x05u, 0x8Du, 0x54u, 0xFCu, /* AB low */
+        0xA9u, 0x00u, 0x8Du, 0x55u, 0xFCu, /* AB high/start */
+        0x4Cu, 0x19u, 0x02u                  /* JMP $0219 */
     };
-    m = init_in(buf_b, &cfg);
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(buf_b, &cfg);
     if (m == NULL) {
         CHECK(m != NULL);
         return;
     }
     CHECK_EQ_U64(load_bll_at(m, signed_trigger, sizeof signed_trigger, 0x0200u), LYNX_OK);
     m->ram[0xFC55u] = 0xE7u;
-    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
-    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
-    CHECK_EQ_U64(m->cpu.req_addr, 0xFC55u);
+    uint64_t consumed = 0u;
+    lynx_stop_reason stop = LYNX_STOP_UNAVAILABLE;
+    CHECK_EQ_U64(lynx_advance(m, 12000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(consumed, 12000u);
     CHECK_EQ_HEX(m->suzy.mode, 0x80u);
     CHECK_EQ_HEX(m->suzy.operation, 0u);
-    CHECK_EQ_HEX(m->suzy.registers[0x15u], 0u);
+    CHECK_EQ_HEX(m->suzy.registers[0x12u], 0x03u);
+    CHECK_EQ_HEX(m->suzy.registers[0x13u], 0x00u);
+    CHECK_EQ_HEX(m->suzy.registers[0x14u], 0x05u);
+    CHECK_EQ_HEX(m->suzy.registers[0x15u], 0x00u);
+    uint8_t product[4] = {0u};
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFC60u, product, sizeof product), LYNX_OK);
+    CHECK_EQ_HEX(product[0], 0xF1u);
+    CHECK_EQ_HEX(product[1], 0xFFu);
+    CHECK_EQ_HEX(product[2], 0xFFu);
+    CHECK_EQ_HEX(product[3], 0xFFu);
     CHECK_EQ_HEX(m->ram[0xFC55u], 0xE7u);
     lynx_machine_deinit(m);
 }
@@ -6099,7 +6119,9 @@ static void case_timer_unavailable(void)
 
     expect_busy_suzy_write_refusal();
     cases_run++;
-    CHECK_EQ_U64(cases_run, 7u);
+    expect_signed_suzy_supported();
+    cases_run++;
+    CHECK_EQ_U64(cases_run, 8u);
     expect_supported_timer1_previous_write();
     expect_supported_audio_volume_write();
     printf("TAP version 13\n1..1\n%s 1 - api.timer_unavailable\n",
