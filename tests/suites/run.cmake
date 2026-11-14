@@ -93,12 +93,12 @@ if(DEFINED SUITE_CLEANUP_CHECK)
   return()
 endif()
 
-foreach(required MODE ROOT WORK SCRATCH_ROOT TEST_BINARY ENV_EXECUTABLE)
+foreach(required MODE ROOT WORK SCRATCH_ROOT TEST_BINARY C_COMPILER ENV_EXECUTABLE)
   if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
     message(FATAL_ERROR "suite_driver: -D${required} is required")
   endif()
 endforeach()
-if(NOT MODE MATCHES "^(cpu|cpu_no_run|timers_no_run|completion_controls|selection_controls|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls|timer_observation|timer_video_revisit|timer_video_revisit_controls|timer_strict_controls|timer_cascade_model|timer_model_controls|timer_result_controls|timer_pending_controls|page_mode_observation|page_mode_controls|audio_observation|audio_controls|audio2_controls|audio_source_controls|math_memio_observation)$")
+if(NOT MODE MATCHES "^(cpu|cpu_no_run|timers_no_run|completion_controls|selection_controls|cpu_model_controls|cpu_bound_controls|tracer|oracle_controls|symbol_controls|timer_observation|timer_video_revisit|timer_video_revisit_controls|timer_strict_controls|timer_cascade_model|timer_model_controls|timer_result_controls|timer_pending_controls|page_mode_observation|page_mode_controls|audio_observation|audio_controls|audio2_controls|audio_source_controls|math_memio_observation|math_controls|memio_controls|math_source_controls|math_strict_comparison_controls)$")
   message(FATAL_ERROR "suite_driver: unknown mode")
 endif()
 if(MODE STREQUAL "cpu" AND NOT PROFILE MATCHES "^(lynx1|lynx2)$")
@@ -2196,7 +2196,7 @@ else()
     endif()
   endif()
 
-  if(FAILURE STREQUAL "" AND MODE STREQUAL "math_memio_observation")
+  if(FAILURE STREQUAL "" AND MODE MATCHES "^(math_memio_observation|math_controls|memio_controls|math_source_controls|math_strict_comparison_controls)$")
     execute_process(
       COMMAND sh "${ROOT}/scripts/generate-suite-oracle.sh"
               --source "${ROOT}/build/pins/lynx-tests" --include-math-memio --out "${MATH_ORACLE}"
@@ -2206,7 +2206,7 @@ else()
     endif()
   endif()
 
-  if(FAILURE STREQUAL "" AND MODE STREQUAL "math_memio_observation")
+  if(FAILURE STREQUAL "" AND MODE MATCHES "^(math_memio_observation|math_controls|memio_controls|math_source_controls|math_strict_comparison_controls)$")
     execute_process(COMMAND "${TEST_BINARY}" validate-math-memio-oracle "${MATH_ORACLE}"
       TIMEOUT 10 RESULT_VARIABLE source_validate_rc OUTPUT_VARIABLE source_validate_out ERROR_VARIABLE source_validate_err)
     if(NOT source_validate_rc STREQUAL "0" OR
@@ -2390,6 +2390,252 @@ elseif(FAILURE STREQUAL "" AND MODE STREQUAL "audio_source_controls")
   expect_success_timeout("audio script controls: source identity, object and label controls passed" 180
     sh "${ROOT}/tests/gates/audio-script-controls.sh")
     string(APPEND all_run_out "audio source controls: 13 required observation/control CTests have exact intended modes/profiles and occur once in the fast inventory; only the two inherited SERCTL skips remain; direct isolated builder/oracle source controls passed\n")
+elseif(FAILURE STREQUAL "" AND MODE STREQUAL "math_source_controls")
+  set(all_run_out "")
+  expect_success_timeout("math script controls: 14 unique source/build identity subcases passed" 180
+    sh "${ROOT}/tests/gates/math-script-controls.sh" "${TEST_BINARY}" "${MATH_ORACLE}")
+  string(APPEND all_run_out "math/memio source controls: 14 unique private-copy shape, identity, builder, and oracle-reserved-range subcases passed\n")
+elseif(FAILURE STREQUAL "" AND MODE MATCHES "^(math_controls|memio_controls)$")
+  set(all_run_out "")
+  if(MODE STREQUAL "math_controls")
+    set(control_suite math)
+    set(control_profile lynx1)
+  else()
+    set(control_suite memio)
+    set(control_profile lynx2)
+  endif()
+  expect_success_timeout("math/memio observation complete: suite=${control_suite} profile=${control_profile}"
+    150 "${TEST_BINARY}" observe math-memio "${control_suite}" "${control_profile}" "${SUITE_BUILD}" "${MATH_ORACLE}")
+  set(control_raw "${SUITE_BUILD}/raw-results-${control_suite}-${control_profile}.tsv")
+  set(control_comparison "${SUITE_BUILD}/comparison-${control_suite}-${control_profile}.tsv")
+  set(control_record "${SUITE_BUILD}/run-record-${control_suite}-${control_profile}.txt")
+  string(ASCII 9 control_tab)
+  expect_success("math/memio record: suite=${control_suite} profile=${control_profile} raw=18"
+    "${TEST_BINARY}" validate-math-memio-record "${control_suite}" "${control_profile}" "${SUITE_BUILD}" "${MATH_ORACLE}")
+  file(READ "${control_raw}" raw_baseline)
+  file(READ "${control_comparison}" comparison_baseline)
+  file(READ "${control_record}" record_baseline)
+  if(MODE STREQUAL "math_controls")
+    set(no_run_dir "${WORK}/math-no-run")
+    file(MAKE_DIRECTORY "${no_run_dir}")
+    write_suite_owner_marker("${no_run_dir}")
+    foreach(build_file build-record.txt math.bll math.lbl memio.bll memio.lbl)
+      file(COPY_FILE "${SUITE_BUILD}/${build_file}" "${no_run_dir}/${build_file}")
+    endforeach()
+    expect_failure("math/memio raw record unreadable"
+      "${TEST_BINARY}" validate-math-memio-record math lynx1 "${no_run_dir}" "${MATH_ORACLE}")
+
+    file(WRITE "${control_raw}" "stale prior-run raw data\n")
+    file(WRITE "${control_comparison}" "stale prior-run comparison\n")
+    file(WRITE "${control_record}" "stale prior-run completion\n")
+    expect_success_timeout("math/memio observation complete: suite=math profile=lynx1" 150
+      "${TEST_BINARY}" observe math-memio math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
+    expect_success("math/memio record: suite=math profile=lynx1 raw=18"
+      "${TEST_BINARY}" validate-math-memio-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
+    file(READ "${control_raw}" raw_baseline)
+    file(READ "${control_comparison}" comparison_baseline)
+    file(READ "${control_record}" record_baseline)
+
+    file(REMOVE "${control_raw}")
+    expect_failure("math/memio raw record unreadable"
+      "${TEST_BINARY}" validate-math-memio-record "${control_suite}" "${control_profile}" "${SUITE_BUILD}" "${MATH_ORACLE}")
+    file(WRITE "${control_raw}" "${raw_baseline}")
+
+    string(REPLACE "machine_profile=lynx1\n" "machine_profile=lynx2\n" changed_record "${record_baseline}")
+    file(WRITE "${control_record}" "${changed_record}")
+    expect_failure("math/memio run record profile mismatch"
+      "${TEST_BINARY}" validate-math-memio-record "${control_suite}" "${control_profile}" "${SUITE_BUILD}" "${MATH_ORACLE}")
+    file(WRITE "${control_record}" "${record_baseline}")
+
+    string(REPLACE "tick_min=256\n" "tick_min=0\n" changed_record "${record_baseline}")
+    file(WRITE "${control_record}" "${changed_record}")
+    expect_failure("math/memio tick minimum mismatch"
+      "${TEST_BINARY}" validate-math-memio-record "${control_suite}" "${control_profile}" "${SUITE_BUILD}" "${MATH_ORACLE}")
+    file(WRITE "${control_record}" "${record_baseline}")
+
+    string(REPLACE "guest_progress=8\n" "guest_progress=1\n" changed_record "${record_baseline}")
+    file(WRITE "${control_record}" "${changed_record}")
+    expect_failure("math/memio progress evidence mismatch"
+      "${TEST_BINARY}" validate-math-memio-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
+    string(REPLACE "guest_return=source-call-returned\n" "guest_return=source-call-incomplete\n" changed_record "${record_baseline}")
+    file(WRITE "${control_record}" "${changed_record}")
+    expect_failure("math/memio source return evidence missing"
+      "${TEST_BINARY}" validate-math-memio-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
+    file(WRITE "${control_record}" "${record_baseline}")
+
+    set(actual_cases "math.lynx1.no_run;math.lynx1.prior_outputs_replaced;math.lynx1.missing_raw;math.lynx1.wrong_profile;math.lynx1.lowered_bound;math.lynx1.missing_progress;math.lynx1.missing_return")
+    foreach(group 0 1 2 3 4 5 6)
+      math(EXPR result_index "${group} * 2")
+      set(line_prefix "result${control_tab}${result_index}${control_tab}")
+      string(FIND "${raw_baseline}" "${line_prefix}ff\n" expected_value_found)
+      if(expected_value_found EQUAL -1)
+        set(original_value 00)
+        set(changed_value 01)
+      else()
+        set(original_value ff)
+        set(changed_value fe)
+      endif()
+      string(REPLACE "${line_prefix}${original_value}\n" "${line_prefix}${changed_value}\n" changed_raw "${raw_baseline}")
+      file(WRITE "${control_raw}" "${changed_raw}")
+      expect_failure("math/memio arithmetic/register scoped comparison failed"
+        "${TEST_BINARY}" validate-math-memio-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
+      file(WRITE "${control_raw}" "${raw_baseline}")
+      list(APPEND actual_cases "math.lynx1.arithmetic_group_${group}")
+    endforeach()
+    foreach(fault result alias completion)
+      execute_process(COMMAND "${CMAKE_COMMAND}"
+          "-DSOURCE_DIR=${ROOT}" "-DBUILD_DIR=${ROOT}/build/check"
+          "-DSUZY_TEST_BINARY=${TEST_BINARY}" "-DC_COMPILER=${C_COMPILER}"
+          "-DFAULT_ID=${fault}" "-DFAULT_TARGET=suite"
+          "-DCLEAN_SUITE_BUILD=${SUITE_BUILD}" "-DMATH_ORACLE=${MATH_ORACLE}"
+          -P "${ROOT}/tests/suzy/fault_controls.cmake"
+        RESULT_VARIABLE mutant_rc OUTPUT_VARIABLE mutant_out ERROR_VARIABLE mutant_err TIMEOUT 190)
+      if(NOT "${mutant_rc}" STREQUAL "0" OR
+         NOT mutant_out MATCHES "Suzy fault proof: ${fault} assertion=suite\\.math\\.")
+        message(FATAL_ERROR "suite_driver: copied-core ${fault} fault was not semantically detected by the source suite: ${mutant_rc} ${mutant_out} ${mutant_err}")
+      endif()
+      message(STATUS "${mutant_out}")
+      list(APPEND actual_cases "math.lynx1.core_fault_${fault}")
+    endforeach()
+    set(expected_cases "math.lynx1.no_run;math.lynx1.prior_outputs_replaced;math.lynx1.missing_raw;math.lynx1.wrong_profile;math.lynx1.lowered_bound;math.lynx1.missing_progress;math.lynx1.missing_return;math.lynx1.arithmetic_group_0;math.lynx1.arithmetic_group_1;math.lynx1.arithmetic_group_2;math.lynx1.arithmetic_group_3;math.lynx1.arithmetic_group_4;math.lynx1.arithmetic_group_5;math.lynx1.arithmetic_group_6;math.lynx1.core_fault_result;math.lynx1.core_fault_alias;math.lynx1.core_fault_completion")
+  else()
+    string(REPLACE "detected_model=lynx2\n" "detected_model=lynx1\n" changed_record "${record_baseline}")
+    file(WRITE "${control_record}" "${changed_record}")
+    expect_failure("math/memio guest model mismatch"
+      "${TEST_BINARY}" validate-math-memio-record "${control_suite}" "${control_profile}" "${SUITE_BUILD}" "${MATH_ORACLE}")
+    file(WRITE "${control_record}" "${record_baseline}")
+
+    file(COPY_FILE "${SUITE_BUILD}/memio.bll" "${WORK}/memio.bll.clean")
+    file(APPEND "${SUITE_BUILD}/memio.bll" "x")
+    expect_failure("math/memio oracle: source/build identity mismatch"
+      "${TEST_BINARY}" validate-math-memio-record "${control_suite}" "${control_profile}" "${SUITE_BUILD}" "${MATH_ORACLE}")
+    file(COPY_FILE "${WORK}/memio.bll.clean" "${SUITE_BUILD}/memio.bll")
+
+    file(READ "${SUITE_BUILD}/memio.lbl" labels_baseline)
+    file(APPEND "${SUITE_BUILD}/memio.lbl" "; stale labels\n")
+    expect_failure("math/memio oracle: source/build identity mismatch"
+      "${TEST_BINARY}" validate-math-memio-record "${control_suite}" "${control_profile}" "${SUITE_BUILD}" "${MATH_ORACLE}")
+    file(WRITE "${SUITE_BUILD}/memio.lbl" "${labels_baseline}")
+    set(actual_cases "memio.lynx2.wrong_model;memio.lynx2.stale_object;memio.lynx2.stale_labels")
+    foreach(group 0 1 2)
+      if(group EQUAL 0)
+        set(result_index 0)
+      elseif(group EQUAL 1)
+        set(result_index 4)
+      else()
+        set(result_index 8)
+      endif()
+      set(line_prefix "result${control_tab}${result_index}${control_tab}")
+      string(FIND "${raw_baseline}" "${line_prefix}00\n" expected_value_found)
+      if(expected_value_found EQUAL -1)
+        set(original_value 01)
+        set(changed_value 00)
+      else()
+        set(original_value 00)
+        set(changed_value 01)
+      endif()
+      string(REPLACE "${line_prefix}${original_value}\n" "${line_prefix}${changed_value}\n" changed_raw "${raw_baseline}")
+      file(WRITE "${control_raw}" "${changed_raw}")
+      expect_failure("math/memio arithmetic/register scoped comparison failed"
+        "${TEST_BINARY}" validate-math-memio-record memio lynx2 "${SUITE_BUILD}" "${MATH_ORACLE}")
+      file(WRITE "${control_raw}" "${raw_baseline}")
+      list(APPEND actual_cases "memio.lynx2.register_group_${group}")
+    endforeach()
+    set(expected_cases "memio.lynx2.wrong_model;memio.lynx2.stale_object;memio.lynx2.stale_labels;memio.lynx2.register_group_0;memio.lynx2.register_group_1;memio.lynx2.register_group_2")
+  endif()
+  list(LENGTH actual_cases actual_count)
+  if(NOT actual_cases STREQUAL expected_cases OR actual_count EQUAL 0)
+    message(FATAL_ERROR "suite_driver: math/memio control subcase inventory is missing, duplicated, or reordered")
+  endif()
+  file(WRITE "${control_record}" "${record_baseline}")
+  file(WRITE "${control_raw}" "${raw_baseline}")
+  expect_success("math/memio record: suite=${control_suite} profile=${control_profile} raw=18"
+    "${TEST_BINARY}" validate-math-memio-record "${control_suite}" "${control_profile}" "${SUITE_BUILD}" "${MATH_ORACLE}")
+  string(APPEND all_run_out "${control_suite} controls: one fresh ${control_profile} guest passed before and after ${actual_cases}; raw identity, profile, bound and artifact faults refused\n")
+elseif(FAILURE STREQUAL "" AND MODE STREQUAL "math_strict_comparison_controls")
+  set(all_run_out "")
+  set(control_suite math)
+  set(control_profile lynx1)
+  expect_success_timeout("math/memio observation complete: suite=math profile=lynx1" 150
+    "${TEST_BINARY}" observe math-memio math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
+  set(control_raw "${SUITE_BUILD}/raw-results-math-lynx1.tsv")
+  set(control_comparison "${SUITE_BUILD}/comparison-math-lynx1.tsv")
+  set(control_record "${SUITE_BUILD}/run-record-math-lynx1.txt")
+  expect_success("math/memio strict source comparison: every meaningful source result matches"
+    "${TEST_BINARY}" validate-math-memio-strict-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
+  file(READ "${control_raw}" raw_baseline)
+  file(READ "${control_comparison}" comparison_baseline)
+  file(READ "${control_record}" record_baseline)
+  set(strict_cases "")
+  string(ASCII 9 control_tab)
+  foreach(offset 14 15)
+    file(STRINGS "${MATH_ORACLE}" oracle_timing_row REGEX "^result${control_tab}${offset}${control_tab}")
+    list(LENGTH oracle_timing_row oracle_row_count)
+    if(NOT oracle_row_count EQUAL 1)
+      message(FATAL_ERROR "suite_driver: pinned math oracle has no unique timing row ${offset}")
+    endif()
+    string(REPLACE "${control_tab}" ";" oracle_timing_fields "${oracle_timing_row}")
+    list(GET oracle_timing_fields 3 expected_value)
+    file(STRINGS "${control_raw}" raw_timing_row REGEX "^result${control_tab}${offset}${control_tab}")
+    string(REPLACE "${control_tab}" ";" raw_timing_fields "${raw_timing_row}")
+    list(GET raw_timing_fields 2 baseline_value)
+    if(baseline_value STREQUAL expected_value)
+      if(expected_value STREQUAL "00")
+        set(changed_value 01)
+      else()
+        set(changed_value 00)
+      endif()
+    else()
+      message(FATAL_ERROR "suite_driver: real math timing row ${offset} was not source-accepted")
+    endif()
+    string(REPLACE "result${control_tab}${offset}${control_tab}${baseline_value}\n"
+      "result${control_tab}${offset}${control_tab}${changed_value}\n" changed_raw "${raw_baseline}")
+    set(old_row "result${control_tab}${offset}${control_tab}${baseline_value}${control_tab}7${control_tab}timing${control_tab}EXPECT(${expected_value})${control_tab}source-accepted\n")
+    set(new_row "result${control_tab}${offset}${control_tab}${changed_value}${control_tab}7${control_tab}timing${control_tab}EXPECT(${expected_value})${control_tab}source-mismatch\nstrict-mismatch${control_tab}${offset}${control_tab}${changed_value}${control_tab}EXPECT(${expected_value})\n")
+    string(REPLACE "${old_row}" "${new_row}" changed_comparison "${comparison_baseline}")
+    string(REPLACE "strict\tmatch\n" "strict\tmismatch\n" changed_comparison "${changed_comparison}")
+    string(REPLACE "strict_mismatch_count\t0\n" "strict_mismatch_count\t1\n" changed_comparison "${changed_comparison}")
+    string(REPLACE "comparison\tstrict-match\n" "comparison\tstrict-mismatch\n" changed_comparison "${changed_comparison}")
+    file(WRITE "${control_raw}" "${changed_raw}")
+    file(WRITE "${control_comparison}" "${changed_comparison}")
+    execute_process(COMMAND shasum -a 256 "${control_raw}" OUTPUT_VARIABLE raw_hash_output RESULT_VARIABLE hash_rc)
+    if(NOT hash_rc STREQUAL "0")
+      message(FATAL_ERROR "suite_driver: cannot hash timing-control raw capture")
+    endif()
+    string(REGEX MATCH "^[0-9a-f]+" raw_hash "${raw_hash_output}")
+    execute_process(COMMAND shasum -a 256 "${control_comparison}" OUTPUT_VARIABLE comparison_hash_output RESULT_VARIABLE hash_rc)
+    if(NOT hash_rc STREQUAL "0")
+      message(FATAL_ERROR "suite_driver: cannot hash timing-control comparison")
+    endif()
+    string(REGEX MATCH "^[0-9a-f]+" comparison_hash "${comparison_hash_output}")
+    string(REPLACE "strict_mismatch_count=0\n" "strict_mismatch_count=1\n" changed_record "${record_baseline}")
+    string(REGEX REPLACE "raw_results_sha256=[0-9a-f]+" "raw_results_sha256=${raw_hash}" changed_record "${changed_record}")
+    string(REGEX REPLACE "comparison_sha256=[0-9a-f]+" "comparison_sha256=${comparison_hash}" changed_record "${changed_record}")
+    file(WRITE "${control_record}" "${changed_record}")
+    execute_process(COMMAND "${TEST_BINARY}" validate-math-memio-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}"
+      RESULT_VARIABLE record_rc OUTPUT_VARIABLE record_out ERROR_VARIABLE record_err)
+    if(NOT record_rc STREQUAL "0" OR NOT record_out MATCHES "scoped=14/14 strict_mismatches=1")
+      message(FATAL_ERROR "suite_driver: timing mismatch evidence did not remain independently valid: ${record_rc} ${record_out} ${record_err} comparison=${changed_comparison} record=${changed_record}")
+    endif()
+    execute_process(COMMAND "${TEST_BINARY}" validate-math-memio-strict-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}"
+      RESULT_VARIABLE strict_rc OUTPUT_VARIABLE strict_out ERROR_VARIABLE strict_err)
+    set(expected_strict_row "strict source mismatch row: strict-mismatch${control_tab}${offset}${control_tab}${changed_value}${control_tab}EXPECT(${expected_value})")
+    string(FIND "${strict_out}" "${expected_strict_row}" strict_row_found)
+    if(NOT strict_rc STREQUAL "1" OR strict_row_found EQUAL -1 OR
+       NOT strict_err MATCHES "math/memio strict source comparison failed")
+      message(FATAL_ERROR "suite_driver: strict comparison accepted timing offset ${offset} or hid its mismatch: ${strict_rc} ${strict_out} ${strict_err}")
+    endif()
+    list(APPEND strict_cases "math.lynx1.timing_${offset}")
+    file(WRITE "${control_raw}" "${raw_baseline}")
+    file(WRITE "${control_comparison}" "${comparison_baseline}")
+    file(WRITE "${control_record}" "${record_baseline}")
+  endforeach()
+  if(NOT strict_cases STREQUAL "math.lynx1.timing_14;math.lynx1.timing_15")
+    message(FATAL_ERROR "suite_driver: strict timing control subcases missing, duplicated, or reordered")
+  endif()
+  expect_success("math/memio strict source comparison: every meaningful source result matches"
+    "${TEST_BINARY}" validate-math-memio-strict-record math lynx1 "${SUITE_BUILD}" "${MATH_ORACLE}")
+  string(APPEND all_run_out "strict math controls: clean record passed; independent timing-byte mutations at14 and15 each failed strict comparison with its exact mismatch row while scoped agreement stayed14/14\n")
 elseif(FAILURE STREQUAL "" AND MODE STREQUAL "page_mode_controls")
   set(all_run_out "")
   foreach(profile lynx1 lynx2)
@@ -2517,8 +2763,8 @@ if(FAILURE STREQUAL "")
   if(MODE STREQUAL "completion_controls")
     set(all_run_out "")
     set(required_selection "suite.cpu.lynx1,suite.cpu.lynx2,suite.timers.observation.lynx1,suite.timers.observation.lynx2,suite.page_mode.observation.lynx1,suite.page_mode.observation.lynx2,suite.audio.observation.lynx1,suite.audio.observation.lynx2,suite.audio2.observation.lynx1,suite.audio2.observation.lynx2,suite.math.observation.lynx1,suite.math.observation.lynx2,suite.memio.observation.lynx1,suite.memio.observation.lynx2")
-    set(control_selection "suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls")
-    expect_success("suite selection: required=14 controls=8 inventory complete"
+    set(control_selection "suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls,suite.math.controls,suite.memio.controls,suite.math.source_controls,suite.math.strict_comparison_controls")
+    expect_success("suite selection: required=14 controls=12 inventory complete"
       "${TEST_BINARY}" validate-selection "${required_selection}" "${control_selection}")
     build_fault_wrapper(cpu)
     build_fault_wrapper(timers)
@@ -2547,8 +2793,8 @@ if(FAILURE STREQUAL "")
   elseif(MODE STREQUAL "selection_controls")
     set(all_run_out "")
     set(required_selection "suite.cpu.lynx1,suite.cpu.lynx2,suite.timers.observation.lynx1,suite.timers.observation.lynx2,suite.page_mode.observation.lynx1,suite.page_mode.observation.lynx2,suite.audio.observation.lynx1,suite.audio.observation.lynx2,suite.audio2.observation.lynx1,suite.audio2.observation.lynx2,suite.math.observation.lynx1,suite.math.observation.lynx2,suite.memio.observation.lynx1,suite.memio.observation.lynx2")
-    set(control_selection "suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls")
-    expect_success("suite selection: required=14 controls=8 inventory complete"
+    set(control_selection "suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls,suite.math.controls,suite.memio.controls,suite.math.source_controls,suite.math.strict_comparison_controls")
+    expect_success("suite selection: required=14 controls=12 inventory complete"
       "${TEST_BINARY}" validate-selection "${required_selection}" "${control_selection}")
     string(REPLACE "suite.memio.observation.lynx2" "suite.memio.observation.lynx9"
       unknown_required_selection "${required_selection}")
@@ -2563,9 +2809,9 @@ if(FAILURE STREQUAL "")
     expect_failure("suite: selection: incomplete required-suite inventory"
       "${TEST_BINARY}" validate-selection "${incomplete_required_selection}" "${control_selection}")
     expect_failure("suite: selection: duplicate control case ID"
-      "${TEST_BINARY}" validate-selection "${required_selection}" "suite.cpu.no_run,suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls")
+      "${TEST_BINARY}" validate-selection "${required_selection}" "suite.cpu.no_run,suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls,suite.math.controls,suite.memio.controls,suite.math.source_controls,suite.math.strict_comparison_controls")
     expect_failure("suite: selection: incomplete control inventory"
-      "${TEST_BINARY}" validate-selection "${required_selection}" "suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls")
+      "${TEST_BINARY}" validate-selection "${required_selection}" "suite.cpu.no_run,suite.timers.no_run,suite.completion_controls,suite.selection_controls,suite.page_mode.controls,suite.audio.controls,suite.audio.source_controls,suite.audio2.controls,suite.math.controls,suite.memio.controls,suite.math.source_controls")
 
     file(READ "${ROOT}/tests/suites/tests.cmake" registration_text)
     string(ASCII 9 suite_tab)
@@ -2582,7 +2828,9 @@ if(FAILURE STREQUAL "")
                     suite.audio.controls suite.audio.source_controls suite.audio2.observation.lynx1
                     suite.audio2.observation.lynx2 suite.audio2.controls
                     suite.math.observation.lynx1 suite.math.observation.lynx2
-                    suite.memio.observation.lynx1 suite.memio.observation.lynx2)
+                    suite.memio.observation.lynx1 suite.memio.observation.lynx2
+                    suite.math.controls suite.memio.controls suite.math.source_controls
+                    suite.math.strict_comparison_controls)
       string(FIND "${registration_text}" "lynx_suite_test(${case_id} " registration_found)
       if(registration_found EQUAL -1)
         message(FATAL_ERROR "suite_driver: required suite/control CTest ID is not registered: ${case_id}")
@@ -3259,6 +3507,7 @@ if(MODE STREQUAL "oracle_controls" AND FAILURE STREQUAL "")
       "-DMODE=oracle_controls" "-DROOT=${ROOT}"
       "-DWORK=${symlink_work_parent}/attempt"
       "-DSCRATCH_ROOT=${SCRATCH_ROOT}" "-DTEST_BINARY=${TEST_BINARY}"
+      "-DC_COMPILER=${C_COMPILER}"
       "-DENV_EXECUTABLE=${ENV_EXECUTABLE}"
       -P "${ROOT}/tests/suites/run.cmake"
       RESULT_VARIABLE symlink_work_rc OUTPUT_VARIABLE symlink_work_out ERROR_VARIABLE symlink_work_err)

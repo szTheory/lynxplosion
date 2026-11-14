@@ -221,8 +221,12 @@ suite.cpu.lynx1	suite
 suite.cpu.lynx2	suite
 suite.cpu.model_controls	suite
 suite.cpu.no_run	suite
+suite.math.controls	suite
 suite.math.observation.lynx1	suite
 suite.math.observation.lynx2	suite
+suite.math.source_controls	suite
+suite.math.strict_comparison_controls	suite
+suite.memio.controls	suite
 suite.memio.observation.lynx1	suite
 suite.memio.observation.lynx2	suite
 suite.oracle_controls	suite

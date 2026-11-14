@@ -6,7 +6,16 @@ foreach(required SOURCE_DIR BUILD_DIR SUZY_TEST_BINARY C_COMPILER FAULT_ID)
     message(FATAL_ERROR "Suzy fault control: -D${required} is required")
   endif()
 endforeach()
-
+if(NOT DEFINED FAULT_TARGET OR "${FAULT_TARGET}" STREQUAL "")
+  set(FAULT_TARGET suzy)
+endif()
+if(NOT FAULT_TARGET MATCHES "^(suzy|suite)$")
+  message(FATAL_ERROR "Suzy fault control: unsupported target ${FAULT_TARGET}")
+endif()
+if(FAULT_TARGET STREQUAL "suite" AND
+   (NOT DEFINED CLEAN_SUITE_BUILD OR NOT DEFINED MATH_ORACLE OR NOT EXISTS "${MATH_ORACLE}"))
+  message(FATAL_ERROR "Suzy fault control: suite target requires a clean build directory and math oracle")
+endif()
 if(FAULT_ID STREQUAL "decoder")
   set(TEST_CASE "fault_decoder")
   set(MUTANT_SOURCE "core/suzy.c")
@@ -21,11 +30,24 @@ elseif(FAULT_ID STREQUAL "result")
   set(replacement [=[put_u32(&suzy->registers[SUZY_R_PRODUCT_LOW], product ^ 1u);]=])
   set(assertion_id "suzy.fault.result-independent-product")
   set(assertion_pattern "suzy\\.fault\\.result-independent-product")
-elseif(FAULT_ID STREQUAL "completion")
-  set(TEST_CASE "fault_completion")
+elseif(FAULT_ID STREQUAL "alias")
+  set(TEST_CASE "source_suite")
   set(MUTANT_SOURCE "core/suzy.c")
-  set(anchor [=[SUZY_MULTIPLY_TICKS = 44u,]=])
-  set(replacement [=[SUZY_MULTIPLY_TICKS = 45u,]=])
+  set(anchor [=[*index = (uint8_t)(offset & 0x3Fu);]=])
+  set(replacement [=[*index = (uint8_t)(offset == 0x55u ? 0x14u : (offset & 0x3Fu));]=])
+  set(assertion_id "suzy.alias.upper-view-result")
+  set(assertion_pattern "suzy\\.alias\\.upper-view-result")
+elseif(FAULT_ID STREQUAL "completion")
+  if(FAULT_TARGET STREQUAL "suite")
+    set(TEST_CASE "source_suite")
+    set(anchor [=[put_u32(&suzy->registers[SUZY_R_PRODUCT_LOW], product);]=])
+    set(replacement [=[/* fault: completed product publication suppressed */]=])
+  else()
+    set(TEST_CASE "fault_completion")
+    set(anchor [=[SUZY_MULTIPLY_TICKS = 44u,]=])
+    set(replacement [=[SUZY_MULTIPLY_TICKS = 45u,]=])
+  endif()
+  set(MUTANT_SOURCE "core/suzy.c")
   set(assertion_id "suzy.lifecycle.completion-before-status-read")
   set(assertion_pattern "suzy\\.lifecycle\\.completion-before-status-read")
 elseif(FAULT_ID STREQUAL "snapshot")
@@ -38,6 +60,10 @@ elseif(FAULT_ID STREQUAL "snapshot")
   set(assertion_pattern "suzy\\.snapshot\\.continuation-suffix")
 else()
   message(FATAL_ERROR "Suzy fault control: unsupported fault ${FAULT_ID}")
+endif()
+
+if(FAULT_TARGET STREQUAL "suite")
+  set(assertion_id "suite.math.scoped-arithmetic-refusal")
 endif()
 
 file(REAL_PATH "${SOURCE_DIR}" source_root)
@@ -54,6 +80,9 @@ function(source_manifest root excluded_relative output_var)
   file(GLOB_RECURSE inputs LIST_DIRECTORIES FALSE
        "${root}/core/*" "${root}/include/*")
   list(APPEND inputs "${root}/tests/suzy/test_suzy.c" "${root}/tests/check.h")
+  if(FAULT_TARGET STREQUAL "suite")
+    list(APPEND inputs "${root}/tests/suites/test_public_suites.c")
+  endif()
   list(SORT inputs)
   set(serialized "")
   foreach(input IN LISTS inputs)
@@ -87,8 +116,24 @@ endfunction()
 
 function(check_clean_case stage output_failure output_seconds)
   string(TIMESTAMP started "%s" UTC)
-  execute_process(COMMAND "${clean_binary}" "${TEST_CASE}"
-    RESULT_VARIABLE result OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 30)
+  if(FAULT_TARGET STREQUAL "suite")
+    execute_process(COMMAND "${clean_binary}" observe math-memio math lynx1
+      "${CLEAN_SUITE_BUILD}" "${MATH_ORACLE}"
+      RESULT_VARIABLE result OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 60)
+    if("${result}" STREQUAL "0")
+      execute_process(COMMAND "${clean_binary}" validate-math-memio-strict-record math lynx1
+        "${CLEAN_SUITE_BUILD}" "${MATH_ORACLE}"
+        RESULT_VARIABLE validation_result OUTPUT_VARIABLE validation_out ERROR_VARIABLE validation_err TIMEOUT 30)
+      set(out "${out}${validation_out}")
+      set(err "${err}${validation_err}")
+      if(NOT "${validation_result}" STREQUAL "0")
+        set(result "${validation_result}")
+      endif()
+    endif()
+  else()
+    execute_process(COMMAND "${clean_binary}" "${TEST_CASE}"
+      RESULT_VARIABLE result OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 30)
+  endif()
   string(TIMESTAMP ended "%s" UTC)
   math(EXPR elapsed "${ended} - ${started}")
   set(output "${out}${err}")
@@ -139,6 +184,26 @@ file(COPY_FILE "${source_root}/tests/suzy/test_suzy.c"
      "${variant_source}/tests/suzy/test_suzy.c")
 file(COPY_FILE "${source_root}/tests/check.h" "${variant_source}/tests/check.h")
 file(COPY_FILE "${build_root}/generated/build_id.c" "${variant_source}/core/build_id.c")
+if(FAULT_TARGET STREQUAL "suite")
+  file(MAKE_DIRECTORY "${variant_source}/tests/suites" "${variant_source}/fixtures"
+       "${variant_source}/scripts" "${variant_source}/build/pins/cc65/bin"
+       "${variant_source}/build/check/scratch")
+  file(COPY_FILE "${source_root}/tests/suites/test_public_suites.c"
+       "${variant_source}/tests/suites/test_public_suites.c")
+  file(COPY "${source_root}/fixtures/suites" DESTINATION "${variant_source}/fixtures")
+  file(COPY_FILE "${source_root}/scripts/build-suites.sh" "${variant_source}/scripts/build-suites.sh")
+  file(COPY_FILE "${source_root}/scripts/generate-suite-oracle.sh" "${variant_source}/scripts/generate-suite-oracle.sh")
+  file(COPY_FILE "${source_root}/pins.txt" "${variant_source}/pins.txt")
+  file(COPY "${source_root}/build/pins/lynx-tests" DESTINATION "${variant_source}/build/pins")
+  file(COPY "${source_root}/build/pins/cc65/asminc" DESTINATION "${variant_source}/build/pins/cc65")
+  foreach(cc65_file .lynx-pin .lynx-build .lynx-build-files)
+    file(COPY_FILE "${source_root}/build/pins/cc65/${cc65_file}"
+         "${variant_source}/build/pins/cc65/${cc65_file}")
+  endforeach()
+  file(COPY "${source_root}/build/pins/cc65/bin/ca65" "${source_root}/build/pins/cc65/bin/ld65"
+       DESTINATION "${variant_source}/build/pins/cc65/bin")
+  file(COPY_FILE "${MATH_ORACLE}" "${variant_source}/build/check/scratch/math-memio-oracle.tsv")
+endif()
 file(SHA256 "${build_root}/generated/build_id.c" source_build_id_sha256)
 file(SHA256 "${variant_source}/core/build_id.c" copied_build_id_sha256)
 if(NOT copied_build_id_sha256 STREQUAL source_build_id_sha256)
@@ -184,6 +249,28 @@ if(NOT mutant_manifest_sha256 STREQUAL clean_manifest_sha256)
   message(FATAL_ERROR "Suzy fault control: non-mutated source identity changed; retained at ${scratch}")
 endif()
 
+if(FAULT_TARGET STREQUAL "suite")
+  file(WRITE "${variant_source}/CMakeLists.txt" [=[
+cmake_minimum_required(VERSION 3.25)
+project(lynx_suite_fault LANGUAGES C)
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+file(GLOB core_sources "${CMAKE_CURRENT_SOURCE_DIR}/core/*.c")
+add_executable(lynx-test-suites tests/suites/test_public_suites.c ${core_sources})
+target_include_directories(lynx-test-suites PRIVATE core include tests)
+target_compile_definitions(lynx-test-suites PRIVATE
+  _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700
+  LYNX_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+  LYNX_SCRATCH_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/build/check/scratch")
+target_compile_options(lynx-test-suites PRIVATE
+  -Wall -Wextra -Wpedantic -pedantic-errors -Wconversion -Wshadow -Werror
+  -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+  -ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=.
+  -ffile-prefix-map=${CMAKE_CURRENT_BINARY_DIR}=build)
+target_link_options(lynx-test-suites PRIVATE -fsanitize=address,undefined)
+]=])
+else()
 file(WRITE "${variant_source}/CMakeLists.txt" [=[
 cmake_minimum_required(VERSION 3.25)
 project(lynx_suzy_fault LANGUAGES C)
@@ -203,8 +290,15 @@ target_compile_options(lynx-test-suzy PRIVATE
   -ffile-prefix-map=${CMAKE_CURRENT_BINARY_DIR}=build)
 target_link_options(lynx-test-suzy PRIVATE -fsanitize=address,undefined)
 ]=])
+endif()
 
-set(mutant_binary "${variant_build}/lynx-test-suzy")
+if(FAULT_TARGET STREQUAL "suite")
+  set(mutant_binary "${variant_build}/lynx-test-suites")
+  set(mutant_target lynx-test-suites)
+else()
+  set(mutant_binary "${variant_build}/lynx-test-suzy")
+  set(mutant_target lynx-test-suzy)
+endif()
 if(EXISTS "${mutant_binary}" OR IS_SYMLINK "${mutant_binary}")
   message(FATAL_ERROR "Suzy fault control: refusing existing mutant executable; retained at ${scratch}")
 endif()
@@ -217,7 +311,7 @@ file(WRITE "${scratch}/configure.log" "${configure_out}${configure_err}")
 if(NOT "${configure_result}" STREQUAL "0")
   message(FATAL_ERROR "Suzy fault control: mutant configure failed, not semantic detection: ${configure_result}; retained at ${scratch}")
 endif()
-execute_process(COMMAND "${CMAKE_COMMAND}" --build "${variant_build}" --target lynx-test-suzy
+execute_process(COMMAND "${CMAKE_COMMAND}" --build "${variant_build}" --target "${mutant_target}"
   RESULT_VARIABLE build_result OUTPUT_VARIABLE build_out ERROR_VARIABLE build_err TIMEOUT 120)
 file(WRITE "${scratch}/build.log" "${build_out}${build_err}")
 if(NOT "${build_result}" STREQUAL "0")
@@ -233,23 +327,81 @@ if(mutant_binary_path STREQUAL clean_binary_path OR mutant_inode STREQUAL baseli
   message(FATAL_ERROR "Suzy fault control: mutant binary lacks independent path/inode; retained at ${scratch}")
 endif()
 
-execute_process(COMMAND "${mutant_binary}" "${TEST_CASE}"
-  RESULT_VARIABLE mutant_result OUTPUT_VARIABLE mutant_out ERROR_VARIABLE mutant_err TIMEOUT 30)
-set(mutant_output "${mutant_out}${mutant_err}")
-file(WRITE "${scratch}/mutant.log" "exit=${mutant_result}\n${mutant_output}")
-string(REGEX MATCHALL "ASSERT [^\r\n]* failed" assertion_lines "${mutant_output}")
-list(LENGTH assertion_lines assertion_count)
-set(expected_assertion_count 0)
-foreach(assertion IN LISTS assertion_lines)
-  if(assertion MATCHES "^ASSERT ${assertion_pattern} failed")
-    math(EXPR expected_assertion_count "${expected_assertion_count} + 1")
+if(FAULT_TARGET STREQUAL "suite")
+  file(MAKE_DIRECTORY "${variant_source}/build/check/scratch")
+  set(mutant_object_dir "${variant_source}/build/check/scratch/mutant-suite-build")
+  execute_process(COMMAND sh "${variant_source}/scripts/build-suites.sh" --out "${mutant_object_dir}"
+    RESULT_VARIABLE source_build_result OUTPUT_VARIABLE source_build_out ERROR_VARIABLE source_build_err TIMEOUT 60)
+  file(WRITE "${scratch}/source-build.log" "${source_build_out}${source_build_err}")
+  if(NOT "${source_build_result}" STREQUAL "0")
+    message(FATAL_ERROR "Suzy fault control: copied pinned source build failed, not semantic detection: ${source_build_result}; retained at ${scratch}")
   endif()
-endforeach()
-if("${mutant_result}" STREQUAL "Process terminated due to timeout" OR
-   mutant_output MATCHES "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:" OR
-   NOT "${mutant_result}" STREQUAL "1" OR assertion_count LESS 1 OR
-   NOT assertion_count EQUAL expected_assertion_count)
-  message(FATAL_ERROR "Suzy fault control: ${FAULT_ID} did not fail only ${assertion_id}, exit=${mutant_result}, assertions=${assertion_count}/${expected_assertion_count}; retained at ${scratch}")
+  execute_process(COMMAND sh "${variant_source}/scripts/generate-suite-oracle.sh"
+      --source "${variant_source}/build/pins/lynx-tests" --include-math-memio
+      --out "${variant_source}/build/check/scratch/math-memio-oracle.tsv"
+    RESULT_VARIABLE oracle_result OUTPUT_VARIABLE oracle_out ERROR_VARIABLE oracle_err TIMEOUT 30)
+  file(WRITE "${scratch}/oracle.log" "${oracle_out}${oracle_err}")
+  if(NOT "${oracle_result}" STREQUAL "0")
+    message(FATAL_ERROR "Suzy fault control: copied pinned oracle generation failed, not semantic detection: ${oracle_result}; retained at ${scratch}")
+  endif()
+  file(REAL_PATH "${mutant_object_dir}" canonical_mutant_output)
+  string(RANDOM LENGTH 48 ALPHABET 0123456789abcdef mutant_output_nonce)
+  file(WRITE "${mutant_object_dir}/.lynx-suite-owner"
+    "lynx-suite-output-v1\n${canonical_mutant_output}\n${mutant_output_nonce}\n")
+  execute_process(COMMAND "${mutant_binary}" observe math-memio math lynx1
+      "${mutant_object_dir}" "${variant_source}/build/check/scratch/math-memio-oracle.tsv"
+    RESULT_VARIABLE mutant_result OUTPUT_VARIABLE mutant_out ERROR_VARIABLE mutant_err TIMEOUT 45)
+  set(mutant_output "${mutant_out}${mutant_err}")
+  file(WRITE "${scratch}/mutant.log" "exit=${mutant_result}\n${mutant_output}")
+  if("${mutant_result}" STREQUAL "Process terminated due to timeout" OR
+     mutant_output MATCHES "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:" OR
+     NOT mutant_out MATCHES "math/memio observation complete: suite=math profile=lynx1")
+    message(FATAL_ERROR "Suzy fault control: ${FAULT_ID} did not reach a completed source guest; compile/runtime failure is not detection; retained at ${scratch}")
+  endif()
+  if(FAULT_ID STREQUAL "completion" AND FAULT_TARGET STREQUAL "suzy")
+    if(NOT "${mutant_result}" STREQUAL "0" OR
+       NOT mutant_out MATCHES "scoped=14/14 strict_mismatches=[1-9][0-9]*")
+      message(FATAL_ERROR "Suzy fault control: completion mutation did not preserve scoped results and produce a strict timing mismatch: ${mutant_result}; retained at ${scratch}")
+    endif()
+    execute_process(COMMAND "${mutant_binary}" validate-math-memio-strict-record math lynx1
+        "${mutant_object_dir}" "${variant_source}/build/check/scratch/math-memio-oracle.tsv"
+      RESULT_VARIABLE strict_result OUTPUT_VARIABLE strict_out ERROR_VARIABLE strict_err TIMEOUT 30)
+    if(NOT "${strict_result}" STREQUAL "1" OR NOT strict_out MATCHES "strict source mismatch row: strict-mismatch\\t14\\t" OR
+       NOT strict_err MATCHES "math/memio strict source comparison failed")
+      message(FATAL_ERROR "Suzy fault control: completion timing mismatch was not rejected by the strict source gate: ${strict_result}; retained at ${scratch}")
+    endif()
+  else()
+    if(NOT "${mutant_result}" STREQUAL "1" OR
+       NOT mutant_err MATCHES "math/memio arithmetic/register source oracle comparison mismatch")
+      message(FATAL_ERROR "Suzy fault control: ${FAULT_ID} did not reach the suite arithmetic/register refusal: ${mutant_result}; retained at ${scratch}")
+    endif()
+    execute_process(COMMAND "${mutant_binary}" validate-math-memio-record math lynx1
+        "${mutant_object_dir}" "${variant_source}/build/check/scratch/math-memio-oracle.tsv"
+      RESULT_VARIABLE scoped_result OUTPUT_VARIABLE scoped_out ERROR_VARIABLE scoped_err TIMEOUT 30)
+    if(NOT "${scoped_result}" STREQUAL "1" OR
+       NOT scoped_err MATCHES "math/memio arithmetic/register scoped comparison failed")
+      message(FATAL_ERROR "Suzy fault control: ${FAULT_ID} produced a wrong guest result not rejected by the suite scoped gate: ${scoped_result}; retained at ${scratch}")
+    endif()
+  endif()
+else()
+  execute_process(COMMAND "${mutant_binary}" "${TEST_CASE}"
+    RESULT_VARIABLE mutant_result OUTPUT_VARIABLE mutant_out ERROR_VARIABLE mutant_err TIMEOUT 30)
+  set(mutant_output "${mutant_out}${mutant_err}")
+  file(WRITE "${scratch}/mutant.log" "exit=${mutant_result}\n${mutant_output}")
+  string(REGEX MATCHALL "ASSERT [^\r\n]* failed" assertion_lines "${mutant_output}")
+  list(LENGTH assertion_lines assertion_count)
+  set(expected_assertion_count 0)
+  foreach(assertion IN LISTS assertion_lines)
+    if(assertion MATCHES "^ASSERT ${assertion_pattern} failed")
+      math(EXPR expected_assertion_count "${expected_assertion_count} + 1")
+    endif()
+  endforeach()
+  if("${mutant_result}" STREQUAL "Process terminated due to timeout" OR
+     mutant_output MATCHES "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:" OR
+     NOT "${mutant_result}" STREQUAL "1" OR assertion_count LESS 1 OR
+     NOT assertion_count EQUAL expected_assertion_count)
+    message(FATAL_ERROR "Suzy fault control: ${FAULT_ID} did not fail only ${assertion_id}, exit=${mutant_result}, assertions=${assertion_count}/${expected_assertion_count}; retained at ${scratch}")
+  endif()
 endif()
 
 check_clean_case("after mutation" failure_after positive_after_seconds)
@@ -278,4 +430,4 @@ file(REMOVE_RECURSE "${final_scratch_root}")
 if(EXISTS "${scratch}" OR IS_SYMLINK "${scratch}")
   message(FATAL_ERROR "Suzy fault control: verified scratch cleanup did not complete")
 endif()
-message(STATUS "Suzy fault proof: ${FAULT_ID} assertion=${assertion_id} exit=1 clean_source=${clean_source_sha256} mutant_source=${mutant_source_sha256} nonmutant_manifest=${clean_manifest_sha256} baseline_binary=${baseline_binary_sha256}@${baseline_inode} mutant_binary=${mutant_binary_sha256}@${mutant_inode} clean_before_after_s=${positive_before_seconds}/${positive_after_seconds} nonce=${invocation_nonce} scratch=removed-after-owner-check")
+message(STATUS "Suzy fault proof: ${FAULT_ID} assertion=${assertion_id} target=${FAULT_TARGET} exit=1 clean_source=${clean_source_sha256} mutant_source=${mutant_source_sha256} nonmutant_manifest=${clean_manifest_sha256} baseline_binary=${baseline_binary_sha256}@${baseline_inode} mutant_binary=${mutant_binary_sha256}@${mutant_inode} clean_before_after_s=${positive_before_seconds}/${positive_after_seconds} nonce=${invocation_nonce} scratch=removed-after-owner-check")

@@ -31,6 +31,7 @@ function(lynx_suite_test name mode timeout)
       -DWORK=${LYNX_SCRATCH_DIR}/suites/${name}
       -DSCRATCH_ROOT=${LYNX_SCRATCH_DIR}/suites
       -DTEST_BINARY=$<TARGET_FILE:lynx-test-suites>
+      -DC_COMPILER=${CMAKE_C_COMPILER}
       -DENV_EXECUTABLE=${LYNX_SUITES_ENV_EXECUTABLE}
       -P ${CMAKE_CURRENT_LIST_DIR}/run.cmake
     LABELS suite TIMEOUT ${timeout})
@@ -57,6 +58,10 @@ lynx_suite_test(suite.math.observation.lynx1 math_memio_observation 180 lynx1 ma
 lynx_suite_test(suite.math.observation.lynx2 math_memio_observation 180 lynx2 math)
 lynx_suite_test(suite.memio.observation.lynx1 math_memio_observation 180 lynx1 memio)
 lynx_suite_test(suite.memio.observation.lynx2 math_memio_observation 180 lynx2 memio)
+lynx_suite_test(suite.math.controls math_controls 240)
+lynx_suite_test(suite.memio.controls memio_controls 240)
+lynx_suite_test(suite.math.source_controls math_source_controls 240)
+lynx_suite_test(suite.math.strict_comparison_controls math_strict_comparison_controls 240)
 lynx_suite_test(suite.page_mode.observation.lynx1 page_mode_observation 300 lynx1)
 lynx_suite_test(suite.page_mode.observation.lynx2 page_mode_observation 300 lynx2)
 lynx_suite_test(suite.page_mode.controls page_mode_controls 300)

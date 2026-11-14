@@ -30,6 +30,15 @@ register's four-bit readback; Blue/Red registers preserve their full byte.
 These source results agree with the current deterministic software behavior,
 not with a physical unit or the complete SUZ-02 contract.
 
+The math/memio evidence validator re-reads all 18 raw bytes, every meaningful
+source row, the group classification and the separate strict/scoped verdicts.
+Fault controls corrupt each arithmetic and register group, reject absent
+completion and altered profile/build identity, and independently mutate math
+timing bytes 14 and 15. A timing-only mutation keeps the 14/14 scoped result
+but the strict-record validator fails with the exact source mismatch. These
+are validation controls over copied or captured software records, not new
+measurements or exceptions to source agreement.
+
 The selected timing constants below are deterministic guest-time policy. No
 row-based parameter fitting was performed. No emulator implementation source,
 BIOS, firmware, commercial ROM or diagnostic payload is included in this

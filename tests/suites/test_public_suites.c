@@ -4434,6 +4434,14 @@ static int validate_math_memio_record_mode(const char *suite_name, const char *p
     text = NULL;
     offset = 0u;
 #undef SOURCE_RAW_ROW
+    for (i = 0u; i < scoped_limit; i++) {
+        unsigned alternative;
+        int accepted = 0;
+        for (alternative = 0u; alternative < oracle.counts[suite_index][i]; alternative++) {
+            if (results[i] == oracle.values[suite_index][i][alternative]) accepted = 1;
+        }
+        if (accepted == 0) return fail("math/memio arithmetic/register scoped comparison failed");
+    }
     if (read_text(comparison_path, &text, &length, 16384u) != 0) return fail("math/memio comparison record unreadable");
 #define SOURCE_COMPARE_ROW(expected_key, expected_fields) \
     do { \
@@ -4535,6 +4543,11 @@ static int validate_math_memio_record_mode(const char *suite_name, const char *p
     }
 #define SOURCE_RECORD_IS(key, expected_value, diagnostic) \
     do { if (timer_record_is(record_path, (key), (expected_value), (diagnostic)) != 0) return 1; } while (0)
+    SOURCE_RECORD_IS("result_extent", "18", "math/memio run result extent mismatch");
+    SOURCE_RECORD_IS("guest_progress", "8", "math/memio progress evidence mismatch");
+    SOURCE_RECORD_IS("timing_policy", "legacy-flat5", "math/memio run timing policy mismatch");
+    if (snprintf(expected_text, sizeof expected_text, "%u", oracle.group_count[suite_index]) >= (int)sizeof expected_text) return 1;
+    SOURCE_RECORD_IS("source_group_count", expected_text, "math/memio source group count mismatch");
     SOURCE_RECORD_IS("source_main_sha256", oracle.main_sha256[suite_index], "math/memio run source main identity mismatch");
     SOURCE_RECORD_IS("source_assembly_sha256", oracle.asm_sha256[suite_index], "math/memio run source assembly identity mismatch");
     SOURCE_RECORD_IS("build_record_sha256", actual, "math/memio build record hash mismatch");
@@ -4575,6 +4588,38 @@ static int validate_math_memio_record_mode(const char *suite_name, const char *p
     if (scoped != scoped_limit) return fail("math/memio arithmetic/register scoped comparison failed");
     printf("math/memio record: suite=%s profile=%s raw=18 scoped=%u/%u strict_mismatches=%u guest_ticks=%u\n",
            suite_name, profile, scoped, scoped_limit, mismatches, tick_value);
+    return 0;
+}
+
+static int validate_math_memio_strict_record_mode(const char *suite_name, const char *profile,
+                                                  const char *directory, const char *oracle_path)
+{
+    char comparison_path[4096], filename[128];
+    char *text = NULL;
+    size_t length = 0u, offset = 0u;
+    unsigned mismatch_count = 0u;
+    if (validate_math_memio_record_mode(suite_name, profile, directory, oracle_path) != 0) return 1;
+    if (snprintf(filename, sizeof filename, "comparison-%s-%s.tsv", suite_name, profile) >= (int)sizeof filename ||
+        checked_join(comparison_path, sizeof comparison_path, directory, filename) != 0 ||
+        read_text(comparison_path, &text, &length, 16384u) != 0) {
+        return fail("math/memio strict comparison record is unreadable");
+    }
+    while (offset < length) {
+        size_t line_length = 0u;
+        while (offset + line_length < length && text[offset + line_length] != '\n') line_length++;
+        if (line_length >= 512u) {
+            free(text);
+            return fail("math/memio strict comparison row is oversized");
+        }
+        if (line_length >= 16u && memcmp(text + offset, "strict-mismatch\t", 16u) == 0) {
+            (void)printf("strict source mismatch row: %.*s\n", (int)line_length, text + offset);
+            mismatch_count++;
+        }
+        offset += line_length + (offset + line_length < length ? 1u : 0u);
+    }
+    free(text);
+    if (mismatch_count != 0u) return fail("math/memio strict source comparison failed");
+    puts("math/memio strict source comparison: every meaningful source result matches");
     return 0;
 }
 
@@ -6304,13 +6349,15 @@ static int validate_selection_mode(const char *required, const char *controls)
         "suite.cpu.no_run", "suite.timers.no_run",
         "suite.completion_controls", "suite.selection_controls",
         "suite.page_mode.controls", "suite.audio.controls",
-        "suite.audio.source_controls", "suite.audio2.controls"
+        "suite.audio.source_controls", "suite.audio2.controls",
+        "suite.math.controls", "suite.memio.controls",
+        "suite.math.source_controls", "suite.math.strict_comparison_controls"
     };
     if (validate_selection_list(required, "required-suite", required_ids,
                                 sizeof required_ids / sizeof required_ids[0]) != 0 ||
         validate_selection_list(controls, "control", control_ids,
                                 sizeof control_ids / sizeof control_ids[0]) != 0) return 1;
-    puts("suite selection: required=14 controls=8 inventory complete");
+    puts("suite selection: required=14 controls=12 inventory complete");
     return 0;
 }
 
@@ -6565,6 +6612,9 @@ int main(int argc, char **argv)
     }
     if (argc == 6 && strcmp(argv[1], "validate-math-memio-record") == 0) {
         return validate_math_memio_record_mode(argv[2], argv[3], argv[4], argv[5]);
+    }
+    if (argc == 6 && strcmp(argv[1], "validate-math-memio-strict-record") == 0) {
+        return validate_math_memio_strict_record_mode(argv[2], argv[3], argv[4], argv[5]);
     }
     if (argc == 5 && strcmp(argv[1], "validate-audio-oracle") == 0) {
         suite_oracle legacy;

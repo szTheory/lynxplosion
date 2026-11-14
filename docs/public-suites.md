@@ -1,4 +1,4 @@
-# Headless public CPU, timer, page-mode and audio suite evidence
+# Headless public CPU, timer, page-mode, audio, math and memio suite evidence
 
 The `suite.cpu.lynx1` and `suite.cpu.lynx2` tests build the pinned `lynx-tests` sources, derive expected bytes from their checked-in `main.c` and `tests.s`, load the linked BS93 object through the public BLL API, and run the CPU suite in fresh machines. Each profile runs once with zeroed result/zero-page storage and once with a deterministic test-private seeded pattern. Raw guest bytes and their source-oracle comparisons are separate records. A match means those software observations agree for this build and selected profile input; it does not establish agreement with a physical Lynx or qualify a CPU hardware profile. The overall default profile remains `none`.
 
@@ -46,7 +46,17 @@ Green-register reads were masked to their low nibble in the device model.
 Every reserved byte was zero. The observed timing bytes are timing-test
 diagnostics, not a complete hardware latency trace.
 The required profile selection covers 14 observations across CPU, timers,
-page mode, audio, audio2, math and memio on Lynx I and Lynx II.
+page mode, audio, audio2, math and memio on Lynx I and Lynx II. The control
+selection now contains 12 named cases. Math controls reject no-run/missing
+captures, replace stale prior outputs through a new guest run, and corrupt one
+arithmetic result in each of groups 1–7. Memio controls corrupt one result in
+each of its three register groups and reject wrong model, object and label
+identities. The source controls exercise 14 unique copied-source, builder,
+tool, object, label, notice and reserved-range faults. Strict comparison
+controls independently alter timing offsets 14 and 15: each complete record
+still passes the 14/14 arithmetic gate, while the strict validator fails and
+prints the exact mismatch row. These injected records test the verdict path;
+they are not observations from the pinned guest or timing exceptions.
 
 | Suite / profile | Guest ticks | Raw result bytes, indices 0–17 | Scoped result | Strict mismatches |
 | --- | ---: | --- | ---: | ---: |
