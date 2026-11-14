@@ -2394,7 +2394,49 @@ elseif(FAILURE STREQUAL "" AND MODE STREQUAL "math_source_controls")
   set(all_run_out "")
   expect_success_timeout("math script controls: 14 unique source/build identity subcases passed" 180
     sh "${ROOT}/tests/gates/math-script-controls.sh" "${TEST_BINARY}" "${MATH_ORACLE}")
-  string(APPEND all_run_out "math/memio source controls: 14 unique private-copy shape, identity, builder, and oracle-reserved-range subcases passed\n")
+  execute_process(COMMAND sh "${ROOT}/scripts/generate-suite-oracle.sh"
+      --source "${ROOT}/build/pins/lynx-tests" --include-math-memio --out "${MATH_ORACLE}"
+    TIMEOUT 15 RESULT_VARIABLE range_oracle_rc OUTPUT_VARIABLE range_oracle_out ERROR_VARIABLE range_oracle_err)
+  if(NOT range_oracle_rc STREQUAL "0")
+    message(FATAL_ERROR "suite_driver: could not restore canonical math/memio oracle after script controls: ${range_oracle_rc} ${range_oracle_out} ${range_oracle_err}")
+  endif()
+  file(READ "${MATH_ORACLE}" math_oracle_baseline)
+  set(range_parser_object "${WORK}/lynx-test-suites-range-no-ubsan.o")
+  set(range_parser_binary "${WORK}/lynx-test-suites-range-no-ubsan")
+  execute_process(COMMAND "${C_COMPILER}"
+      "-DLYNX_PROJECT_ROOT=\"${ROOT}\""
+      "-DLYNX_SCRATCH_ROOT=\"${SCRATCH_ROOT}/suites\""
+      -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
+      "-I${ROOT}/core" "-I${ROOT}/include" -g -std=c17
+      -Wall -Wextra -Wpedantic -pedantic-errors -Wconversion -Wshadow -Werror
+      -fno-sanitize=address,undefined -c "${ROOT}/tests/suites/test_public_suites.c"
+      -o "${range_parser_object}"
+    TIMEOUT 90 RESULT_VARIABLE range_compile_rc OUTPUT_VARIABLE range_compile_out ERROR_VARIABLE range_compile_err)
+  if(NOT range_compile_rc STREQUAL "0")
+    message(FATAL_ERROR "suite_driver: cannot compile unsanitized parser control binary: ${range_compile_rc} ${range_compile_out} ${range_compile_err}")
+  endif()
+  execute_process(COMMAND "${C_COMPILER}" -g -fsanitize=address,undefined
+      "${range_parser_object}" "${ROOT}/build/check/liblynx_core.a" -o "${range_parser_binary}"
+    TIMEOUT 90 RESULT_VARIABLE range_link_rc OUTPUT_VARIABLE range_link_out ERROR_VARIABLE range_link_err)
+  if(NOT range_link_rc STREQUAL "0")
+    message(FATAL_ERROR "suite_driver: cannot link unsanitized parser control binary: ${range_link_rc} ${range_link_out} ${range_link_err}")
+  endif()
+  expect_success("math/memio oracle: exact source groups, meaningful rows and reserved extents valid"
+    "${range_parser_binary}" validate-math-memio-oracle "${MATH_ORACLE}")
+  set(math_group_zero "group\t0\t0\t2\tarithmetic\tSIMPLE MUL\n")
+  set(math_group_overflow "group\t0\t4294967295\t1\tarithmetic\tSIMPLE MUL\n")
+  string(REPLACE "${math_group_zero}" "${math_group_overflow}" malformed_range_oracle
+    "${math_oracle_baseline}")
+  if(malformed_range_oracle STREQUAL math_oracle_baseline)
+    message(FATAL_ERROR "suite_driver: math oracle uint32 range-overflow seed was not unique")
+  endif()
+  set(malformed_range_path "${WORK}/math-memio-range-overflow.tsv")
+  file(WRITE "${malformed_range_path}" "${malformed_range_oracle}")
+  expect_failure("math/memio oracle: malformed group row"
+    "${range_parser_binary}" validate-math-memio-oracle "${malformed_range_path}")
+  expect_success("math/memio oracle: exact source groups, meaningful rows and reserved extents valid"
+    "${TEST_BINARY}" validate-math-memio-oracle "${MATH_ORACLE}")
+  string(APPEND all_run_out "math/memio source controls: 14 unique private-copy shape, identity, builder, and oracle-reserved-range subcases passed; uint32-max group span rejected by the named malformed-row invariant\n")
 elseif(FAILURE STREQUAL "" AND MODE MATCHES "^(math_controls|memio_controls)$")
   set(all_run_out "")
   if(MODE STREQUAL "math_controls")

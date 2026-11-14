@@ -815,7 +815,8 @@ static int parse_math_memio_oracle(const char *path, suite_source_oracle *out)
                 (count = split_fields(line, fields, 12u)) != 6u || strcmp(fields[0], "group") != 0 ||
                 parse_decimal(fields[1], &index) != 0 || index != i ||
                 parse_decimal(fields[2], &start) != 0 || parse_decimal(fields[3], &span) != 0 ||
-                span == 0u || start + span > meaningful || strcmp(fields[4], kind) != 0 ||
+                span == 0u || start >= meaningful || span > meaningful - start ||
+                strcmp(fields[4], kind) != 0 ||
                 strcmp(fields[5], expected_names[suite][i]) != 0 ||
                 copy_field(out->group_kind[suite][i], sizeof out->group_kind[suite][i], fields[4]) != 0 ||
                 copy_field(out->group_label[suite][i], sizeof out->group_label[suite][i], fields[5]) != 0) {
