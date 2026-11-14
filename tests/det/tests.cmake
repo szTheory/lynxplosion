@@ -107,6 +107,10 @@ lynx_add_test(NAME det.sensitivity_state
   COMMAND lynx-test-det state_sensitivity ${LYNX_CPU_LOOP_CONTENT}
   LABELS det TIMEOUT 60)
 
+lynx_add_test(NAME det.suzy_sensitivity
+  COMMAND lynx-test-det suzy_sensitivity
+  LABELS det TIMEOUT 60)
+
 lynx_add_test(NAME det.timer_paths
   COMMAND lynx-test-det timer_paths
   LABELS det TIMEOUT 60)

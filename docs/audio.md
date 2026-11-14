@@ -123,6 +123,6 @@ timer, channel, link, video or CPU work.
 Raw pens/palettes and per-line ticks remain separate from audio samples and
 events. Host timeline cursors, file offsets, clocks, and output buffers are not
 guest state. The complete four-channel state and deferred ring work are
-included in snapshot format 7 and the canonical guest-state digest, although
+included in snapshot format 8 and the canonical guest-state digest, although
 this tracer exercises only channel 0. Snapshot round trips establish software
 repeatability within the exact build identity, not physical accuracy.

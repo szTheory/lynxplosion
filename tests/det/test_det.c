@@ -1039,6 +1039,134 @@ static void case_state_sensitivity(char **args)
     free(base.mem);
 }
 
+static int suzy_state_digest(const lynx_machine *machine, char output[65])
+{
+    uint8_t digest[32];
+    if (lynx_state_digest(machine, digest) != LYNX_OK) return 1;
+    digest_hex(digest, output);
+    return 0;
+}
+
+static void prepare_suzy_multiply(lynx_machine *machine)
+{
+    const uint64_t tick = machine->guest_ticks;
+    CHECK(lynx__suzy_write(&machine->suzy, 0xFC52u, 0xFFu, tick));
+    CHECK(lynx__suzy_write(&machine->suzy, 0xFC53u, 0x00u, tick));
+    CHECK(lynx__suzy_write(&machine->suzy, 0xFC54u, 0x02u, tick));
+    CHECK(lynx__suzy_write(&machine->suzy, 0xFC55u, 0x00u, tick));
+    CHECK(lynx__suzy_valid(&machine->suzy, tick));
+}
+
+static void flip_suzy_sign_ab(lynx__suzy_state *suzy) { suzy->sign_ab ^= 1u; }
+static void flip_suzy_sign_cd(lynx__suzy_state *suzy) { suzy->sign_cd ^= 1u; }
+static void flip_suzy_mode(lynx__suzy_state *suzy) { suzy->mode = 0x80u; }
+static void flip_suzy_warning(lynx__suzy_state *suzy) { suzy->warning ^= 1u; }
+static void flip_suzy_carry(lynx__suzy_state *suzy) { suzy->carry ^= 1u; }
+static void flip_suzy_unsafe(lynx__suzy_state *suzy) { suzy->unsafe ^= 1u; }
+static void flip_suzy_latched_ab(lynx__suzy_state *suzy) { suzy->latched_ab ^= 1u; }
+static void flip_suzy_start_tick(lynx__suzy_state *suzy) { suzy->start_tick ^= 1u; }
+static void flip_suzy_deadline_tick(lynx__suzy_state *suzy) { suzy->deadline_tick ^= 1u; }
+
+static void case_suzy_sensitivity(char **args)
+{
+    static const uint8_t loop[] = {0x4Cu, 0x00u, 0x02u}; /* JMP $0200 */
+    (void)args;
+    instance base;
+    char base_digest[65];
+    char changed_digest[65];
+    CHECK_EQ_U64(instance_make(&base, loop, sizeof loop), 0u);
+    if (base.m == NULL) {
+        free(base.mem);
+        return;
+    }
+    uint64_t used = 0u;
+    lynx_stop_reason stop = LYNX_STOP_HALT;
+    CHECK_EQ_U64(lynx_advance(base.m, BUDGET, &used, &stop), LYNX_OK);
+    CHECK_EQ_U64(used, BUDGET);
+    CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+    CHECK_EQ_U64(suzy_state_digest(base.m, base_digest), 0u);
+
+    /* Every byte in the backing window participates in the canonical state. */
+    for (size_t index = 0u; index < sizeof base.m->suzy.registers; index++) {
+        lynx_machine *copy = copy_machine(base.m);
+        CHECK(copy != NULL);
+        if (copy == NULL) continue;
+        copy->suzy.registers[index] ^= 1u;
+        CHECK(lynx__suzy_valid(&copy->suzy, copy->guest_ticks));
+        CHECK_EQ_U64(suzy_state_digest(copy, changed_digest), 0u);
+        if (strcmp(changed_digest, base_digest) == 0) {
+            fprintf(stderr, "suzy_sensitivity: backing byte %zu is absent from digest\n", index);
+            check_failures++;
+        }
+        free(copy);
+    }
+
+    static const struct {
+        const char *name;
+        void (*flip)(lynx__suzy_state *);
+    } idle_flips[] = {
+        {"sign_ab", flip_suzy_sign_ab},
+        {"sign_cd", flip_suzy_sign_cd},
+        {"mode", flip_suzy_mode},
+        {"warning", flip_suzy_warning},
+        {"carry", flip_suzy_carry},
+        {"unsafe", flip_suzy_unsafe}
+    };
+    for (size_t index = 0u; index < sizeof idle_flips / sizeof idle_flips[0]; index++) {
+        lynx_machine *copy = copy_machine(base.m);
+        CHECK(copy != NULL);
+        if (copy == NULL) continue;
+        idle_flips[index].flip(&copy->suzy);
+        CHECK(lynx__suzy_valid(&copy->suzy, copy->guest_ticks));
+        CHECK_EQ_U64(suzy_state_digest(copy, changed_digest), 0u);
+        if (strcmp(changed_digest, base_digest) == 0) {
+            fprintf(stderr, "suzy_sensitivity: %s is absent from digest\n",
+                    idle_flips[index].name);
+            check_failures++;
+        }
+        free(copy);
+    }
+
+    lynx_machine *active = copy_machine(base.m);
+    CHECK(active != NULL);
+    if (active != NULL) {
+        prepare_suzy_multiply(active);
+        char active_digest[65];
+        CHECK_EQ_U64(suzy_state_digest(active, active_digest), 0u);
+        static const struct {
+            const char *name;
+            void (*flip)(lynx__suzy_state *);
+        } progress_flips[] = {
+            {"latched AB", flip_suzy_latched_ab},
+            {"start tick", flip_suzy_start_tick},
+            {"deadline tick", flip_suzy_deadline_tick}
+        };
+        for (size_t index = 0u;
+             index < sizeof progress_flips / sizeof progress_flips[0]; index++) {
+            lynx_machine *copy = copy_machine(active);
+            CHECK(copy != NULL);
+            if (copy == NULL) continue;
+            progress_flips[index].flip(&copy->suzy);
+            CHECK_EQ_U64(suzy_state_digest(copy, changed_digest), 0u);
+            if (strcmp(changed_digest, active_digest) == 0) {
+                fprintf(stderr, "suzy_sensitivity: %s is absent from digest\n",
+                        progress_flips[index].name);
+                check_failures++;
+            }
+            free(copy);
+        }
+        free(active);
+    }
+
+    /* The host-only write watch is outside guest state and must not perturb it. */
+    CHECK_EQ_U64(lynx_watch_configure(base.m, 0x0400u, 1u), LYNX_OK);
+    CHECK_EQ_U64(suzy_state_digest(base.m, changed_digest), 0u);
+    CHECK(strcmp(changed_digest, base_digest) == 0);
+    printf("suzy_sensitivity: all 48 backing bytes, signs, mode, status, active progress, and host-watch exclusion passed (%s)\n",
+           base_digest);
+    free(base.mem);
+}
+
 /* ---- det.profile_agreement ---- */
 
 /* The golden workload (churn-loop, seeded RAM, 4096 ticks) uses only opcodes the
@@ -2950,6 +3078,7 @@ static const struct {
     void (*run)(char **args);
 } cases[] = {
     {"profile_agreement", 2, case_profile_agreement},
+    {"suzy_sensitivity", 0, case_suzy_sensitivity},
     {"state_sensitivity", 1, case_state_sensitivity},
     {"timer_paths", 0, case_timer_paths},
     {"video_paths", 0, case_video_paths},

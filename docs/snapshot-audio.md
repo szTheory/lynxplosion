@@ -1,8 +1,9 @@
-# Format 7 audio snapshot state
+# Audio snapshot envelope
 
-Format 7 stores digital audio state as a fieldwise continuation record. The
-audio record begins at payload offset `77948`, is 160 bytes long, and ends at
-payload byte `78108`. All multi-byte values are little-endian; signed output
+The 160-byte audio envelope introduced in snapshot format 7 remains unchanged
+inside format 8. The audio record begins at payload offset `77948`, is 160 bytes
+long, and ends at payload byte `78108`. Format 8 appends the 88-byte Suzy record
+there. All multi-byte values are little-endian; signed output
 and integrator values are encoded as their two's-complement `i8` bit patterns.
 The format does not copy C structure padding.
 
@@ -54,7 +55,7 @@ per second, stereo S16). The policy also fixes the sample origin and cadence,
 mixing behavior, ring deferral, and event ordering. These are not repeated as
 untrusted assertions in the snapshot payload. Restore continues to require
 the same exact build, CPU profile, RAM policy and seed, loaded content, and
-timing policy; format 7 does not promise migration between builds or older
+timing policy; format 8 does not promise migration between builds or older
 snapshot versions.
 
 The canonical guest-state digest appends this complete 160-byte fieldwise
@@ -75,6 +76,6 @@ next event sequence, before the deferred ring continues on the following tick.
 Zero-output, one-sample and one-event suffixes are checked against nonempty
 prefixes.
 
-This establishes deterministic format-7 continuation within one exact build
+This establishes deterministic format-8 audio continuation within one exact build
 identity. It does not qualify audio timing or output against physical Lynx
 hardware.

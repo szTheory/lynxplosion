@@ -682,6 +682,11 @@ static int map_target_is_mikey(uint8_t mapctl, uint16_t addr)
            (lynx__timer_available(addr) || lynx__audio_available(addr));
 }
 
+static int map_target_is_suzy(uint8_t mapctl, uint16_t addr)
+{
+    return (mapctl & 0x01u) == 0u && lynx__suzy_available(addr);
+}
+
 static uint8_t map_mikey_peek(const lynx_machine *m, uint16_t addr)
 {
     return lynx__audio_available(addr) ? lynx__audio_peek(&m->audio, addr) :
@@ -719,6 +724,12 @@ static void map_read_one(uint8_t mapctl, uint16_t addr)
         CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
         CHECK_EQ_U64(consumed, 512u);
         CHECK_EQ_U64(m->ram[0x0300u], map_mikey_peek(m, addr));
+        return;
+    }
+    if (map_target_is_suzy(mapctl, addr)) {
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 512u);
+        CHECK_EQ_U64(m->ram[0x0300u], lynx__suzy_peek(&m->suzy, addr));
         return;
     }
 
@@ -775,6 +786,14 @@ static void map_write_one(uint8_t mapctl, uint16_t addr)
         }
         return;
     }
+    if (map_target_is_suzy(mapctl, addr)) {
+        uint8_t index = (uint8_t)addr;
+        if (index > 0x2Fu) index = (uint8_t)(index & 0x3Fu);
+        CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
+        CHECK_EQ_U64(consumed, 512u);
+        CHECK_EQ_HEX(m->suzy.registers[index], value);
+        return;
+    }
 
     CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
     CHECK(consumed < 512u);
@@ -811,12 +830,14 @@ static void map_latch_one(uint8_t value)
 static void case_map_matrix(void)
 {
     static const uint16_t boundaries[] = {
-        0xFBFFu, 0xFC00u, 0xFCFFu, 0xFD00u, 0xFD1Fu, 0xFD20u,
+        0xFBFFu, 0xFC00u, 0xFC2Fu, 0xFC30u, 0xFC3Fu, 0xFC40u, 0xFC6Fu, 0xFC70u,
+        0xFC7Fu, 0xFCFFu, 0xFD00u, 0xFD1Fu, 0xFD20u,
         0xFD3Fu, 0xFD40u, 0xFD50u, 0xFD7Fu, 0xFD80u, 0xFD81u, 0xFD82u, 0xFDFFu, 0xFE00u,
         0xFFF7u, 0xFFF8u, 0xFFF9u, 0xFFFAu, 0xFFFFu
     };
     static const uint16_t window_writes[] = {
-        0xFC00u, 0xFCFFu, 0xFD00u, 0xFD1Fu, 0xFD20u, 0xFD50u, 0xFD7Fu,
+        0xFC00u, 0xFC2Fu, 0xFC30u, 0xFC3Fu, 0xFC40u, 0xFC6Fu, 0xFC70u,
+        0xFCFFu, 0xFD00u, 0xFD1Fu, 0xFD20u, 0xFD50u, 0xFD7Fu,
         0xFD80u, 0xFD81u, 0xFD82u, 0xFDFFu, 0xFE00u, 0xFFF7u,
         0xFFF8u, 0xFFFAu, 0xFFFFu
     };
@@ -1526,6 +1547,13 @@ static void case_memory_peek_pure(void)
     m->mapctl = 0u;
     m->ram[0xFBFFu] = 0xA1u;
     m->ram[0xFC00u] = 0xB2u;
+    uint8_t mapped_suzy = 0xCCu;
+    const uint64_t suzy_peek_ticks = ticks_of(m);
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFC00u, &mapped_suzy, 1u), LYNX_OK);
+    CHECK_EQ_HEX(mapped_suzy, 0u);
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK_EQ_U64(ticks_of(m), suzy_peek_ticks);
     uint8_t raw_suzy = 0u;
     const lynx_status raw_status =
         g_api_fault == API_FAULT_RAW_AS_MAPPED
@@ -1548,20 +1576,22 @@ static void case_memory_peek_pure(void)
     uint8_t raw_audio_volume = 0u;
     CHECK_EQ_U64(lynx_read_memory(m, 0xFD20u, &raw_audio_volume, 1u), LYNX_OK);
     CHECK_EQ_HEX(raw_audio_volume, 0xA7u);
+    uint8_t timer_backup = 0xCCu;
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD00u, &timer_backup, 1u), LYNX_OK);
+    CHECK_EQ_U64(timer_backup, 0u); /* the timer view is separate from raw RAM */
     uint64_t ticks_before = ticks_of(m);
+    m->mapctl = 0x02u;
+    m->ram[0xFDFFu] = 0x3Cu;
     memcpy(snap_a, m, MSIZE);
     capture_inspection_snapshot(m, before_snapshot, sizeof before_snapshot);
     uint8_t crossing[2] = {0x5Au, 0xA5u};
-    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFBFFu, crossing, sizeof crossing),
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFDFFu, crossing, sizeof crossing),
                  LYNX_ERR_UNAVAILABLE);
     CHECK_EQ_HEX(crossing[0], 0x5Au);
     CHECK_EQ_HEX(crossing[1], 0xA5u);
     uint8_t unavailable = 0xCCu;
-    uint8_t timer_backup = 0xCCu;
-    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFD00u, &timer_backup, 1u), LYNX_OK);
-    CHECK_EQ_U64(timer_backup, 0u); /* the timer view is separate from raw RAM */
     static const uint16_t unavailable_addresses[] = {
-        0xFC00u, 0xFE00u, 0xFFF9u, 0xFFFAu};
+        0xFC30u, 0xFE00u, 0xFFF9u, 0xFFFAu};
     for (size_t i = 0u; i < sizeof unavailable_addresses / sizeof unavailable_addresses[0]; i++) {
         unavailable = 0xCCu;
         CHECK_EQ_U64(lynx_read_cpu_memory(m, unavailable_addresses[i], &unavailable, 1u),
@@ -2436,7 +2466,7 @@ static void case_reset_power_on(void)
 #define SNAP_OFF_PAYLOAD_SHA 220u
 #define SNAP_SEED 0x0123456789abcdefu
 
-/* Payload offsets of format 7 (white-box, from core/snapshot.c). */
+/* Payload offsets of format 8 (white-box, from core/snapshot.c). */
 enum {
     PAY_PC = 0, PAY_P = 6, PAY_FLAGS = 7, PAY_OPCODE = 8, PAY_STEP = 9, PAY_EA = 10, PAY_TMP = 12,
     PAY_COST_MODEL = 13, PAY_MAPCTL = 14, PAY_PAGE_LATCH = 15, PAY_TICKS = 16, PAY_READY_AT = 24,
@@ -2446,7 +2476,8 @@ enum {
     PAY_TIMER_EVENT_APPLIED = PAY_TIMER_PHASE + 1,
     PAY_BUS_HOLD = PAY_TIMER_EVENT_APPLIED + 1,
     PAY_VIDEO = PAY_BUS_HOLD + 1,
-    PAY_AUDIO = PAY_VIDEO + (int)LYNX__VIDEO_SNAPSHOT_LEN
+    PAY_AUDIO = PAY_VIDEO + (int)LYNX__VIDEO_SNAPSHOT_LEN,
+    PAY_SUZY = PAY_AUDIO + (int)LYNX__AUDIO_SNAPSHOT_LEN
 };
 
 enum {
@@ -3187,7 +3218,7 @@ static void case_snapshot_roundtrip(void)
     CHECK_UNCHANGED(machine_buf, snap_a);
     CHECK_EQ_U64(blob_v[SNAP_TOTAL], 0xA5u); /* nothing written past the end */
     CHECK(memcmp(blob_v, "LYNXSNAP", 8u) == 0);
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 7u); /* format 7 */
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 8u); /* format 8 */
     CHECK_EQ_U64(get_le(blob_v + 12u, 4u), LYNX__SNAPSHOT_HEADER_LEN);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
@@ -3195,6 +3226,10 @@ static void case_snapshot_roundtrip(void)
     CHECK_EQ_U64(get_le(blob_v + 212u, 4u), sizeof churn_loop + 10u);
     CHECK_EQ_U64(get_le(blob_v + 216u, 4u), LYNX__SNAPSHOT_PAYLOAD_LEN);
     CHECK_EQ_U64(PAY_AUDIO, 77948);
+    CHECK_EQ_U64(PAY_SUZY, 78108);
+    CHECK_EQ_U64(LYNX__SUZY_SNAPSHOT_LEN, 88u);
+    CHECK(all_bytes_equal(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_SUZY,
+                          LYNX__SUZY_SNAPSHOT_LEN, 0u));
     CHECK(all_bytes_equal(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO, 40u, 0u));
     CHECK_EQ_U64(get_le(blob_v + LYNX__SNAPSHOT_HEADER_LEN + PAY_AUDIO +
                         AUDIO_NEXT_SAMPLE_TICK, 8u), 2400u);
@@ -3361,9 +3396,9 @@ static void case_bll_identity(void)
     CHECK_EQ_U64(m->mapctl, 0x0Cu);
     CHECK_EQ_U64(save_into(m, blob_v), 0u);
 
-    /* Format 7 carries the complete object and timing identity in the LE
+    /* Format 8 carries the complete object and timing identity in the LE
        header and the guest-written MAPCTL latch in the payload. */
-    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 7u);
+    CHECK_EQ_U64(get_le(blob_v + 8u, 4u), 8u);
     CHECK_EQ_U64(get_le(blob_v + 200u, 4u), LYNX_CONTENT_BS93);
     CHECK_EQ_U64(get_le(blob_v + 204u, 4u), LYNX_STARTUP_A);
     CHECK_EQ_U64(get_le(blob_v + 208u, 4u), 0x0200u);
@@ -3581,8 +3616,8 @@ static void case_snapshot_refusal(void)
     RESTORE_EXPECT(m, blob_v, 0u, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
     RESTORE_EXPECT(m, blob_v, LYNX__SNAPSHOT_HEADER_LEN, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
 
-    /* Formats 1 through 6 are unsupported; format 7 is the current positive case. */
-    CHECK_EQ_U64(blob_bad[8], 7u);
+    /* Formats 1 through 7 are unsupported; format 8 is the current positive case. */
+    CHECK_EQ_U64(blob_bad[8], 8u);
     CHECK_EQ_U64(blob_bad[9] | blob_bad[10] | blob_bad[11], 0u);
     blob_bad[8] = 1u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
@@ -3596,7 +3631,21 @@ static void case_snapshot_refusal(void)
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
     blob_bad[8] = 6u;
     RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
-    blob_bad[8] = 6u;
+    blob_bad[8] = 7u;
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_VERSION, snap_a);
+    blob_bad[8] = 8u;
+
+    /* The outer hash can be valid while the candidate record is not. Reject
+       an unknown operation and noncanonical idle pending fields atomically. */
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
+    blob_bad[LYNX__SNAPSHOT_HEADER_LEN + PAY_SUZY + 54u] = 2u;
+    rehash_payload(blob_bad);
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
+    blob_bad[LYNX__SNAPSHOT_HEADER_LEN + PAY_SUZY + 56u] = 1u;
+    rehash_payload(blob_bad);
+    RESTORE_EXPECT(m, blob_bad, SNAP_TOTAL, LYNX_ERR_SNAPSHOT_INVALID, snap_a);
+    memcpy(blob_bad, blob_v, SNAP_TOTAL);
 
     /* Another identity: each refused as a MISMATCH, whatever the blob holds. */
     unsigned char other_image[sizeof churn_loop];
@@ -5908,6 +5957,77 @@ static void expect_supported_timer1_previous_write(void)
     lynx_machine_deinit(m);
 }
 
+static void expect_busy_suzy_write_refusal(void)
+{
+    static const uint8_t program[] = {
+        0xA9u, 0xFFu, 0x8Du, 0x52u, 0xFCu, /* CD low */
+        0xA9u, 0x00u, 0x8Du, 0x53u, 0xFCu, /* CD high */
+        0xA9u, 0x02u, 0x8Du, 0x54u, 0xFCu, /* AB low */
+        0xA9u, 0x0Cu, 0x8Du, 0x55u, 0xFCu, /* AB high triggers */
+        0x8Du, 0x92u, 0xFCu,              /* allowed orientation/clear */
+        0x8Du, 0x52u, 0xFCu               /* refused while busy */
+    };
+    lynx_config cfg;
+    lynx_config_default(&cfg);
+    lynx_machine *m = init_in(machine_buf, &cfg);
+    if (m == NULL) {
+        CHECK(m != NULL);
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, program, sizeof program, 0x0200u), LYNX_OK);
+    m->ram[0xFC52u] = 0xE7u;
+    uint64_t consumed = UINT64_MAX;
+    lynx_stop_reason stop = LYNX_STOP_BUDGET;
+    CHECK_EQ_U64(lynx_advance(m, 2000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_EQ_U64(m->cpu.req_addr, 0xFC52u);
+    CHECK_EQ_HEX(m->cpu.req_data, 0x0Cu);
+    CHECK_EQ_HEX(m->suzy.operation, 1u);
+    CHECK_EQ_HEX(m->suzy.registers[0x12u], 0xFFu);
+    CHECK_EQ_HEX(m->suzy.registers[0x13u], 0x00u);
+    CHECK_EQ_HEX(m->video.lefthand, 1u);
+    CHECK_EQ_HEX(m->suzy.unsafe, 0u);
+    CHECK_EQ_HEX(m->ram[0xFC52u], 0xE7u);
+
+    memcpy(snap_a, m, MSIZE);
+    const uint64_t before_retry = ticks_of(m);
+    CHECK_EQ_U64(lynx_advance(m, 10u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(consumed, 0u);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_UNCHANGED(m, snap_a);
+    CHECK_EQ_U64(ticks_of(m), before_retry);
+
+    uint8_t mapped = 0u;
+    uint8_t raw = 0u;
+    memcpy(snap_a, m, MSIZE);
+    CHECK_EQ_U64(lynx_read_cpu_memory(m, 0xFC52u, &mapped, 1u), LYNX_OK);
+    CHECK_EQ_HEX(mapped, 0xFFu);
+    CHECK_EQ_U64(lynx_read_memory(m, 0xFC52u, &raw, 1u), LYNX_OK);
+    CHECK_EQ_HEX(raw, 0xE7u);
+    CHECK_UNCHANGED(m, snap_a);
+    lynx_machine_deinit(m);
+
+    static const uint8_t signed_trigger[] = {
+        0xA9u, 0x80u, 0x8Du, 0x92u, 0xFCu, /* reserve signed mode */
+        0xA9u, 0x00u, 0x8Du, 0x55u, 0xFCu  /* unsupported until plan 02 */
+    };
+    m = init_in(buf_b, &cfg);
+    if (m == NULL) {
+        CHECK(m != NULL);
+        return;
+    }
+    CHECK_EQ_U64(load_bll_at(m, signed_trigger, sizeof signed_trigger, 0x0200u), LYNX_OK);
+    m->ram[0xFC55u] = 0xE7u;
+    CHECK_EQ_U64(lynx_advance(m, 1000u, &consumed, &stop), LYNX_OK);
+    CHECK_EQ_U64(stop, LYNX_STOP_UNAVAILABLE);
+    CHECK_EQ_U64(m->cpu.req_addr, 0xFC55u);
+    CHECK_EQ_HEX(m->suzy.mode, 0x80u);
+    CHECK_EQ_HEX(m->suzy.operation, 0u);
+    CHECK_EQ_HEX(m->suzy.registers[0x15u], 0u);
+    CHECK_EQ_HEX(m->ram[0xFC55u], 0xE7u);
+    lynx_machine_deinit(m);
+}
+
 static void expect_supported_audio_volume_write(void)
 {
     lynx_config cfg;
@@ -5951,8 +6071,10 @@ static void case_timer_unavailable(void)
     expect_unavailable_guest_write(0xFD19u, 0x0Fu, true, true, 6u, 0x07u);
     cases_run++;
 
-    /* Suzy addresses still refuse through the guest bus. */
-    expect_unavailable_guest_write(0xFC00u, 0x5Au, false, false, 0u, 0u);
+    /* Unmapped Suzy holes and absent ROM remain atomic guest refusals. */
+    expect_unavailable_guest_write(0xFC30u, 0x5Au, false, false, 0u, 0u);
+    cases_run++;
+    expect_unavailable_guest_write(0xFE00u, 0x5Au, false, false, 0u, 0u);
     cases_run++;
 
     lynx_config cfg;
@@ -5975,7 +6097,9 @@ static void case_timer_unavailable(void)
         CHECK(m != NULL);
     }
 
-    CHECK_EQ_U64(cases_run, 5u);
+    expect_busy_suzy_write_refusal();
+    cases_run++;
+    CHECK_EQ_U64(cases_run, 7u);
     expect_supported_timer1_previous_write();
     expect_supported_audio_volume_write();
     printf("TAP version 13\n1..1\n%s 1 - api.timer_unavailable\n",
@@ -8728,7 +8852,7 @@ static void case_input_orientation(void)
     static const uint8_t unsupported_sprsys_write[] = {
         0xA9u, 0x0Cu, 0x8Du, 0xF9u, 0xFFu,
         0xA9u, 0x08u, 0x8Du, 0x92u, 0xFCu,
-        0xA9u, 0x10u, 0x8Du, 0x92u, 0xFCu,
+        0xA9u, 0x32u, 0x8Du, 0x92u, 0xFCu,
         0x4Cu, 0x0Au, 0x02u
     };
     CHECK_EQ_U64(load_bll_at(m, unsupported_sprsys_write,
@@ -8740,7 +8864,7 @@ static void case_input_orientation(void)
     }
     CHECK_NAMED(stop == LYNX_STOP_UNAVAILABLE && m->video.lefthand == 1u &&
                     m->cpu.req_addr == 0xFC92u && m->cpu.req_kind == LYNX__CK_WRITE &&
-                    m->cpu.a == 0x10u,
+                    m->cpu.a == 0x32u,
                 "input_orientation.unsupported-sprsys-control-refuses-before-device-mutation");
 
     static const uint8_t unsupported_suzy_read[] = {

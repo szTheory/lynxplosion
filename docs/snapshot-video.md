@@ -1,8 +1,8 @@
-# Format 7 video and audio snapshot state
+# Format 8 video, audio and Suzy snapshot state
 
-Format 7 records the machine's current guest video, logical input and digital
-audio state so an accepted restore can continue the same deterministic A/V
-stream. Snapshot restore
+Format 8 records the machine's current guest video, logical input, digital
+audio and Suzy math state so an accepted restore can continue the same
+deterministic guest stream. Snapshot restore
 requires the same build, CPU profile, RAM policy and seed, loaded content, and
 timing policy. Every scalar is encoded field by field in little-endian order;
 the snapshot does not copy C structure padding.
@@ -62,7 +62,7 @@ fieldwise little-endian layout is:
 | 146 | 8 | absolute deferred-work deadline |
 | 154 | 6 | reserved zero |
 
-The payload therefore ends at 78,108 bytes. The event and sampling cursors and
+The audio envelope ends at payload byte 78,108. The event and sampling cursors and
 ring debt are guest continuation state so output remains identical when an
 instance is advanced in different host-sized slices. Caller spans, host
 event-script cursors and output-file positions remain host state. The ring uses
@@ -118,7 +118,13 @@ for the selected timing policy: four ticks for flat-five or video policy, and
 thirteen ticks for the test-skew table. Guest time is bounded below the
 64-bit overflow margin, so future release arithmetic is safe.
 
-These checks establish deterministic format-7 restoration within one exact
+The 88-byte Suzy record begins at payload offset `78108` and ends the
+78,196-byte payload. Its canonical field order is documented in
+[`suzy-math.md`](suzy-math.md). The record is appended to snapshots and to the
+guest-state digest; restore validates it before applying any candidate state.
+Format 7 and earlier are refused as version mismatches.
+
+These checks establish deterministic format-8 restoration within one exact
 build identity. The video cadence, palette sampling, refresh period, and input
 mapping remain software policy; snapshot equality does not qualify Lynx
 hardware accuracy.
@@ -131,15 +137,16 @@ snapshot and timer controls.
 
 `lynx_state_digest` returns 32 SHA-256 bytes for an initialized instance,
 including one that has not loaded content. Its versioned stream is encoded in
-this order: the NUL-terminated tag `lynxplosion.guest-state.v3`; CPU PC as
+this order: the NUL-terminated tag `lynxplosion.guest-state.v4`; CPU PC as
 little-endian `u16`, A/X/Y/S, P with reserved bits set, flags/opcode/step, EA as
 little-endian `u16`, and TMP; MAPCTL and CPU page latch as bytes; guest ticks
 and CPU-ready tick as little-endian `u64`; all 65,536 RAM bytes; eight timer
 records (backup/count/CTLA/CTLB), pending bits, timer phase policy, the
 current-tick event-applied bit, and bus hold as bytes; then the complete
-fieldwise video record above and the 160-byte audio envelope. The NUL-terminated
-domain is `lynxplosion.guest-state.v3`. Video and audio scalars follow their
-documented widths and little-endian rules. The timer event bit is derived from the current tick; an
+fieldwise video record above, the 160-byte audio envelope and the 88-byte
+Suzy record. The NUL-terminated domain is `lynxplosion.guest-state.v4`. Video,
+audio and Suzy scalars follow their documented widths and little-endian rules.
+The timer event bit is derived from the current tick; an
 older cursor timestamp is deliberately omitted. The stream contains no C
 structure padding, immutable machine identity (profile, RAM policy/seed,
 content or build), snapshot header, derived CPU request/wake state, host watch
@@ -149,10 +156,10 @@ unchanged; the output span must not wrap or overlap the machine.
 The runner writes those 32 public digest bytes as 64 lowercase hex digits in
 `obs.state.hex`; its `digests.txt` entry is SHA-256 of the decoded 32 bytes.
 The observation digest now covers that entry in addition to RAM, public
-registers and time. Adding audio state changes the CPU-loop golden: the digest
-makes input, timer, bus, video and audio state visible
-even when RAM/register/time projections agree. This is repeatability evidence,
-not hardware-accuracy evidence.
+registers and time. Format 8's domain and Suzy state change the CPU-loop golden:
+the digest makes input, timer, bus, video, audio and Suzy state visible even
+when RAM/register/time projections agree. This is repeatability evidence, not
+hardware-accuracy evidence.
 
 Input event scripts and replay cursors remain host-owned. A host checkpoint
 taken at tick `T` before applying event `T` is pre-edge and resumes with the
@@ -163,7 +170,9 @@ wrapper must carry that phase marker and the complete script digest; the core
 snapshot stores only the current logical input mask. Applying an event and
 taking a checkpoint must be ordered consistently with the chosen marker.
 
-The digest sensitivity target is `det.video_sensitivity`; cross-path raw frame,
+The video digest sensitivity target is `det.video_sensitivity`; Suzy record
+sensitivity and host-watch exclusion are checked by `det.suzy_sensitivity`.
+Cross-path raw frame,
 progress and input comparisons are in `det.video_paths`. The public API and
 standalone-header contract are checked by `api.state_digest` and
 `api.header_selfcontained`.

@@ -233,7 +233,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_executable(lynx-test-audio
   tests/audio/test_audio.c
   core/audio.c core/bus.c core/cpu.c core/cpu_profile.c core/input.c
-  core/machine.c core/sha256.c core/snapshot.c core/timer.c core/video.c
+  core/machine.c core/sha256.c core/snapshot.c core/suzy.c core/timer.c core/video.c
   core/build_id.c)
 target_include_directories(lynx-test-audio PRIVATE include core)
 target_compile_options(lynx-test-audio PRIVATE

@@ -1,4 +1,4 @@
-/* Snapshot save and restore, format version 7.
+/* Snapshot save and restore, format version 8.
 
    A snapshot is a header followed by a payload. Every integer is
    little-endian and is written and read one field at a time, never by copying
@@ -6,7 +6,7 @@
 
    Header (256 bytes), in order:
      0    magic          8 bytes  "LYNXSNAP"
-     8    format_version u32      7
+     8    format_version u32      8
      12   header_len     u32      256
      16   build_id       128      lynx__build_id, NUL-padded to 128
      144  profile        u32
@@ -19,10 +19,10 @@
      204  startup_tier   u32
      208  entry_addr     u32
      212  object_len     u32
-     216  payload_len    u32      78108
+     216  payload_len    u32      78196
      220  payload_sha256 32       SHA-256 of the payload
      252  timing_policy  u32
-   Payload (78108 bytes), offsets relative to its start:
+   Payload (78196 bytes), offsets relative to its start:
      0  pc u16        2  a      3  x      4  y      5  s
      6  p (bits 4 and 5 set)    7  cpu latches (lynx__cpu.flags)
      8  opcode        9  step (cycle index inside the instruction)
@@ -36,8 +36,9 @@
      65602 event-already-applied-at-guest-tick (0 or 1)
      65603 bus ownership hold (0 or 1)
      65604 video/input runtime header and bounded raw capture (format 5 layout)
-     77948 audio state: fieldwise 160-byte format-7 envelope documented in
-       docs/snapshot-video.md
+     77948 audio state: fieldwise 160-byte envelope documented in
+       docs/snapshot-audio.md
+     78108 Suzy state: fieldwise 88-byte record
    The profile is not in the payload: it is part of the header identity. The
    CPU request and wake_pending are derived state and are never stored; restore
    recomputes them from CPU state and timer pending bits. Divider phase and
@@ -53,7 +54,7 @@
    cannot fail. A refused restore leaves the instance byte-identical. After
    that guest-state apply succeeds, host-only watch configuration and hit
    reporting are cleared; callers must explicitly rearm after restore.
-   Formats 1 through 6 are refused as version errors.
+   Formats 1 through 7 are refused as version errors.
 
    Reversibility: restore needs the same build, so no old snapshot is ever
    accepted and the format may change in any later build without migration. */
@@ -113,13 +114,15 @@ enum {
     P_BUS_HOLD = P_TIMER_EVENT_APPLIED + 1,
     P_VIDEO = P_BUS_HOLD + 1,
     P_AUDIO = P_VIDEO + (int)LYNX__VIDEO_SNAPSHOT_LEN,
-    P_END = P_AUDIO + (int)LYNX__AUDIO_SNAPSHOT_LEN
+    P_SUZY = P_AUDIO + (int)LYNX__AUDIO_SNAPSHOT_LEN,
+    P_END = P_SUZY + (int)LYNX__SUZY_SNAPSHOT_LEN
 };
 
 _Static_assert(OFF_END == (int)LYNX__SNAPSHOT_HEADER_LEN, "snapshot header length");
 _Static_assert(P_END == (int)LYNX__SNAPSHOT_PAYLOAD_LEN, "snapshot payload length");
 _Static_assert(P_PAGE_LATCH + 1 == P_TICKS, "snapshot byte fields meet the clock fields");
 _Static_assert(P_TIMERS == 65568, "timer bank follows RAM without padding");
+_Static_assert(P_SUZY == 78108, "Suzy snapshot follows the audio envelope");
 
 #define SNAPSHOT_TOTAL ((size_t)LYNX__SNAPSHOT_HEADER_LEN + (size_t)LYNX__SNAPSHOT_PAYLOAD_LEN)
 
@@ -308,16 +311,17 @@ static void audio_snapshot_write(uint8_t *out, const lynx__audio_state *audio)
    fieldwise video encoder, but excludes the snapshot header, build/content
    identity and historical timer cursor timestamp. Order: domain/version,
    CPU registers/latches, MAPCTL and page latch, guest tick/readiness, all RAM,
-   timer records and current-tick event bit, bus hold, then the canonical video
-   and audio records. Struct padding, derived CPU requests/wake state and host
+   timer records and current-tick event bit, bus hold, then the canonical video,
+   audio and Suzy records. Struct padding, derived CPU requests/wake state and host
    observations never enter the hash. */
 static void guest_state_digest_bytes(const lynx_machine *m, uint8_t out[32])
 {
-    static const uint8_t domain[] = "lynxplosion.guest-state.v3";
+    static const uint8_t domain[] = "lynxplosion.guest-state.v4";
     uint8_t cpu[13];
     uint8_t timer_records[LYNX__TIMER_COUNT * 4u + 4u];
     uint8_t video[LYNX__VIDEO_SNAPSHOT_LEN];
     uint8_t audio[LYNX__AUDIO_SNAPSHOT_LEN];
+    uint8_t suzy[LYNX__SUZY_SNAPSHOT_LEN];
     uint8_t digest[32];
     lynx__sha256 hash;
 
@@ -350,6 +354,7 @@ static void guest_state_digest_bytes(const lynx_machine *m, uint8_t out[32])
     timer_records[LYNX__TIMER_COUNT * 4u + 3u] = m->bus_hold;
     video_snapshot_write(video, &m->video);
     audio_snapshot_write(audio, &m->audio);
+    lynx__suzy_snapshot_write(suzy, &m->suzy);
 
     lynx__sha256_init(&hash);
     lynx__sha256_update(&hash, domain, sizeof domain);
@@ -364,6 +369,7 @@ static void guest_state_digest_bytes(const lynx_machine *m, uint8_t out[32])
     lynx__sha256_update(&hash, timer_records, sizeof timer_records);
     lynx__sha256_update(&hash, video, sizeof video);
     lynx__sha256_update(&hash, audio, sizeof audio);
+    lynx__sha256_update(&hash, suzy, sizeof suzy);
     lynx__sha256_final(&hash, digest);
     memcpy(out, digest, sizeof digest);
 }
@@ -667,6 +673,7 @@ lynx_status lynx_snapshot_save(const lynx_machine *m, uint8_t *buf, size_t cap, 
     payload[P_BUS_HOLD] = m->bus_hold;
     video_snapshot_write(payload + P_VIDEO, &m->video);
     audio_snapshot_write(payload + P_AUDIO, &m->audio);
+    lynx__suzy_snapshot_write(payload + P_SUZY, &m->suzy);
 
     memcpy(buf + OFF_MAGIC, LYNX__SNAPSHOT_MAGIC, LYNX__SNAPSHOT_MAGIC_LEN);
     put_u32(buf + OFF_FORMAT, LYNX__SNAPSHOT_FORMAT);
@@ -842,6 +849,11 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     if (!audio_state_valid(&audio_cand, payload + P_AUDIO, ticks)) {
         return LYNX_ERR_SNAPSHOT_INVALID;
     }
+    lynx__suzy_state suzy_cand;
+    lynx__suzy_snapshot_read(&suzy_cand, payload + P_SUZY);
+    if (!lynx__suzy_valid(&suzy_cand, ticks)) {
+        return LYNX_ERR_SNAPSHOT_INVALID;
+    }
 
     /* Apply: one step, field by field, no failure path. The pending bus
        request is recomputed from the restored state. */
@@ -865,6 +877,7 @@ lynx_status lynx_snapshot_restore(lynx_machine *m, const uint8_t *buf, size_t le
     m->timer_bank = timer_cand;
     m->audio = audio_cand;
     m->video = video_cand;
+    m->suzy = suzy_cand;
     m->bus_hold = bus_hold;
     m->wake_pending = timer_cand.pending != 0u ? 1u : 0u;
     /* Every refusal check is above. Successful restore resumes guest state

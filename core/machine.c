@@ -17,6 +17,7 @@
 /* Reserved for the private CPU-vector machine-loop seam. This value is not a
    public content format and can only be selected by the test adapter below. */
 #define LYNX__CONTENT_TEST_FLAT 1u
+enum { SUZY_SPRSYS = 0xFC92u };
 
 /* SplitMix64, written in 2015 by S. Vigna, public domain. The state is held
    by the caller (here: a local of the power-on function) so there is no
@@ -151,6 +152,7 @@ void lynx__power_on(lynx_machine *m)
     lynx__timer_init(&m->timer_bank);
     lynx__audio_init(&m->audio);
     lynx__video_init(&m->video, m->cfg.timing_policy);
+    lynx__suzy_init(&m->suzy);
     memset(&m->host_observation, 0, sizeof m->host_observation);
 }
 
@@ -378,6 +380,32 @@ lynx_status lynx__machine_set_bus_hold(struct lynx_machine *m, uint32_t hold)
     return LYNX_OK;
 }
 
+static uint8_t suzy_system_peek(const struct lynx_machine *m)
+{
+    return (uint8_t)((m->suzy.operation != 0u ? 0x80u : 0u) |
+                     (m->suzy.warning != 0u ? 0x40u : 0u) |
+                     (m->suzy.carry != 0u ? 0x20u : 0u) |
+                     (m->video.lefthand != 0u ? 0x08u : 0u) |
+                     (m->suzy.unsafe != 0u ? 0x04u : 0u));
+}
+
+static bool suzy_system_write(struct lynx_machine *m, uint8_t value)
+{
+    const uint8_t supported = 0xCDu; /* signed, accumulate, handedness, clear, ignored bit 0 */
+    if ((value & (uint8_t)~supported) != 0u ||
+        (m->suzy.operation != 0u && (value & 0xC0u) != m->suzy.mode)) {
+        return false;
+    }
+    if (!lynx__input_write(&m->video, SUZY_SPRSYS, (uint8_t)(value & 0x08u))) {
+        return false;
+    }
+    m->suzy.mode = (uint8_t)(value & 0xC0u);
+    if ((value & 0x04u) != 0u) {
+        m->suzy.unsafe = 0u;
+    }
+    return true;
+}
+
 /* Side-effect-free CPU-visible byte for the opcode gate and page candidate.
    It follows the same mapping as bus_access but does not complete a request.
    Private vector tests intentionally keep their separate flat RAM bus. */
@@ -409,9 +437,19 @@ static bool bus_opcode_peek(const struct lynx_machine *m, uint16_t addr,
         }
         return false;
     case LYNX__BUS_ROUTE_SUZY:
-        if (!lynx__input_available(addr)) return false;
-        *result = lynx__input_peek(&m->video, addr);
-        return true;
+        if (addr == SUZY_SPRSYS) {
+            *result = suzy_system_peek(m);
+            return true;
+        }
+        if (lynx__input_available(addr)) {
+            *result = lynx__input_peek(&m->video, addr);
+            return true;
+        }
+        if (lynx__suzy_available(addr)) {
+            *result = lynx__suzy_peek(&m->suzy, addr);
+            return true;
+        }
+        return false;
     case LYNX__BUS_ROUTE_MAPCTL:
     case LYNX__BUS_ROUTE_ROM:
     case LYNX__BUS_ROUTE_VECTOR:
@@ -435,7 +473,9 @@ static bool bus_request_available(const struct lynx_machine *m, uint16_t addr, u
         return lynx__timer_available(addr) || lynx__video_available(addr) ||
                lynx__audio_available(addr);
     }
-    if (route == LYNX__BUS_ROUTE_SUZY) return lynx__input_available(addr);
+    if (route == LYNX__BUS_ROUTE_SUZY) {
+        return lynx__input_available(addr) || lynx__suzy_available(addr);
+    }
     return route == LYNX__BUS_ROUTE_MAPCTL && (flags & LYNX__CF_WRITE) != 0u;
 }
 
@@ -520,14 +560,32 @@ static bool bus_access(struct lynx_machine *m, uint16_t addr, uint8_t data, uint
         }
         return true;
     case LYNX__BUS_ROUTE_SUZY:
-        if (!lynx__input_available(addr)) return false;
+        if (addr == SUZY_SPRSYS) {
+            if (write) {
+                if (!suzy_system_write(m, data)) return false;
+                *result = data;
+            } else {
+                *result = suzy_system_peek(m);
+            }
+            return true;
+        }
+        if (lynx__input_available(addr)) {
+            if (write) {
+                if (!lynx__input_write(&m->video, addr, data)) return false;
+                *result = data;
+            } else {
+                /* MUTATION_ANCHOR_INPUT_SAMPLE_EDGE: input is sampled only when
+                   this CPU read receives its actual bus grant (price.sample is 0). */
+                *result = lynx__input_peek(&m->video, addr);
+            }
+            return true;
+        }
+        if (!lynx__suzy_available(addr)) return false;
         if (write) {
-            if (!lynx__input_write(&m->video, addr, data)) return false;
+            if (!lynx__suzy_write(&m->suzy, addr, data, stamp)) return false;
             *result = data;
         } else {
-            /* MUTATION_ANCHOR_INPUT_SAMPLE_EDGE: input is sampled only when
-               this CPU read receives its actual bus grant (price.sample is 0). */
-            *result = lynx__input_peek(&m->video, addr);
+            *result = lynx__suzy_peek(&m->suzy, addr);
         }
         return true;
     case LYNX__BUS_ROUTE_ROM:
@@ -676,6 +734,17 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
                 has_event = true;
             }
         }
+        uint64_t suzy_tick = 0u;
+        if (lynx__suzy_next(&m->suzy, m->guest_ticks, &suzy_tick) &&
+            suzy_tick < target) {
+            const lynx__machine_event suzy_event = {
+                suzy_tick, (uint8_t)LYNX__MACHINE_EVENT_SUZY_PRIORITY,
+                (uint8_t)LYNX__MACHINE_EVENT_SEQUENCE};
+            if (!has_event || lynx__machine_event_before(suzy_event, next)) {
+                next = suzy_event;
+                has_event = true;
+            }
+        }
         if (!has_event) {
             /* No eligible work before the exclusive target. This is also the
                bounded idle path while the private CPU grant gate is held. */
@@ -752,6 +821,11 @@ static lynx_status machine_advance(lynx_machine *m, uint64_t budget, uint64_t *c
             }
             if (capture != NULL) capture->pcm[capture->pcm_count++] = sample;
             lynx__audio_mark_sample(&m->audio);
+            continue;
+        }
+        if (next.priority == (uint8_t)LYNX__MACHINE_EVENT_SUZY_PRIORITY) {
+            machine_set_guest_tick(m, next.tick);
+            lynx__suzy_apply(&m->suzy, next.tick);
             continue;
         }
         if (next.tick > m->guest_ticks) {
@@ -1138,7 +1212,8 @@ lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *
             !((route == LYNX__BUS_ROUTE_MIKEY &&
                (lynx__timer_available(current) || lynx__video_available(current) ||
                 lynx__audio_available(current))) ||
-              (route == LYNX__BUS_ROUTE_SUZY && lynx__input_available(current)))) {
+              (route == LYNX__BUS_ROUTE_SUZY &&
+               (lynx__input_available(current) || lynx__suzy_available(current))))) {
             return LYNX_ERR_UNAVAILABLE;
         }
     }
@@ -1148,7 +1223,13 @@ lynx_status lynx_read_cpu_memory(const lynx_machine *m, uint32_t addr, uint8_t *
         if (lynx__bus_decode(m->mapctl, current) == LYNX__BUS_ROUTE_RAM) {
             out[i] = m->ram[current];
         } else if (lynx__bus_decode(m->mapctl, current) == LYNX__BUS_ROUTE_SUZY) {
-            out[i] = lynx__input_peek(&m->video, current);
+            if (current == SUZY_SPRSYS) {
+                out[i] = suzy_system_peek(m);
+            } else if (lynx__input_available(current)) {
+                out[i] = lynx__input_peek(&m->video, current);
+            } else {
+                out[i] = lynx__suzy_peek(&m->suzy, current);
+            }
         } else if (lynx__video_available(current)) {
             out[i] = lynx__video_peek(&m->video, current);
         } else if (lynx__audio_available(current)) {

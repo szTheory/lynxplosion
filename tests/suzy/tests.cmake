@@ -6,3 +6,4 @@ lynx_sanitize(lynx-test-suzy)
 set_target_properties(lynx-test-suzy PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/tests)
 
 lynx_add_test(NAME suzy.tracer COMMAND lynx-test-suzy tracer LABELS suzy TIMEOUT 60)
+lynx_add_test(NAME suzy.snapshot_tracer COMMAND lynx-test-suzy snapshot_tracer LABELS suzy TIMEOUT 60)

@@ -11,10 +11,10 @@
 #include "cpu.h"
 #include "lynxplosion.h"
 
-/* Snapshot format version 7 (core/snapshot.c documents the layout). */
+/* Snapshot format version 8 (core/snapshot.c documents the layout). */
 #define LYNX__SNAPSHOT_MAGIC "LYNXSNAP" /* 8 bytes, no terminating NUL in the blob */
 #define LYNX__SNAPSHOT_MAGIC_LEN 8u
-#define LYNX__SNAPSHOT_FORMAT 7u
+#define LYNX__SNAPSHOT_FORMAT 8u
 #define LYNX__BUILD_ID_FIELD 128u
 #define LYNX__SNAPSHOT_HEADER_LEN 256u  /* prior header + timing-policy identity */
 #define LYNX__VIDEO_CAPTURE_PENS 8160u
@@ -35,12 +35,14 @@
 #define LYNX__AUDIO_RING_RESERVED_MASK 0x70u
 #define LYNX__AUDIO_MAX_EVENTS_PER_TICK 13u
 #define LYNX__AUDIO_SNAPSHOT_LEN 160u
-#define LYNX__SNAPSHOT_PAYLOAD_LEN (65604u + LYNX__VIDEO_SNAPSHOT_LEN + LYNX__AUDIO_SNAPSHOT_LEN)
+#define LYNX__SUZY_SNAPSHOT_LEN 88u
+#define LYNX__SNAPSHOT_PAYLOAD_LEN \
+    (65604u + LYNX__VIDEO_SNAPSHOT_LEN + LYNX__AUDIO_SNAPSHOT_LEN + LYNX__SUZY_SNAPSHOT_LEN)
 
 /* The payload layout belongs to the format number: a layout change without a
    format bump stops the build. */
-_Static_assert(LYNX__SNAPSHOT_FORMAT != 7u || LYNX__SNAPSHOT_PAYLOAD_LEN == 78108u,
-               "snapshot format 7 has a 78108-byte payload; bump the format to change it");
+_Static_assert(LYNX__SNAPSHOT_FORMAT != 8u || LYNX__SNAPSHOT_PAYLOAD_LEN == 78196u,
+               "snapshot format 8 has a 78196-byte payload; bump the format to change it");
 
 /* Build identity string baked at configure time (core/build_id.c.in). */
 extern const char lynx__build_id[];
@@ -131,7 +133,8 @@ enum {
     LYNX__MACHINE_EVENT_VIDEO_PRIORITY = 2u,
     LYNX__MACHINE_EVENT_REFRESH_PRIORITY = 3u,
     LYNX__MACHINE_EVENT_SAMPLE_PRIORITY = 4u,
-    LYNX__MACHINE_EVENT_CPU_PRIORITY = 5u,
+    LYNX__MACHINE_EVENT_SUZY_PRIORITY = 5u,
+    LYNX__MACHINE_EVENT_CPU_PRIORITY = 6u,
     LYNX__MACHINE_EVENT_SEQUENCE = 0u,
 };
 
@@ -148,6 +151,19 @@ typedef struct lynx__video_state {
     uint8_t palettes[LYNX__VIDEO_CAPTURE_PALETTES];
     uint64_t line_ticks[LYNX__VIDEO_CAPTURE_TICKS];
 } lynx__video_state;
+
+typedef struct lynx__suzy_state {
+    uint8_t registers[48];
+    uint8_t sign_ab, sign_cd;
+    uint8_t mode;
+    uint8_t warning, carry, unsafe;
+    uint8_t operation;
+    uint8_t latched_modes;
+    uint16_t latched_ab, latched_cd, latched_np;
+    uint32_t latched_dividend, latched_accumulator;
+    uint8_t latched_sign_ab, latched_sign_cd;
+    uint64_t start_tick, deadline_tick;
+} lynx__suzy_state;
 
 /* Host-side debugger observations are deliberately separate from guest
    machine state. Snapshot serialization and guest digests omit this object. */
@@ -178,6 +194,7 @@ struct lynx_machine {
     lynx__timer_bank timer_bank;
     lynx__audio_state audio;
     lynx__video_state video;
+    lynx__suzy_state suzy;
     lynx__host_observation host_observation;
 };
 
@@ -243,6 +260,17 @@ bool lynx__video_next_refresh(const lynx__video_state *video, uint64_t now, uint
 void lynx__video_dma_apply(lynx__video_state *video, const uint8_t *ram, uint64_t tick);
 void lynx__video_refresh_apply(lynx__video_state *video, uint64_t tick);
 bool lynx__video_timer_apply(lynx__video_state *video, uint8_t borrow_mask, uint64_t tick);
+void lynx__suzy_init(lynx__suzy_state *suzy);
+bool lynx__suzy_available(uint16_t addr);
+uint8_t lynx__suzy_peek(const lynx__suzy_state *suzy, uint16_t addr);
+bool lynx__suzy_write(lynx__suzy_state *suzy, uint16_t addr, uint8_t value, uint64_t tick);
+bool lynx__suzy_next(const lynx__suzy_state *suzy, uint64_t now, uint64_t *tick);
+void lynx__suzy_apply(lynx__suzy_state *suzy, uint64_t tick);
+bool lynx__suzy_valid(const lynx__suzy_state *suzy, uint64_t ticks);
+void lynx__suzy_snapshot_write(uint8_t out[LYNX__SUZY_SNAPSHOT_LEN],
+                               const lynx__suzy_state *suzy);
+void lynx__suzy_snapshot_read(lynx__suzy_state *suzy,
+                              const uint8_t in[LYNX__SUZY_SNAPSHOT_LEN]);
 void lynx__video_copy_frame(const lynx__video_state *video, const lynx_frame_buffers *buffers);
 void lynx__video_discard_frame(lynx__video_state *video, uint64_t next_start_tick);
 lynx_status lynx__input_set(lynx__video_state *video, uint32_t mask);
