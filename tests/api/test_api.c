@@ -644,10 +644,9 @@ static lynx_status load_bll_at(lynx_machine *m, const uint8_t *payload, size_t p
 }
 
 /* CPU-only reads and writes use a BLL program that selects MAPCTL through the
-   guest bus before touching one address. The oracle below is hand-derived
-   from the four independent Epyx overlay windows, with implemented timer and
-   audio registers checked as device routes and unimplemented targets stopping
-   before the CPU request completes. */
+   guest bus before touching one address. The oracle below checks the Epyx
+   overlay windows and mapped Suzy/Mikey devices, with unimplemented targets
+   stopping before the CPU request completes. */
 static int map_target_is_ram(uint8_t mapctl, uint16_t addr)
 {
     /* Persistent negative controls deliberately corrupt one expected route.
@@ -717,7 +716,8 @@ static void map_read_one(uint8_t mapctl, uint16_t addr)
     if (map_target_is_ram(mapctl, addr)) {
         CHECK_EQ_U64(stop, LYNX_STOP_BUDGET);
         CHECK_EQ_U64(consumed, 512u);
-        CHECK_EQ_U64(m->ram[0x0300u], sentinel);
+        CHECK_NAMED(m->ram[0x0300u] == sentinel,
+                    "map_matrix.ram-route-sentinel");
         return;
     }
     if (map_target_is_mikey(mapctl, addr)) {
@@ -1560,7 +1560,7 @@ static void case_memory_peek_pure(void)
             ? lynx_read_cpu_memory(m, 0xFC00u, &raw_suzy, 1u)
             : lynx_read_memory(m, 0xFC00u, &raw_suzy, 1u);
     CHECK_EQ_U64(raw_status, LYNX_OK);
-    CHECK_EQ_HEX(raw_suzy, 0xB2u);
+    CHECK_NAMED(raw_suzy == 0xB2u, "memory_peek_pure.raw-ram-value");
     m->ram[0xFD20u] = 0xA7u;
     CHECK_NAMED(lynx__audio_write(&m->audio, 0xFD20u, 0x7Fu, m->guest_ticks, NULL),
                 "memory.peek.audio-write-fixture");

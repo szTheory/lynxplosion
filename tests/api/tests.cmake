@@ -121,12 +121,12 @@ endforeach()
 if(FAULT_GROUP STREQUAL "map")
   set(positive_case map_matrix)
   set(fault_cases
-    "map_matrix|fault-wrong-map-bit|stop == LYNX_STOP_BUDGET failed"
+    "map_matrix|fault-wrong-map-bit|map_matrix\\.ram-route-sentinel failed"
     "map_matrix|fault-special-address-order|stop == LYNX_STOP_UNAVAILABLE failed")
 elseif(FAULT_GROUP STREQUAL "peek")
   set(positive_case memory_peek_pure)
   set(fault_cases
-    "memory_peek_pure|fault-raw-as-mapped|raw_status == LYNX_OK failed")
+    "memory_peek_pure|fault-raw-as-mapped|memory_peek_pure\\.raw-ram-value failed")
 elseif(FAULT_GROUP STREQUAL "rom")
   set(positive_case rom_unavailable)
   set(fault_cases
